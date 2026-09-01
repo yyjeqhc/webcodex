@@ -735,7 +735,6 @@ async fn closed_session_blocks_write_tools_and_message_post() {
             session_id: Some(session.session_id.clone()),
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         })
         .await;
     assert!(!write.success);

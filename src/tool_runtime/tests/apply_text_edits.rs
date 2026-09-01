@@ -61,7 +61,11 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let output_properties = &spec.output_schema["properties"]["output"]["properties"];
     assert!(output_properties["change_index"]["anyOf"].is_array());
     assert!(output_properties["edit_index"]["anyOf"].is_array());
-    assert_eq!(output_properties["state_changed"]["type"], "boolean");
+    assert!(output_properties["state_changed"]["anyOf"].is_array());
+    assert_eq!(
+        output_properties["execution_state"]["enum"],
+        serde_json::json!(["not_started", "completed", "outcome_unknown"])
+    );
     assert_eq!(output_properties["retry_guidance"]["type"], "string");
     assert!(output["properties"]["conflict_kind"]["enum"]
         .as_array()
@@ -1224,4 +1228,140 @@ async fn apply_text_edits_session_event_summary() {
         summary_str
     );
     assert_eq!(input_summary["expected_sha256_count"], 1);
+}
+
+fn assert_apply_text_edits_outcome_unknown(result: &ToolResult) {
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert!(result.output["state_changed"].is_null());
+    assert_eq!(result.output["error_kind"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert_eq!(
+        result.output["recovery_action"],
+        "inspect_workspace_before_retry"
+    );
+    assert_eq!(result.output["recovery_kind"], "reobserve");
+    assert!(result.output.get("conflict_recovery").is_none());
+    let error = result.error.as_deref().expect("model-facing uncertainty");
+    assert!(error.contains("outcome is unknown"), "{error}");
+    assert!(error.contains("Inspect current workspace state"), "{error}");
+    assert!(!error.contains("No files were modified"), "{error}");
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &serde_json::to_value(result).unwrap(),
+        &schema,
+    )
+    .unwrap_or_else(|schema_error| {
+        panic!("apply_text_edits outcome_unknown result must match output schema: {schema_error}")
+    });
+}
+
+async fn apply_text_edits_effect_runtime(client_id: &str) -> (ToolRuntime, String) {
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    (runtime, project)
+}
+
+fn one_effect_change() -> Vec<ApplyFileChangeInput> {
+    vec![edit_change(
+        "src/lib.rs",
+        &"a".repeat(64),
+        vec![text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("old"),
+            Some("new"),
+            None,
+        )],
+    )]
+}
+
+#[tokio::test]
+async fn apply_text_edits_dropped_waiter_after_dispatch_is_outcome_unknown() {
+    let (runtime, project) = apply_text_edits_effect_runtime("ate-drop").await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .apply_text_edits(project, one_effect_change(), None)
+                .await
+        }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, "ate-drop").await;
+    assert_eq!(request.kind, "file_apply_text_edits");
+    assert_eq!(
+        runtime
+            .shell_clients
+            .cancel_request_dispatch_state(&request.request_id)
+            .await,
+        Some(true)
+    );
+
+    assert_apply_text_edits_outcome_unknown(&task.await.unwrap());
+}
+
+#[tokio::test]
+async fn apply_text_edits_malformed_success_payload_is_outcome_unknown() {
+    let (runtime, project) = apply_text_edits_effect_runtime("ate-malformed").await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .apply_text_edits(project, one_effect_change(), None)
+                .await
+        }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, "ate-malformed").await;
+    complete_patch_agent_request(&runtime, "ate-malformed", &request.request_id, 0, "{}", "").await;
+
+    assert_apply_text_edits_outcome_unknown(&task.await.unwrap());
+}
+
+#[tokio::test]
+async fn apply_text_edits_complete_rollback_is_known_completed_no_effect() {
+    let (runtime, project) = apply_text_edits_effect_runtime("ate-rollback").await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .apply_text_edits(project, one_effect_change(), None)
+                .await
+        }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, "ate-rollback").await;
+    complete_patch_agent_request(
+        &runtime,
+        "ate-rollback",
+        &request.request_id,
+        0,
+        r#"{"changed":false,"state_changed":false,"rollback_complete":true,"error_kind":"transaction_failed","error":"Transactional file batch failed and was rolled back: simulated failure"}"#,
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["changed"], false);
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["rollback_complete"], true);
+    assert_ne!(result.output["error_kind"], "outcome_unknown");
+    assert!(result.output.get("recovery_kind").is_none());
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("was rolled back")));
 }

@@ -393,7 +393,7 @@ impl RemoteShellTransport {
 
     fn finish_readers(&self) {
         self.readers_stop.store(true, Ordering::SeqCst);
-        let Some(mut handles) = lock_unpoison(&self.reader_threads).take() else {
+        let Some(handles) = lock_unpoison(&self.reader_threads).take() else {
             return;
         };
         #[cfg(unix)]
@@ -402,6 +402,7 @@ impl RemoteShellTransport {
         }
         #[cfg(windows)]
         {
+            let mut handles = handles;
             let deadline = Instant::now() + REMOTE_READER_JOIN_GRACE;
             while Instant::now() < deadline && handles.iter().any(|handle| !handle.is_finished()) {
                 thread::sleep(Duration::from_millis(5));

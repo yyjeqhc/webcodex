@@ -39,7 +39,6 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
                         session_id: Some(session_id),
                         overwrite: None,
                         expected_sha256: None,
-                        expected_content_prefix: None,
                     },
                     Some(&bootstrap),
                 )
@@ -3971,7 +3970,6 @@ async fn write_project_file_rejects_invalid_input_before_agent_dispatch() {
             "a\0b".to_string(),
             None,
             None,
-            None,
         )
         .await;
     assert!(!result.success);
@@ -3982,7 +3980,6 @@ async fn write_project_file_rejects_invalid_input_before_agent_dispatch() {
             "agent:c:p".to_string(),
             ".env".to_string(),
             "x".to_string(),
-            None,
             None,
             None,
         )
@@ -3997,7 +3994,6 @@ async fn write_project_file_rejects_invalid_input_before_agent_dispatch() {
             "x".to_string(),
             Some(true),
             Some("not-a-hash".to_string()),
-            None,
         )
         .await;
     assert!(!result.success);

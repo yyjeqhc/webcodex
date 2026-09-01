@@ -348,6 +348,15 @@ pub struct ApplyFileChangeInput {
     pub expected_sha256: Option<String>,
 }
 
+/// True only for a lowercase 64-character hexadecimal SHA-256 digest.
+/// Shared by the Server and Runner so write guards cannot drift by adapter.
+pub fn is_lowercase_hex_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// Maximum number of edits accepted by a single `apply_text_edits` call.
 pub const MAX_APPLY_TEXT_EDITS: usize = 20;
 
@@ -382,6 +391,20 @@ mod tests {
             start_line,
             end_line,
         }
+    }
+
+    #[test]
+    fn lowercase_sha256_validation_is_exact() {
+        assert!(is_lowercase_hex_sha256(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
+        assert!(!is_lowercase_hex_sha256("abc"));
+        assert!(!is_lowercase_hex_sha256(
+            "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        ));
+        assert!(!is_lowercase_hex_sha256(
+            "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
     }
 
     #[test]

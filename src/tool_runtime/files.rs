@@ -73,16 +73,9 @@ pub(crate) use crate::apply_edits_shared::{
     restore_apply_text_line_endings,
 };
 pub(crate) use crate::apply_edits_shared::{
-    is_sensitive_edit_path, MAX_APPLY_FILE_CHANGES, MAX_APPLY_TEXT_EDITS,
-    MAX_APPLY_TEXT_EDIT_FIELD_BYTES,
+    is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path, MAX_APPLY_FILE_CHANGES,
+    MAX_APPLY_TEXT_EDITS, MAX_APPLY_TEXT_EDIT_FIELD_BYTES,
 };
-
-/// True if `s` is a lowercase 64-character hex string (a sha256 digest).
-pub(crate) fn is_hex_sha256(s: &str) -> bool {
-    s.len() == 64
-        && s.bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-}
 
 pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();

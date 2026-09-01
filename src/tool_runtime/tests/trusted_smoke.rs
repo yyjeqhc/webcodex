@@ -186,7 +186,6 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
             session_id: Some(session_id.clone()),
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         },
         &poll_calls,
     )
@@ -228,7 +227,6 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
             session_id: Some(session_id.clone()),
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         },
         &poll_calls,
     )

@@ -1170,14 +1170,32 @@ fn from_tool_name_parses_write_project_file() {
     .unwrap();
     assert!(matches!(
         write,
-        ToolCall::WriteProjectFile { project, path, content, overwrite, expected_sha256, expected_content_prefix, .. }
+        ToolCall::WriteProjectFile { project, path, content, overwrite, expected_sha256, .. }
             if project == "agent:c:p"
             && path == "new.txt"
             && content == "hello"
             && overwrite.is_none()
             && expected_sha256.is_none()
-            && expected_content_prefix.is_none()
     ));
+}
+
+#[test]
+fn from_tool_name_rejects_retired_write_prefix_guard() {
+    let error = ToolCall::from_tool_name(
+        "write_project_file",
+        json!({
+            "project": "agent:c:p",
+            "path": "existing.txt",
+            "content": "replacement",
+            "overwrite": true,
+            "expected_sha256": "a".repeat(64),
+            "expected_content_prefix": "legacy"
+        }),
+    )
+    .expect_err("retired prefix guard must fail before dispatch");
+    assert!(error.contains("expected_content_prefix"), "{error}");
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(error.contains("expected_sha256"), "{error}");
 }
 
 #[test]

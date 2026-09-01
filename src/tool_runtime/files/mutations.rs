@@ -13,6 +13,161 @@ fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     )
 }
 
+fn structured_edit_not_started_result(tool_name: &str, reason: impl AsRef<str>) -> ToolResult {
+    ToolResult::err_with_output(
+        format!(
+            "{tool_name} was not dispatched: {}. No files were modified by this request. Restore Runner availability, then retry with the same guards.",
+            reason.as_ref()
+        ),
+        json!({
+            "execution_state": "not_started",
+            "state_changed": false,
+            "error_kind": "not_started",
+            "failure_kind": "not_started",
+            "tool_failure": true,
+            "recovery_action": "retry_same_after_runner_recovery",
+        }),
+    )
+    .with_recovery(crate::tool_runtime::RecoveryKind::RetrySame, None)
+}
+
+fn structured_edit_outcome_unknown_result(
+    tool_name: &str,
+    reason: impl AsRef<str>,
+    mut output: Value,
+) -> ToolResult {
+    if !output.is_object() {
+        output = json!({});
+    }
+    let fields = output
+        .as_object_mut()
+        .expect("structured edit uncertainty output normalized to object");
+    for key in [
+        "conflict_recovery",
+        "retry_guidance",
+        "state_changed",
+        "execution_state",
+        "error_kind",
+        "failure_kind",
+        "tool_failure",
+        "recovery_action",
+        "recovery_kind",
+        "recovery_tool",
+    ] {
+        fields.remove(key);
+    }
+    fields.insert("execution_state".to_string(), json!("outcome_unknown"));
+    fields.insert("state_changed".to_string(), Value::Null);
+    fields.insert("error_kind".to_string(), json!("outcome_unknown"));
+    fields.insert("failure_kind".to_string(), json!("outcome_unknown"));
+    fields.insert("tool_failure".to_string(), json!(true));
+    fields.insert(
+        "recovery_action".to_string(),
+        json!("inspect_workspace_before_retry"),
+    );
+    ToolResult::err_with_output(
+        format!(
+            "{tool_name} outcome is unknown: {}. The Runner may already have changed files. Inspect current workspace state before issuing another write.",
+            reason.as_ref()
+        ),
+        output,
+    )
+    .with_recovery(crate::tool_runtime::RecoveryKind::Reobserve, None)
+}
+
+fn structured_edit_delivery_failure(
+    tool_name: &str,
+    reason: impl AsRef<str>,
+    state: ShellCommandExecutionState,
+) -> ToolResult {
+    if state == ShellCommandExecutionState::NotStarted {
+        structured_edit_not_started_result(tool_name, reason)
+    } else {
+        structured_edit_outcome_unknown_result(tool_name, reason, json!({}))
+    }
+}
+
+async fn await_structured_edit_response(
+    runtime: &ToolRuntime,
+    request_id: &str,
+    rx: tokio::sync::oneshot::Receiver<ShellRunResponse>,
+    wait_timeout_secs: u64,
+    tool_name: &str,
+) -> Result<ShellRunResponse, ToolResult> {
+    match tokio::time::timeout(Duration::from_secs(wait_timeout_secs + 4), rx).await {
+        Ok(Ok(response)) => {
+            if response.request_dispatched == Some(false) {
+                return Err(structured_edit_not_started_result(
+                    tool_name,
+                    "the returned lifecycle evidence proves the request never left the queue",
+                ));
+            }
+            if response.error.is_some() {
+                return Err(structured_edit_outcome_unknown_result(
+                    tool_name,
+                    "the Runner returned a transport or execution error after dispatch",
+                    json!({}),
+                ));
+            }
+            if response.exit_code != Some(0) {
+                return Err(structured_edit_outcome_unknown_result(
+                    tool_name,
+                    "the Runner returned a non-zero terminal result after dispatch",
+                    json!({}),
+                ));
+            }
+            Ok(response)
+        }
+        Ok(Err(_)) => {
+            let state = dispatch_uncertainty_lifecycle(
+                runtime
+                    .shell_clients
+                    .cancel_request_dispatch_state(request_id)
+                    .await,
+            );
+            Err(structured_edit_delivery_failure(
+                tool_name,
+                "the Runner response channel closed before a trustworthy result was received",
+                state,
+            ))
+        }
+        Err(_) => {
+            let state = dispatch_uncertainty_lifecycle(
+                runtime
+                    .shell_clients
+                    .cancel_request_dispatch_state(request_id)
+                    .await,
+            );
+            Err(structured_edit_delivery_failure(
+                tool_name,
+                format!("no trustworthy result arrived within {wait_timeout_secs} seconds"),
+                state,
+            ))
+        }
+    }
+}
+
+fn write_project_file_preflight_rejection(
+    detail: impl Into<String>,
+    error_kind: &'static str,
+    retry_guidance: &'static str,
+) -> ToolResult {
+    let detail = detail.into();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {detail}.\nNo files were modified.\nRetry guidance: {retry_guidance}."
+        ),
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": error_kind,
+            "retry_guidance": retry_guidance,
+        }),
+    )
+    .with_recovery(crate::tool_runtime::RecoveryKind::FixInput, None)
+}
+
 fn apply_text_edit_occurrence_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
     let reason = reason.as_ref();
     ToolResult::err_with_output(
@@ -290,40 +445,111 @@ fn validate_apply_file_change(
     Ok(())
 }
 
-fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
+fn apply_text_edits_agent_stdout_result(
+    stdout: &str,
+    expected_change_count: usize,
+    expected_dry_run: bool,
+) -> ToolResult {
     let stdout = stdout.trim();
-    let mut obj: Value = match serde_json::from_str(stdout) {
-        Ok(value) => value,
-        Err(error) => {
-            return ToolResult::err(format!(
-                "agent apply_text_edits returned invalid JSON: {} (got: {})",
-                error,
-                &stdout[..stdout.len().min(200)]
-            ))
+    let mut obj: Value = match serde_json::from_str::<Value>(stdout) {
+        Ok(value) if value.is_object() => value,
+        _ => {
+            return structured_edit_outcome_unknown_result(
+                "apply_text_edits",
+                "the Runner returned malformed or non-object JSON after dispatch",
+                json!({}),
+            )
         }
     };
     if let Some(error) = obj.get("error").and_then(Value::as_str).map(str::to_string) {
-        let uncertain = obj.get("rollback_complete").and_then(Value::as_bool) == Some(false)
-            || obj.get("changed").and_then(Value::as_bool) == Some(true);
-        let message = if uncertain {
-            if let Some(output) = obj.as_object_mut() {
-                // A Runner response that admits incomplete rollback or a
-                // changed worktree cannot retain deterministic no-mutation
-                // retry authority from an earlier planning conflict.
-                output.remove("conflict_recovery");
-                output.remove("retry_guidance");
-                output.remove("state_changed");
-            }
-            format!(
-                "Edit outcome is uncertain: {error}. Inspect the affected files before issuing another write."
-            )
-        } else if obj.get("conflict_recovery").is_some_and(Value::is_object) {
-            error.clone()
+        let rollback_complete = obj.get("rollback_complete").and_then(Value::as_bool);
+        let changed = obj.get("changed").and_then(Value::as_bool);
+        let state_changed = obj.get("state_changed").and_then(Value::as_bool);
+        let uncertain = rollback_complete == Some(false)
+            || changed == Some(true)
+            || state_changed == Some(true);
+        let no_effect_proven = !uncertain
+            && (rollback_complete == Some(true)
+                || changed == Some(false)
+                || state_changed == Some(false));
+        if !no_effect_proven {
+            return structured_edit_outcome_unknown_result("apply_text_edits", error, obj);
+        }
+        obj["changed"] = json!(false);
+        obj["state_changed"] = json!(false);
+        obj["execution_state"] = if rollback_complete == Some(true) {
+            json!("completed")
+        } else {
+            json!("not_started")
+        };
+        let message = if obj.get("conflict_recovery").is_some_and(Value::is_object)
+            || error.contains("No files were modified")
+            || error.contains("was rolled back")
+        {
+            error
         } else {
             recoverable_write_rejection(&error)
         };
         return ToolResult::err_with_output(message, obj);
     }
+
+    let dry_run = obj.get("dry_run").and_then(Value::as_bool);
+    let applied_count = obj.get("applied_count").and_then(Value::as_u64);
+    let changed = obj.get("changed").and_then(Value::as_bool);
+    let would_change = obj.get("would_change").and_then(Value::as_bool);
+    let valid = dry_run == Some(expected_dry_run)
+        && applied_count == Some(expected_change_count as u64)
+        && changed.is_some()
+        && would_change.is_some()
+        && !(expected_dry_run && changed == Some(true))
+        && (expected_dry_run || changed == would_change);
+    if !valid {
+        return structured_edit_outcome_unknown_result(
+            "apply_text_edits",
+            "the Runner success payload omitted or contradicted authoritative edit-effect fields",
+            obj,
+        );
+    }
+    obj["state_changed"] = json!(changed.expect("validated changed field"));
+    obj["execution_state"] = json!("completed");
+    ToolResult::ok(obj)
+}
+
+fn write_project_file_agent_stdout_result(stdout: &str) -> ToolResult {
+    let stdout = stdout.trim();
+    let mut obj: Value = match serde_json::from_str::<Value>(stdout) {
+        Ok(value) if value.is_object() => value,
+        _ => {
+            return structured_edit_outcome_unknown_result(
+                "write_project_file",
+                "the Runner returned malformed or non-object JSON after dispatch",
+                json!({}),
+            )
+        }
+    };
+    if let Some(error) = obj.get("error").and_then(Value::as_str).map(str::to_string) {
+        let changed = obj.get("changed").and_then(Value::as_bool);
+        let state_changed = obj.get("state_changed").and_then(Value::as_bool);
+        if changed == Some(true)
+            || state_changed == Some(true)
+            || (changed != Some(false) && state_changed != Some(false))
+        {
+            return structured_edit_outcome_unknown_result("write_project_file", error, obj);
+        }
+        obj["changed"] = json!(false);
+        obj["state_changed"] = json!(false);
+        obj["execution_state"] = json!("not_started");
+        return ToolResult::err_with_output(error, obj);
+    }
+    let Some(changed) = obj.get("changed").and_then(Value::as_bool) else {
+        return structured_edit_outcome_unknown_result(
+            "write_project_file",
+            "the Runner success payload omitted the authoritative changed field",
+            obj,
+        );
+    };
+    obj["state_changed"] = json!(changed);
+    obj["execution_state"] = json!("completed");
     ToolResult::ok(obj)
 }
 
@@ -926,27 +1152,51 @@ impl ToolRuntime {
         content: String,
         overwrite: Option<bool>,
         expected_sha256: Option<String>,
-        expected_content_prefix: Option<String>,
     ) -> ToolResult {
         // ---- Input validation (before project resolution) ----
         if let Err(e) = validate_edit_file_path(&path) {
             return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if content.contains('\0') {
-            return ToolResult::err("content cannot contain NUL bytes");
+            return write_project_file_preflight_rejection(
+                "content cannot contain NUL bytes",
+                "invalid_content",
+                "remove the NUL byte and retry",
+            );
         }
         if content.len() > MAX_WRITE_CONTENT_BYTES {
-            return ToolResult::err(format!(
-                "content too large; maximum is {} bytes",
-                MAX_WRITE_CONTENT_BYTES
-            ));
+            return write_project_file_preflight_rejection(
+                format!("content exceeds {MAX_WRITE_CONTENT_BYTES} bytes"),
+                "content_too_large",
+                "use apply_text_edits for a smaller local change or reduce the full rewrite",
+            );
         }
+        let overwrite = overwrite.unwrap_or(false);
         if let Some(hash) = expected_sha256.as_deref() {
             if !is_hex_sha256(hash) {
-                return ToolResult::err(
-                    "expected_sha256 must be a lowercase 64-char hex sha256 digest",
+                return write_project_file_preflight_rejection(
+                    "expected_sha256 must be a lowercase 64-character hex digest",
+                    "invalid_expected_sha256",
+                    "reread the file and provide its exact current sha256",
                 );
             }
+        }
+        match (overwrite, expected_sha256.is_some()) {
+            (true, false) => {
+                return write_project_file_preflight_rejection(
+                    "overwrite=true requires expected_sha256",
+                    "missing_expected_sha256",
+                    "reread the existing file and retry with its exact current sha256",
+                )
+            }
+            (false, true) => {
+                return write_project_file_preflight_rejection(
+                    "expected_sha256 is allowed only when overwrite=true",
+                    "unexpected_expected_sha256",
+                    "omit expected_sha256 for a new-file create, or set overwrite=true for an existing-file rewrite",
+                )
+            }
+            _ => {}
         }
 
         // ---- Project resolution (agent-registered only) ----
@@ -968,39 +1218,55 @@ impl ToolRuntime {
         let payload = json!({
             "path": path.clone(),
             "content": content,
-            "overwrite": overwrite.unwrap_or(false),
+            "overwrite": overwrite,
             "expected_sha256": expected_sha256,
-            "expected_content_prefix": expected_content_prefix,
         });
-        let mut obj = match self
-            .run_agent_json_file_op(
-                client_id,
-                proj.path.clone(),
-                path.clone(),
-                "write_project_file",
-                payload,
-                "write_project_file",
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "write_project_file".to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content: Some(payload.to_string()),
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
             )
             .await
         {
-            Ok(v) => v,
-            Err(e) => return ToolResult::err(e),
+            Ok(request) => request,
+            Err(_) => {
+                return structured_edit_not_started_result(
+                    "write_project_file",
+                    "the Runner queue rejected the request before dispatch",
+                )
+            }
         };
-        if let Some(err) = obj
-            .get("error")
-            .and_then(|e| e.as_str())
-            .map(str::to_string)
+        let response = match await_structured_edit_response(
+            self,
+            &request_id,
+            rx,
+            wait_timeout,
+            "write_project_file",
+        )
+        .await
         {
-            return ToolResult {
-                success: false,
-                output: obj,
-                error: Some(err),
-            };
-        }
-        if let Some(changed) = obj.get("changed").and_then(Value::as_bool) {
-            obj["state_changed"] = json!(changed);
-        }
-        ToolResult::ok(obj)
+            Ok(response) => response,
+            Err(result) => return result,
+        };
+        write_project_file_agent_stdout_result(&response.stdout.unwrap_or_default())
     }
 
     pub(crate) async fn apply_text_edits(
@@ -1111,9 +1377,11 @@ impl ToolRuntime {
             .flat_map(|change| change.edits.iter())
             .any(|edit| edit.line_scope.is_some());
 
+        let expected_change_count = changes.len();
+        let expected_dry_run = dry_run.unwrap_or(false);
         let payload = json!({
             "changes": changes,
-            "dry_run": dry_run.unwrap_or(false),
+            "dry_run": expected_dry_run,
             "recovery_metadata_version": 1,
         });
         let serialized = match serde_json::to_string(&payload) {
@@ -1217,33 +1485,30 @@ impl ToolRuntime {
             {
                 return apply_text_edit_occurrence_capability_rejection(e)
             }
-            Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
-        };
-        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
-                return ToolResult::err("agent apply_text_edits request was dropped");
-            }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
-                return ToolResult::err("timed out waiting for agent apply_text_edits");
+                return structured_edit_not_started_result(
+                    "apply_text_edits",
+                    "the Runner queue rejected the request before dispatch",
+                )
             }
         };
-        if let Some(e) = resp.error {
-            return ToolResult::err(recoverable_write_rejection(e));
-        }
-        if resp.exit_code != Some(0) {
-            return ToolResult::err(recoverable_write_rejection(resp.stderr.unwrap_or_else(
-                || {
-                    format!(
-                        "agent apply_text_edits failed with code {:?}",
-                        resp.exit_code
-                    )
-                },
-            )));
-        }
-        apply_text_edits_agent_stdout_result(&resp.stdout.unwrap_or_default())
+        let response = match await_structured_edit_response(
+            self,
+            &request_id,
+            rx,
+            wait_timeout,
+            "apply_text_edits",
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(result) => return result,
+        };
+        apply_text_edits_agent_stdout_result(
+            &response.stdout.unwrap_or_default(),
+            expected_change_count,
+            expected_dry_run,
+        )
     }
 }
 
@@ -1276,15 +1541,18 @@ mod tests {
     fn incomplete_apply_text_edits_rollback_is_not_reported_as_no_write() {
         let result = apply_text_edits_agent_stdout_result(
             r#"{"changed":true,"state_changed":false,"rollback_complete":false,"retry_guidance":"retry directly","conflict_recovery":{"schema_version":1,"conflict_kind":"multiple_matches","occurrence_selector_supported":true,"direct_retry_safe":true,"reread_required":false,"recovery_action":"select_occurrence_or_refine_match"},"error":"rollback failed"}"#,
+            1,
+            false,
         );
 
         assert!(!result.success);
         assert_eq!(result.output["rollback_complete"], false);
         assert!(result.output.get("conflict_recovery").is_none());
         assert!(result.output.get("retry_guidance").is_none());
-        assert!(result.output.get("state_changed").is_none());
+        assert!(result.output["state_changed"].is_null());
+        assert_eq!(result.output["execution_state"], "outcome_unknown");
         let error = result.error.unwrap();
-        assert!(error.contains("uncertain"));
+        assert!(error.contains("outcome is unknown"));
         assert!(!error.contains("No files were modified"));
     }
 }

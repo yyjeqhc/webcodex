@@ -65,7 +65,6 @@ async fn unknown_session_id_fails_before_execution_or_mutation() {
             session_id: Some("wc_sess_missing".to_string()),
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         })
         .await;
     assert!(!write.success);
@@ -191,7 +190,6 @@ async fn mutation_cross_project_session_fails_before_write() {
                 session_id: Some(session.session_id.clone()),
                 overwrite: None,
                 expected_sha256: None,
-                expected_content_prefix: None,
             },
             Some(&auth),
         )
@@ -585,7 +583,6 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
             session_id: Some(session.session_id.clone()),
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         })
         .await;
 
@@ -838,7 +835,6 @@ async fn deny_write_only_allows_read_and_shell_tools() {
                 session_id: Some(session.session_id.clone()),
                 overwrite: None,
                 expected_sha256: None,
-                expected_content_prefix: None,
             },
             Some(&bootstrap),
         )
@@ -964,7 +960,6 @@ async fn deny_shell_only_allows_write_tools() {
                         session_id: Some(session_id),
                         overwrite: None,
                         expected_sha256: None,
-                        expected_content_prefix: None,
                     },
                     Some(&bootstrap),
                 )
@@ -978,7 +973,7 @@ async fn deny_shell_only_allows_write_tools() {
         "guard-shell-only",
         &req.request_id,
         0,
-        r#"{"path":"allowed.txt","created":true,"overwritten":false,"bytes_written":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","warning":null}"#,
+        r#"{"path":"allowed.txt","created":true,"overwritten":false,"bytes_written":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","changed":true}"#,
         "",
     )
     .await;

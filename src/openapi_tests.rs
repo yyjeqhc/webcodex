@@ -913,13 +913,23 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
 }
 
 #[test]
+fn openapi_omits_retired_write_project_file_dedicated_schema() {
+    let spec = build_openapi_spec();
+    assert!(
+        spec["components"]["schemas"]
+            .get("WriteProjectFileRequest")
+            .is_none(),
+        "the removed /api/projects/write_file action must not leave an unreferenced schema"
+    );
+}
+
+#[test]
 fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
     let spec = build_openapi_spec();
     let schemas = &spec["components"]["schemas"];
     for name in [
         "ReadProjectFileRequest",
         "RunShellRequest",
-        "WriteProjectFileRequest",
         "ProjectIdRequest",
         "ProjectGitDiffRequest",
         "SearchProjectTextRequest",

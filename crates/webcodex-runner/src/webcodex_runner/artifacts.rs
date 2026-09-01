@@ -1,5 +1,6 @@
 use super::files::sha256_hex_bytes;
 use super::output::{line_edit_stdout, CommandResult};
+use crate::apply_edits_shared::is_lowercase_hex_sha256 as is_hex_sha256;
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error, DOCX_MIME,
     MAX_MCP_IMAGE_BYTES, PPTX_MIME, XLSX_MIME,
@@ -163,13 +164,6 @@ fn parse_required_clean_string(
         Some(_) => Err(format!("{key} must be a string")),
         None => Err(format!("{key} is required")),
     }
-}
-
-fn is_hex_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn validate_upload_id(upload_id: &str) -> Result<(), String> {

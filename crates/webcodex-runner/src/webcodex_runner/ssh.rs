@@ -26,13 +26,16 @@ const SSH_REMOTE_CWD_MAX_BYTES: usize = 4096;
 /// The public wire command plus the worst-case POSIX single-quote expansion of
 /// a maximum remote cwd and fixed cwd wrapper fit below this internal ceiling.
 /// It is transport headroom, not a smaller Windows product limit.
+#[cfg(any(test, windows))]
 const WINDOWS_DIRECT_PROGRAM_MAX_BYTES: usize =
     crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES + SSH_REMOTE_CWD_MAX_BYTES * 5 + 512;
 /// Windows Direct transports a shell-quoted `eval <program>` frame over stdin.
 /// POSIX single-quote encoding expands each input byte by at most 5x; the fixed
 /// `eval ` prefix and surrounding quotes add seven bytes. This is internal
 /// transport headroom only and does not lower the public raw-shell ceilings.
+#[cfg(any(test, windows))]
 const WINDOWS_DIRECT_FRAME_MAX_BYTES: usize = WINDOWS_DIRECT_PROGRAM_MAX_BYTES * 5 + 7;
+#[cfg(any(test, windows))]
 const WINDOWS_DIRECT_BOOTSTRAP_PREFIX: &str = ": WEBCODEX_SSH_PROGRAM_BYTES=";
 
 /// In-memory identity for one OpenSSH multiplex transport. The Runner config
@@ -83,6 +86,8 @@ pub(crate) struct SshConnectionPool {
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedSshTransport {
     Mux(SshConnectionKey),
+    // Constructed only by the Windows direct-OpenSSH path.
+    #[cfg_attr(not(windows), allow(dead_code))]
     Direct,
 }
 
@@ -95,7 +100,11 @@ pub(crate) enum PreparedSshTransport {
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedSshProgramDelivery {
     Argv,
-    StdinFramed { program: Vec<u8> },
+    // Constructed only by the Windows direct-OpenSSH path.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    StdinFramed {
+        program: Vec<u8>,
+    },
 }
 
 impl PreparedSshProgramDelivery {
@@ -1055,6 +1064,7 @@ fn shell_quote(value: &str) -> String {
 /// wrapper; the inner `eval` builtin then receives exactly `program` as one
 /// argument. The frame always ends in a closing single quote, so command
 /// substitution cannot strip user trailing newlines from the represented data.
+#[cfg(any(test, windows))]
 fn windows_direct_program_frame(program: &str) -> String {
     format!("eval {}", shell_quote(program))
 }
@@ -1068,6 +1078,7 @@ fn windows_direct_program_frame(program: &str) -> String {
 /// consumes only the frame region, and the complete frame is byte-counted before
 /// any user program can execute. The wrapper's inner builtin `eval` receives the
 /// exact original program text, with its own lexical EOF.
+#[cfg(any(test, windows))]
 fn windows_direct_program_bootstrap(frame_len: usize) -> String {
     format!(
         r#"{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{frame_len}; eval "$(set +e; WEBCODEX_SSH_N={frame_len}; [ "$WEBCODEX_SSH_N" -gt 0 ] 2>/dev/null && [ "$WEBCODEX_SSH_N" -le {WINDOWS_DIRECT_FRAME_MAX_BYTES} ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: SSH program length out of range'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_FRAME=$(dd bs=1 count="$WEBCODEX_SSH_N" 2>/dev/null); WEBCODEX_SSH_DD_STATUS=$?; [ "$WEBCODEX_SSH_DD_STATUS" -eq 0 ] || {{ printf >&2 '%s\n' 'webcodex: SSH program upload failed'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_ACTUAL=$(printf '%s' "$WEBCODEX_SSH_FRAME" | wc -c); [ "$WEBCODEX_SSH_ACTUAL" -eq "$WEBCODEX_SSH_N" ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: incomplete SSH program upload'; printf '%s' 'exit 126'; exit 0; }}; printf '%s' "$WEBCODEX_SSH_FRAME")""#

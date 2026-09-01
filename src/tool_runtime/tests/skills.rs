@@ -1251,7 +1251,6 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
                 session_id: None,
                 overwrite: None,
                 expected_sha256: None,
-                expected_content_prefix: None,
             },
             Some(&bootstrap),
         )

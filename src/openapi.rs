@@ -1464,42 +1464,6 @@ fn schemas() -> Value {
                 }
             }
         },
-        "WriteProjectFileRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "path", "content"],
-            "description": "Write a UTF-8 project file via the owning agent. Mutation with side effects; creates new files and overwrites existing ones when a guard matches.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected. Sensitive paths are rejected."
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Full UTF-8 file content to write."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "overwrite": {
-                    "type": "boolean",
-                    "description": "Optional. When true, allows overwriting an existing file (guarded by expected_sha256 / expected_content_prefix when set)."
-                },
-                "expected_sha256": {
-                    "type": "string",
-                    "description": "Optional sha256 of the existing file content. Overwrite only proceeds when it matches; prevents accidental overwrites."
-                },
-                "expected_content_prefix": {
-                    "type": "string",
-                    "description": "Optional prefix the existing file content must start with before overwriting."
-                }
-            }
-        },
         "StartProjectShellJobRequest": {
             "type": "object",
             "additionalProperties": false,

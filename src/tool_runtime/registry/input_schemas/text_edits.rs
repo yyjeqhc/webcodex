@@ -10,19 +10,13 @@ pub(crate) fn write_project_file_input_schema() -> Value {
         (
             "overwrite",
             "boolean",
-            "Allow overwriting an existing file (default false).",
+            "Allow replacing an existing file (default false); true requires expected_sha256.",
             false,
         ),
         (
             "expected_sha256",
             "string",
-            "Required sha256 of the current file when overwriting.",
-            false,
-        ),
-        (
-            "expected_content_prefix",
-            "string",
-            "Required prefix of the current file when overwriting.",
+            "Exact current-file sha256 required with overwrite=true; omit for new-file creation.",
             false,
         ),
     ]))

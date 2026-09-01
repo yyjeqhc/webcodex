@@ -696,11 +696,14 @@ pub(super) fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
     let KernelFailure::Tool(result) = error else {
         return false;
     };
-    if result
-        .output
-        .get("rollback_complete")
-        .and_then(Value::as_bool)
-        == Some(false)
+    if result.output.get("execution_state").and_then(Value::as_str) == Some("outcome_unknown")
+        || result.output.get("failure_kind").and_then(Value::as_str) == Some("outcome_unknown")
+        || result.output.get("error_kind").and_then(Value::as_str) == Some("outcome_unknown")
+        || result
+            .output
+            .get("rollback_complete")
+            .and_then(Value::as_bool)
+            == Some(false)
         || result.output.get("changed").and_then(Value::as_bool) == Some(true)
     {
         return true;

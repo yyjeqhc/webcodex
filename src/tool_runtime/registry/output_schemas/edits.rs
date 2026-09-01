@@ -97,27 +97,47 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "created",
-                schema_type("boolean", "True when the whole-file write created a new file."),
+                schema_type("boolean", "True when the request created a new file."),
             ),
             (
                 "overwritten",
-                schema_type("boolean", "True when the whole-file write replaced an existing file."),
+                schema_type("boolean", "True when the request successfully targeted an existing file with its exact sha256 guard."),
             ),
             (
                 "bytes_written",
-                schema_type("integer", "Bytes written to the final file. Result metadata only; does not include file content, is not a shell-execution interface, and does not expose environment, token, or secret values."),
+                schema_type("integer", "Bytes written to the final file; zero for a confirmed no-change rewrite. Result metadata does not include file content, is not a shell-execution interface, and does not expose environment, token, or secret values."),
             ),
             (
                 "sha256",
-                nullable_schema("string", "sha256 of the written file, current file on sha guard mismatch, or null when unavailable."),
+                nullable_schema("string", "sha256 of the final file, current file on sha guard mismatch, or null when unavailable."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Runner-authoritative file-content change fact when a trustworthy result was received."),
             ),
             (
                 "state_changed",
-                schema_type("boolean", "Authoritative whole-file write effect derived from the agent's changed result; false means the successful write left file content unchanged."),
+                nullable_schema("boolean", "True or false for a trustworthy effect result; null when a dispatched write may have completed but its result is unavailable or invalid."),
             ),
             (
-                "warning",
-                nullable_schema("string", "Whole-file write safety warning, such as an unguarded overwrite warning; null otherwise."),
+                "execution_state",
+                json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Whole-file mutation effect state; never a shell-command lifecycle."}),
+            ),
+            (
+                "error_kind",
+                nullable_schema("string", "Stable preflight or outcome_unknown classification when unsuccessful."),
+            ),
+            (
+                "failure_kind",
+                nullable_schema("string", "not_started or outcome_unknown for delivery-boundary failures."),
+            ),
+            (
+                "recovery_action",
+                nullable_schema("string", "Bounded next action; outcome_unknown requires workspace inspection before another write."),
+            ),
+            (
+                "retry_guidance",
+                schema_type("string", "Bounded correction guidance for a deterministic preflight rejection."),
             ),
             (
                 "error",
@@ -154,11 +174,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "state_changed",
-                schema_type("boolean", "Authoritative no-effect fact for deterministic rejected batches when false."),
+                nullable_schema("boolean", "True or false for a trustworthy edit effect; null when a dispatched mutation may have completed but its result is unavailable or invalid."),
+            ),
+            (
+                "execution_state",
+                json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Transactional edit mutation effect state; never a shell-command lifecycle."}),
             ),
             (
                 "error_kind",
                 schema_type("string", "Stable structured rejection/failure kind when unsuccessful."),
+            ),
+            (
+                "failure_kind",
+                nullable_schema("string", "not_started or outcome_unknown for delivery-boundary failures."),
+            ),
+            (
+                "recovery_action",
+                nullable_schema("string", "Bounded next action; outcome_unknown requires workspace inspection before another write."),
+            ),
+            (
+                "rollback_complete",
+                nullable_schema("boolean", "Whether a failed transactional apply fully restored every prior change; false makes the final workspace state uncertain."),
             ),
             (
                 "change_index",

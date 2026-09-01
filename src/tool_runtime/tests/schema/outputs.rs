@@ -1392,7 +1392,13 @@ fn write_project_file_output_schema_include_metadata_fields() {
         "overwritten",
         "bytes_written",
         "sha256",
-        "warning",
+        "changed",
+        "state_changed",
+        "execution_state",
+        "error_kind",
+        "failure_kind",
+        "recovery_action",
+        "retry_guidance",
         "error",
     ] {
         assert!(
@@ -1400,10 +1406,17 @@ fn write_project_file_output_schema_include_metadata_fields() {
             "write_project_file missing {field}"
         );
     }
-
+    assert!(!output_schema_properties(&specs, "write_project_file").contains_key("warning"));
     assert_eq!(
         output_schema_property(&specs, "write_project_file", "bytes_written")["type"],
         "integer"
+    );
+    assert!(
+        output_schema_property(&specs, "write_project_file", "state_changed")["anyOf"].is_array()
+    );
+    assert_eq!(
+        output_schema_property(&specs, "write_project_file", "execution_state")["enum"],
+        json!(["not_started", "completed", "outcome_unknown"])
     );
 }
 

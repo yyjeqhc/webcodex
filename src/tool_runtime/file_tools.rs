@@ -137,17 +137,9 @@ impl ToolRuntime {
                 session_id: _,
                 overwrite,
                 expected_sha256,
-                expected_content_prefix,
             } => {
-                self.write_project_file(
-                    project,
-                    path,
-                    content,
-                    overwrite,
-                    expected_sha256,
-                    expected_content_prefix,
-                )
-                .await
+                self.write_project_file(project, path, content, overwrite, expected_sha256)
+                    .await
             }
             ToolCall::SaveProjectArtifact {
                 project,

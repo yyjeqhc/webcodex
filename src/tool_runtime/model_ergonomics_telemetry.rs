@@ -256,7 +256,10 @@ fn edit_facts(tool_name: &str, success: bool, output: &Value) -> EditFacts {
                     (Some(false), Some(false), _) => Some("no_change".to_string()),
                     _ => None,
                 }
-            } else if output.get("rollback_complete").and_then(Value::as_bool) == Some(false)
+            } else if output.get("execution_state").and_then(Value::as_str)
+                == Some("outcome_unknown")
+                || output.get("error_kind").and_then(Value::as_str) == Some("outcome_unknown")
+                || output.get("rollback_complete").and_then(Value::as_bool) == Some(false)
                 || output.get("changed").and_then(Value::as_bool) == Some(true)
             {
                 Some("uncertain".to_string())

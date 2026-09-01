@@ -1526,10 +1526,10 @@ pub enum ToolCall {
     },
 
     /// Write a UTF-8 file in a project via the owning agent. Creates new files
-    /// and (with `overwrite`) replaces existing ones, gating overwrites on an
-    /// optional `expected_sha256` / `expected_content_prefix` so a stale caller
-    /// cannot clobber a file that changed underneath it. The server never reads
-    /// the agent filesystem directly; the write runs as a native agent file op.
+    /// and, with `overwrite=true` plus the exact current `expected_sha256`,
+    /// replaces existing ones without a stale read clobbering concurrent work.
+    /// The server never reads the agent filesystem directly; the write runs as
+    /// a native agent file operation.
     WriteProjectFile {
         project: String,
         path: String,
@@ -1540,8 +1540,6 @@ pub enum ToolCall {
         overwrite: Option<bool>,
         #[serde(default)]
         expected_sha256: Option<String>,
-        #[serde(default)]
-        expected_content_prefix: Option<String>,
     },
 
     /// Write a binary artifact in a project via the owning agent. The payload is
@@ -2390,6 +2388,16 @@ impl ToolCall {
         {
             return Err(
                 "invalid arguments for tool 'read_project_artifact': field 'max_bytes' is no longer supported; use 'length'"
+                    .to_string(),
+            );
+        }
+        if name == "write_project_file"
+            && arguments
+                .as_object()
+                .is_some_and(|object| object.contains_key("expected_content_prefix"))
+        {
+            return Err(
+                "invalid arguments for tool 'write_project_file': field 'expected_content_prefix' is no longer supported; use expected_sha256"
                     .to_string(),
             );
         }

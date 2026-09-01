@@ -21,7 +21,9 @@ const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
 const MAX_ELEMENT_REGISTRY: usize = 1024;
 const MAX_INPUT_TEXT_BYTES: usize = 2048;
+#[cfg(any(test, target_os = "macos", windows))]
 const MAX_CLIPBOARD_TEXT_BYTES: usize = 16 * 1024;
+#[cfg(any(test, target_os = "macos", windows))]
 const MAX_CLIPBOARD_NATIVE_STORAGE_BYTES: usize = 64 * 1024;
 const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
     "enter",
@@ -273,6 +275,7 @@ fn validate_input_text(text: &str) -> Result<usize, String> {
     Ok(text_bytes)
 }
 
+#[cfg(any(test, target_os = "macos", windows))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PreparedClipboardText {
     utf16: Vec<u16>,
@@ -280,6 +283,7 @@ struct PreparedClipboardText {
     storage_bytes: usize,
 }
 
+#[cfg(any(test, target_os = "macos", windows))]
 fn prepare_clipboard_write_text(text: &str) -> Result<PreparedClipboardText, String> {
     let text_bytes = text.len();
     if text_bytes == 0 || text_bytes > MAX_CLIPBOARD_TEXT_BYTES || text.contains('\0') {
@@ -370,6 +374,7 @@ fn clipboard_read_result(platform: &str, text: Option<&str>) -> Result<Value, St
     }))
 }
 
+#[cfg(any(test, target_os = "macos", windows))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClipboardWriteEffectState {
     #[cfg(any(test, windows))]
@@ -629,6 +634,7 @@ struct PlatformApplication {
     native_identity: Vec<u8>,
 }
 
+#[cfg(any(test, target_os = "macos", windows))]
 fn application_candidate_order(
     left: &PlatformApplication,
     right: &PlatformApplication,
@@ -640,6 +646,7 @@ fn application_candidate_order(
         .then_with(|| left.native_identity.cmp(&right.native_identity))
 }
 
+#[cfg(any(test, target_os = "macos", windows))]
 fn sort_application_candidates(applications: &mut [PlatformApplication]) {
     applications.sort_by(application_candidate_order);
 }

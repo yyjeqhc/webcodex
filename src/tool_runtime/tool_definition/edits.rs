@@ -30,7 +30,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Create new files or intentional whole-file rewrites. Not preferred for ordinary local edits—prefer apply_text_edits. Inspect current content and worktree changes before overwriting; do not silently clobber user edits.",
+        "Create new files or intentional whole-file rewrites. Existing-file overwrite requires the exact current expected_sha256. Prefer apply_text_edits for ordinary local edits; inspect current content and worktree changes before replacing a file.",
         write_project_file_input_schema,
     ),
     adaptive_runtime_direct(

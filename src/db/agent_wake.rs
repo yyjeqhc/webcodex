@@ -34,6 +34,7 @@ pub(crate) enum AgentWakeState {
 }
 
 impl AgentWakeState {
+    #[cfg(test)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -74,18 +75,6 @@ pub(crate) enum AgentWakeAttemptState {
 }
 
 impl AgentWakeAttemptState {
-    #[allow(dead_code)]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claimed => "claimed",
-            Self::Prepared => "prepared",
-            Self::Delivered => "delivered",
-            Self::DeliveryUnknown => "delivery_unknown",
-            Self::Revoked => "revoked",
-            Self::Consumed => "consumed",
-        }
-    }
-
     fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
         match value {
             "claimed" => Ok(Self::Claimed),
@@ -1335,6 +1324,7 @@ impl Database {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_wake(
         &self,
         wake_id: &str,
@@ -1344,6 +1334,7 @@ impl Database {
         load_wake(&conn, wake_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_wake_attempts(
         &self,
         wake_id: &str,

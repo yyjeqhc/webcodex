@@ -30,11 +30,15 @@ pub(crate) struct ContinuationPreflightError {
 }
 
 impl ContinuationPreflightError {
+    #[cfg(test)]
     pub(crate) const fn new(kind: &'static str) -> Self {
         Self { kind }
     }
 }
 
+// Production variants are returned by Host adapters. The current tree ships
+// only deterministic test adapters; keeping this narrow contract is intentional.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContinuationDispatchOutcome {
     Delivered,

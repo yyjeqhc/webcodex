@@ -1099,16 +1099,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
         }
         "write_project_file" => {
-            copy_keys(
-                obj,
-                &mut out,
-                &[
-                    "path",
-                    "overwrite",
-                    "expected_sha256",
-                    "expected_content_prefix",
-                ],
-            );
+            copy_keys(obj, &mut out, &["path", "overwrite", "expected_sha256"]);
             out.insert(
                 "content_present".to_string(),
                 Value::Bool(obj.contains_key("content")),
@@ -5123,7 +5114,6 @@ impl ToolCall {
                 path,
                 overwrite,
                 expected_sha256,
-                expected_content_prefix,
                 ..
             } => serde_json::json!({
                 "project": project,
@@ -5131,7 +5121,6 @@ impl ToolCall {
                 "content_present": true,
                 "overwrite": overwrite,
                 "expected_sha256_present": expected_sha256.as_ref().is_some_and(|v| !v.is_empty()),
-                "expected_content_prefix_present": expected_content_prefix.as_ref().is_some_and(|v| !v.is_empty()),
             }),
             Self::SaveProjectArtifact {
                 project,

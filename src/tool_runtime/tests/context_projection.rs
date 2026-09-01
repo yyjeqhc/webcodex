@@ -414,7 +414,6 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
                         session_id: None,
                         overwrite: None,
                         expected_sha256: None,
-                        expected_content_prefix: None,
                     },
                     Some(&auth),
                     SessionTransport::Mcp,

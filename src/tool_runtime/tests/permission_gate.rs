@@ -20,9 +20,8 @@ fn write_tool_call(
         path: path.to_string(),
         content: content.to_string(),
         session_id,
-        overwrite: Some(true),
+        overwrite: None,
         expected_sha256: None,
-        expected_content_prefix: None,
     }
 }
 

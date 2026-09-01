@@ -288,7 +288,6 @@ const ROUTE_GROUPS: &[&[RouteSpec]] = &[
     consoles::PUBLIC_WEB_ROUTES,
 ];
 
-#[allow(dead_code)]
 pub(crate) fn iter_routes() -> impl Iterator<Item = &'static RouteSpec> + Clone {
     ROUTE_GROUPS.iter().flat_map(|routes| routes.iter())
 }

@@ -908,7 +908,6 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
             session_id: None,
             overwrite: None,
             expected_sha256: None,
-            expected_content_prefix: None,
         },
         ToolCall::RunJob {
             project: project_id.clone(),

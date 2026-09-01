@@ -2243,15 +2243,6 @@ impl ToolRuntime {
         grouped
     }
 
-    /// `job_tail`: bounded stdout/stderr tails for a job. Reuses the bounded
-    /// `job_log` path with a tail-focused default so the console never reads
-    /// full logs by default.
-    #[cfg(test)]
-    pub(crate) async fn job_tail(&self, job_id: String, tail_lines: Option<usize>) -> ToolResult {
-        self.job_tail_for_auth(job_id, tail_lines, None, None, None)
-            .await
-    }
-
     pub(crate) async fn job_tail_for_auth(
         &self,
         job_id: String,

@@ -116,7 +116,9 @@ fn write_project_file_error(path: serde_json::Value, error: String) -> serde_jso
         "overwritten": false,
         "bytes_written": 0,
         "sha256": serde_json::Value::Null,
-        "warning": serde_json::Value::Null,
+        "changed": false,
+        "state_changed": false,
+        "execution_state": "not_started",
         "error": error,
     })
 }
@@ -134,20 +136,26 @@ pub(crate) fn handle_write_project_file_request(
         }
     };
 
-    let content = match payload.get("content") {
-        Some(value) => match value.as_str() {
-            Some(value) => value,
-            None => {
-                return line_edit_stdout(
-                    write_project_file_error(
-                        serde_json::json!(path),
-                        "content must be a UTF-8 string without NUL".to_string(),
-                    ),
-                    start,
-                );
-            }
-        },
-        None => "",
+    if payload.get("expected_content_prefix").is_some() {
+        return line_edit_stdout(
+            write_project_file_error(
+                serde_json::json!(path),
+                "expected_content_prefix is no longer supported; use expected_sha256".to_string(),
+            ),
+            start,
+        );
+    }
+    let content = match payload.get("content").and_then(serde_json::Value::as_str) {
+        Some(value) => value,
+        None => {
+            return line_edit_stdout(
+                write_project_file_error(
+                    serde_json::json!(path),
+                    "content must be a UTF-8 string without NUL".to_string(),
+                ),
+                start,
+            );
+        }
     };
     if content.contains('\0') {
         return line_edit_stdout(
@@ -165,6 +173,19 @@ pub(crate) fn handle_write_project_file_request(
             return line_edit_stdout(write_project_file_error(serde_json::json!(path), e), start);
         }
     };
+    let expected_sha = match payload.get("expected_sha256") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) if is_hex_sha256(value) => Some(value.as_str()),
+        Some(_) => {
+            return line_edit_stdout(
+                write_project_file_error(
+                    serde_json::json!(path),
+                    "expected_sha256 must be a lowercase 64-character hex digest".to_string(),
+                ),
+                start,
+            )
+        }
+    };
     let exists = std::fs::symlink_metadata(resolved).is_ok();
     if exists && !overwrite {
         return line_edit_stdout(
@@ -175,9 +196,27 @@ pub(crate) fn handle_write_project_file_request(
             start,
         );
     }
+    if !exists && (overwrite || expected_sha.is_some()) {
+        return line_edit_stdout(
+            write_project_file_error(
+                serde_json::json!(path),
+                "overwrite and expected_sha256 require an existing file; omit both to create"
+                    .to_string(),
+            ),
+            start,
+        );
+    }
 
-    let mut warning = serde_json::Value::Null;
-    if exists && overwrite {
+    let current = if exists {
+        let Some(expected_sha) = expected_sha else {
+            return line_edit_stdout(
+                write_project_file_error(
+                    serde_json::json!(path),
+                    "overwrite requires expected_sha256".to_string(),
+                ),
+                start,
+            );
+        };
         let current = match std::fs::read(resolved) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(content) => content,
@@ -201,56 +240,39 @@ pub(crate) fn handle_write_project_file_request(
                 );
             }
         };
-        let expected_sha = payload
-            .get("expected_sha256")
-            .filter(|value| !value.is_null());
-        if let Some(expected) = expected_sha {
-            let current_sha = sha256_hex_bytes(current.as_bytes());
-            if expected.as_str() != Some(current_sha.as_str()) {
-                let mut out = write_project_file_error(
-                    serde_json::json!(path),
-                    "expected_sha256 mismatch".to_string(),
-                );
-                out["sha256"] = serde_json::json!(current_sha);
-                return line_edit_stdout(out, start);
-            }
+        let current_sha = sha256_hex_bytes(current.as_bytes());
+        if expected_sha != current_sha {
+            let mut out = write_project_file_error(
+                serde_json::json!(path),
+                "expected_sha256 mismatch".to_string(),
+            );
+            out["sha256"] = serde_json::json!(current_sha);
+            return line_edit_stdout(out, start);
         }
+        Some(current)
+    } else {
+        None
+    };
 
-        let expected_prefix = payload
-            .get("expected_content_prefix")
-            .filter(|value| !value.is_null());
-        if let Some(expected) = expected_prefix {
-            if expected.as_str().map(|prefix| current.starts_with(prefix)) != Some(true) {
-                return line_edit_stdout(
-                    write_project_file_error(
-                        serde_json::json!(path),
-                        "expected_content_prefix mismatch".to_string(),
-                    ),
-                    start,
-                );
-            }
-        }
-        if expected_sha.is_none() && expected_prefix.is_none() {
-            warning = serde_json::json!(
-                "overwrite without expected_sha256 or expected_content_prefix; provide expected_sha256 for safer overwrites"
+    let changed = current.as_deref() != Some(content);
+    if changed {
+        if let Err(e) = write_file_atomic_strict(resolved, content, true, ".pd-write") {
+            return line_edit_stdout(
+                write_project_file_error(serde_json::json!(path), format!("write failed: {}", e)),
+                start,
             );
         }
-    }
-
-    if let Err(e) = write_file_atomic_strict(resolved, content, true, ".pd-write") {
-        return line_edit_stdout(
-            write_project_file_error(serde_json::json!(path), format!("write failed: {}", e)),
-            start,
-        );
     }
     line_edit_stdout(
         serde_json::json!({
             "path": path,
             "created": !exists,
             "overwritten": exists,
-            "bytes_written": content.len(),
+            "bytes_written": if changed { content.len() } else { 0 },
             "sha256": sha256_hex_bytes(content.as_bytes()),
-            "warning": warning,
+            "changed": changed,
+            "state_changed": changed,
+            "execution_state": "completed",
         }),
         start,
     )
@@ -264,10 +286,11 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // shared verbatim with the host write path via `apply_edits_shared`; use the
 // neutral shared type names directly rather than preserving Runner-local aliases.
 use crate::apply_edits_shared::{
-    canonicalize_apply_text_line_endings, detect_apply_text_line_ending, is_sensitive_edit_path,
-    resolve_apply_text_match, restore_apply_text_line_endings, ApplyFileChangeInput,
-    ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ApplyTextMatchConflict,
-    ApplyTextMatchConflictKind, MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
+    canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
+    is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path, resolve_apply_text_match,
+    restore_apply_text_line_endings, ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput,
+    ApplyTextEditKind, ApplyTextMatchConflict, ApplyTextMatchConflictKind,
+    MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };

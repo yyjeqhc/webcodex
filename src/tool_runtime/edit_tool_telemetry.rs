@@ -169,6 +169,8 @@ fn sanitize_error_kind(kind: &str) -> Option<&'static str> {
         "confirmation_required" => Some("confirmation_required"),
         "agent_offline" | "agent_unavailable" => Some("agent_unavailable"),
         "timeout" => Some("timeout"),
+        "not_started" => Some("not_started"),
+        "outcome_unknown" => Some("outcome_unknown"),
         "not_found" => Some("not_found"),
         "runtime_error" => Some("runtime_error"),
         "incomplete" => Some("incomplete"),

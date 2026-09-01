@@ -54,7 +54,6 @@ async fn computer_control_enqueue_requires_independent_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-control".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -113,8 +112,6 @@ async fn computer_scroll_to_element_requires_independent_capability() {
                 computer_scroll_to_element: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -134,7 +131,6 @@ async fn computer_scroll_to_element_requires_independent_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-scroll-capable".to_string(),
             agent_instance_id: "computer-scroll-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -193,8 +189,6 @@ async fn computer_key_input_requires_independent_capability() {
                 computer_key_input: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -214,7 +208,6 @@ async fn computer_key_input_requires_independent_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-key-capable".to_string(),
             agent_instance_id: "computer-key-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -251,8 +244,6 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
                 computer_display_observe: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -293,8 +284,6 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
                 computer_pointer_control: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -314,7 +303,6 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
         .poll(ShellAgentPollRequest {
             client_id: "computer-pointer-capable".to_string(),
             agent_instance_id: "pointer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -352,8 +340,6 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 computer_text_input: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -401,8 +387,6 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 computer_clipboard_read: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -422,7 +406,6 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
         .poll(ShellAgentPollRequest {
             client_id: "computer-clipboard-read".to_string(),
             agent_instance_id: "clipboard-read-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -465,8 +448,6 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
                 computer_clipboard_write: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -486,7 +467,6 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
         .poll(ShellAgentPollRequest {
             client_id: "computer-clipboard-write".to_string(),
             agent_instance_id: "clipboard-write-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -563,8 +543,6 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
                 computer_window_activate: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -584,7 +562,6 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-activate".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

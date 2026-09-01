@@ -189,7 +189,6 @@ fn spawn_request_pump(
             let poll_req = ShellAgentPollRequest {
                 client_id: pump_client_id.clone(),
                 agent_instance_id: pump_instance_id.clone(),
-                projects: None,
             };
             match pump_registry
                 .poll_for_connection(poll_req, &pump_connection_id)

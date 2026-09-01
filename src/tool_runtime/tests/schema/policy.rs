@@ -759,77 +759,23 @@ fn required_agent_capability_matches_metadata_risk_table() {
 }
 
 #[test]
-fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
+fn policy_helpers_keep_unknown_non_runtime_names_fail_closed() {
     use crate::tool_runtime::metadata::{
-        lookup_tool_metadata, ToolPathHint, ToolRisk, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
-        TOOL_PROVIDER_UNKNOWN,
+        lookup_tool_metadata, ToolAuthorityPolicy, ToolPathHint, ToolRisk, TOOL_PROVIDER_UNKNOWN,
     };
     use crate::tool_runtime::tool_definition::{
         is_model_hidden_tool_name, is_model_visible_tool_name, lookup_tool_definition,
         runtime_tool_category, runtime_tool_is_read_like, runtime_tool_is_shell_like,
         runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
-        runtime_tool_requires_permission, runtime_tool_session_risk_class,
-        PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+        runtime_tool_requires_permission, runtime_tool_session_risk_class, PERMISSION_RISK_WRITE,
     };
-
-    let delete_files = runtime_tool_metadata("delete_files");
-    assert_eq!(delete_files.name, "delete_files");
-    assert_eq!(delete_files.provider_id, TOOL_PROVIDER_AGENT);
-    assert_eq!(delete_files.risk, ToolRisk::ProjectWrite);
-    assert_eq!(delete_files.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
-    assert!(delete_files.requires_project);
-    assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
-    assert_eq!(
-        delete_files.effect,
-        crate::tool_runtime::metadata::ToolEffect::Mutate
-    );
-    assert_eq!(
-        delete_files.approval,
-        crate::tool_runtime::metadata::ToolApprovalPolicy::Standard
-    );
-    assert_eq!(
-        delete_files.idempotency,
-        crate::tool_runtime::metadata::ToolIdempotency::NonIdempotent
-    );
-    assert!(delete_files.destructive);
-    assert!(!delete_files.shell_like);
-    assert_eq!(
-        lookup_tool_metadata("delete_files").copied(),
-        Some(delete_files)
-    );
-    assert!(lookup_tool_definition("delete_files").is_none());
-    assert!(!is_known_tool_name("delete_files"));
-    assert!(!is_model_visible_tool_name("delete_files"));
-    assert!(!is_model_hidden_tool_name("delete_files"));
-    assert_eq!(runtime_tool_category("delete_files"), "other");
-    assert_eq!(
-        runtime_tool_session_risk_class("delete_files"),
-        ToolRisk::ProjectWrite.session_risk_class()
-    );
-    assert!(!runtime_tool_is_read_like("delete_files"));
-    assert!(runtime_tool_is_write_like("delete_files"));
-    assert!(!runtime_tool_is_shell_like("delete_files"));
-    assert!(runtime_tool_requires_permission("delete_files"));
-    assert_eq!(
-        runtime_tool_permission_risk("delete_files"),
-        PERMISSION_RISK_DESTRUCTIVE
-    );
-    assert!(
-        ToolCall::from_tool_name(
-            "delete_files",
-            json!({"project": SAMPLE_PROJECT, "paths": ["old.txt"]})
-        )
-        .is_err(),
-        "delete_files must remain metadata-only, not a runtime ToolCall"
-    );
-    assert_agent_capability_lookup_rejects_non_runtime_name("delete_files");
 
     for name in ["__unknown_tool_for_policy_test__", "not_a_tool"] {
         let unknown = runtime_tool_metadata(name);
         assert_eq!(unknown.name, "<unknown>", "{name}");
         assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN, "{name}");
         assert_eq!(unknown.risk, ToolRisk::Unknown, "{name}");
-        assert_eq!(unknown.legacy_oauth_scope_hint, None, "{name}");
+        assert_eq!(unknown.authority, ToolAuthorityPolicy::Unknown, "{name}");
         assert!(!unknown.requires_project, "{name}");
         assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
         assert_eq!(

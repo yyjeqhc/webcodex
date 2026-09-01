@@ -856,17 +856,22 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    project_id,
-                    &format!("/tmp/{project_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(&auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![registered_project(
+            project_id,
+            &format!("/tmp/{project_id}"),
+        )],
+    )
+    .await;
     let project = format!("agent:{client_id}:{project_id}");
     let result = runtime
         .dispatch_with_auth(
@@ -2260,17 +2265,22 @@ async fn register_job_agent_for_auth(
                 hostname: None,
                 host_context: None,
                 capabilities: Some(caps),
-                projects: Some(vec![registered_project(
-                    project_id,
-                    &format!("/tmp/{project_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![registered_project(
+            project_id,
+            &format!("/tmp/{project_id}"),
+        )],
+    )
+    .await;
 }
 
 fn managed_job_auth(username: &str) -> crate::auth::AuthContext {
@@ -2310,15 +2320,20 @@ async fn register_managed_job_agent(
                     ..Default::default()
                 },
             )),
-            projects: Some(vec![registered_project(
-                project_id,
-                &format!("/tmp/{owner}/{project_id}"),
-            )]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![registered_project(
+            project_id,
+            &format!("/tmp/{owner}/{project_id}"),
+        )],
+    )
+    .await;
 }
 
 async fn start_agent_runtime_job(

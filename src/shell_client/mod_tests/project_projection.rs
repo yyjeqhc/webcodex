@@ -1,20 +1,26 @@
 use super::*;
+use crate::shell_protocol::ShellProjectInventoryPage;
 
 #[tokio::test]
 async fn bounded_semantic_inventory_fails_closed_on_client_or_project_overflow() {
     let registry = ShellClientRegistry::default();
     for index in 0..2 {
+        let client_id = format!("bounded-{index}");
+        let instance_id = format!("bounded-instance-{index}");
         registry
-            .register(runner_registration(
-                &format!("bounded-{index}"),
-                &format!("bounded-instance-{index}"),
-                vec![project_summary(
-                    &format!("project-{index}"),
-                    &format!("/tmp/project-{index}"),
-                )],
-            ))
+            .register(runner_registration(&client_id, &instance_id, Vec::new()))
             .await
             .unwrap();
+        crate::test_support::apply_project_inventory_snapshot(
+            &registry,
+            &client_id,
+            &instance_id,
+            vec![project_summary(
+                &format!("project-{index}"),
+                &format!("/tmp/project-{index}"),
+            )],
+        )
+        .await;
     }
     let admin = auth_context(None, true);
     assert_eq!(
@@ -54,13 +60,28 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
         .collect::<Vec<_>>();
     let view = registry
         .register_with_auth(
-            runner_registration("project-scale", "project-scale-instance", projects),
+            runner_registration("project-scale", "project-scale-instance", Vec::new()),
             Some(&shared),
         )
         .await
-        .expect("65 projects must not reject Runner registration");
+        .expect("project cardinality must not reject Runner registration");
     assert!(view.connected);
-    assert_eq!(view.projects.len(), 65);
+    assert!(view.projects.is_empty());
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "project-scale",
+        "project-scale-instance",
+        projects,
+    )
+    .await;
+    assert_eq!(
+        registry
+            .list_client_projects("project-scale")
+            .await
+            .unwrap()
+            .len(),
+        65
+    );
 
     registry
         .upsert_client_project(
@@ -78,15 +99,22 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
         66
     );
 
-    let duplicate_projects = vec![project_summary("duplicate", "/tmp/duplicate"); 65];
-    registry
-        .poll(ShellAgentPollRequest {
-            client_id: "project-scale".to_string(),
-            agent_instance_id: "project-scale-instance".to_string(),
-            projects: Some(duplicate_projects),
-        })
+    let duplicate_projects = vec![project_summary("duplicate", "/tmp/duplicate"); 64];
+    let status = registry
+        .apply_project_inventory_page(
+            "project-scale",
+            "project-scale-instance",
+            ShellProjectInventoryPage {
+                generation: "duplicate-refresh".to_string(),
+                snapshot_sequence: u64::MAX,
+                page_index: 0,
+                total_reported: 65,
+                complete: false,
+                projects: duplicate_projects,
+            },
+        )
         .await
-        .expect("malformed inventory refresh must not reject Runner heartbeat");
+        .expect("malformed inventory refresh must not reject Runner liveness");
     assert_eq!(
         registry
             .list_client_projects("project-scale")
@@ -96,10 +124,6 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
         66,
         "malformed inventory refresh must preserve the authoritative projection"
     );
-    let status = registry
-        .project_inventory_status_for_test("project-scale")
-        .await
-        .unwrap();
     assert_eq!(status.sync_state, "degraded");
     assert_eq!(
         status.last_error_code.as_deref(),
@@ -108,7 +132,7 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
 }
 
 #[tokio::test]
-async fn registry_register_saves_projects() {
+async fn registry_inventory_snapshot_saves_projects() {
     let registry = ShellClientRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
@@ -125,12 +149,17 @@ async fn registry_register_saves_projects() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "oe",
+        "inst",
+        vec![project_summary("webcodex", "/root/git/webcodex")],
+    )
+    .await;
     let clients = registry.list_clients().await;
     assert_eq!(clients[0].projects.len(), 1);
     assert_eq!(clients[0].projects[0].id, "webcodex");
@@ -141,7 +170,7 @@ async fn registry_register_saves_projects() {
 }
 
 #[tokio::test]
-async fn registry_poll_updates_projects() {
+async fn registry_inventory_snapshot_updates_projects() {
     let registry = ShellClientRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
@@ -158,24 +187,27 @@ async fn registry_poll_updates_projects() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: Some(vec![project_summary("one", "/tmp/one")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
         .unwrap();
-    let polled = registry
-        .poll(ShellAgentPollRequest {
-            client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            projects: Some(vec![
-                project_summary("one", "/tmp/one"),
-                project_summary("two", "/tmp/two"),
-            ]),
-        })
-        .await
-        .unwrap();
-    assert!(polled.is_none());
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "oe",
+        "inst",
+        vec![project_summary("one", "/tmp/one")],
+    )
+    .await;
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "oe",
+        "inst",
+        vec![
+            project_summary("one", "/tmp/one"),
+            project_summary("two", "/tmp/two"),
+        ],
+    )
+    .await;
 
     let projects = registry.list_client_projects("oe").await.unwrap();
     assert_eq!(projects.len(), 2);
@@ -201,18 +233,22 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: Some(vec![project_summary("one", "/tmp/one")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "oe",
+        "inst",
+        vec![project_summary("one", "/tmp/one")],
+    )
+    .await;
 
     let polled = registry
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -242,8 +278,6 @@ async fn registry_project_owner_check_enforces_boundary() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -263,12 +297,24 @@ async fn registry_project_owner_check_enforces_boundary() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: Some(vec![project_summary("secret", "/tmp/secret")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "alice-client",
+        "inst",
+        vec![project_summary("alice-project", "/tmp/alice-project")],
+    )
+    .await;
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "bob-client",
+        "inst",
+        vec![project_summary("bob-project", "/tmp/bob-project")],
+    )
+    .await;
 
     let alice = auth_context(Some("alice"), false);
     assert!(

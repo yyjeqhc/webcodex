@@ -41,8 +41,10 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
             "{name}"
         );
         assert_eq!(
-            def.metadata.legacy_oauth_scope_hint,
-            Some(crate::tool_runtime::metadata::PROJECT_READ),
+            def.metadata.authority,
+            crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(
+                crate::tool_runtime::metadata::PROJECT_READ
+            ),
             "{name}"
         );
     }
@@ -57,8 +59,10 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         Some(AgentCapability::LspCallHierarchy)
     );
     assert_eq!(
-        hierarchy.metadata.legacy_oauth_scope_hint,
-        Some(crate::tool_runtime::metadata::PROJECT_READ)
+        hierarchy.metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(
+            crate::tool_runtime::metadata::PROJECT_READ
+        )
     );
     let names: Vec<_> = model_visible_tool_definitions().map(|d| d.name).collect();
     for name in [
@@ -362,13 +366,18 @@ async fn register_lsp_agent_capabilities(
                     lsp_call_hierarchy: call_hierarchy_capable,
                     ..Default::default()
                 }),
-                projects: Some(vec![registered_project(project_id, &project_path)]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![registered_project(project_id, &project_path)],
+    )
+    .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 

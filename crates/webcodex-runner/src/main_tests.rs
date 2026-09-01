@@ -1106,14 +1106,9 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
     // The register builder carries it through unchanged.
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
-    let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1, &id, 0);
+    let body = build_register_request(&cfg, &id, 0);
     assert_eq!(body.agent_instance_id, id);
     assert!(!body.agent_instance_id.is_empty());
-    assert_eq!(
-        body.agent_protocol_version.as_deref(),
-        Some(AGENT_PROTOCOL_VERSION_POLLING_V1),
-        "first-party registration builders must always declare protocol identity"
-    );
     assert_eq!(
         body.capabilities
             .as_ref()
@@ -1418,6 +1413,22 @@ fn empty_tokens_are_not_sent_as_credentials() {
     assert_eq!(non_empty_token("  abc123  "), Some("abc123".to_string()));
 }
 
+fn canonical_registered_client_json(instance_id: &str, transport: &str) -> serde_json::Value {
+    serde_json::json!({
+        "client_id": "oe",
+        "agent_instance_id": instance_id,
+        "status": "online",
+        "connected": true,
+        "last_seen": 1,
+        "capabilities": {},
+        "pending_requests": 0,
+        "projects": [],
+        "project_inventory": ShellProjectInventoryStatus::pending(0),
+        "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
+        "transport": transport
+    })
+}
+
 #[test]
 fn empty_tokens_http_register_omits_authorization_header() {
     use std::io::{Read, Write};
@@ -1441,7 +1452,12 @@ fn empty_tokens_http_register_omits_authorization_header() {
             !request.to_ascii_lowercase().contains("authorization:"),
             "empty token must not send Authorization header: {request}"
         );
-        let body = r#"{"success":true,"client":null,"error":null}"#;
+        let body = serde_json::json!({
+            "success": true,
+            "client": canonical_registered_client_json("inst-empty-token", "polling"),
+            "error": null
+        })
+        .to_string();
         write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
@@ -1506,15 +1522,49 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
         let reg_env = AgentEnvelope::from_slice(reg_msg.into_text().unwrap().as_bytes()).unwrap();
         assert!(matches!(reg_env, AgentEnvelope::Register { .. }));
 
-        // Ack register.
+        // Ack register with the canonical generation-2 inventory negotiation state.
+        let client =
+            serde_json::from_value(canonical_registered_client_json("inst-1", "websocket"))
+                .unwrap();
         let ack = AgentEnvelope::Registered {
             success: true,
-            client: None,
+            client: Some(client),
             error: None,
         };
         ws.send(WsMessage::Text(ack.to_json().unwrap().into()))
             .await
             .unwrap();
+
+        // Complete startup inventory synchronization before exercising unrelated
+        // keepalive traffic.
+        let inventory_msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .expect("agent did not publish startup project inventory")
+            .expect("stream open for startup inventory")
+            .expect("startup inventory message is valid");
+        let page = match AgentEnvelope::from_slice(inventory_msg.into_text().unwrap().as_bytes())
+            .unwrap()
+        {
+            AgentEnvelope::ProjectInventoryPage { page } => page,
+            other => panic!("expected project inventory page, got {:?}", other.kind()),
+        };
+        assert!(
+            page.complete,
+            "empty test inventory must complete in one page"
+        );
+        let mut status = ShellProjectInventoryStatus::pending(page.total_reported);
+        status.sync_state = "complete".to_string();
+        status.generation = Some(page.generation);
+        status.total_reported = Some(page.total_reported);
+        status.total_synced = page.total_reported;
+        ws.send(WsMessage::Text(
+            AgentEnvelope::ProjectInventoryStatus { status }
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
 
         // Send a Pong — the Runner must accept it as keepalive and stay
         // connected (this is the regression we are guarding against).

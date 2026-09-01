@@ -1,23 +1,8 @@
 use super::*;
 
 use crate::tool_runtime::metadata::{
-    ToolPathHint, ToolRisk, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_UNKNOWN,
+    ToolAuthorityPolicy, ToolPathHint, ToolRisk, TOOL_PROVIDER_UNKNOWN,
 };
-
-struct LegacyMetadataFallback {
-    name: &'static str,
-    reason: &'static str,
-}
-
-const NON_RUNTIME_METADATA_COMPATIBILITY_NAMES: &[&str] = &["delete_files"];
-
-// TODO(tool-definition): delete this allowlist when the legacy dedicated
-// delete-files HTTP route is removed or is represented outside the runtime tool
-// metadata facade.
-const KNOWN_LEGACY_METADATA_FALLBACKS: &[LegacyMetadataFallback] = &[LegacyMetadataFallback {
-    name: "delete_files",
-    reason: "legacy dedicated HTTP route metadata; not accepted by ToolCall and not a runtime tool",
-}];
 
 #[test]
 fn tool_definition_explains_all_tool_call_runtime_names() {
@@ -66,15 +51,6 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
             lookup_tool_definition(call.tool_name()).is_some(),
             "{} ToolCall::tool_name must resolve to ToolDefinition",
             call.tool_name()
-        );
-    }
-
-    for fallback in KNOWN_LEGACY_METADATA_FALLBACKS {
-        assert!(
-            ToolCall::from_tool_name(fallback.name, json!({})).is_err(),
-            "{} is a legacy metadata fallback only: {}",
-            fallback.name,
-            fallback.reason
         );
     }
 }
@@ -166,124 +142,32 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
 }
 
 #[test]
-fn tool_definition_strict_agent_capability_lookup_has_no_metadata_fallback() {
-    use crate::tool_runtime::tool_definition::runtime_tool_agent_capability;
-
-    for name in known_tool_names() {
-        let _ = runtime_tool_agent_capability(name);
-    }
-    let previous_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    for fallback in KNOWN_LEGACY_METADATA_FALLBACKS {
-        let result = std::panic::catch_unwind(|| runtime_tool_agent_capability(fallback.name));
-        assert!(
-            result.is_err(),
-            "{} must not resolve agent capability through legacy metadata fallback: {}",
-            fallback.name,
-            fallback.reason
-        );
-    }
-    std::panic::set_hook(previous_hook);
-}
-
-#[test]
-fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
+fn tool_definition_metadata_fallback_facade_is_unknown_only() {
     use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
     use crate::tool_runtime::tool_definition::{
         is_model_visible_tool_name, lookup_tool_definition, runtime_tool_category,
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-        runtime_tool_session_risk_class, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+        runtime_tool_session_risk_class, PERMISSION_RISK_WRITE,
     };
 
-    let delete_files = lookup_tool_metadata("delete_files")
-        .copied()
-        .expect("delete_files legacy route metadata");
-    assert_eq!(delete_files.name, "delete_files");
-    assert_eq!(delete_files.provider_id, TOOL_PROVIDER_AGENT);
-    assert_eq!(delete_files.risk, ToolRisk::ProjectWrite);
-    assert_eq!(delete_files.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
-    assert!(delete_files.requires_project);
-    assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
-    assert_eq!(
-        delete_files.effect,
-        crate::tool_runtime::metadata::ToolEffect::Mutate
-    );
-    assert_eq!(
-        delete_files.approval,
-        crate::tool_runtime::metadata::ToolApprovalPolicy::Standard
-    );
-    assert_eq!(
-        delete_files.idempotency,
-        crate::tool_runtime::metadata::ToolIdempotency::NonIdempotent
-    );
-    assert!(delete_files.destructive);
-    assert!(!delete_files.shell_like);
-    assert!(
-        lookup_tool_definition("delete_files").is_none(),
-        "delete_files must remain metadata-only legacy route metadata"
-    );
-    assert!(!is_known_tool_name("delete_files"));
-    assert!(
-        ToolCall::from_tool_name(
-            "delete_files",
-            json!({"project": SAMPLE_PROJECT, "paths": ["old.txt"]})
-        )
-        .is_err(),
-        "delete_files metadata fallback must not make it ToolCall-parseable"
-    );
-    assert_eq!(runtime_tool_metadata("delete_files"), delete_files);
-    assert_eq!(runtime_tool_category("delete_files"), "other");
-    assert_eq!(
-        runtime_tool_session_risk_class("delete_files"),
-        ToolRisk::ProjectWrite.session_risk_class()
-    );
-    assert!(!runtime_tool_is_read_like("delete_files"));
-    assert!(runtime_tool_is_write_like("delete_files"));
-    assert!(!runtime_tool_is_shell_like("delete_files"));
-    assert!(runtime_tool_requires_permission("delete_files"));
-    assert_eq!(
-        runtime_tool_permission_risk("delete_files"),
-        PERMISSION_RISK_DESTRUCTIVE
-    );
-    assert_model_facing_surfaces_do_not_list_name("delete_files");
-    assert_agent_capability_lookup_rejects_non_runtime_name("delete_files");
-
     for name in [
+        "delete_files",
         "__unknown_non_runtime__",
         "__unknown_tool_for_metadata_test__",
         "not_a_tool",
-        "delete_files_v2",
     ] {
         let unknown = tool_metadata(name);
         assert!(lookup_tool_metadata(name).is_none(), "{name}");
-        assert!(
-            lookup_tool_definition(name).is_none(),
-            "{name} must not resolve to ToolDefinition"
-        );
+        assert!(lookup_tool_definition(name).is_none(), "{name}");
         assert!(!is_known_tool_name(name), "{name}");
         assert!(!is_model_visible_tool_name(name), "{name}");
         assert_eq!(unknown.name, "<unknown>", "{name}");
         assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN, "{name}");
         assert_eq!(unknown.risk, ToolRisk::Unknown, "{name}");
-        assert_eq!(unknown.legacy_oauth_scope_hint, None, "{name}");
+        assert_eq!(unknown.authority, ToolAuthorityPolicy::Unknown, "{name}");
         assert!(!unknown.requires_project, "{name}");
         assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
-        assert_eq!(
-            unknown.effect,
-            crate::tool_runtime::metadata::ToolEffect::Unknown,
-            "{name}"
-        );
-        assert_eq!(
-            unknown.approval,
-            crate::tool_runtime::metadata::ToolApprovalPolicy::Unknown,
-            "{name}"
-        );
-        assert_eq!(
-            unknown.idempotency,
-            crate::tool_runtime::metadata::ToolIdempotency::Unknown,
-            "{name}"
-        );
         assert!(!unknown.destructive, "{name}");
         assert!(!unknown.shell_like, "{name}");
         assert_eq!(runtime_tool_metadata(name), unknown, "{name}");
@@ -302,64 +186,21 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
             PERMISSION_RISK_WRITE,
             "{name}"
         );
-        assert!(
-            ToolCall::from_tool_name(name, json!({})).is_err(),
-            "{name} must remain non-callable"
-        );
+        assert!(ToolCall::from_tool_name(name, json!({})).is_err(), "{name}");
         assert_model_facing_surfaces_do_not_list_name(name);
         assert_agent_capability_lookup_rejects_non_runtime_name(name);
     }
 }
 
 #[test]
-fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
-    let metadata_only_names = crate::tool_runtime::metadata::iter_tool_metadata()
-        .filter(|metadata| !is_known_tool_name(metadata.name))
-        .map(|metadata| metadata.name)
-        .collect::<Vec<_>>();
-    let expected_names = KNOWN_LEGACY_METADATA_FALLBACKS
-        .iter()
-        .map(|fallback| fallback.name)
-        .collect::<Vec<_>>();
-    let fallback_reasons = KNOWN_LEGACY_METADATA_FALLBACKS
-        .iter()
-        .map(|fallback| format!("{}: {}", fallback.name, fallback.reason))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        expected_names, NON_RUNTIME_METADATA_COMPATIBILITY_NAMES,
-        "non-runtime metadata compatibility allowlist must stay explicitly named"
-    );
-    assert_eq!(
-        metadata_only_names, expected_names,
-        "remaining metadata fallbacks must stay explicit and reasoned: {fallback_reasons:?}"
-    );
-    for fallback in KNOWN_LEGACY_METADATA_FALLBACKS {
-        eprintln!(
-            "legacy metadata fallback retained: {} - {}",
-            fallback.name, fallback.reason
-        );
-        assert!(
-            !fallback.reason.trim().is_empty(),
-            "{} fallback must explain why it remains",
-            fallback.name
-        );
+fn tool_metadata_has_no_non_runtime_entries() {
+    for metadata in crate::tool_runtime::metadata::iter_tool_metadata() {
+        assert!(is_known_tool_name(metadata.name), "{}", metadata.name);
     }
-
-    let unknown = crate::tool_runtime::tool_definition::runtime_tool_metadata("__unknown__");
-    eprintln!(
-        "unknown metadata fallback retained: non-runtime unknown names return provider={} risk={:?}",
-        unknown.provider_id, unknown.risk
-    );
-    assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN);
-    assert_eq!(unknown.risk, ToolRisk::Unknown);
-    assert!(!is_known_tool_name("__unknown__"));
-    assert!(ToolCall::from_tool_name("__unknown__", json!({})).is_err());
-    assert_model_facing_surfaces_do_not_list_name("__unknown__");
 }
 
 #[test]
-fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
+fn tool_definition_surface_counts_stay_fixed() {
     use crate::tool_runtime::tool_definition::{lookup_tool_definition, model_hidden_tool_names};
 
     let openapi = crate::openapi::build_openapi_spec();
@@ -369,7 +210,7 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(openapi_operation_count, 23, "OpenAPI operation count");
+    assert_eq!(openapi_operation_count, 22, "OpenAPI operation count");
 
     let operation_ids = openapi["paths"]
         .as_object()

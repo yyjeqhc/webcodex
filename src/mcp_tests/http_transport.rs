@@ -104,46 +104,51 @@ async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::Shell
                 hostname: None,
                 host_context: None,
                 capabilities: Some(ShellClientCapabilities::default()),
-                projects: Some(vec![
-                    ShellAgentProjectSummary {
-                        id: "shared".to_string(),
-                        name: Some("Shared observation project".to_string()),
-                        path: "/tmp/mcp-observation-shared".to_string(),
-                        allow_patch: true,
-                        kind: Some("repo".to_string()),
-                        description: None,
-                        hooks: Vec::new(),
-                        disabled: false,
-                        revision: None,
-                        git_branch: None,
-                        git_head: None,
-                        git_dirty: None,
-                        updated_at: 1,
-                        shell_profile: None,
-                    },
-                    ShellAgentProjectSummary {
-                        id: "foreign".to_string(),
-                        name: Some("Foreign observation project".to_string()),
-                        path: "/tmp/mcp-observation-foreign".to_string(),
-                        allow_patch: true,
-                        kind: Some("repo".to_string()),
-                        description: None,
-                        hooks: Vec::new(),
-                        disabled: false,
-                        revision: None,
-                        git_branch: None,
-                        git_head: None,
-                        git_dirty: None,
-                        updated_at: 2,
-                        shell_profile: None,
-                    },
-                ]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &shell_clients,
+        "mcp-observation-agent",
+        "inst-mcp-observation",
+        vec![
+            crate::shell_protocol::ShellAgentProjectSummary {
+                id: "shared".to_string(),
+                name: Some("Shared observation project".to_string()),
+                path: "/tmp/mcp-observation-shared".to_string(),
+                allow_patch: true,
+                kind: Some("repo".to_string()),
+                description: None,
+                hooks: Vec::new(),
+                disabled: false,
+                revision: None,
+                git_branch: None,
+                git_head: None,
+                git_dirty: None,
+                updated_at: 1,
+                shell_profile: None,
+            },
+            crate::shell_protocol::ShellAgentProjectSummary {
+                id: "foreign".to_string(),
+                name: Some("Foreign observation project".to_string()),
+                path: "/tmp/mcp-observation-foreign".to_string(),
+                allow_patch: true,
+                kind: Some("repo".to_string()),
+                description: None,
+                hooks: Vec::new(),
+                disabled: false,
+                revision: None,
+                git_branch: None,
+                git_head: None,
+                git_dirty: None,
+                updated_at: 2,
+                shell_profile: None,
+            },
+        ],
+    )
+    .await;
     shell_clients
 }
 
@@ -156,7 +161,6 @@ fn spawn_stateless_observation_agent_executor(
                 .poll(crate::shell_protocol::ShellAgentPollRequest {
                     client_id: "mcp-observation-agent".to_string(),
                     agent_instance_id: "inst-mcp-observation".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()

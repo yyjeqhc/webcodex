@@ -16,8 +16,6 @@ async fn register_structured_delete_client(registry: &ShellClientRegistry, clien
             hostname: None,
             host_context: None,
             capabilities: Some(ShellClientCapabilities::default()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -74,7 +72,6 @@ async fn enqueue_structured_file_delete_queues_when_capability_advertised() {
         .poll(ShellAgentPollRequest {
             client_id: "structured-delete-on".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -193,7 +190,6 @@ async fn same_instance_reconnect_keeps_queued_structured_delete_dispatchable() {
         .poll(ShellAgentPollRequest {
             client_id: "reconnect-keeps".to_string(),
             agent_instance_id: "inst-a".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -250,7 +246,6 @@ async fn instance_replacement_drains_sync_requests_before_installing_new_lease()
         .poll(ShellAgentPollRequest {
             client_id: "replace-drain".to_string(),
             agent_instance_id: "inst-b".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -341,7 +336,6 @@ async fn instance_replacement_keeps_job_reconciliation_contract_unchanged() {
         .poll(ShellAgentPollRequest {
             client_id: "replace-job-sync".to_string(),
             agent_instance_id: "inst-b".to_string(),
-            projects: None,
         })
         .await
         .unwrap();

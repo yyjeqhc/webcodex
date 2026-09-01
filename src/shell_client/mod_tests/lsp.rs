@@ -41,8 +41,6 @@ async fn register_lsp_test_client_capabilities(
                 lsp_call_hierarchy: call_hierarchy_capable,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await

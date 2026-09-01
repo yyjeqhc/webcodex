@@ -1,8 +1,8 @@
 use super::*;
 use crate::shell_protocol::{
-    ShellProjectInventoryPage, AGENT_PROTOCOL_VERSION_POLLING_V2,
-    PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
-    PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_STAGING_TTL_SECS,
+    ShellProjectInventoryPage, PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS,
+    PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+    PROJECT_INVENTORY_STAGING_TTL_SECS,
 };
 
 fn synthetic_projects(count: usize) -> Vec<ShellAgentProjectSummary> {
@@ -17,10 +17,7 @@ fn synthetic_projects(count: usize) -> Vec<ShellAgentProjectSummary> {
 }
 
 fn paged_registration(client_id: &str, instance_id: &str) -> ShellClientRegisterRequest {
-    let mut registration = runner_registration(client_id, instance_id, Vec::new());
-    registration.projects = None;
-    registration.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string());
-    registration
+    runner_registration(client_id, instance_id, Vec::new())
 }
 
 fn snapshot_pages(
@@ -87,49 +84,56 @@ fn assert_resolves_edges(projects: &[ShellAgentProjectSummary], count: usize) {
 }
 
 #[tokio::test]
-async fn legacy_full_inventory_has_no_project_count_liveness_boundary() {
+async fn paged_inventory_has_no_project_count_liveness_boundary() {
     let registry = ShellClientRegistry::default();
     for count in [64usize, 65, 100, 256, 1024] {
-        let client_id = format!("legacy-scale-{count}");
+        let client_id = format!("paged-scale-{count}");
+        let instance_id = format!("paged-instance-{count}");
         let view = registry
-            .register(runner_registration(
-                &client_id,
-                &format!("legacy-instance-{count}"),
-                synthetic_projects(count),
-            ))
+            .register(paged_registration(&client_id, &instance_id))
             .await
-            .unwrap_or_else(|error| panic!("legacy {count}-project registration failed: {error}"));
+            .unwrap_or_else(|error| {
+                panic!("{count}-project liveness registration failed: {error}")
+            });
         assert!(view.connected, "Runner must remain online at count {count}");
-        assert_eq!(view.projects.len(), count);
+        assert!(view.projects.is_empty());
         assert_eq!(
             view.project_inventory
                 .as_ref()
                 .map(|status| status.sync_state.as_str()),
-            Some("complete")
+            Some("pending")
         );
-        assert_resolves_edges(&view.projects, count);
+
+        let projects = synthetic_projects(count);
+        let status = apply_snapshot(
+            &registry,
+            &client_id,
+            &instance_id,
+            &format!("scale-generation-{count}"),
+            1,
+            &projects,
+        )
+        .await;
+        assert_eq!(status.sync_state, "complete");
+        let published = registry.list_client_projects(&client_id).await.unwrap();
+        assert_eq!(published.len(), count);
+        assert_resolves_edges(&published, count);
     }
 }
 
 #[tokio::test]
-async fn v2_registration_project_bootstrap_is_not_published_as_authoritative_inventory() {
+async fn registration_does_not_publish_project_inventory_before_snapshot() {
     let registry = ShellClientRegistry::default();
     let client_id = "v2-bootstrap";
     let instance_id = "v2-bootstrap-instance";
-    let mut registration = runner_registration(
-        client_id,
-        instance_id,
-        vec![
-            project_summary("project-0000", "/tmp/project-0000"),
-            project_summary("project-0064", "/tmp/project-0064"),
-        ],
-    );
-    registration.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string());
-    let view = registry.register(registration).await.unwrap();
+    let view = registry
+        .register(paged_registration(client_id, instance_id))
+        .await
+        .unwrap();
     assert!(view.connected);
     assert!(
         view.projects.is_empty(),
-        "V2 bootstrap summaries validate the register envelope but are not routable inventory"
+        "registration establishes liveness only; projects require an authoritative inventory snapshot"
     );
     assert_eq!(
         view.project_inventory
@@ -160,38 +164,31 @@ async fn v2_registration_project_bootstrap_is_not_published_as_authoritative_inv
 }
 
 #[tokio::test]
-async fn inventory_pages_require_paged_registration_strategy() {
+async fn generation2_registration_accepts_canonical_inventory_pages() {
     let registry = ShellClientRegistry::default();
-    let client_id = "inventory-strategy-inline";
-    let instance_id = "inventory-strategy-inline-instance";
-    let original = project_summary("original", "/tmp/original");
+    let client_id = "inventory-generation2";
+    let instance_id = "inventory-generation2-instance";
     let registered = registry
-        .register(runner_registration(
-            client_id,
-            instance_id,
-            vec![original.clone()],
-        ))
+        .register(paged_registration(client_id, instance_id))
         .await
         .unwrap();
-    assert_eq!(registered.projects.len(), 1);
-    assert_eq!(registered.projects[0].id, "original");
+    assert!(registered.projects.is_empty());
 
     let replacement = vec![project_summary("replacement", "/tmp/replacement")];
-    let status = registry
-        .apply_project_inventory_page(
-            client_id,
-            instance_id,
-            snapshot_pages("unexpected-page", 1, &replacement).remove(0),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        status.last_error_code.as_deref(),
-        Some("project_inventory_paging_not_negotiated")
-    );
+    let status = apply_snapshot(
+        &registry,
+        client_id,
+        instance_id,
+        "canonical-page",
+        1,
+        &replacement,
+    )
+    .await;
+    assert_eq!(status.sync_state, "complete");
+    assert!(status.last_error_code.is_none());
     let published = registry.list_client_projects(client_id).await.unwrap();
     assert_eq!(published.len(), 1);
-    assert_eq!(published[0].id, "original");
+    assert_eq!(published[0].id, "replacement");
 }
 
 #[tokio::test]
@@ -204,10 +201,14 @@ async fn unsupported_protocol_registration_does_not_publish_project_inventory() 
         instance_id,
         vec![project_summary("untrusted", "/tmp/untrusted")],
     );
-    registration.agent_protocol_version = Some("future-v2".to_string());
+    registration
+        .capabilities
+        .as_mut()
+        .unwrap()
+        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
 
     let error = registry.register(registration).await.unwrap_err();
-    assert_eq!(error, "agent_protocol_version is unsupported");
+    assert_eq!(error, "agent_protocol_generation is unsupported");
     assert!(registry.get_client_view(client_id).await.is_none());
     assert!(registry.list_client_projects(client_id).await.is_err());
 }

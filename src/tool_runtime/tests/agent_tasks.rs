@@ -78,15 +78,17 @@ async fn register_coding_agent_task_runner(
                     ..Default::default()
                 },
             )),
-            projects: Some(vec![registered_project(
-                project_id,
-                &root.to_string_lossy(),
-            )]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        instance_id,
+        vec![registered_project(project_id, &root.to_string_lossy())],
+    )
+    .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 

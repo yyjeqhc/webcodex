@@ -1,17 +1,5 @@
 use super::*;
 
-struct TemporaryDefaultOnlyOutputSchemaGap {
-    name: &'static str,
-    reason: &'static str,
-    exit_condition: &'static str,
-}
-
-// TODO(tool-definition): remove entries as these tools gain explicit output
-// schema fields, or move the allowlist to a generated definition-backed
-// declaration once output_schema is part of ToolDefinition.
-const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS:
-    &[TemporaryDefaultOnlyOutputSchemaGap] = &[];
-
 fn structured_execution_output(
     execution_source: &str,
     execution_state: &str,
@@ -157,7 +145,7 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
 }
 
 #[test]
-fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
+fn model_visible_tool_definitions_have_explicit_output_schema_coverage() {
     let specs = registered_tool_specs();
     let default_fields = default_output_schema_field_names();
     let default_schema_names = specs
@@ -165,41 +153,10 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
         .filter(|spec| output_schema_field_names(spec) == default_fields)
         .map(|spec| spec.name.as_str())
         .collect::<Vec<_>>();
-    let allowed_names = TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS
-        .iter()
-        .map(|gap| {
-            assert!(
-                specs.iter().any(|spec| spec.name == gap.name),
-                "{} default output schema gap must refer to a public ToolSpec",
-                gap.name
-            );
-            assert!(
-                !gap.reason.trim().is_empty(),
-                "{} default output schema allowance must explain the drift risk",
-                gap.name
-            );
-            assert!(
-                !gap.exit_condition.trim().is_empty(),
-                "{} default output schema allowance must explain how to remove it",
-                gap.name
-            );
-            gap.name
-        })
-        .collect::<Vec<_>>();
 
-    assert_eq!(
-        specs.len() - default_schema_names.len(),
-        specs.len(),
-        "explicit model-visible output schema coverage"
-    );
-    assert_eq!(
-        default_schema_names.len(),
-        0,
-        "temporary default-only output schema gap count"
-    );
-    assert_eq!(
-        default_schema_names, allowed_names,
-        "model-visible tools may use the default output schema only with an explicit allowance"
+    assert!(
+        default_schema_names.is_empty(),
+        "model-visible tools must declare explicit output schemas: {default_schema_names:?}"
     );
 }
 

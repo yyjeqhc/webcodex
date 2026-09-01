@@ -1,21 +1,19 @@
 use super::auth::{assert_shell_client_access, shell_client_visible_to_auth, ShellClientAuthGroup};
 use super::jobs::{begin_job_recovery, is_final_job_status, mark_job_lost, offline_last_seen};
 use super::project_inventory::{
-    degraded_inventory_state, expire_staging, pending_inventory_state, prepare_legacy_inventory,
-    preserve_authoritative_pending, preserve_authoritative_with_error,
+    expire_staging, pending_inventory_state, preserve_authoritative_pending,
 };
 use super::reconciliation::{
     preflight_inventory_locked, reconcile_inventory_locked, terminate_instance_jobs_locked,
-    validate_job_inventory, validate_job_inventory_without_project_membership,
+    validate_job_inventory_without_project_membership,
 };
 use super::requests::resolve_disconnected_sync_requests_locked;
 use super::state::{
     NotifierEntry, ShellClientRecord, ShellClientRegistryInner, ShellClientSemanticView,
 };
 use super::validation::{
-    normalize_project_summaries, normalize_required_agent_protocol_version,
     normalize_tool_providers, trim_string, validate_agent_instance_id, validate_id,
-    validate_optional_field, validate_project_summary_batch,
+    validate_optional_field,
 };
 use super::{
     now_ts, AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet,
@@ -23,8 +21,7 @@ use super::{
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    AgentProjectInventoryStrategy, ShellClientRegisterRequest, ShellClientView,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -249,14 +246,10 @@ impl ShellClientRegistry {
 
         let client_id = body.client_id.trim().to_string();
         let agent_instance_id = body.agent_instance_id.trim().to_string();
-        let agent_protocol_version =
-            normalize_required_agent_protocol_version(body.agent_protocol_version.as_deref())?;
         let mut capabilities = body.capabilities.clone().unwrap_or_default();
         let announced_generation = capabilities.agent_protocol_generation.take();
-        let accepted_protocol = AcceptedRunnerProtocol::try_from_registration(
-            &agent_protocol_version,
-            announced_generation,
-        )?;
+        let accepted_protocol =
+            AcceptedRunnerProtocol::try_from_registration(announced_generation)?;
         let runner_features = RunnerFeatureSet::try_from_registration(&capabilities)?;
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
@@ -269,10 +262,6 @@ impl ShellClientRegistry {
         )?;
         let coding_agent_providers = coding_agent_providers.unwrap_or_default();
         let coding_agent_inventory = coding_agent_inventory.unwrap_or_default();
-        let paged_project_inventory = matches!(
-            accepted_protocol.project_inventory(),
-            AgentProjectInventoryStrategy::Paged
-        );
         let host_context = body
             .host_context
             .clone()
@@ -290,24 +279,10 @@ impl ShellClientRegistry {
                 .map_err(|error| format!("invalid MCP gateway provider inventory: {error}"))?;
         }
         let now = now_ts();
-        // Project inventory validation is deliberately independent from the
-        // Runner lease. Malformed/oversized inventory degrades routing state but
-        // must not reject identity/liveness registration.
-        let job_validation_projects = normalize_project_summaries(body.projects.clone());
-        let (projects_supplied, projects, project_inventory, project_inventory_error) =
-            if paged_project_inventory {
-                match validate_project_summary_batch(body.projects.as_deref().unwrap_or(&[])) {
-                    Ok(_) => (false, Vec::new(), pending_inventory_state(0), None),
-                    Err(code) => (
-                        false,
-                        Vec::new(),
-                        degraded_inventory_state(0, code, now),
-                        Some(code),
-                    ),
-                }
-            } else {
-                prepare_legacy_inventory(body.projects, now)
-            };
+        // Registration establishes liveness only. Project routing becomes authoritative
+        // exclusively through the bounded paged inventory protocol.
+        let projects = Vec::new();
+        let project_inventory = pending_inventory_state(0);
         let record = ShellClientRecord {
             client_id: client_id.clone(),
             agent_instance_id: agent_instance_id.clone(),
@@ -320,7 +295,6 @@ impl ShellClientRegistry {
             projects,
             project_inventory,
             last_seen: now,
-            agent_protocol_version,
             transport: streaming
                 .as_ref()
                 .map(|session| session.transport)
@@ -346,19 +320,10 @@ impl ShellClientRegistry {
             job_inventory.as_ref(),
         ) {
             (true, Some(inventory)) => {
-                if !paged_project_inventory
-                    && projects_supplied
-                    && project_inventory_error.is_none()
-                {
-                    validate_job_inventory(&client_id, &job_validation_projects, inventory)?;
-                } else {
-                    // A paged or degraded project inventory is intentionally not
-                    // a liveness prerequisite. Validate the bounded job snapshot
-                    // and same-client namespace now; exact project membership is
-                    // established independently by the authoritative project
-                    // inventory before any project becomes routable.
-                    validate_job_inventory_without_project_membership(&client_id, inventory)?;
-                }
+                // Registration inventory is always paged. Validate the bounded Job snapshot
+                // and same-client namespace now; exact project membership is established by
+                // the authoritative project inventory before any project becomes routable.
+                validate_job_inventory_without_project_membership(&client_id, inventory)?;
             }
             (true, None) => {
                 return Err(
@@ -556,21 +521,11 @@ impl ShellClientRegistry {
             // projection built from its own registration (empty for V2 paged
             // registration) until that instance completes an atomic snapshot.
             if existing.agent_instance_id == agent_instance_id {
-                if let Some(error_code) = project_inventory_error {
-                    record.projects = existing.projects.clone();
-                    record.project_inventory = preserve_authoritative_with_error(
-                        &existing.project_inventory,
-                        record.projects.len(),
-                        error_code,
-                        now,
-                    );
-                } else if !projects_supplied {
-                    record.projects = existing.projects.clone();
-                    record.project_inventory = preserve_authoritative_pending(
-                        &existing.project_inventory,
-                        record.projects.len(),
-                    );
-                }
+                record.projects = existing.projects.clone();
+                record.project_inventory = preserve_authoritative_pending(
+                    &existing.project_inventory,
+                    record.projects.len(),
+                );
             }
         }
 
@@ -1464,9 +1419,8 @@ impl ShellClientRegistry {
             pending_requests,
             projects: client.projects.clone(),
             project_inventory: Some(client.project_inventory.status.clone()),
-            agent_protocol_version: client.agent_protocol_version.clone(),
+            agent_protocol_generation: client.accepted_protocol.generation(),
             transport: client.transport.as_str().to_string(),
-            agent_protocol_semantics: client.accepted_protocol.compatibility_semantics(),
             policy: client.policy.clone(),
             registered_at: client.registered_at,
             connected_at: client.connected_at,

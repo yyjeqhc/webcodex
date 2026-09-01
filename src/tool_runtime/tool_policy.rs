@@ -127,7 +127,6 @@ fn permission_risk_from_metadata(metadata: ToolMetadata) -> &'static str {
             | ToolRisk::MemoryManage
             | ToolRisk::ComputerControl
             | ToolRisk::CommunicationManage
-            | ToolRisk::AccountManage
     ) {
         return PERMISSION_RISK_WRITE;
     }
@@ -150,9 +149,8 @@ fn definition_or_metadata_facade(name: &str) -> Result<&'static ToolDefinition, 
 }
 
 fn fallback_metadata_for_non_runtime_name(name: &str) -> ToolMetadata {
-    // Known runtime names must resolve through ToolDefinition. This metadata
-    // facade is only for the legacy dedicated `delete_files` HTTP route and for
-    // safe Unknown metadata on non-runtime names; ToolCall still rejects both.
+    // Known runtime names must resolve through ToolDefinition. Non-runtime names
+    // receive safe Unknown metadata; ToolCall still rejects them.
     tool_metadata(name)
 }
 

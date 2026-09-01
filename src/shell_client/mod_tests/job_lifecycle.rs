@@ -18,8 +18,6 @@ async fn terminal_observed_poll_complete_and_log() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -64,7 +62,6 @@ async fn terminal_observed_poll_complete_and_log() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -137,8 +134,6 @@ async fn terminal_observed_queued_stop_records_server_time() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -177,7 +172,6 @@ async fn terminal_observed_queued_stop_records_server_time() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -202,8 +196,6 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -231,7 +223,6 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -247,7 +238,6 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -274,8 +264,6 @@ async fn registry_marks_running_job_lost_when_client_stale() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
@@ -303,7 +291,6 @@ async fn registry_marks_running_job_lost_when_client_stale() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

@@ -71,9 +71,11 @@ additive `RegistrationRequired` capability。这一承诺不向 pre-0.4 二进�
 bool 是协议事实；缺失或与 baseline 矛盾时直接拒绝注册，而不是降级成 unavailable。
 RegistrationRequired 的增量 capability 仍保持显式声明，省略时按不可用处理。
 
-`polling-v1`、`websocket-v1`、`quic-v1` 以及对应的 `v2` inventory label 仍是当前
-ingress 语义；它们只选择 project inventory strategy，不选择旧 protocol generation，
-也不承诺接受任意旧 release binary。`agent_protocol_version` 仍必须存在且受支持。
+在 `v0.4` 中，protocol generation 是 Runner 唯一的协议版本 identity。transport
+作为独立 ingress 事实（`polling`、`websocket` 或 `quic`）存在；项目清单在注册后统一
+使用有界 paged synchronization。pre-0.4 的 `polling-v1/v2`、`websocket-v1/v2`、
+`quic-v1/v2` label 与 inline registration inventory 不再跨这一破坏性边界兼容；
+跨版本升级时应同步升级 first-party Server 与 Runner。
 
 QUIC 升级注意：`[quic].keepalive_interval_secs` 现在会真实配置 Quinn transport
 keepalive；默认仍为 20 秒，有效范围为 `1..=25`。历史上大于 25 的值虽然能够被接受，

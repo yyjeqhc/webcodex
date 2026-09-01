@@ -185,9 +185,7 @@ impl ToolRuntime {
                         "display_name": client.display_name,
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_version": client.agent_protocol_version,
-                        "protocol_compatibility": client.agent_protocol_semantics.compatibility,
-                        "project_inventory_strategy": client.agent_protocol_semantics.project_inventory,
+                        "agent_protocol_generation": client.agent_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
                         "pending_requests": client.pending_requests,
@@ -212,9 +210,7 @@ impl ToolRuntime {
                         "host_context": host_context_projection(client.host_context.as_ref()),
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_version": client.agent_protocol_version,
-                        "protocol_compatibility": client.agent_protocol_semantics.compatibility,
-                        "project_inventory_strategy": client.agent_protocol_semantics.project_inventory,
+                        "agent_protocol_generation": client.agent_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen": client.last_seen,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
@@ -336,9 +332,7 @@ impl ToolRuntime {
                     "status": c.status,
                     "host_context": host_context_projection(c.host_context.as_ref()),
                     "connected": c.connected,
-                    "agent_protocol_version": c.agent_protocol_version,
-                    "protocol_compatibility": c.agent_protocol_semantics.compatibility,
-                    "project_inventory_strategy": c.agent_protocol_semantics.project_inventory,
+                    "agent_protocol_generation": c.agent_protocol_generation.get(),
                     "transport": c.transport,
                     "last_seen": c.last_seen,
                     "last_seen_age_secs": last_seen_age_secs(c, now),
@@ -638,9 +632,7 @@ impl ToolRuntime {
                 "display_name": client.display_name,
                 "status": client.status,
                 "connected": client.connected,
-                "agent_protocol_version": client.agent_protocol_version,
-                "protocol_compatibility": client.agent_protocol_semantics.compatibility,
-                "project_inventory_strategy": client.agent_protocol_semantics.project_inventory,
+                "agent_protocol_generation": client.agent_protocol_generation.get(),
                 "transport": client.transport,
                 "last_seen": client.last_seen,
                 "last_seen_age_secs": last_seen_age_secs(&client, now),
@@ -1210,7 +1202,6 @@ fn version_compatibility_against(
     let runners: Vec<Value> = clients
         .iter()
         .map(|client| {
-            let protocol_supported = client.agent_protocol_semantics.compatibility.is_supported();
             let build_version = client.build.as_ref().and_then(|b| b.version.clone());
             let build_git_commit = client.build.as_ref().and_then(|b| b.git_commit.clone());
             let build_git_dirty = client.build.as_ref().and_then(|b| b.git_dirty);
@@ -1255,13 +1246,7 @@ fn version_compatibility_against(
                 _ => {}
             }
 
-            let (status, reason_code, action) = if !protocol_supported {
-                (
-                    "capability_mismatch",
-                    Some("agent_protocol_version_unsupported"),
-                    Some("upgrade the runner to a build announcing a supported protocol version"),
-                )
-            } else if version_matches_server == Some(false) {
+            let (status, reason_code, action) = if version_matches_server == Some(false) {
                 (
                     "version_mismatch",
                     Some("runner_version_differs_from_server"),
@@ -1270,19 +1255,12 @@ fn version_compatibility_against(
             } else {
                 ("compatible", None, None)
             };
-            match (status, overall) {
-                ("capability_mismatch", _) => overall = "capability_mismatch",
-                ("version_mismatch", o) if o != "capability_mismatch" => {
-                    overall = "version_mismatch"
-                }
-                _ => {}
+            if status == "version_mismatch" {
+                overall = "version_mismatch";
             }
             json!({
                 "client_id": client.client_id,
-                "agent_protocol_version": client.agent_protocol_version,
-                "protocol_supported": protocol_supported,
-                "protocol_compatibility": client.agent_protocol_semantics.compatibility,
-                "project_inventory_strategy": client.agent_protocol_semantics.project_inventory,
+                "agent_protocol_generation": client.agent_protocol_generation.get(),
                 "build_version": build_version,
                 "build_git_commit": build_git_commit,
                 "build_git_dirty": build_git_dirty,
@@ -1594,11 +1572,8 @@ mod phase_e2_status_tests {
             pending_requests: 0,
             projects: Vec::new(),
             project_inventory: None,
-            agent_protocol_version: "websocket-v1".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             transport: "websocket".to_string(),
-            agent_protocol_semantics: crate::shell_protocol::normalize_agent_protocol_semantics(
-                "websocket-v1",
-            ),
             policy: None,
             registered_at: 0,
             connected_at: 0,

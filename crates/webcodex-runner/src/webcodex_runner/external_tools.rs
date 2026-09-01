@@ -1,10 +1,9 @@
-//! Experimental, allowlisted external tool backends for agent file operations.
+//! Allowlisted external tool backends for agent file operations.
 //!
 //! The first provider is a deliberately small stdio MCP client for
 //! `claude mcp serve`. Native execution remains the default.
 
 use super::config::{ClaudeCodeMcpConfig, ToolProviderStrategy, ToolProvidersConfig};
-use super::files::sha256_hex_bytes;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use super::shutdown::{lock_unpoison, SHUTDOWN_POLL_INTERVAL};
@@ -14,7 +13,7 @@ use crate::shell_protocol::{
     EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[cfg(windows)]
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -28,9 +27,34 @@ use std::time::{Duration, Instant};
 
 use webcodex_process::{GracefulTermination, ManagedChild};
 
-mod experimental;
+const MAX_DISCOVERED_TOOLS: usize = 64;
+const MAX_DISCOVERED_TOOL_SCHEMA_BYTES: usize = 64 * 1024;
 
-use experimental::{discovered_tool_entry, DiscoveredTool, MAX_EXPERIMENTAL_TOOLS};
+struct DiscoveredTool {
+    fields: BTreeSet<String>,
+}
+
+fn discovered_tool_entry(tool: &Value) -> Option<(String, DiscoveredTool)> {
+    let name = tool.get("name")?.as_str()?.to_string();
+    sanitize_tool_name(&name)?;
+    let input_schema = tool
+        .get("inputSchema")
+        .cloned()
+        .unwrap_or_else(|| json!({"type": "object"}));
+    let schema_within_bound = serde_json::to_vec(&input_schema)
+        .is_ok_and(|encoded| encoded.len() <= MAX_DISCOVERED_TOOL_SCHEMA_BYTES);
+    let fields = if schema_within_bound {
+        input_schema
+            .pointer("/properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|properties| properties.keys().cloned())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    Some((name, DiscoveredTool { fields }))
+}
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const MAX_MCP_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -62,29 +86,14 @@ impl ProviderCapability {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WriteState {
-    NotSubmitted,
-    Uncertain,
-}
-
 #[derive(Debug, Clone)]
 struct ProviderError {
     code: &'static str,
-    write_state: WriteState,
 }
 
 impl ProviderError {
     fn new(code: &'static str) -> Self {
-        Self {
-            code,
-            write_state: WriteState::NotSubmitted,
-        }
-    }
-
-    fn with_state(mut self, write_state: WriteState) -> Self {
-        self.write_state = write_state;
-        self
+        Self { code }
     }
 }
 
@@ -129,11 +138,6 @@ impl ExternalToolRouter {
 
     pub(crate) fn shutdown_until(&self, deadline: Instant) -> ExternalShutdownOutcome {
         self.claude.shutdown_until(deadline)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn shutdown(&self) {
-        let _ = self.shutdown_until(Instant::now() + MCP_FALLBACK_SHUTDOWN_BUDGET);
     }
 
     #[cfg(test)]
@@ -237,10 +241,6 @@ impl ExternalToolRouter {
         request: &ShellAgentShellRequest,
         shutdown: Option<&AtomicBool>,
     ) -> ExternalRoute {
-        // Fixed experimental harness surface — independent of production strategy.
-        if experimental::is_experimental_claude_kind(&request.kind) {
-            return ExternalRoute::Handled(self.handle_experimental(policy, request, shutdown));
-        }
         if self.strategy == ToolProviderStrategy::Native {
             return ExternalRoute::Native;
         }
@@ -272,7 +272,6 @@ impl ExternalToolRouter {
                         "claude_code",
                         false,
                         false,
-                        None,
                         started,
                         Some(error.code),
                     ),
@@ -297,7 +296,7 @@ impl ExternalToolRouter {
         {
             Ok(output) => {
                 self.claude.record_call(
-                    call_summary(capability, "claude_code", false, true, None, started, None),
+                    call_summary(capability, "claude_code", false, true, started, None),
                     true,
                 );
                 let stdout = output
@@ -335,7 +334,6 @@ impl ExternalToolRouter {
                     "claude_code",
                     false,
                     false,
-                    None,
                     started,
                     Some(error.code),
                 ),
@@ -357,7 +355,6 @@ impl ExternalToolRouter {
                 "native",
                 true,
                 succeeded,
-                None,
                 fallback.started,
                 (!succeeded).then_some("native_tool_failed"),
             ),
@@ -377,7 +374,6 @@ fn call_summary(
     selected_provider: &str,
     fallback_used: bool,
     succeeded: bool,
-    write_state: Option<&str>,
     started: Instant,
     error_code: Option<&str>,
 ) -> ProviderCallSummary {
@@ -386,7 +382,7 @@ fn call_summary(
         selected_provider: selected_provider.to_string(),
         fallback_used,
         result: if succeeded { "success" } else { "failure" }.to_string(),
-        write_state: write_state.map(str::to_string),
+        write_state: None,
         duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
         error_code: error_code.map(str::to_string),
     }
@@ -744,8 +740,6 @@ impl ClaudeCodeMcpProvider {
 struct ProjectMcpClient {
     connection: Arc<McpConnection>,
     tools: BTreeMap<String, DiscoveredTool>,
-    version: Option<String>,
-    tools_truncated: bool,
 }
 
 impl ProjectMcpClient {
@@ -770,7 +764,6 @@ impl ProjectMcpClient {
                 "clientInfo": {"name": "webcodex-runner", "version": env!("CARGO_PKG_VERSION")},
             }),
             timeout(),
-            WriteState::NotSubmitted,
             shutdown,
         )?;
         let version = initialized
@@ -785,15 +778,9 @@ impl ProjectMcpClient {
         connection.write_json(
             &json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
         )?;
-        let listed = connection.request_with_shutdown(
-            "tools/list",
-            json!({}),
-            timeout(),
-            WriteState::NotSubmitted,
-            shutdown,
-        )?;
+        let listed =
+            connection.request_with_shutdown("tools/list", json!({}), timeout(), shutdown)?;
         let mut tools = BTreeMap::new();
-        let mut tools_truncated = false;
         for tool in listed
             .get("tools")
             .and_then(Value::as_array)
@@ -805,19 +792,13 @@ impl ProjectMcpClient {
             if tools.contains_key(&name) {
                 continue;
             }
-            if tools.len() >= MAX_EXPERIMENTAL_TOOLS {
+            if tools.len() >= MAX_DISCOVERED_TOOLS {
                 // Valid 65th+ tool discovered; keep only the stored bound.
-                tools_truncated = true;
                 break;
             }
             tools.insert(name, discovered);
         }
-        let client = Self {
-            connection,
-            tools,
-            version,
-            tools_truncated,
-        };
+        let client = Self { connection, tools };
         let mut discovered_tool_names = client
             .tools
             .keys()
@@ -825,7 +806,7 @@ impl ProjectMcpClient {
             .collect::<Vec<_>>();
         discovered_tool_names.sort();
         discovered_tool_names.dedup();
-        discovered_tool_names.truncate(MAX_EXPERIMENTAL_TOOLS);
+        discovered_tool_names.truncate(MAX_DISCOVERED_TOOLS);
         state.update(|status| {
             status.discovered_tool_names = discovered_tool_names;
             status.process_state = "mapping".to_string();
@@ -909,7 +890,6 @@ impl ProjectMcpClient {
     ) -> Result<Value, ProviderError> {
         let tool = self.tool_for(capability, config)?;
         let arguments = build_arguments(capability, &request, context)?;
-        let failure_state = WriteState::NotSubmitted;
         let timeout = deadline.saturating_duration_since(Instant::now());
         if timeout.is_zero() {
             return Err(ProviderError::new("mcp_request_timeout"));
@@ -918,7 +898,6 @@ impl ProjectMcpClient {
             "tools/call",
             json!({"name": tool, "arguments": arguments}),
             timeout,
-            failure_state,
             shutdown,
         )?;
         if result
@@ -926,7 +905,7 @@ impl ProjectMcpClient {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            return Err(ProviderError::new("claude_tool_failed").with_state(failure_state));
+            return Err(ProviderError::new("claude_tool_failed"));
         }
         normalize_search_result(&result, context)
     }
@@ -1161,9 +1140,8 @@ impl McpConnection {
         method: &str,
         params: Value,
         timeout: Duration,
-        failure_state: WriteState,
     ) -> Result<Value, ProviderError> {
-        self.request_with_shutdown(method, params, timeout, failure_state, None)
+        self.request_with_shutdown(method, params, timeout, None)
     }
 
     fn request_with_shutdown(
@@ -1171,10 +1149,8 @@ impl McpConnection {
         method: &str,
         params: Value,
         timeout: Duration,
-        failure_state: WriteState,
         shutdown: Option<&AtomicBool>,
     ) -> Result<Value, ProviderError> {
-        // Pre-send failures keep default NotSubmitted (do not apply failure_state).
         if shutdown.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err(ProviderError::new("mcp_connection_closed"));
         }
@@ -1194,8 +1170,8 @@ impl McpConnection {
             pending.insert(id, tx);
         }
         let message = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        // Encode + size-check before any stdin write so serialization / oversize
-        // rejections stay pre-send (not_submitted) even for mutating tools.
+        // Encode + size-check before any stdin write so malformed or oversized
+        // requests fail before anything is submitted to the provider.
         let encoded = match encode_mcp_message(&message) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -1203,10 +1179,9 @@ impl McpConnection {
                 return Err(error);
             }
         };
-        // Write/flush may partially deliver bytes; treat as post-send.
         if let Err(error) = write_mcp_message(&self.stdin, &encoded) {
             lock_unpoison(&self.pending).remove(&id);
-            return Err(error.with_state(failure_state));
+            return Err(error);
         }
         let deadline = Instant::now() + timeout;
         loop {
@@ -1214,23 +1189,21 @@ impl McpConnection {
                 lock_unpoison(&self.pending).remove(&id);
                 self.signal_shutdown();
                 let _ = self.finish_shutdown(Instant::now() + MCP_FALLBACK_SHUTDOWN_BUDGET);
-                return Err(ProviderError::new("mcp_connection_closed").with_state(failure_state));
+                return Err(ProviderError::new("mcp_connection_closed"));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 lock_unpoison(&self.pending).remove(&id);
                 self.signal_shutdown();
                 let _ = self.finish_shutdown(Instant::now() + MCP_FALLBACK_SHUTDOWN_BUDGET);
-                return Err(ProviderError::new("mcp_request_timeout").with_state(failure_state));
+                return Err(ProviderError::new("mcp_request_timeout"));
             }
             match rx.recv_timeout(remaining.min(Duration::from_millis(25))) {
                 Ok(Ok(value)) => return Ok(value),
-                Ok(Err(error)) => return Err(error.with_state(failure_state)),
+                Ok(Err(error)) => return Err(error),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(
-                        ProviderError::new("mcp_connection_closed").with_state(failure_state)
-                    );
+                    return Err(ProviderError::new("mcp_connection_closed"));
                 }
             }
         }

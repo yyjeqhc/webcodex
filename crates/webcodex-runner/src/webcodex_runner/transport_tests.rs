@@ -1,7 +1,7 @@
 use super::super::config::{RunnerPolicy, ShellConfig};
 use super::*;
 use crate::shell_protocol::{
-    ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_GENERATION_V2,
 };
 #[cfg(unix)]
 use crate::POLLING_DISPATCH_MAX_IN_FLIGHT;
@@ -360,6 +360,7 @@ fn start_polling_http_server(
     poll_status: &str,
     poll_content_type: &str,
     poll_body: &str,
+    once: bool,
 ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
     let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -372,18 +373,36 @@ fn start_polling_http_server(
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_http_request(&mut stream);
         assert_eq!(request_path(&request), "/api/shell/agent/register");
+        let response = register_inventory_support_response();
         write_http_response(
             &mut stream,
-            "200 OK",
-            "application/json",
-            r#"{"success":true,"client":null,"error":null}"#,
+            response.status,
+            response.content_type,
+            &response.body,
         );
 
-        let (mut stream, _) = listener.accept().unwrap();
-        let request = read_http_request(&mut stream);
-        assert_eq!(request_path(&request), "/api/shell/agent/poll");
-        server_poll_count.fetch_add(1, Ordering::SeqCst);
-        write_http_response(&mut stream, &poll_status, &poll_content_type, &poll_body);
+        if once {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/shell/agent/poll");
+            let body = request
+                .find("\r\n\r\n")
+                .map(|index| &request[index + 4..])
+                .unwrap_or_default();
+            let response = project_inventory_poll_response(body)
+                .expect("once-mode first poll must publish canonical project inventory");
+            server_poll_count.fetch_add(1, Ordering::SeqCst);
+            write_http_response(
+                &mut stream,
+                response.status,
+                response.content_type,
+                &response.body,
+            );
+        } else {
+            let mut stream = accept_business_poll(&listener);
+            server_poll_count.fetch_add(1, Ordering::SeqCst);
+            write_http_response(&mut stream, &poll_status, &poll_content_type, &poll_body);
+        }
     });
     (format!("http://{}", addr), poll_count, server)
 }
@@ -414,32 +433,30 @@ fn start_auto_fallback_http_server(
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_http_request(&mut stream);
         assert_eq!(request_path(&request), "/api/shell/agent/register");
+        let response = register_inventory_support_response();
         write_http_response(
             &mut stream,
-            "200 OK",
-            "application/json",
-            r#"{"success":true,"client":null,"error":null}"#,
+            response.status,
+            response.content_type,
+            &response.body,
         );
 
-        let (mut stream, _) = listener.accept().unwrap();
-        let request = read_http_request(&mut stream);
-        assert_eq!(request_path(&request), "/api/shell/agent/poll");
+        let mut stream = accept_business_poll(&listener);
         server_poll_count.fetch_add(1, Ordering::SeqCst);
         write_http_response(&mut stream, &poll_status, &poll_content_type, &poll_body);
 
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_http_request(&mut stream);
         assert_eq!(request_path(&request), "/api/shell/agent/register");
+        let response = register_inventory_support_response();
         write_http_response(
             &mut stream,
-            "200 OK",
-            "application/json",
-            r#"{"success":true,"client":null,"error":null}"#,
+            response.status,
+            response.content_type,
+            &response.body,
         );
 
-        let (mut stream, _) = listener.accept().unwrap();
-        let request = read_http_request(&mut stream);
-        assert_eq!(request_path(&request), "/api/shell/agent/poll");
+        let mut stream = accept_business_poll(&listener);
         server_poll_count.fetch_add(1, Ordering::SeqCst);
         write_http_response(
             &mut stream,
@@ -458,7 +475,7 @@ fn run_polling_runner_against_server(
     once: bool,
 ) -> (Result<(), String>, usize) {
     let (server_url, poll_count, server) =
-        start_polling_http_server(poll_status, poll_content_type, poll_body);
+        start_polling_http_server(poll_status, poll_content_type, poll_body, once);
     let tmp = tempfile::tempdir().unwrap();
     let cfg = polling_runner_config(server_url, tmp.path().join("projects.d"));
     let runtime = test_runtime(&cfg);
@@ -652,7 +669,7 @@ fn start_concurrent_polling_server(
                             .find("\r\n\r\n")
                             .map(|index| request[index + 4..].to_string())
                             .unwrap_or_default();
-                        let response = handler(&path, &body);
+                        let response = with_project_inventory_ack(&body, handler(&path, &body));
                         write_http_response(
                             &mut stream,
                             response.status,
@@ -809,7 +826,7 @@ fn poll_delivery_response(request: Option<&ShellAgentShellRequest>) -> Concurren
 }
 
 fn register_success_response() -> ConcurrentHttpResponse {
-    ConcurrentHttpResponse::json(r#"{"success":true,"client":null,"error":null}"#)
+    register_inventory_support_response()
 }
 
 fn register_inventory_support_response() -> ConcurrentHttpResponse {
@@ -825,7 +842,7 @@ fn register_inventory_support_response() -> ConcurrentHttpResponse {
                 "capabilities": {},
                 "pending_requests": 0,
                 "projects": [],
-                "agent_protocol_version": crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2,
+                "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
                 "project_inventory": {
                     "sync_state": "pending",
                     "generation": null,
@@ -853,6 +870,77 @@ fn poll_inventory_response(status: &ShellProjectInventoryStatus) -> ConcurrentHt
         })
         .to_string(),
     )
+}
+
+fn project_inventory_poll_response(body: &str) -> Option<ConcurrentHttpResponse> {
+    let payload: serde_json::Value = serde_json::from_str(body).ok()?;
+    let page = payload.get("project_inventory_page")?.as_object()?;
+    let generation = page.get("generation")?.as_str()?;
+    let total_reported = page.get("total_reported")?.as_u64()? as usize;
+    let complete = page.get("complete")?.as_bool()?;
+    let page_index = page.get("page_index")?.as_u64()? as usize;
+    let page_len = page.get("projects")?.as_array()?.len();
+    let total_synced = if complete {
+        total_reported
+    } else {
+        (page_index * PROJECT_INVENTORY_PAGE_MAX_SUMMARIES + page_len).min(total_reported)
+    };
+    Some(poll_inventory_response(&inventory_status(
+        if complete { "complete" } else { "in_progress" },
+        generation,
+        total_reported,
+        total_synced,
+    )))
+}
+
+fn with_project_inventory_ack(
+    request_body: &str,
+    mut response: ConcurrentHttpResponse,
+) -> ConcurrentHttpResponse {
+    if response.status != "200 OK" || response.content_type != "application/json" {
+        return response;
+    }
+    let Some(inventory_response) = project_inventory_poll_response(request_body) else {
+        return response;
+    };
+    let Ok(mut response_json) = serde_json::from_str::<serde_json::Value>(&response.body) else {
+        return response;
+    };
+    let Some(response_object) = response_json.as_object_mut() else {
+        return response;
+    };
+    if response_object.contains_key("project_inventory") {
+        return response;
+    }
+    let inventory_json: serde_json::Value = serde_json::from_str(&inventory_response.body).unwrap();
+    response_object.insert(
+        "project_inventory".to_string(),
+        inventory_json["project_inventory"].clone(),
+    );
+    response.body = response_json.to_string();
+    response
+}
+
+fn accept_business_poll(listener: &StdTcpListener) -> TcpStream {
+    loop {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_http_request(&mut stream);
+        assert_eq!(request_path(&request), "/api/shell/agent/poll");
+        let body = request
+            .find("\r\n\r\n")
+            .map(|index| &request[index + 4..])
+            .unwrap_or_default();
+        if let Some(response) = project_inventory_poll_response(body) {
+            write_http_response(
+                &mut stream,
+                response.status,
+                response.content_type,
+                &response.body,
+            );
+            continue;
+        }
+        return stream;
+    }
 }
 
 fn result_success_response() -> ConcurrentHttpResponse {
@@ -904,7 +992,18 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
                 .find("\r\n\r\n")
                 .map(|index| request[index + 4..].to_string())
                 .unwrap_or_default();
-            recorded.lock().unwrap().push((path.clone(), body));
+            if path == "/api/shell/agent/poll" {
+                if let Some(response) = project_inventory_poll_response(&body) {
+                    write_http_response(
+                        &mut stream,
+                        response.status,
+                        response.content_type,
+                        &response.body,
+                    );
+                    continue;
+                }
+            }
+            recorded.lock().unwrap().push((path.clone(), body.clone()));
             let Some(index) = steps.iter().position(|step| {
                 step.as_ref()
                     .is_some_and(|step| step.expected_path() == path)
@@ -935,11 +1034,12 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
             match step {
                 ScriptStep::Register => {
                     assert_eq!(path, "/api/shell/agent/register");
+                    let response = register_inventory_support_response();
                     write_http_response(
                         &mut stream,
-                        "200 OK",
-                        "application/json",
-                        r#"{"success":true,"client":null,"error":null}"#,
+                        response.status,
+                        response.content_type,
+                        &response.body,
                     );
                 }
                 ScriptStep::RegisterResponse { status, body } => {
@@ -1652,24 +1752,28 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
             "/api/shell/agent/register" => register_success_response(),
             "/api/shell/agent/poll" => {
                 let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-                let index = poll_count.fetch_add(1, Ordering::SeqCst);
-                if index == 0 {
+                if let Some(response) = project_inventory_poll_response(body) {
+                    let refreshed = payload["project_inventory_page"]["projects"]
+                        .as_array()
+                        .is_some_and(|projects| {
+                            projects.iter().any(|project| project["id"] == "e1-project")
+                        });
+                    if refreshed
+                        && project_result_seen.load(Ordering::SeqCst)
+                        && !refreshed_seen.swap(true, Ordering::SeqCst)
+                    {
+                        let _ = refreshed_tx.send(());
+                        runner_shutdown.store(true, Ordering::SeqCst);
+                    }
+                    response
+                } else {
                     assert!(
                         payload["projects"].is_null(),
-                        "ordinary poll immediately after register must omit projects"
+                        "ordinary business poll must not carry project inventory"
                     );
+                    let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                    poll_delivery_response((index == 0).then_some(&request))
                 }
-                let refreshed = payload["projects"].as_array().is_some_and(|projects| {
-                    projects.iter().any(|project| project["id"] == "e1-project")
-                });
-                if refreshed
-                    && project_result_seen.load(Ordering::SeqCst)
-                    && !refreshed_seen.swap(true, Ordering::SeqCst)
-                {
-                    let _ = refreshed_tx.send(());
-                    runner_shutdown.store(true, Ordering::SeqCst);
-                }
-                poll_delivery_response((index == 0).then_some(&request))
             }
             "/api/shell/agent/result" => {
                 project_result_seen.store(true, Ordering::SeqCst);
@@ -1937,7 +2041,7 @@ fn polling_connection_closed_enters_session_recovery() {
 }
 
 #[test]
-fn polling_repeated_transients_back_off_and_refresh_only_once() {
+fn polling_transient_after_successful_inventory_recovery_starts_a_new_episode() {
     let server = start_scripted_agent_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
@@ -1949,21 +2053,23 @@ fn polling_repeated_transients_back_off_and_refresh_only_once() {
             status: "503 Service Unavailable",
             body: "unavailable",
         },
+        ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "504 Gateway Timeout",
             body: "timeout",
         },
+        ScriptStep::Register,
         ScriptStep::PollEmpty,
     ]);
     let started = Instant::now();
     run_polling_runner_against_scripted_server(&server, false)
-        .expect("consecutive gateway failures must recover");
+        .expect("gateway failures separated by successful inventory recovery must remain live");
     let elapsed = started.elapsed();
     server.handle.join().unwrap();
 
     assert!(
-        elapsed >= Duration::from_millis(1_850),
-        "repeated failures did not apply 500ms/500ms/1s recovery delays: {elapsed:?}"
+        elapsed >= Duration::from_millis(1_350),
+        "repeated recovery episodes did not apply their 500ms delays: {elapsed:?}"
     );
     assert!(
         elapsed < Duration::from_secs(5),
@@ -1976,10 +2082,12 @@ fn polling_repeated_transients_back_off_and_refresh_only_once() {
             "/api/shell/agent/poll",
             "/api/shell/agent/register",
             "/api/shell/agent/poll",
+            "/api/shell/agent/register",
             "/api/shell/agent/poll",
+            "/api/shell/agent/register",
             "/api/shell/agent/poll",
         ],
-        "one recovery episode must not re-register on every 5xx"
+        "a successful canonical inventory poll ends the current recovery episode"
     );
 }
 
@@ -2376,30 +2484,20 @@ fn polling_register_auth_404_and_identity_mismatch_are_terminal() {
 }
 
 #[test]
-fn polling_once_retries_transport_failures_until_one_successful_poll() {
+fn polling_once_retries_transient_registration_until_canonical_inventory_completes() {
     let server = start_scripted_agent_server(vec![
         ScriptStep::RegisterResponse {
             status: "502 Bad Gateway",
             body: "bad gateway",
         },
         ScriptStep::Register,
-        ScriptStep::PollResponse {
-            status: "503 Service Unavailable",
-            body: "unavailable",
-        },
-        ScriptStep::PollEmpty,
     ]);
     run_polling_runner_against_scripted_server(&server, true)
-        .expect("--once must complete after one successful poll");
+        .expect("--once must complete after registration and canonical inventory synchronization");
     server.handle.join().unwrap();
     assert_eq!(
         recorded_paths(&server.requests),
-        vec![
-            "/api/shell/agent/register",
-            "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/poll",
-        ]
+        vec!["/api/shell/agent/register", "/api/shell/agent/register",]
     );
 }
 
@@ -2992,14 +3090,81 @@ async fn read_register(
 }
 
 async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
+    let client = serde_json::from_value(serde_json::json!({
+        "client_id": "oe",
+        "agent_instance_id": "inst-test",
+        "status": "online",
+        "connected": true,
+        "last_seen": 1,
+        "capabilities": {},
+        "pending_requests": 0,
+        "projects": [],
+        "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
+        "project_inventory": {
+            "sync_state": "pending",
+            "generation": null,
+            "total_reported": null,
+            "total_synced": 0,
+            "last_error_code": null,
+            "last_sync_at": null,
+            "max_summaries_per_page": PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+            "max_serialized_bytes_per_page": PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES
+        }
+    }))
+    .unwrap();
     let ack = AgentEnvelope::Registered {
         success: true,
-        client: None,
+        client: Some(client),
         error: None,
     };
     ws.send(WsMessage::Text(ack.to_json().unwrap().into()))
         .await
         .unwrap();
+
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("agent did not publish canonical project inventory after registration")
+            .expect("websocket closed before project inventory publication")
+            .expect("project inventory message is valid");
+        if !msg.is_text() {
+            continue;
+        }
+        let page = match AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
+            AgentEnvelope::ProjectInventoryPage { page } => page,
+            other => panic!(
+                "expected project inventory page after registered ack, got {}",
+                other.kind()
+            ),
+        };
+        let status = inventory_status(
+            if page.complete {
+                "complete"
+            } else {
+                "in_progress"
+            },
+            &page.generation,
+            page.total_reported,
+            if page.complete {
+                page.total_reported
+            } else {
+                (((page.page_index as usize) + 1) * PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
+                    .min(page.total_reported)
+            },
+        );
+        let complete = page.complete;
+        ws.send(WsMessage::Text(
+            AgentEnvelope::ProjectInventoryStatus { status }
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        if complete {
+            break;
+        }
+    }
 }
 
 async fn send_register_rejected_ack(
@@ -3480,7 +3645,7 @@ fn polling_401_and_403_are_terminal_auth_errors() {
 }
 
 #[test]
-fn polling_idle_empty_response_remains_successful_once() {
+fn polling_once_completes_canonical_inventory_without_extra_business_poll() {
     let (result, poll_count) = run_polling_runner_against_server(
         "200 OK",
         "application/json",
@@ -3493,7 +3658,7 @@ fn polling_idle_empty_response_remains_successful_once() {
 }
 
 #[test]
-fn polling_register_sends_projects_and_ordinary_poll_omits_them() {
+fn polling_register_and_ordinary_poll_both_omit_inline_projects() {
     let server = start_scripted_agent_server(vec![ScriptStep::Register, ScriptStep::PollEmpty]);
     run_polling_runner_against_scripted_server(&server, false)
         .expect("empty polling turn should stop cleanly with scripted shutdown");
@@ -3503,12 +3668,12 @@ fn polling_register_sends_projects_and_ordinary_poll_omits_them() {
     let register: serde_json::Value = serde_json::from_str(&requests[0].1).unwrap();
     let poll: serde_json::Value = serde_json::from_str(&requests[1].1).unwrap();
     assert!(
-        register["projects"].is_array(),
-        "register must send full projects"
+        register["projects"].is_null(),
+        "generation-2 registration must not carry inline projects"
     );
     assert!(
         poll["projects"].is_null(),
-        "ordinary poll must omit project refresh"
+        "ordinary poll must not revive inline project refresh"
     );
 }
 
@@ -4134,29 +4299,6 @@ async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
 }
 
 #[test]
-fn project_inventory_rolling_negotiation_never_sends_large_snapshot_to_old_server() {
-    let small = (0..64)
-        .map(|index| synthetic_project_summary(index, None))
-        .collect::<Vec<_>>();
-    assert!(legacy_inline_project_inventory(&small).is_some());
-    assert!(paged_sync_after_registration(TRANSPORT_POLLING, small, None).is_none());
-
-    let large = (0..65)
-        .map(|index| synthetic_project_summary(index, None))
-        .collect::<Vec<_>>();
-    assert!(legacy_inline_project_inventory(&large).is_none());
-    assert!(
-        paged_sync_after_registration(TRANSPORT_POLLING, large.clone(), None).is_none(),
-        "old Server must never receive unknown project-inventory framing"
-    );
-    let support = ShellProjectInventoryStatus::pending(0);
-    assert!(
-        paged_sync_after_registration(TRANSPORT_POLLING, large, Some(&support)).is_some(),
-        "new Server negotiation enables paged sync"
-    );
-}
-
-#[test]
 fn polling_once_startup_with_100_projects_registers_liveness_then_completes_paged_inventory() {
     let temp = tempfile::tempdir().unwrap();
     let projects_dir = temp.path().join("projects.d");
@@ -4173,9 +4315,11 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
         Arc::new(move |path: &str, body: &str| match path {
             "/api/shell/agent/register" => {
                 let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-                assert!(
-                    payload["projects"].is_null(),
-                    "100-project startup must keep base liveness registration bounded"
+                assert!(payload.get("projects").is_none());
+                assert!(payload.get("agent_protocol_version").is_none());
+                assert_eq!(
+                    payload["capabilities"]["agent_protocol_generation"],
+                    AGENT_PROTOCOL_GENERATION_V2.get()
                 );
                 register_inventory_support_response()
             }
@@ -4238,65 +4382,6 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
     assert!(seen.iter().any(|id| id == "project-0050"));
     assert_eq!(seen.last().map(String::as_str), Some("project-0099"));
     assert_eq!(next_page.load(Ordering::SeqCst), 2);
-}
-
-#[test]
-fn polling_startup_with_65_projects_stays_online_against_old_server_without_new_framing() {
-    let temp = tempfile::tempdir().unwrap();
-    let projects_dir = temp.path().join("projects.d");
-    let project_root = temp.path().join("projects");
-    write_synthetic_project_configs(&projects_dir, &project_root, 65);
-
-    let runner_shutdown = Arc::new(AtomicBool::new(false));
-    let poll_count = Arc::new(AtomicUsize::new(0));
-    let handler = {
-        let runner_shutdown = Arc::clone(&runner_shutdown);
-        let poll_count = Arc::clone(&poll_count);
-        Arc::new(move |path: &str, body: &str| match path {
-            "/api/shell/agent/register" => {
-                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-                assert!(
-                    payload["projects"].is_null(),
-                    "large inventory must not poison an old Server registration envelope"
-                );
-                assert_eq!(
-                    payload["agent_protocol_version"],
-                    crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V2,
-                    "large inventory must explicitly advertise the paged registration contract"
-                );
-                register_success_response()
-            }
-            "/api/shell/agent/poll" => {
-                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-                assert!(
-                    payload.get("project_inventory_page").is_none()
-                        || payload["project_inventory_page"].is_null(),
-                    "new Runner must not send unknown inventory framing before negotiation"
-                );
-                poll_count.fetch_add(1, Ordering::SeqCst);
-                runner_shutdown.store(true, Ordering::SeqCst);
-                poll_delivery_response(None)
-            }
-            other => panic!("unexpected old-server compatibility endpoint: {other}"),
-        })
-    };
-    let server = start_concurrent_polling_server(handler);
-    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir);
-    cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
-    let runtime = test_runtime(&cfg);
-    let result = run_polling_runner_with_shutdown(
-        cfg,
-        false,
-        "inst-old-server-project-inventory",
-        Arc::clone(&runner_shutdown),
-        &runtime,
-    );
-    assert!(
-        result.is_ok(),
-        "old Server compatibility must preserve Runner liveness: {result:?}"
-    );
-    server.finish();
-    assert!(poll_count.load(Ordering::SeqCst) >= 1);
 }
 
 #[test]
@@ -5157,7 +5242,7 @@ async fn auto_websocket_register_rejected_is_fatal_without_polling_fallback() {
 }
 
 #[tokio::test]
-async fn websocket_disconnect_loop_reregisters_client_projects_and_capabilities() {
+async fn websocket_disconnect_loop_reregisters_identity_generation_and_capabilities() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (reg_tx, mut reg_rx) = mpsc::channel(2);
@@ -5190,11 +5275,11 @@ async fn websocket_disconnect_loop_reregisters_client_projects_and_capabilities(
     for register in [first, second] {
         assert_eq!(register.client_id, "oe");
         assert_eq!(register.agent_instance_id, "inst-reconnect");
-        assert_eq!(
-            register.agent_protocol_version.as_deref(),
-            Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
-        );
         let caps = register.capabilities.expect("capabilities");
+        assert_eq!(
+            caps.agent_protocol_generation,
+            Some(AGENT_PROTOCOL_GENERATION_V2)
+        );
         assert!(caps.shell);
         assert!(caps.file_read);
         assert!(caps.file_write);
@@ -5202,9 +5287,6 @@ async fn websocket_disconnect_loop_reregisters_client_projects_and_capabilities(
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
         assert!(caps.git);
-        let projects = register.projects.expect("projects");
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].id, "repo-one");
     }
 
     server.await.unwrap();

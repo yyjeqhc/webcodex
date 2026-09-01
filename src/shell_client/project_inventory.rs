@@ -1,12 +1,8 @@
 use super::state::{ProjectInventoryStaging, ProjectInventoryState, ShellClientRecord};
-use super::validation::{
-    normalize_project_summaries, sha256_hex, validate_agent_instance_id,
-    validate_project_summary_batch,
-};
+use super::validation::{sha256_hex, validate_agent_instance_id, validate_project_summary_batch};
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
-    AgentProjectInventoryStrategy, ShellAgentProjectSummary, ShellProjectInventoryPage,
-    ShellProjectInventoryStatus, PROJECT_INVENTORY_GENERATION_MAX_BYTES,
+    ShellProjectInventoryPage, ShellProjectInventoryStatus, PROJECT_INVENTORY_GENERATION_MAX_BYTES,
     PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
     PROJECT_INVENTORY_STAGING_TTL_SECS,
@@ -47,41 +43,6 @@ pub(super) fn pending_inventory_state(total_synced: usize) -> ProjectInventorySt
     }
 }
 
-pub(super) fn complete_legacy_inventory_state(
-    total_synced: usize,
-    now: i64,
-) -> ProjectInventoryState {
-    ProjectInventoryState {
-        status: status(
-            "complete",
-            Some("legacy-inline".to_string()),
-            Some(total_synced),
-            total_synced,
-            None,
-            Some(now),
-        ),
-        ..pending_inventory_state(total_synced)
-    }
-}
-
-pub(super) fn degraded_inventory_state(
-    total_synced: usize,
-    error_code: &str,
-    now: i64,
-) -> ProjectInventoryState {
-    ProjectInventoryState {
-        status: status(
-            "degraded",
-            None,
-            None,
-            total_synced,
-            Some(error_code.to_string()),
-            Some(now),
-        ),
-        ..pending_inventory_state(total_synced)
-    }
-}
-
 fn retire_generation(state: &mut ProjectInventoryState, generation: String) {
     if generation.is_empty()
         || state
@@ -113,27 +74,6 @@ fn clear_staging(client: &mut ShellClientRecord, error_code: Option<&str>, now: 
     }
 }
 
-pub(super) fn preserve_authoritative_with_error(
-    existing: &ProjectInventoryState,
-    total_synced: usize,
-    error_code: &str,
-    now: i64,
-) -> ProjectInventoryState {
-    let mut state = existing.clone();
-    if let Some(staging) = state.staging.take() {
-        retire_generation(&mut state, staging.generation);
-    }
-    state.status = status(
-        "degraded",
-        state.status.generation.clone(),
-        state.status.total_reported,
-        total_synced,
-        Some(error_code.to_string()),
-        state.status.last_sync_at.or(Some(now)),
-    );
-    state
-}
-
 pub(super) fn preserve_authoritative_pending(
     existing: &ProjectInventoryState,
     total_synced: usize,
@@ -153,68 +93,10 @@ pub(super) fn preserve_authoritative_pending(
     state
 }
 
-pub(super) fn prepare_legacy_inventory(
-    projects: Option<Vec<ShellAgentProjectSummary>>,
-    now: i64,
-) -> (
-    bool,
-    Vec<ShellAgentProjectSummary>,
-    ProjectInventoryState,
-    Option<&'static str>,
-) {
-    let Some(projects) = projects else {
-        return (false, Vec::new(), pending_inventory_state(0), None);
-    };
-    match validate_project_summary_batch(&projects) {
-        Ok(_) => {
-            let projects = normalize_project_summaries(Some(projects));
-            let state = complete_legacy_inventory_state(projects.len(), now);
-            (true, projects, state, None)
-        }
-        Err(code) => (
-            true,
-            Vec::new(),
-            degraded_inventory_state(0, code, now),
-            Some(code),
-        ),
-    }
-}
-
-pub(super) fn apply_legacy_refresh(
-    client: &mut ShellClientRecord,
-    projects: Vec<ShellAgentProjectSummary>,
-    now: i64,
-) {
-    match validate_project_summary_batch(&projects) {
-        Ok(_) => {
-            clear_staging(client, None, now);
-            if let Some(previous) = client.project_inventory.status.generation.clone() {
-                if previous != "legacy-inline" {
-                    retire_generation(&mut client.project_inventory, previous);
-                }
-            }
-            client.projects = normalize_project_summaries(Some(projects));
-            client.project_inventory.status = status(
-                "complete",
-                Some("legacy-inline".to_string()),
-                Some(client.projects.len()),
-                client.projects.len(),
-                None,
-                Some(now),
-            );
-        }
-        Err(code) => {
-            clear_staging(client, Some(code), now);
-        }
-    }
-}
-
 pub(super) fn reconcile_dynamic_projection(client: &mut ShellClientRecord, now: i64) {
     clear_staging(client, None, now);
     if let Some(previous) = client.project_inventory.status.generation.clone() {
-        if previous != "legacy-inline" {
-            retire_generation(&mut client.project_inventory, previous);
-        }
+        retire_generation(&mut client.project_inventory, previous);
     }
     // Dynamic mutation is authoritative but is not itself a full snapshot
     // generation. Retiring the prior paged generation prevents a delayed page
@@ -355,14 +237,6 @@ impl ShellClientRegistry {
         // Inventory failure is deliberately subordinate to Runner liveness.
         client.last_seen = now;
         expire_staging(client, now);
-        if !matches!(
-            client.accepted_protocol.project_inventory(),
-            AgentProjectInventoryStrategy::Paged
-        ) {
-            note_nonfatal_error(client, "project_inventory_paging_not_negotiated");
-            return Ok(client.project_inventory.status.clone());
-        }
-
         let (page_bytes, page_digest) = match validate_page(&page) {
             Ok(validated) => validated,
             Err(code) => {
@@ -445,7 +319,7 @@ impl ShellClientRegistry {
             // resurrect removed entries.
             if client.project_inventory.status.sync_state == "complete" {
                 if let Some(previous) = client.project_inventory.status.generation.clone() {
-                    if previous != "legacy-inline" && previous != page.generation {
+                    if previous != page.generation {
                         retire_generation(&mut client.project_inventory, previous);
                     }
                 }
@@ -543,16 +417,5 @@ impl ShellClientRegistry {
             );
         }
         Ok(client.project_inventory.status.clone())
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn project_inventory_status_for_test(
-        &self,
-        client_id: &str,
-    ) -> Option<ShellProjectInventoryStatus> {
-        let mut inner = self.inner.lock().await;
-        let client = inner.clients.get_mut(client_id)?;
-        expire_staging(client, now_ts());
-        Some(client.project_inventory.status.clone())
     }
 }

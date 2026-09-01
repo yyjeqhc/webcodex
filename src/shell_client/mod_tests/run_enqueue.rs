@@ -18,8 +18,6 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await

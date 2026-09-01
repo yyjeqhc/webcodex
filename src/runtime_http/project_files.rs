@@ -45,14 +45,6 @@ struct ApplyUnifiedDiffRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct DeleteProjectFilesRequest {
-    pub project: String,
-    pub paths: Vec<String>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct GitRestorePathsRequest {
     pub project: String,
     pub paths: Vec<String>,
@@ -218,39 +210,6 @@ pub async fn projects_apply_unified_diff(req: &mut Request, depot: &mut Depot, r
         )
         .await;
     render_result(res, &audit, "apply_unified_diff", project, result);
-}
-
-/// `POST /api/projects/delete_files` — thin GPT Actions wrapper over
-/// `ToolCall::DeleteProjectFiles`. Mutation with side effects: deletes the
-/// selected project-relative files only (not directories). Requires Bearer
-/// auth and the agent shell capability.
-#[handler]
-pub async fn projects_delete_files(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(
-        req,
-        depot,
-        "/api/projects/delete_files",
-        "deleteProjectFiles",
-    );
-    let Some(runtime) = require_runtime(depot, res) else {
-        return;
-    };
-    let Some(body) = parse_json_body::<DeleteProjectFilesRequest>(req, res).await else {
-        return;
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::DeleteProjectFiles {
-                project: body.project,
-                paths: body.paths,
-                session_id: body.session_id,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "delete_project_files", project, result);
 }
 
 /// `POST /api/projects/git_restore_paths` — thin GPT Actions wrapper over

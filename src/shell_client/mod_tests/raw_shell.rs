@@ -43,7 +43,6 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
                 .poll(ShellAgentPollRequest {
                     client_id: client_id.to_string(),
                     agent_instance_id: "inst".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()

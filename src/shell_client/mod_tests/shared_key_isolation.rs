@@ -52,8 +52,6 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                     hostname: None,
                     host_context: None,
                     capabilities: Some(async_job_capabilities()),
-                    projects: Some(vec![project_summary(client_id, "/tmp/project")]),
-                    agent_protocol_version: Some("polling-v1".to_string()),
                     policy: None,
                 },
                 Some(auth),
@@ -81,12 +79,17 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                 hostname: None,
                 host_context: None,
                 capabilities: Some(async_job_capabilities()),
-                projects: Some(vec![project_summary(client_id, project_path)]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             })
             .await
             .unwrap();
+        crate::test_support::apply_project_inventory_snapshot(
+            &registry,
+            client_id,
+            &format!("inst-{client_id}"),
+            vec![project_summary(client_id, project_path)],
+        )
+        .await;
     }
 
     let visible_to_a: Vec<String> = registry
@@ -248,11 +251,6 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![project_summary(
-                    "private",
-                    &format!("/home/{owner}/private"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             })
             .await
@@ -288,7 +286,7 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
     let registry = ShellClientRegistry::default();
     let grant_a = crate::auth::shared_key::project_credential_context("wc_pgrant_aaaaaaaaaaaaaaaa");
     let grant_b = crate::auth::shared_key::project_credential_context("wc_pgrant_bbbbbbbbbbbbbbbb");
-    let registration = |hostname: &str, project: &str| ShellClientRegisterRequest {
+    let registration = |hostname: &str| ShellClientRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -302,23 +300,22 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
         hostname: Some(hostname.to_string()),
         host_context: None,
         capabilities: Some(async_job_capabilities()),
-        projects: Some(vec![project_summary(project, "/tmp/project")]),
-        agent_protocol_version: Some("polling-v1".to_string()),
         policy: None,
     };
     registry
-        .register_with_auth(
-            registration("grant-a-host", "grant-a-project"),
-            Some(&grant_a),
-        )
+        .register_with_auth(registration("grant-a-host"), Some(&grant_a))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "same-project-agent",
+        "same-instance-id",
+        vec![project_summary("grant-a-project", "/tmp/project")],
+    )
+    .await;
 
     let error = registry
-        .register_with_auth(
-            registration("grant-b-host", "grant-b-project"),
-            Some(&grant_b),
-        )
+        .register_with_auth(registration("grant-b-host"), Some(&grant_b))
         .await
         .unwrap_err();
     assert!(!error.contains("grant-a-host"));
@@ -365,8 +362,6 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             hostname: Some(hostname.to_string()),
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: Some(vec![project_summary("project", "/tmp/project")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }
     };

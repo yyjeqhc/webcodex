@@ -12,7 +12,6 @@ async fn wait_for_mcp_agent_request(
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -1205,23 +1204,6 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
                     file_read: true,
                     ..Default::default()
                 }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: project_name.to_string(),
-                    name: Some(project_name.to_string()),
-                    path: "/remote/session-atlas".to_string(),
-                    allow_patch: true,
-                    kind: Some("repo".to_string()),
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
                 process_started_at: None,
                 build: None,
@@ -1233,6 +1215,28 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        agent_instance_id,
+        vec![ShellAgentProjectSummary {
+            id: project_name.to_string(),
+            name: Some(project_name.to_string()),
+            path: "/remote/session-atlas".to_string(),
+            allow_patch: true,
+            kind: Some("repo".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 1,
+            shell_profile: None,
+        }],
+    )
+    .await;
     let project = crate::tool_runtime::agent_project_runtime_id(client_id, project_name);
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
     auth.is_bootstrap = true;
@@ -1985,28 +1989,33 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
                     internal_posix_script: true,
                     ..Default::default()
                 }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("Demo".to_string()),
-                    path: "/tmp/demo".to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: vec![],
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 0,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        "mcp-client",
+        "inst",
+        vec![ShellAgentProjectSummary {
+            id: "demo".to_string(),
+            name: Some("demo".to_string()),
+            path: "/tmp/mcp-demo".to_string(),
+            allow_patch: true,
+            kind: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: chrono::Utc::now().timestamp(),
+            shell_profile: None,
+        }],
+    )
+    .await;
     let project = "agent:mcp-client:demo";
     let tracking_session = runtime
         .sessions

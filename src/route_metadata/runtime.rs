@@ -210,16 +210,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
-        ProjectsDeleteFiles,
-        Post,
-        "/api/projects/delete_files",
-        Require(SCOPE_PROJECT_WRITE),
-        RuntimeApi,
-        PublicActions,
-        Artifact,
-        AuthMiddleware,
-    ),
-    route(
         ProjectsGitRestorePaths,
         Post,
         "/api/projects/git_restore_paths",

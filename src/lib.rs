@@ -179,14 +179,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     for load in &env_loads {
         tracing::info!(
-            "Loaded env file {} ({} variables set{})",
+            "Loaded env file {} ({} variables set)",
             load.path.display(),
             load.loaded_count,
-            if load.legacy {
-                ", legacy deprecated path"
-            } else {
-                ""
-            }
         );
     }
     let config = Config::from_env();
@@ -428,10 +423,6 @@ only for local/trusted-network demos."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsRunShell))
                 .post(runtime_http::projects_run_shell),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsDeleteFiles))
-                .post(runtime_http::projects_delete_files),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsGitRestorePaths))

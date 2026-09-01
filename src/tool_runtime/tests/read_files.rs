@@ -715,7 +715,6 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap();

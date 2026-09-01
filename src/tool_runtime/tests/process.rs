@@ -724,15 +724,17 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 capabilities,
             )),
-            projects: Some(vec![registered_project(
-                "demo",
-                &temp.path().to_string_lossy(),
-            )]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &restarted.shell_clients,
+        "detached-restart-recovery",
+        "inst",
+        vec![registered_project("demo", &temp.path().to_string_lossy())],
+    )
+    .await;
     let restarted_project =
         crate::tool_runtime::agent_project_runtime_id("detached-restart-recovery", "demo");
     let retry = restarted

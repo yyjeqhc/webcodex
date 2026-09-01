@@ -67,7 +67,6 @@ async fn computer_text_input_enqueue_requires_exact_owner_and_independent_capabi
         .poll(ShellAgentPollRequest {
             client_id: "computer-input".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -120,7 +119,6 @@ async fn computer_text_input_enqueue_preserves_max_utf8_text_after_json_escaping
         .poll(ShellAgentPollRequest {
             client_id: "computer-input-escaped".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

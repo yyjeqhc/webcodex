@@ -26,8 +26,6 @@ async fn register_with_connection(
                 hostname: None,
                 host_context: None,
                 capabilities: Some(async_job_capabilities()),
-                projects: None,
-                agent_protocol_version: Some("websocket-v1".to_string()),
                 policy: None,
             },
             None,
@@ -43,14 +41,7 @@ async fn register_with_connection(
 async fn streaming_registration_commits_transport_connection_and_notifier_together() {
     let registry = ShellClientRegistry::default();
     let notify = Arc::new(Notify::new());
-    let mut registration = runner_registration(
-        "atomic-stream",
-        "atomic-instance",
-        vec![project_summary("atomic-project", "/tmp/atomic-project")],
-    );
-    // Deliberately use a polling wire label: actual transport authority comes
-    // from the streaming handler argument, never from agent_protocol_version.
-    registration.agent_protocol_version = Some("polling-v1".to_string());
+    let registration = runner_registration("atomic-stream", "atomic-instance", Vec::new());
 
     let view = registry
         .register_streaming_session(
@@ -63,7 +54,13 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
         .await
         .unwrap();
     assert_eq!(view.transport, TRANSPORT_WEBSOCKET);
-    assert_eq!(view.projects.len(), 1);
+    assert!(view.projects.is_empty());
+    assert_eq!(
+        view.project_inventory
+            .as_ref()
+            .map(|status| status.sync_state.as_str()),
+        Some("pending")
+    );
 
     let inner = registry.inner.lock().await;
     let client = inner.clients.get("atomic-stream").unwrap();
@@ -96,12 +93,7 @@ async fn streaming_registration_rejects_polling_transport_authority() {
 async fn failed_streaming_registration_preserves_current_session_exactly() {
     let registry = ShellClientRegistry::default();
     let notify_a = Arc::new(Notify::new());
-    let mut initial = runner_registration(
-        "atomic-preserve",
-        "atomic-instance",
-        vec![project_summary("original", "/tmp/original")],
-    );
-    initial.agent_protocol_version = Some("websocket-v1".to_string());
+    let initial = runner_registration("atomic-preserve", "atomic-instance", Vec::new());
     let (_view_a, cancel_a) = registry
         .register_streaming_session_with_cancel(
             initial,
@@ -112,18 +104,25 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "atomic-preserve",
+        "atomic-instance",
+        vec![project_summary("original", "/tmp/original")],
+    )
+    .await;
     let before = {
         let inner = registry.inner.lock().await;
         inner.clients.get("atomic-preserve").unwrap().clone()
     };
 
     let notify_b = Arc::new(Notify::new());
-    let mut rejected = runner_registration(
-        "atomic-preserve",
-        "atomic-instance",
-        vec![project_summary("replacement", "/tmp/replacement")],
-    );
-    rejected.agent_protocol_version = Some("future-v2".to_string());
+    let mut rejected = runner_registration("atomic-preserve", "atomic-instance", Vec::new());
+    rejected
+        .capabilities
+        .as_mut()
+        .unwrap()
+        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
     let error = registry
         .register_streaming_session_with_cancel(
             rejected,
@@ -134,7 +133,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
         )
         .await
         .unwrap_err();
-    assert_eq!(error, "agent_protocol_version is unsupported");
+    assert_eq!(error, "agent_protocol_generation is unsupported");
     assert!(
         !*cancel_a.borrow(),
         "failed replacement must not cancel the authoritative connection"
@@ -216,7 +215,6 @@ async fn stale_connection_poll_cannot_steal_new_request() {
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-a",
         )
@@ -263,7 +261,6 @@ async fn stale_connection_poll_cannot_steal_new_request() {
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-b",
         )
@@ -281,7 +278,6 @@ async fn stale_connection_poll_cannot_steal_new_request() {
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-a",
         )
@@ -364,8 +360,6 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                     hostname: None,
                     host_context: None,
                     capabilities: Some(async_job_capabilities()),
-                    projects: None,
-                    agent_protocol_version: Some("websocket-v1".to_string()),
                     policy: Some(AgentPolicySummary::default()),
                 },
                 None,
@@ -508,7 +502,6 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-b",
         )
@@ -554,7 +547,6 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-a",
         )
@@ -621,7 +613,6 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-a",
         )
@@ -638,7 +629,6 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-b",
         )
@@ -681,7 +671,6 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
             ShellAgentPollRequest {
                 client_id: "oe".to_string(),
                 agent_instance_id: "inst-x".to_string(),
-                projects: None,
             },
             "conn-a",
         )

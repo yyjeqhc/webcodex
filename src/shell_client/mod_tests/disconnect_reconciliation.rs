@@ -18,8 +18,6 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -77,8 +75,6 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -138,7 +134,6 @@ async fn dispatched_file_request_disconnect_remains_request_neutral() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

@@ -41,11 +41,9 @@ Strategies:
 - `claude_code` — return a structured provider error when Claude is disabled,
   missing, incompatible, or fails.
 - `claude_code_then_native` — use Claude first. Searches may fall back to the
-  existing bounded Native `rg`/`grep` command after failure. Because ordinary
+  existing bounded Native `rg`/`grep` command after failure. Because configured
   provider routing exposes only read-only search, it never routes a WebCodex
-  write to Claude and therefore has no uncertain-write state. The independent
-  agent-internal raw diagnostic harness described below has its own mutating
-  call boundary and write-state handling.
+  write to Claude and has no uncertain-write state.
 
 Claude Code builds do not necessarily expose a search tool. The real smoke with
 Claude Code 2.1.220 exposed `Edit` but no schema-compatible search tool. This
@@ -53,8 +51,8 @@ does not disable WebCodex search when using `native` or `claude_code_then_native
 the latter falls back to the existing bounded Native `rg`/`grep` command. Strict
 `claude_code` strategy instead returns a capability error when no mapped search
 tool is available. Ordinary search routing does not use Claude's `Bash` tool and
-never invokes Claude's `Edit`; this restriction is specific to the configured
-`search_project_text` capability, not the internal raw diagnostic harness.
+never invokes Claude's `Edit`; the configured provider surface is limited to
+`search_project_text`.
 
 The agent runs one lazy child per canonical registered project root, fixes the
 child `cwd` to that root, bounds requests/responses/pending calls, discards
@@ -84,17 +82,6 @@ inserted into those registries. A Claude upgrade may therefore add `Read`,
 any of them visible to an external WebCodex client. Public names and input
 schemas, including `write_project_file` and `apply_text_edits`, are identical
 with the provider disabled or enabled.
-
-Separately, the agent carries an experimental raw diagnostic harness with three
-agent-internal request kinds (`claude_list_tools`, `claude_describe_tool`,
-`claude_tool_call`). They remain absent from public MCP/OpenAPI and do not extend
-the ordinary provider capability mapping. Raw calls are fixed to the `Read`,
-`Edit`, `Write`, and `Bash` allowlist; orchestration, workflow, network, and
-other discovered tools are never callable. An explicit raw diagnostic call may
-therefore read or mutate the fixture through those Claude tools. Mutating raw
-calls retain the existing uncertain-write semantics and are never automatically
-retried after an uncertain result because the provider may already have applied
-the write.
 
 The bounded version reported by MCP `initialize.serverInfo` is exposed in
 provider status after a successful start. A version is retained only when it

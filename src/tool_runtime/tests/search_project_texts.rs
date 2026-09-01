@@ -75,7 +75,6 @@ async fn poll_agent_request(
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -1558,7 +1557,6 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap();

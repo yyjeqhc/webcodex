@@ -6,9 +6,6 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock, Weak};
 use tempfile::TempDir;
 
-#[path = "external_tools/experimental_tests.rs"]
-mod experimental_tests;
-
 /// Routing tests that operate inside the fixture root and are not about the
 /// filesystem boundary. `RunnerPolicy::default()` is fail-closed, so these opt
 /// out explicitly; `router_rejects_absolute_parent_and_symlink_escape_paths`
@@ -715,7 +712,6 @@ fn unresponsive_provider_is_killed_reaped_and_wakes_pending_request() {
             "tools/call",
             json!({"name":"fake_search","arguments":{}}),
             Duration::from_secs(5),
-            WriteState::NotSubmitted,
         )
     });
     assert!(wait_until(Duration::from_secs(1), || {
@@ -763,7 +759,6 @@ fn provider_request_timeout_racing_shutdown_is_idempotent() {
             "tools/call",
             json!({"name":"fake_search","arguments":{}}),
             Duration::from_millis(100),
-            WriteState::NotSubmitted,
         )
     });
     assert!(wait_until(Duration::from_secs(1), || {

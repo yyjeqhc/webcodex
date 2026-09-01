@@ -977,7 +977,7 @@ expected_ops = {
     "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
     "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
     "applyUnifiedDiff",
-    "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
+    "runProjectShellCommand", "gitRestorePaths",
     "discardUntrackedFiles", "importConversationFilesToProject", "startProjectShellJob",
     "listRuntimeJobs", "getRuntimeJobTail", "callRuntimeTool",
 }
@@ -1099,7 +1099,6 @@ mutation_paths = [
     "/api/projects/create",
     "/api/projects/apply_unified_diff",
     "/api/projects/run_shell",
-    "/api/projects/delete_files",
     "/api/projects/git_restore_paths",
     "/api/projects/discard_untracked",
     "/api/projects/run_job",
@@ -1475,8 +1474,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 7d. Dedicated mutation actions (apply_unified_diff, delete_files,
-#     git_restore_paths, discard_untracked) against probe files only
+# 7d. Dedicated mutation actions plus canonical runtime cleanup against probe files only
 # ----------------------------------------------------------------------------
 #
 # These are executable mutations with side effects. To avoid breaking the
@@ -1525,14 +1523,14 @@ else
     fail "applyUnifiedDiff probe file not in diff summary (got: ${gds_changed:0:200})"
 fi
 
-# deleteProjectFiles — delete the probe file created above.
-del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"APPLY_CHECKED_PROBE.txt\"]}")"
-body="$(api_post /api/projects/delete_files "$del_body")"
+# Canonical runtime delete — delete the probe file created above.
+del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"APPLY_CHECKED_PROBE.txt\"]}}")"
+body="$(api_post /api/tools/call "$del_body")"
 del_success="$(json_get "$body" success)"
 if [ "$del_success" = "True" ]; then
-    pass "deleteProjectFiles(probe) returns success"
+    pass "callRuntimeTool(delete_project_files) returns success"
 else
-    fail "deleteProjectFiles(probe) failed (body: ${body:0:300})"
+    fail "callRuntimeTool(delete_project_files) failed (body: ${body:0:300})"
 fi
 # Verify the probe file is gone via list_files root listing.
 body="$(api_post /api/projects/list_files "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
@@ -1691,9 +1689,9 @@ else
     fail "apply_text_edits(stale sha guard) modified the file (got: ${body:0:200})"
 fi
 
-# deleteProjectFiles removes the probe so the worktree returns to clean.
-del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"EDIT_PROBE.txt\"]}")"
-body="$(api_post /api/projects/delete_files "$del_body")"
+# Canonical runtime delete removes the probe so the worktree returns to clean.
+del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"EDIT_PROBE.txt\"]}}")"
+body="$(api_post /api/tools/call "$del_body")"
 if [ "$(json_get "$body" success)" = "True" ]; then
     pass "deleteProjectFiles removes EDIT_PROBE.txt"
 else
@@ -1761,8 +1759,8 @@ else
 fi
 
 # Clean up the probe file so the worktree returns to a clean state.
-del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"NEG_PROBE.txt\"]}")"
-body="$(api_post /api/projects/delete_files "$del_body")" || true
+del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"NEG_PROBE.txt\"]}}")"
+body="$(api_post /api/tools/call "$del_body")" || true
 
 # ----------------------------------------------------------------------------
 # 7g. Unified-diff hardening: a large diff still travels over typed stdin,
@@ -1813,8 +1811,8 @@ else
     fail "large apply probe file not visible (got: ${body:0:200})"
 fi
 # Clean up the large probe so the worktree returns to a clean state.
-del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LARGE_APPLY_PROBE.md\"]}")"
-body="$(api_post /api/projects/delete_files "$del_body")" || true
+del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LARGE_APPLY_PROBE.md\"]}}")"
+body="$(api_post /api/tools/call "$del_body")" || true
 
 # A diff whose context does not match — applyUnifiedDiff must return the
 # non-applicable no-change domain outcome.
@@ -1865,7 +1863,7 @@ fi
 # Then an optional unified-diff sub-loop:
 #  10. applyUnifiedDiff           — preflight + apply one small raw unified diff
 #  11. getProjectGitDiffSummary   — confirm diff visible
-#  12. deleteProjectFiles         — cleanup the probe file
+#  12. callRuntimeTool(delete_project_files) — cleanup the probe file
 #  13. getProjectGitDiffSummary   — confirm clean again
 
 log "---- full-auto coding loop smoke (dedicated actions plus callRuntimeTool) ----"
@@ -2013,13 +2011,13 @@ else
     fail "loop: probe file not visible after apply (got: ${body:0:200})"
 fi
 
-# Step 12: deleteProjectFiles — cleanup the probe file.
-loop_del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LOOP_PATCH_PROBE.md\"]}")"
-body="$(api_post /api/projects/delete_files "$loop_del_body")"
+# Step 12: callRuntimeTool(delete_project_files) — cleanup the probe file.
+loop_del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LOOP_PATCH_PROBE.md\"]}}")"
+body="$(api_post /api/tools/call "$loop_del_body")"
 if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "loop: deleteProjectFiles removed probe file"
+    pass "loop: delete_project_files removed probe file"
 else
-    fail "loop: deleteProjectFiles did not remove probe file (body: ${body:0:300})"
+    fail "loop: delete_project_files did not remove probe file (body: ${body:0:300})"
 fi
 
 # Step 13: getProjectGitDiffSummary — confirm clean again.
@@ -2042,7 +2040,7 @@ fi
 #   2. readProjectFile                    — confirm content
 #   3. callRuntimeTool(write_project_file) — overwrite with an expected_sha256 guard
 #   4. readProjectFile    — confirm overwritten content
-#   5. deleteProjectFiles — cleanup the probe file
+#   5. callRuntimeTool(delete_project_files) — cleanup the probe file
 #   6. startProjectShellJob — start `printf job-ok` asynchronously
 #   7. getRuntimeJobStatus — poll until completed
 #   8. getRuntimeJobTail   — confirm the output contains job-ok
@@ -2112,9 +2110,9 @@ else
     fail "readProjectFile did not confirm overwritten content (got: ${body:0:200})"
 fi
 
-# Step 5: deleteProjectFiles — cleanup the probe.
-waf_del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"WRITE_ACTION_PROBE.txt\"]}")"
-body="$(api_post /api/projects/delete_files "$waf_del_body")"
+# Step 5: callRuntimeTool(delete_project_files) — cleanup the probe.
+waf_del_body="$(build_body "{\"tool\":\"delete_project_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"WRITE_ACTION_PROBE.txt\"]}}")"
+body="$(api_post /api/tools/call "$waf_del_body")"
 if [ "$(json_get "$body" success)" = "True" ]; then
     pass "deleteProjectFiles removes WRITE_ACTION_PROBE.txt"
 else

@@ -118,29 +118,34 @@ async fn register_agent_with_lsp_capabilities(
                         agent_protocol_generation: None,
                     },
                 )),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: project_id.to_string(),
-                    name: Some(project_id.to_string()),
-                    path: path.to_string(),
-                    allow_patch: true,
-                    kind: Some("auto".to_string()),
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: None,
-                    git_branch: Some("main".to_string()),
-                    git_head: None,
-                    git_dirty: Some(false),
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(&auth("u1")),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        registry,
+        "hosted",
+        "instance",
+        vec![ShellAgentProjectSummary {
+            id: project_id.to_string(),
+            name: Some(project_id.to_string()),
+            path: path.to_string(),
+            allow_patch: true,
+            kind: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: chrono::Utc::now().timestamp(),
+            shell_profile: None,
+        }],
+    )
+    .await;
 }
 
 async fn next_lsp_request(registry: &ShellClientRegistry) -> ShellAgentShellRequest {
@@ -150,7 +155,6 @@ async fn next_lsp_request(registry: &ShellClientRegistry) -> ShellAgentShellRequ
             .poll(ShellAgentPollRequest {
                 client_id: "hosted".to_string(),
                 agent_instance_id: "instance".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -951,7 +955,6 @@ async fn read_only_to_write_keeps_task_and_rechecks_write_authority() {
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
                     agent_instance_id: "instance".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -1216,7 +1219,6 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
                     agent_instance_id: "instance".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -1295,7 +1297,6 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
                     agent_instance_id: "instance".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -1494,7 +1495,6 @@ async fn failed_runner_project_registration_unwinds_workspace_and_allows_retry()
                     .poll(ShellAgentPollRequest {
                         client_id: "hosted".to_string(),
                         agent_instance_id: "instance".to_string(),
-                        projects: None,
                     })
                     .await
                     .unwrap()
@@ -1658,7 +1658,6 @@ async fn failed_task_binding_releases_prepared_workspace_for_retry() {
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
                     agent_instance_id: "instance".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -1801,7 +1800,6 @@ async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
                 .poll(ShellAgentPollRequest {
                     client_id: "hosted".to_string(),
                     agent_instance_id: "instance".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -2180,7 +2178,6 @@ async fn code_navigate_requires_project_read_and_rejects_foreign_or_inactive_tas
         .poll(ShellAgentPollRequest {
             client_id: "hosted".to_string(),
             agent_instance_id: "instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -2217,7 +2214,6 @@ async fn code_navigate_rejects_irrelevant_null_fields_before_dispatch() {
         .poll(ShellAgentPollRequest {
             client_id: "hosted".to_string(),
             agent_instance_id: "instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -2400,7 +2396,6 @@ async fn code_impact_is_available_in_normal_and_read_only_tasks() {
                         .poll(ShellAgentPollRequest {
                             client_id: "hosted".to_string(),
                             agent_instance_id: "instance".to_string(),
-                            projects: None,
                         })
                         .await
                         .unwrap()
@@ -2579,7 +2574,6 @@ async fn code_impact_rejects_null_malformed_and_schema_bypassing_inputs() {
         .poll(ShellAgentPollRequest {
             client_id: "hosted".to_string(),
             agent_instance_id: "instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

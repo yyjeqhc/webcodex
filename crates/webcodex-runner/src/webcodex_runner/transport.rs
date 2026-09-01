@@ -24,15 +24,13 @@ use crate::shell_protocol::{
     ShellAgentPersistentShellResultRequest, ShellAgentPersistentShellResultResponse,
     ShellAgentProjectSummary, ShellAgentResultPayload, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellJobInventory, ShellProjectInventoryPage,
-    ShellProjectInventoryStatus, AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
-    PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+    ShellProjectInventoryStatus, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
+    PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
 use crate::{
     build_register_request_with_provider_status, dispatch_request, handle_one_poll, is_project_op,
-    legacy_inline_project_inventory, project_registration_bootstrap, register, CommandResult,
-    JobManager, PollingDispatchSupervisor, PollingRecoveryAction, RegisterRecoveryAction,
-    RunnerHttpError, RunnerHttpErrorKind,
+    register, CommandResult, JobManager, PollingDispatchSupervisor, PollingRecoveryAction,
+    RegisterRecoveryAction, RunnerHttpError, RunnerHttpErrorKind,
 };
 use reqwest::blocking::Client;
 use std::fmt;
@@ -1706,13 +1704,6 @@ impl ProjectInventorySync {
     }
 }
 
-fn log_project_inventory_upgrade_required(transport: &str, projects: usize) {
-    eprintln!(
-        "webcodex-runner project inventory sync unavailable transport={} projects={} reason_code=project_inventory_protocol_upgrade_required; runner remains online; upgrade Server to route this inventory",
-        transport, projects
-    );
-}
-
 fn log_project_inventory_degraded(transport: &str, projects: usize, reason_code: &str) {
     eprintln!(
         "webcodex-runner project inventory sync degraded transport={} projects={} reason_code={}; runner remains online",
@@ -1720,19 +1711,8 @@ fn log_project_inventory_degraded(transport: &str, projects: usize, reason_code:
     );
 }
 
-fn paged_sync_after_registration(
-    transport: &str,
-    projects: Vec<ShellAgentProjectSummary>,
-    status: Option<&ShellProjectInventoryStatus>,
-) -> Option<ProjectInventorySync> {
-    if legacy_inline_project_inventory(&projects).is_some() {
-        return None;
-    }
-    if status.is_none() {
-        log_project_inventory_upgrade_required(transport, projects.len());
-        return None;
-    }
-    Some(ProjectInventorySync::new(projects))
+fn paged_sync_after_registration(projects: Vec<ShellAgentProjectSummary>) -> ProjectInventorySync {
+    ProjectInventorySync::new(projects)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2195,7 +2175,6 @@ fn run_polling_runner_with_shutdown(
     let mut session_refreshed_during_recovery = false;
     let mut recovery_backoff = RetryBackoff::new(&POLLING_RECOVERY_BACKOFF_STEPS);
     let mut lease_conflict_started: Option<Instant> = None;
-    let mut project_inventory_supported = false;
     let mut project_inventory_sync: Option<ProjectInventorySync> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -2237,18 +2216,14 @@ fn run_polling_runner_with_shutdown(
                 jobs.prepared_profiles.len(),
                 &jobs,
             ) {
-                Ok((projects_count, registered_jobs, registered_projects, inventory_status)) => {
+                Ok((projects_count, registered_jobs, registered_projects, _inventory_status)) => {
                     registered = true;
                     lease_conflict_started = None;
                     recovery_backoff.reset();
                     idle_backoff.reset();
                     project_refresh.mark_sent(Instant::now());
-                    project_inventory_supported = inventory_status.is_some();
-                    project_inventory_sync = paged_sync_after_registration(
-                        TRANSPORT_POLLING,
-                        registered_projects,
-                        inventory_status.as_ref(),
-                    );
+                    project_inventory_sync =
+                        Some(paged_sync_after_registration(registered_projects));
                     let sink = RunnerSink::Http(HttpSendConfig {
                         client: client.clone(),
                         server_url: cfg.server_url.clone(),
@@ -2361,18 +2336,8 @@ fn run_polling_runner_with_shutdown(
         } else {
             None
         };
-        let mut poll_projects = None;
-        let mut sent_inline_project_refresh = false;
         if let Some(projects) = refresh_projects {
-            if let Some(inline) = legacy_inline_project_inventory(&projects) {
-                poll_projects = Some(inline);
-                sent_inline_project_refresh = true;
-            } else if project_inventory_supported {
-                project_inventory_sync = Some(ProjectInventorySync::new(projects));
-            } else {
-                log_project_inventory_upgrade_required(TRANSPORT_POLLING, projects.len());
-                project_refresh.mark_sent(Instant::now());
-            }
+            project_inventory_sync = Some(ProjectInventorySync::new(projects));
         }
 
         let mut project_inventory_page = None;
@@ -2402,7 +2367,6 @@ fn run_polling_runner_with_shutdown(
             &jobs,
             &runtime.persistent_shells,
             &mut project_cache,
-            poll_projects,
             project_inventory_page,
             agent_instance_id,
             &runtime.lsp,
@@ -2418,9 +2382,6 @@ fn run_polling_runner_with_shutdown(
         }
         match poll_result {
             Ok((ran_request, inventory_status)) => {
-                if sent_inline_project_refresh {
-                    project_refresh.mark_sent(Instant::now());
-                }
                 if sent_inventory_page {
                     match inventory_status {
                         Some(status) => {
@@ -2445,14 +2406,10 @@ fn run_polling_runner_with_shutdown(
                             }
                         }
                         None => {
-                            project_inventory_supported = false;
-                            if let Some(sync) = project_inventory_sync.take() {
-                                log_project_inventory_upgrade_required(
-                                    TRANSPORT_POLLING,
-                                    sync.total_reported(),
-                                );
-                            }
-                            project_refresh.mark_sent(Instant::now());
+                            return Err(
+                                "poll response missing canonical project_inventory acknowledgement; Server is incompatible with this 0.4 Runner"
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -2756,13 +2713,15 @@ where
     let _ = tokio::time::timeout(timeout, peer_closed).await;
 }
 
-fn registered_ack(ack: AgentEnvelope) -> Result<Option<ShellProjectInventoryStatus>, String> {
+fn registered_ack(ack: AgentEnvelope) -> Result<ShellProjectInventoryStatus, String> {
     match ack {
         AgentEnvelope::Registered {
             success: true,
             client,
             ..
-        } => Ok(client.and_then(|client| client.project_inventory)),
+        } => client
+            .and_then(|client| client.project_inventory)
+            .ok_or_else(|| "register acknowledgement missing canonical project_inventory status; Server is incompatible with this 0.4 Runner".to_string()),
         AgentEnvelope::Registered { error, .. } => Err(format!(
             "register rejected by server: {}",
             error.unwrap_or_else(|| "no server error message".to_string())
@@ -3460,29 +3419,17 @@ async fn quic_session(
     let (mut send, mut recv) =
         open_result.map_err(|e| format!("failed to open quic bidirectional stream: {}", e))?;
 
-    // QUIC-v1 transport registration retains the legacy first-frame JSON shape
-    // for rolling-old Servers, but credential ownership stays outside the
-    // transport-neutral AgentEnvelope lifecycle. The token is never logged.
+    // Credential ownership stays outside the transport-neutral registration payload.
+    // The token is never logged.
     let projects_count = enabled_projects_count(&projects);
     let registered_jobs = runtime.jobs.inventory();
-    let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &registered_jobs);
-    // Preserve the legacy QUIC `v1/v2` label solely as the old-Server
-    // projection of inline versus paged registration inventory. Current Servers
-    // normalize it before registry/business decisions.
-    let protocol_version = if bootstrap.paged_inventory {
-        AGENT_PROTOCOL_VERSION_QUIC_V2
-    } else {
-        AGENT_PROTOCOL_VERSION_QUIC_V1
-    };
     let (register_payload, provider, provider_revision) =
         build_register_request_with_provider_status(
             cfg,
             &runtime.config,
-            bootstrap.projects,
-            protocol_version,
             agent_instance_id,
             0,
-            bootstrap.job_inventory,
+            registered_jobs.clone(),
         );
     let register_frame = QuicRegisterFrame::new(register_payload, non_empty_token(&cfg.token));
     let Some(register_write) = future_or_shutdown(
@@ -3511,9 +3458,8 @@ async fn quic_session(
     let ack = ack_result
         .map_err(|_| "quic register ack timed out".to_string())?
         .map_err(|e| format!("failed to read quic register ack: {}", e))?;
-    let inventory_status = registered_ack(ack)?;
-    let mut project_inventory_sync =
-        paged_sync_after_registration(TRANSPORT_QUIC, projects, inventory_status.as_ref());
+    let _inventory_status = registered_ack(ack)?;
+    let mut project_inventory_sync = Some(paged_sync_after_registration(projects));
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",
@@ -4088,24 +4034,13 @@ where
     // `prepared_cache_count` is reported as 0 here.
     let projects_count = enabled_projects_count(&projects);
     let registered_jobs = runtime.jobs.inventory();
-    let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &registered_jobs);
-    // Preserve the legacy WebSocket `v1/v2` label solely as the old-Server
-    // projection of inline versus paged registration inventory. Current Servers
-    // normalize it before registry/business decisions.
-    let protocol_version = if bootstrap.paged_inventory {
-        AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
-    } else {
-        AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
-    };
     let (register_payload, provider, provider_revision) =
         build_register_request_with_provider_status(
             cfg,
             &runtime.config,
-            bootstrap.projects,
-            protocol_version,
             agent_instance_id,
             0,
-            bootstrap.job_inventory,
+            registered_jobs.clone(),
         );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
@@ -4138,9 +4073,8 @@ where
         .map_err(|_| "register ack was not text".to_string())?;
     let ack = AgentEnvelope::from_slice(ack_text.as_bytes())
         .map_err(|e| format!("register ack is not a valid envelope: {}", e))?;
-    let inventory_status = registered_ack(ack)?;
-    let mut project_inventory_sync =
-        paged_sync_after_registration(TRANSPORT_WEBSOCKET, projects, inventory_status.as_ref());
+    let _inventory_status = registered_ack(ack)?;
+    let mut project_inventory_sync = Some(paged_sync_after_registration(projects));
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",

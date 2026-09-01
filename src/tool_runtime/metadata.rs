@@ -13,10 +13,6 @@ pub(crate) enum ToolRisk {
     RunControl,
     ComputerControl,
     JobRun,
-    /// Reserved for account-control tools; the current runtime manifest has
-    /// no model-facing account mutation tool.
-    #[allow(dead_code)]
-    AccountManage,
     Unknown,
 }
 
@@ -36,7 +32,6 @@ impl ToolRisk {
             ToolRisk::RunControl => "run_control",
             ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
-            ToolRisk::AccountManage => "account_manage",
             ToolRisk::Unknown => "unknown",
         }
     }
@@ -151,10 +146,6 @@ impl ToolPathHint {
 pub(crate) enum ToolAuthorityPolicy {
     Require(&'static str),
     RequireAll(&'static [&'static str]),
-    /// Reserved fail-closed policy for tools intentionally restricted to
-    /// first-party credentials.
-    #[allow(dead_code)]
-    FirstPartyOnly,
     Unknown,
 }
 
@@ -169,9 +160,6 @@ pub(crate) struct ToolMetadata {
     /// Canonical credential authority for this runtime tool. Discovery and
     /// execution must both derive from this policy rather than tool-name switches.
     pub(crate) authority: ToolAuthorityPolicy,
-    /// Compatibility-only manifest hint retained for the existing `oauth_scope`
-    /// field. It is never consulted for authorization.
-    pub(crate) legacy_oauth_scope_hint: Option<&'static str>,
     pub(crate) requires_project: bool,
     pub(crate) path_hint: ToolPathHint,
     pub(crate) destructive: bool,
@@ -204,7 +192,7 @@ pub(crate) const fn metadata(
     name: &'static str,
     provider_id: &'static str,
     semantic: ToolSemanticContract,
-    oauth_scope: Option<&'static str>,
+    required_scope: Option<&'static str>,
     requires_project: bool,
     path_hint: ToolPathHint,
     destructive: bool,
@@ -217,11 +205,10 @@ pub(crate) const fn metadata(
         risk: semantic.risk,
         approval: semantic.approval,
         idempotency: semantic.idempotency,
-        authority: match oauth_scope {
+        authority: match required_scope {
             Some(scope) => ToolAuthorityPolicy::Require(scope),
             None => ToolAuthorityPolicy::Unknown,
         },
-        legacy_oauth_scope_hint: oauth_scope,
         requires_project,
         path_hint,
         destructive,
@@ -229,37 +216,13 @@ pub(crate) const fn metadata(
     }
 }
 
-const LEGACY_ROUTE_METADATA: &[ToolMetadata] = &[metadata(
-    "delete_files",
-    TOOL_PROVIDER_AGENT,
-    ToolSemanticContract {
-        effect: ToolEffect::Mutate,
-        risk: ToolRisk::ProjectWrite,
-        approval: ToolApprovalPolicy::Standard,
-        idempotency: ToolIdempotency::NonIdempotent,
-    },
-    Some(PROJECT_WRITE),
-    true,
-    ToolPathHint::PathList,
-    true,
-    false,
-)];
-
 pub(crate) fn lookup_tool_metadata(name: &str) -> Option<&'static ToolMetadata> {
-    super::tool_definition::lookup_tool_definition(name)
-        .map(|definition| &definition.metadata)
-        .or_else(|| {
-            LEGACY_ROUTE_METADATA
-                .iter()
-                .find(|metadata| metadata.name == name)
-        })
+    super::tool_definition::lookup_tool_definition(name).map(|definition| &definition.metadata)
 }
 
 #[cfg(test)]
 pub(crate) fn iter_tool_metadata() -> impl Iterator<Item = ToolMetadata> {
-    super::tool_definition::tool_definitions()
-        .map(|definition| definition.metadata())
-        .chain(LEGACY_ROUTE_METADATA.iter().copied())
+    super::tool_definition::tool_definitions().map(|definition| definition.metadata())
 }
 
 pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
@@ -271,7 +234,6 @@ pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
         approval: ToolApprovalPolicy::Unknown,
         idempotency: ToolIdempotency::Unknown,
         authority: ToolAuthorityPolicy::Unknown,
-        legacy_oauth_scope_hint: None,
         requires_project: false,
         path_hint: ToolPathHint::None,
         destructive: false,
@@ -316,24 +278,8 @@ mod tests {
         assert_eq!(metadata.risk, ToolRisk::Unknown);
         assert_eq!(metadata.approval, ToolApprovalPolicy::Unknown);
         assert_eq!(metadata.idempotency, ToolIdempotency::Unknown);
-        assert_eq!(metadata.legacy_oauth_scope_hint, None);
+        assert_eq!(metadata.authority, ToolAuthorityPolicy::Unknown);
         assert!(!metadata.destructive);
-        assert!(!metadata.shell_like);
-    }
-
-    #[test]
-    fn tool_metadata_preserves_legacy_delete_files_route() {
-        assert!(!is_known_tool_name("delete_files"));
-        let metadata = lookup_tool_metadata("delete_files").unwrap();
-        assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
-        assert_eq!(metadata.risk, ToolRisk::ProjectWrite);
-        assert_eq!(metadata.effect, ToolEffect::Mutate);
-        assert_eq!(metadata.approval, ToolApprovalPolicy::Standard);
-        assert_eq!(metadata.idempotency, ToolIdempotency::NonIdempotent);
-        assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_WRITE));
-        assert!(metadata.requires_project);
-        assert_eq!(metadata.path_hint, ToolPathHint::PathList);
-        assert!(metadata.destructive);
         assert!(!metadata.shell_like);
     }
 
@@ -345,7 +291,10 @@ mod tests {
         assert_eq!(metadata.risk, ToolRisk::Read);
         assert_eq!(metadata.approval, ToolApprovalPolicy::None);
         assert_eq!(metadata.idempotency, ToolIdempotency::PureRead);
-        assert_eq!(metadata.legacy_oauth_scope_hint, Some(PROJECT_READ));
+        assert_eq!(
+            metadata.authority,
+            ToolAuthorityPolicy::Require(PROJECT_READ)
+        );
         assert!(metadata.requires_project);
         assert!(!metadata.destructive);
     }
@@ -358,7 +307,10 @@ mod tests {
         assert_eq!(metadata.risk, ToolRisk::WorkflowManage);
         assert_eq!(metadata.approval, ToolApprovalPolicy::None);
         assert_eq!(metadata.idempotency, ToolIdempotency::NonIdempotent);
-        assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_RUNTIME_READ));
+        assert_eq!(
+            metadata.authority,
+            ToolAuthorityPolicy::Require(SCOPE_RUNTIME_READ)
+        );
         assert!(!metadata.requires_project);
     }
 
@@ -370,7 +322,10 @@ mod tests {
         assert_eq!(create.risk, ToolRisk::CheckpointManage);
         assert_eq!(create.approval, ToolApprovalPolicy::None);
         assert_eq!(create.idempotency, ToolIdempotency::NonIdempotent);
-        assert_eq!(create.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
+        assert_eq!(
+            create.authority,
+            ToolAuthorityPolicy::Require(SCOPE_PROJECT_READ)
+        );
         assert!(create.requires_project);
 
         for name in ["workspace_checkpoint_list", "workspace_checkpoint_show"] {
@@ -381,8 +336,8 @@ mod tests {
             assert_eq!(metadata.approval, ToolApprovalPolicy::None, "{name}");
             assert_eq!(metadata.idempotency, ToolIdempotency::PureRead, "{name}");
             assert_eq!(
-                metadata.legacy_oauth_scope_hint,
-                Some(SCOPE_PROJECT_READ),
+                metadata.authority,
+                ToolAuthorityPolicy::Require(SCOPE_PROJECT_READ),
                 "{name}"
             );
             assert!(metadata.requires_project, "{name}");
@@ -402,8 +357,8 @@ mod tests {
                 "{name}"
             );
             assert_eq!(
-                metadata.legacy_oauth_scope_hint,
-                Some(PROJECT_WRITE),
+                metadata.authority,
+                ToolAuthorityPolicy::Require(PROJECT_WRITE),
                 "{name}"
             );
             assert!(metadata.requires_project, "{name}");
@@ -433,8 +388,8 @@ mod tests {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
             assert_eq!(
-                metadata.legacy_oauth_scope_hint,
-                Some(SCOPE_PROJECT_WRITE),
+                metadata.authority,
+                ToolAuthorityPolicy::Require(SCOPE_PROJECT_WRITE),
                 "{name}"
             );
             assert_eq!(metadata.effect, ToolEffect::Mutate, "{name}");
@@ -455,18 +410,10 @@ mod tests {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.risk, ToolRisk::JobRun, "{name}");
             assert_eq!(
-                metadata.legacy_oauth_scope_hint,
-                Some(SCOPE_JOB_RUN),
+                metadata.authority,
+                ToolAuthorityPolicy::Require(SCOPE_JOB_RUN),
                 "{name}"
             );
         }
-    }
-
-    #[test]
-    fn tool_metadata_keeps_account_manage_class_available() {
-        assert_eq!(
-            ToolRisk::AccountManage.session_risk_class(),
-            "account_manage"
-        );
     }
 }

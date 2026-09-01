@@ -105,8 +105,7 @@ pub(crate) fn public_url() -> String {
 ///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
 ///    `searchProjectText`)
 /// 4. project mutation (`applyUnifiedDiff`, `runProjectShellCommand`,
-///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`,
-///    `startProjectShellJob`)
+///    `gitRestorePaths`, `discardUntrackedFiles`, `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
@@ -132,7 +131,6 @@ const GPT_ACTION_OPS: &[&str] = &[
     "searchProjectText",
     "applyUnifiedDiff",
     "runProjectShellCommand",
-    "deleteProjectFiles",
     "gitRestorePaths",
     "discardUntrackedFiles",
     "importConversationFilesToProject",
@@ -542,24 +540,6 @@ pub(crate) fn build_openapi_spec() -> Value {
                     })
                 )
             },
-            "/api/projects/delete_files": {
-                "post": operation_with_examples(
-                    "deleteProjectFiles",
-                    "Delete project files",
-                    "Mutation with side effects. Deletes selected project-relative files only (not directories). Safer than ad hoc rm. Requires Bearer auth and the agent shell capability.",
-                    "DeleteProjectFilesRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Delete selected files",
-                            "value": {
-                                "project": "webcodex",
-                                "paths": ["tmp_probe.txt"]
-                            }
-                        }
-                    })
-                )
-            },
             "/api/projects/git_restore_paths": {
                 "post": operation_with_examples(
                     "gitRestorePaths",
@@ -916,7 +896,6 @@ fn is_consequential_operation(operation_id: &str) -> bool {
         | "runProjectShellCommand"
         | "startProjectShellJob"
         | "stopRuntimeJob"
-        | "deleteProjectFiles"
         | "gitRestorePaths"
         | "discardUntracked"
         | "discardUntrackedFiles"
@@ -1398,27 +1377,6 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "default": true,
                     "description": "Optional fail-safe sensitive-path policy. Defaults to true; when true, any sensitive-path warning blocks mutation before git apply --check is dispatched."
-                }
-            }
-        },
-        "DeleteProjectFilesRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "paths"],
-            "description": "Delete selected project-relative files only (not directories). Mutation with side effects.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "paths": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Project-relative file paths to delete."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },

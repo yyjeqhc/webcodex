@@ -106,7 +106,10 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
 
     let metadata = lookup_tool_metadata("validation_summary").unwrap();
     assert_eq!(metadata.risk, ToolRisk::Read);
-    assert_eq!(metadata.legacy_oauth_scope_hint, Some(SCOPE_PROJECT_READ));
+    assert_eq!(
+        metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(SCOPE_PROJECT_READ)
+    );
     assert!(metadata.requires_project);
     assert_eq!(
         metadata.effect,
@@ -138,7 +141,7 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 23);
+    assert_eq!(operation_count, 22);
 }
 
 #[tokio::test]

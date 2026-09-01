@@ -275,7 +275,7 @@ pub(crate) fn enforce_route_scope(
 mod tests {
     use super::*;
     use crate::tool_runtime::metadata::lookup_tool_metadata;
-    use crate::tool_runtime::tool_definition::{is_known_tool_name, known_tool_names};
+    use crate::tool_runtime::tool_definition::known_tool_names;
 
     #[test]
     fn validate_scopes_rejects_unknown() {
@@ -836,107 +836,22 @@ mod tests {
             let metadata = lookup_tool_metadata(tool).unwrap();
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(tool),
-                OAuthToolScopePolicy::Require(metadata.legacy_oauth_scope_hint.unwrap()),
+                metadata.authority,
                 "{tool}"
             );
         }
     }
 
     #[test]
-    fn oauth_route_policy_tool_scope_policy_covers_metadata_for_known_tools() {
+    fn runtime_tool_scope_policy_is_exactly_tool_definition_authority() {
         for tool in known_tool_names() {
             let metadata = lookup_tool_metadata(tool).unwrap();
-            let expected = if matches!(tool, "memory_search" | "memory_read") {
-                OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
-            } else if matches!(tool, "memory_set" | "memory_delete") {
-                OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
-            } else if matches!(
-                tool,
-                "list_agent_identities"
-                    | "list_conversations"
-                    | "read_conversation"
-                    | "list_agent_inbox"
-                    | "list_agent_tasks"
-                    | "read_agent_task"
-            ) {
-                OAuthToolScopePolicy::RequireAll(COMMUNICATION_READ_SCOPES)
-            } else if tool == "start_agent_task_coding_run" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMMUNICATION_READ,
-                    SCOPE_COMMUNICATION_MANAGE,
-                    SCOPE_CODING_AGENT_RUN,
-                    SCOPE_PROJECT_WRITE,
-                ])
-            } else if tool == "reconcile_agent_task_coding_run" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMMUNICATION_READ,
-                    SCOPE_COMMUNICATION_MANAGE,
-                    SCOPE_CODING_AGENT_RUN,
-                ])
-            } else if matches!(
-                tool,
-                "create_agent_identity"
-                    | "update_agent_identity"
-                    | "attach_agent_endpoint"
-                    | "bootstrap_agent_conversation"
-                    | "detach_agent_endpoint"
-                    | "create_conversation"
-                    | "post_conversation_message"
-                    | "consume_agent_deliveries"
-                    | "consume_agent_wake"
-                    | "create_agent_task"
-                    | "assign_agent_task"
-                    | "start_agent_task_attempt"
-                    | "heartbeat_agent_task_attempt"
-                    | "complete_agent_task_attempt"
-            ) {
-                OAuthToolScopePolicy::RequireAll(COMMUNICATION_MANAGE_SCOPES)
-            } else if tool == "run_detached_process" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
-            } else if tool == "coding_agent_start" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE])
-            } else if tool == "computer_save_snapshot" {
-                OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
-            } else if tool == "computer_read_clipboard" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_CLIPBOARD_READ,
-                ])
-            } else if tool == "computer_write_clipboard" {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_CONTROL,
-                    SCOPE_COMPUTER_CLIPBOARD_WRITE,
-                ])
-            } else if matches!(tool, "computer_pointer_move" | "computer_pointer_click") {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_DISPLAY_READ,
-                    SCOPE_COMPUTER_CONTROL,
-                    SCOPE_COMPUTER_POINTER_CONTROL,
-                ])
-            } else if matches!(tool, "computer_list_displays" | "computer_snapshot_display") {
-                OAuthToolScopePolicy::RequireAll(&[
-                    SCOPE_COMPUTER_READ,
-                    SCOPE_COMPUTER_DISPLAY_READ,
-                ])
-            } else {
-                OAuthToolScopePolicy::Require(metadata.legacy_oauth_scope_hint.unwrap())
-            };
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(tool),
-                expected,
+                metadata.authority,
                 "{tool}"
             );
         }
-    }
-
-    #[test]
-    fn oauth_route_policy_preserves_legacy_non_runtime_metadata_scope() {
-        assert!(!is_known_tool_name("delete_files"));
-        assert_eq!(
-            oauth_scope_policy_for_runtime_tool("delete_files"),
-            OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE)
-        );
     }
 
     #[test]

@@ -59,7 +59,6 @@ async fn enqueue_apply_text_edits_occurrence_requires_capability_and_queues_atom
         .poll(ShellAgentPollRequest {
             client_id: "occurrence-on".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

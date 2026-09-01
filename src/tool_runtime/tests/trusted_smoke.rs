@@ -42,7 +42,6 @@ async fn dispatch_with_local_agent(
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: CLIENT.to_string(),
                 agent_instance_id: "inst".to_string(),
-                projects: None,
             })
             .await
             .unwrap();

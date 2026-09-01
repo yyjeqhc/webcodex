@@ -69,12 +69,17 @@ async fn register_target_agent(
                     ..Default::default()
                 },
             )),
-            projects: Some(projects),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &format!("inst-{client_id}"),
+        projects,
+    )
+    .await;
 }
 
 async fn register_target_agent_for_auth(
@@ -102,17 +107,22 @@ async fn register_target_agent_for_auth(
                 capabilities: Some(crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities::default(),
                 )),
-                projects: Some(vec![registered_project(
-                    project_id,
-                    &format!("/tmp/{client_id}/{project_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &format!("inst-{client_id}"),
+        vec![registered_project(
+            project_id,
+            &format!("/tmp/{client_id}/{project_id}"),
+        )],
+    )
+    .await;
 }
 
 fn managed_discovery_auth(username: &str) -> crate::auth::AuthContext {
@@ -149,12 +159,17 @@ async fn register_managed_target_agent(
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
             )),
-            projects: Some(vec![registered_project(project_id, project_path)]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &format!("inst-{client_id}"),
+        vec![registered_project(project_id, project_path)],
+    )
+    .await;
 }
 
 fn large_fixture_projects(count: usize) -> Vec<crate::shell_protocol::ShellAgentProjectSummary> {

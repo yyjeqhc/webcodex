@@ -69,8 +69,6 @@ async fn register_sequenced(registry: &ShellClientRegistry, instance: &str) {
             hostname: None,
             host_context: None,
             capabilities: Some(sequenced_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -462,8 +460,6 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
             hostname: None,
             host_context: None,
             capabilities: Some(capabilities),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await

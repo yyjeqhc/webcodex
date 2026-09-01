@@ -14,8 +14,8 @@ use crate::shell_protocol::{
     ShellClientRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot,
     ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
-    ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, AGENT_PROTOCOL_VERSION_POLLING_V2,
-    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 
 const CLIENT_ID: &str = "oe";
@@ -76,8 +76,6 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
         hostname: None,
         host_context: None,
         capabilities: Some(reconciliation_capabilities()),
-        projects: Some(vec![project_summary()]),
-        agent_protocol_version: Some("polling-v1".to_string()),
         policy: None,
         process_started_at: Some(1_700_000_000),
         build: None,
@@ -137,7 +135,6 @@ async fn start_and_take_over(
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: instance.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -267,7 +264,6 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -369,7 +365,6 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -537,7 +532,6 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -589,7 +583,6 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -638,7 +631,6 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -700,7 +692,6 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -751,7 +742,6 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -839,7 +829,6 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -877,7 +866,6 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -959,7 +947,6 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -1030,7 +1017,6 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -1066,7 +1052,6 @@ async fn projected_hidden_raw_shell_terminal_does_not_resurrect_on_same_instance
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -1166,7 +1151,6 @@ async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -1956,7 +1940,6 @@ async fn job_reconciliation_instance_replacement_does_not_redispatch_server_queu
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_B.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -2079,7 +2062,6 @@ async fn job_reconciliation_stop_restored_job_targets_original_id() {
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -2227,15 +2209,13 @@ async fn paged_project_registration_does_not_make_active_job_inventory_a_livenes
     let registry = ShellClientRegistry::default();
     let mut snapshot = standalone_snapshot("paged-active-job", "running");
     snapshot.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
-    let mut request = register_request(
+    let request = register_request(
         INSTANCE_A,
         ShellJobInventory {
             active_complete: true,
             jobs: vec![snapshot],
         },
     );
-    request.projects = Some(vec![project_summary()]);
-    request.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string());
 
     let view = registry.register(request).await.expect(
         "paged project inventory must not reject Runner liveness during job reconciliation",
@@ -2515,7 +2495,6 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .poll(ShellAgentPollRequest {
             client_id: CLIENT_ID.to_string(),
             agent_instance_id: INSTANCE_A.to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -2783,7 +2762,6 @@ async fn recovery_sweep_pass_cap_bounds_a_single_pass() {
             .poll(ShellAgentPollRequest {
                 client_id: CLIENT_ID.to_string(),
                 agent_instance_id: INSTANCE_A.to_string(),
-                projects: None,
             })
             .await
             .unwrap()

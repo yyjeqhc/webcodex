@@ -148,46 +148,20 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
 }
 
 #[test]
-fn delete_files_remains_legacy_metadata_only_not_runtime_tool() {
+fn retired_delete_files_alias_stays_absent() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::lookup_tool_definition;
 
-    assert!(
-        lookup_tool_metadata("delete_files").is_some(),
-        "delete_files legacy dedicated route metadata must remain explicit"
-    );
-    assert!(
-        lookup_tool_definition("delete_files").is_none(),
-        "delete_files must not become a ToolDefinition"
-    );
-    assert!(
-        !is_known_tool_name("delete_files"),
-        "delete_files must not become a known runtime tool"
-    );
-    assert!(
-        ToolCall::from_tool_name(
-            "delete_files",
-            json!({"project": SAMPLE_PROJECT, "paths": []})
-        )
-        .is_err(),
-        "delete_files must not be accepted by ToolCall"
-    );
-    assert!(
-        !registered_tool_specs()
-            .iter()
-            .any(|spec| spec.name == "delete_files"),
-        "delete_files must not become a public ToolSpec"
-    );
-
-    let openapi = crate::openapi::build_openapi_spec();
-    let tool_description = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
-        [TOOL_CALL_TOOL_FIELD]["description"]
-        .as_str()
-        .expect("ToolCallRequest.tool description");
-    assert!(
-        !tool_description.contains("delete_files"),
-        "callRuntimeTool accepted-name text must not advertise legacy delete_files"
-    );
+    assert!(lookup_tool_metadata("delete_files").is_none());
+    assert!(lookup_tool_definition("delete_files").is_none());
+    assert!(!is_known_tool_name("delete_files"));
+    assert!(ToolCall::from_tool_name("delete_files", json!({})).is_err());
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "delete_files"));
+    assert!(crate::openapi::build_openapi_spec()["paths"]
+        .get("/api/projects/delete_files")
+        .is_none());
 }
 
 #[test]
@@ -248,7 +222,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
             json!({"project": SAMPLE_PROJECT, "paths": []})
         )
         .is_err(),
-        "delete_files must remain legacy route metadata only, not ToolCall parseable"
+        "retired delete_files alias must stay absent from ToolCall parsing"
     );
     // A ToolDefinition may be `ModelHidden`: kernel-known and dispatchable only
     // through an adapter that explicitly projects it, or retained as compatibility

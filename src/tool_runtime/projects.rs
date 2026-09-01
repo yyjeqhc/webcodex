@@ -751,19 +751,12 @@ fn project_source(project: &ShellAgentProjectSummary) -> &'static str {
 }
 
 fn project_git_available(
-    client: &crate::shell_protocol::ShellClientView,
     project: &crate::shell_protocol::ShellAgentProjectSummary,
 ) -> Option<bool> {
     if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
         Some(true)
-    } else if client
-        .agent_protocol_semantics
-        .compatibility
-        .reports_project_git_metadata()
-    {
-        Some(false)
     } else {
-        None
+        Some(false)
     }
 }
 
@@ -779,7 +772,7 @@ fn smoke_project_capabilities(
     client: &ShellClientSemanticView,
     project: &crate::shell_protocol::ShellAgentProjectSummary,
 ) -> Value {
-    let git_available = project_git_available(&client.view, project);
+    let git_available = project_git_available(project);
     let safe_smoke_project =
         project.allow_patch && client.view.connected && smoke_marker_present(project);
     let supports_artifact_smoke =

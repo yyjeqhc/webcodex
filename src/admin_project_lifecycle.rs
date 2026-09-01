@@ -836,8 +836,7 @@ mod tests {
     use crate::auth::AuthKind;
     use crate::shell_client::ShellJobStartMetadata;
     use crate::shell_protocol::{
-        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
-        ShellJobOpRequest,
+        ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest,
     };
 
     fn user_auth(username: &str) -> AuthContext {
@@ -893,23 +892,6 @@ mod tests {
                         project_lifecycle: true,
                         ..Default::default()
                     }),
-                    projects: Some(vec![ShellAgentProjectSummary {
-                        id: "demo".to_string(),
-                        name: Some("demo".to_string()),
-                        path: "/tmp/demo".to_string(),
-                        allow_patch: true,
-                        kind: None,
-                        description: None,
-                        hooks: Vec::new(),
-                        disabled: false,
-                        revision: Some(revision.clone()),
-                        git_branch: None,
-                        git_head: None,
-                        git_dirty: None,
-                        updated_at: 1,
-                        shell_profile: None,
-                    }]),
-                    agent_protocol_version: Some("polling-v1".to_string()),
                     policy: None,
                     process_started_at: None,
                     build: None,

@@ -573,7 +573,6 @@ async fn assert_no_apply_text_edits_runner_request(runtime: &ToolRuntime, client
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -1065,7 +1064,6 @@ async fn apply_text_edits_scoped_request_fails_closed_before_enqueue_without_cap
         .poll(ShellAgentPollRequest {
             client_id: "ate-scope-off".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

@@ -7,10 +7,8 @@ use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_client::AgentTransport;
 use crate::shell_protocol::{
-    AgentBuildInfo, AgentHostContext, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellJobOpRequest, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
-    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
+    AgentBuildInfo, AgentHostContext, AgentProtocolGenerationNumber, ShellClientCapabilities,
+    ShellClientRegisterRequest, ShellJobOpRequest, AGENT_PROTOCOL_GENERATION_V2,
 };
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
@@ -49,7 +47,6 @@ fn register_request(
     instance: &str,
     process_started_at: Option<i64>,
     build: Option<AgentBuildInfo>,
-    protocol: &str,
 ) -> ShellClientRegisterRequest {
     crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         client_id: client_id.to_string(),
@@ -68,8 +65,6 @@ fn register_request(
             async_shell_jobs: true,
             ..Default::default()
         }),
-        projects: Some(vec![registered_project("proj", "/tmp/reconnect-proj")]),
-        agent_protocol_version: Some(protocol.to_string()),
         policy: None,
         process_started_at,
         build,
@@ -78,6 +73,32 @@ fn register_request(
         coding_agent_providers: None,
         coding_agent_inventory: None,
     })
+}
+
+async fn register_with_project(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    instance: &str,
+    process_started_at: Option<i64>,
+    build: Option<AgentBuildInfo>,
+) {
+    runtime
+        .shell_clients
+        .register(register_request(
+            client_id,
+            instance,
+            process_started_at,
+            build,
+        ))
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        instance,
+        vec![registered_project("proj", "/tmp/reconnect-proj")],
+    )
+    .await;
 }
 
 async fn layers(runtime: &ToolRuntime) -> Value {
@@ -105,17 +126,7 @@ fn assert_layer_contract(layer: &Value, context: &str) {
 #[tokio::test]
 async fn runner_disconnect_and_reconnect_change_layers_independently() {
     let runtime = test_runtime();
-    runtime
-        .shell_clients
-        .register(register_request(
-            "rc-agent",
-            "inst-a",
-            Some(1_000),
-            None,
-            "polling-v1",
-        ))
-        .await
-        .unwrap();
+    register_with_project(&runtime, "rc-agent", "inst-a", Some(1_000), None).await;
 
     // Connected: every runner-derived layer is a real observation.
     let connected = layers(&runtime).await;
@@ -175,17 +186,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
 
     // Reconnect with a NEW process instance: new connection replaces the old
     // state, the project re-registers, and no server restart was needed.
-    runtime
-        .shell_clients
-        .register(register_request(
-            "rc-agent",
-            "inst-b",
-            Some(2_000),
-            None,
-            "polling-v1",
-        ))
-        .await
-        .unwrap();
+    register_with_project(&runtime, "rc-agent", "inst-b", Some(2_000), None).await;
     let reconnected = layers(&runtime).await;
     assert_eq!(reconnected["runner_process"]["status"], "ready");
     assert_eq!(reconnected["runner_process"]["process_started_at"], 2_000);
@@ -241,17 +242,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
 #[tokio::test]
 async fn stale_heartbeat_without_disconnect_is_not_ready() {
     let runtime = test_runtime();
-    runtime
-        .shell_clients
-        .register(register_request(
-            "stale-agent",
-            "inst-a",
-            None,
-            None,
-            "polling-v1",
-        ))
-        .await
-        .unwrap();
+    register_with_project(&runtime, "stale-agent", "inst-a", None, None).await;
     runtime
         .shell_clients
         .set_last_seen_for_test("stale-agent", chrono::Utc::now().timestamp() - 3600)
@@ -475,17 +466,7 @@ async fn malformed_persisted_authority_is_discarded_fail_closed() {
 #[tokio::test]
 async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
     let runtime = test_runtime();
-    runtime
-        .shell_clients
-        .register(register_request(
-            "job-agent",
-            "inst-a",
-            None,
-            None,
-            "polling-v1",
-        ))
-        .await
-        .unwrap();
+    register_with_project(&runtime, "job-agent", "inst-a", None, None).await;
 
     // Start an async agent job and let the agent pick it up.
     let job = runtime
@@ -525,17 +506,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
 
     // Reconnect with a new instance: the terminal state must not be
     // resurrected or duplicated.
-    runtime
-        .shell_clients
-        .register(register_request(
-            "job-agent",
-            "inst-b",
-            None,
-            None,
-            "polling-v1",
-        ))
-        .await
-        .unwrap();
+    register_with_project(&runtime, "job-agent", "inst-b", None, None).await;
     let jobs = runtime.shell_clients.list_jobs(None).await;
     let still_lost = jobs
         .iter()
@@ -546,55 +517,16 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
 }
 
 #[tokio::test]
-async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
+async fn runtime_status_keeps_generation_independent_from_transport() {
     let runtime = test_runtime();
     let cases = [
-        (
-            "polling-inline",
-            AGENT_PROTOCOL_VERSION_POLLING_V1,
-            AgentTransport::Polling,
-            "polling",
-            "inline",
-        ),
-        (
-            "polling-paged",
-            AGENT_PROTOCOL_VERSION_POLLING_V2,
-            AgentTransport::Polling,
-            "polling",
-            "paged",
-        ),
-        (
-            "websocket-inline",
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-            AgentTransport::WebSocket,
-            "websocket",
-            "inline",
-        ),
-        (
-            "websocket-paged",
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
-            AgentTransport::WebSocket,
-            "websocket",
-            "paged",
-        ),
-        (
-            "quic-inline",
-            AGENT_PROTOCOL_VERSION_QUIC_V1,
-            AgentTransport::Quic,
-            "quic",
-            "inline",
-        ),
-        (
-            "quic-paged",
-            AGENT_PROTOCOL_VERSION_QUIC_V2,
-            AgentTransport::Quic,
-            "quic",
-            "paged",
-        ),
+        ("polling-gen2", AgentTransport::Polling, "polling"),
+        ("websocket-gen2", AgentTransport::WebSocket, "websocket"),
+        ("quic-gen2", AgentTransport::Quic, "quic"),
     ];
 
-    for (client_id, protocol, transport, _, _) in cases.iter().copied() {
-        let registration = register_request(client_id, "inst", None, None, protocol);
+    for (client_id, transport, _) in cases.iter().copied() {
+        let registration = register_request(client_id, "inst", None, None);
         match transport {
             AgentTransport::Polling => {
                 runtime.shell_clients.register(registration).await.unwrap();
@@ -621,15 +553,15 @@ async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
         .as_array()
         .unwrap();
     let clients = status.output["agents"]["clients"].as_array().unwrap();
-    for (client_id, raw_protocol, _, transport, inventory_strategy) in cases.iter().copied() {
+    for (client_id, _, transport) in cases {
         let runner = runners
             .iter()
             .find(|runner| runner["client_id"] == client_id)
             .unwrap_or_else(|| panic!("runner {client_id} missing"));
-        assert_eq!(runner["agent_protocol_version"], raw_protocol);
-        assert_eq!(runner["protocol_supported"], true);
-        assert_eq!(runner["protocol_compatibility"], "v1");
-        assert_eq!(runner["project_inventory_strategy"], inventory_strategy);
+        assert_eq!(
+            runner["agent_protocol_generation"],
+            AGENT_PROTOCOL_GENERATION_V2.get()
+        );
         assert_eq!(runner["status"], "compatible");
 
         let client = clients
@@ -637,9 +569,11 @@ async fn version_compatibility_accepts_all_normalized_legacy_wire_forms() {
             .find(|client| client["client_id"] == client_id)
             .unwrap_or_else(|| panic!("client {client_id} missing"));
         assert_eq!(client["transport"], transport);
-        assert_eq!(client["agent_protocol_version"], raw_protocol);
-        assert_eq!(client["protocol_compatibility"], "v1");
-        assert_eq!(client["project_inventory_strategy"], inventory_strategy);
+        assert_eq!(
+            client["agent_protocol_generation"],
+            AGENT_PROTOCOL_GENERATION_V2.get()
+        );
+        assert_eq!(client["project_inventory"]["sync_state"], "pending");
     }
 }
 
@@ -666,7 +600,6 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
                 git_commit: Some(different_commit),
                 git_dirty: Some(false),
             }),
-            "polling-v1",
         ))
         .await
         .unwrap();
@@ -682,24 +615,23 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
                 git_commit: None,
                 git_dirty: None,
             }),
-            "websocket-v1",
         ))
         .await
         .unwrap();
-    // Unsupported protocol identities fail registration and therefore never
+    // Unsupported protocol generations fail registration and therefore never
     // become a diagnostic-but-operational runtime client.
+    let mut unsupported = register_request("future-generation", "inst-3", None, None);
+    unsupported
+        .capabilities
+        .as_mut()
+        .unwrap()
+        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
     let unsupported = runtime
         .shell_clients
-        .register(register_request(
-            "legacy",
-            "inst-3",
-            None,
-            None,
-            "prehistoric-v0",
-        ))
+        .register(unsupported)
         .await
         .unwrap_err();
-    assert_eq!(unsupported, "agent_protocol_version is unsupported");
+    assert_eq!(unsupported, "agent_protocol_generation is unsupported");
 
     let status = runtime.runtime_status(None).await;
     assert!(status.success);
@@ -757,7 +689,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
 #[tokio::test]
 async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     let runtime = test_runtime();
-    let mut request = register_request("sf", "inst-host-context", None, None, "polling-v1");
+    let mut request = register_request("sf", "inst-host-context", None, None);
     request.host_context = Some(AgentHostContext {
         role: Some("server_host".to_string()),
         runtime: Some("Prefer this Runner for operations on its own host.".to_string()),
@@ -807,7 +739,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
 
     // Same-instance reconnect republishes the current startup context; it does
     // not depend on the previous transport record for this descriptive fact.
-    let mut reconnect = register_request("sf", "inst-host-context", None, None, "websocket-v1");
+    let mut reconnect = register_request("sf", "inst-host-context", None, None);
     reconnect.host_context = Some(AgentHostContext {
         role: Some("server_host".to_string()),
         network: Some("Internal destinations normally use the direct path.".to_string()),
@@ -830,7 +762,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
 #[tokio::test]
 async fn runner_host_context_is_revalidated_at_server_registration() {
     let runtime = test_runtime();
-    let mut request = register_request("bad-context", "inst-bad", None, None, "polling-v1");
+    let mut request = register_request("bad-context", "inst-bad", None, None);
     request.host_context = Some(AgentHostContext {
         role: Some("Server Host".to_string()),
         ..Default::default()
@@ -898,7 +830,6 @@ async fn dispatch_start_coding_task_in_window_with_transport(
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
-                projects: None,
             })
             .await
             .unwrap()

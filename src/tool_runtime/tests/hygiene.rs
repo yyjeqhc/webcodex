@@ -108,8 +108,10 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
     assert!(!metadata.shell_like);
     assert!(metadata.requires_project);
     assert_eq!(
-        metadata.legacy_oauth_scope_hint,
-        Some(crate::auth::SCOPE_PROJECT_READ)
+        metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(
+            crate::auth::SCOPE_PROJECT_READ
+        )
     );
 
     // MCP annotations: readOnlyHint=true.
@@ -154,7 +156,7 @@ fn workspace_hygiene_check_openapi_operation_count_unchanged() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 23, "operation count must stay 23");
+    assert_eq!(count, 22, "operation count must stay 22");
 }
 
 // =========================================================================

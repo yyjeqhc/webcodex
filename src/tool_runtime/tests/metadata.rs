@@ -5,7 +5,7 @@ use super::support::*;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellProjectInventoryPage, AGENT_PROTOCOL_VERSION_POLLING_V2,
+    ShellProjectInventoryPage, AGENT_PROTOCOL_GENERATION_V2,
 };
 use crate::tool_runtime::sessions::{
     TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
@@ -104,7 +104,7 @@ fn list_agents_call() -> ToolCall {
     }
 }
 
-fn metadata_agent_registration(client_id: &str, protocol: &str) -> ShellClientRegisterRequest {
+fn metadata_agent_registration(client_id: &str) -> ShellClientRegisterRequest {
     crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         process_started_at: None,
         build: None,
@@ -119,8 +119,6 @@ fn metadata_agent_registration(client_id: &str, protocol: &str) -> ShellClientRe
         hostname: None,
         host_context: None,
         capabilities: None,
-        projects: None,
-        agent_protocol_version: Some(protocol.to_string()),
         policy: None,
     })
 }
@@ -158,11 +156,6 @@ async fn register_computer_target_for_auth(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    &format!("private-{client_id}"),
-                    &format!("/tmp/private-{client_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
@@ -202,11 +195,6 @@ async fn register_application_target_for_auth(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    &format!("private-{client_id}"),
-                    &format!("/tmp/private-{client_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
@@ -243,11 +231,6 @@ async fn register_display_target_for_auth(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    &format!("private-{client_id}"),
-                    &format!("/tmp/private-{client_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
@@ -284,11 +267,6 @@ async fn register_pointer_target_for_auth(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    &format!("private-{client_id}"),
-                    &format!("/tmp/private-{client_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
@@ -327,11 +305,6 @@ async fn register_clipboard_target_for_auth(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    &format!("private-{client_id}"),
-                    &format!("/tmp/private-{client_id}"),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
@@ -415,17 +388,22 @@ async fn register_agent_projects_for_auth(
                         agent_protocol_generation: None,
                     },
                 )),
-                projects: Some(vec![registered_project(
-                    project_id,
-                    &format!("/tmp/{}", project_id),
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &format!("inst-{client_id}"),
+        vec![registered_project(
+            project_id,
+            &format!("/tmp/{project_id}"),
+        )],
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -867,8 +845,6 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 capabilities,
             )),
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
             policy: None,
         })
         .await
@@ -1040,8 +1016,6 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 capabilities,
             )),
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V2.to_string()),
             policy: None,
         })
         .await
@@ -1255,8 +1229,6 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
             )),
-            projects: None,
-            agent_protocol_version: Some("websocket-v1".to_string()),
             policy: Some(AgentPolicySummary {
                 allow_raw_shell: true,
                 allow_cwd_anywhere: false,
@@ -1591,7 +1563,10 @@ fn session_handoff_validation_exposure_keeps_read_only_metadata() {
     );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
+    assert_eq!(
+        metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require("runtime:read")
+    );
 }
 
 #[test]
@@ -1606,7 +1581,10 @@ fn project_overview_metadata_schema_and_flattened_args_are_read_only() {
     );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.legacy_oauth_scope_hint, Some("project:read"));
+    assert_eq!(
+        metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require("project:read")
+    );
     assert_eq!(tool_manifest_category("project_overview"), "project");
 
     let spec = registered_tool_specs()
@@ -2568,12 +2546,11 @@ fn runtime_info_from_env_reads_effective_server_config() {
 #[tokio::test]
 async fn runtime_status_agent_summary_includes_protocol_version() {
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("agent-1", "polling-v1");
+    let mut registration = metadata_agent_registration("agent-1");
     registration.agent_instance_id = "inst".to_string();
     registration.job_concurrency_limit = Some(4);
     registration.display_name = Some("Workstation".to_string());
     registration.owner = Some("alice".to_string());
-    registration.projects = Some(vec![]);
     registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
@@ -2589,9 +2566,10 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     let clients = agents["clients"].as_array().unwrap();
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0]["client_id"], "agent-1");
-    assert_eq!(clients[0]["agent_protocol_version"], "polling-v1");
-    assert_eq!(clients[0]["protocol_compatibility"], "v1");
-    assert_eq!(clients[0]["project_inventory_strategy"], "inline");
+    assert_eq!(
+        clients[0]["agent_protocol_generation"],
+        AGENT_PROTOCOL_GENERATION_V2.get()
+    );
     assert_eq!(clients[0]["transport"], "polling");
     assert_eq!(clients[0]["connected"], true);
     assert!(clients[0]["capabilities"].is_object());
@@ -2630,7 +2608,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         ToolProvidersStatus,
     };
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("policy-agent", "websocket-v1");
+    let mut registration = metadata_agent_registration("policy-agent");
     registration.agent_instance_id = "inst-p".to_string();
     registration.owner = Some("alice".to_string());
     registration.policy = Some(AgentPolicySummary {
@@ -2754,7 +2732,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .input_schema
         .clone();
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("provider-surface", "websocket-v1");
+    let mut registration = metadata_agent_registration("provider-surface");
     registration.agent_instance_id = "inst-surface".to_string();
     registration.policy = Some(AgentPolicySummary {
         tool_providers: Some(ToolProvidersStatus {
@@ -2813,14 +2791,14 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .values()
         .map(|path| path.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 23);
+    assert_eq!(operation_count, 22);
 }
 
 #[tokio::test]
 async fn runtime_status_policy_summary_is_null_for_older_agents() {
     let registry = Arc::new(ShellClientRegistry::default());
     // Older agent: no policy field (None).
-    let mut registration = metadata_agent_registration("legacy-agent", "polling-v1");
+    let mut registration = metadata_agent_registration("legacy-agent");
     registration.agent_instance_id = "inst-l".to_string();
     registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
@@ -3078,7 +3056,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
 async fn list_agents_includes_sanitized_policy_summary() {
     use crate::shell_protocol::AgentPolicySummary;
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("list-policy-agent", "websocket-v1");
+    let mut registration = metadata_agent_registration("list-policy-agent");
     registration.agent_instance_id = "inst-lp".to_string();
     registration.job_concurrency_limit = Some(8);
     registration.owner = Some("alice".to_string());
@@ -3134,11 +3112,10 @@ async fn list_agents_includes_sanitized_policy_summary() {
 async fn runtime_status_distinguishes_stale_registration_from_transport_connection() {
     use crate::shell_client::AgentTransport;
     let registry = Arc::new(ShellClientRegistry::default());
-    let mut registration = metadata_agent_registration("ws-stale", "websocket-v1");
+    let mut registration = metadata_agent_registration("ws-stale");
     registration.agent_instance_id = "inst".to_string();
     registration.display_name = Some("Stale WS".to_string());
     registration.owner = Some("alice".to_string());
-    registration.projects = Some(vec![]);
     registry.register(registration).await.unwrap();
     registry
         .set_transport("ws-stale", AgentTransport::WebSocket)
@@ -3184,7 +3161,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
 async fn runtime_status_reflects_websocket_transport_label() {
     let registry = Arc::new(ShellClientRegistry::default());
     let runtime = ToolRuntime::new(registry.clone(), Arc::new(RuntimeInfo::default()));
-    let mut registration = metadata_agent_registration("ws-agent", "websocket-v1");
+    let mut registration = metadata_agent_registration("ws-agent");
     registration.agent_instance_id = "inst".to_string();
     registration.owner = Some("alice".to_string());
     registry.register(registration).await.unwrap();
@@ -3205,9 +3182,10 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .find(|c| c["client_id"] == "ws-agent")
         .expect("ws-agent present");
     assert_eq!(entry["transport"], "websocket");
-    assert_eq!(entry["agent_protocol_version"], "websocket-v1");
-    assert_eq!(entry["protocol_compatibility"], "v1");
-    assert_eq!(entry["project_inventory_strategy"], "inline");
+    assert_eq!(
+        entry["agent_protocol_generation"],
+        AGENT_PROTOCOL_GENERATION_V2.get()
+    );
 }
 
 #[tokio::test]

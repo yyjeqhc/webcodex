@@ -333,8 +333,8 @@ async fn http_projects_apply_unified_diff_dispatches_to_runtime() {
 }
 
 // =========================================================================
-// Dedicated mutation actions (apply_unified_diff, delete_files,
-// git_restore_paths, discard_untracked) — auth gate + dispatch wiring
+// Dedicated mutation actions (apply_unified_diff, git_restore_paths,
+// discard_untracked) — auth gate + dispatch wiring
 // =========================================================================
 
 #[tokio::test]
@@ -345,10 +345,6 @@ async fn http_phase3_mutation_actions_require_bearer_auth() {
         (
             "/api/projects/apply_unified_diff",
             json!({"project": "demo", "diff": "diff"}),
-        ),
-        (
-            "/api/projects/delete_files",
-            json!({"project": "demo", "paths": ["x.txt"]}),
         ),
         (
             "/api/projects/git_restore_paths",
@@ -383,10 +379,6 @@ async fn http_phase3_mutation_actions_dispatch_to_runtime() {
         (
             "/api/projects/apply_unified_diff",
             json!({"project": "agent:nope:nope", "diff": "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"}),
-        ),
-        (
-            "/api/projects/delete_files",
-            json!({"project": "agent:nope:nope", "paths": ["x.txt"]}),
         ),
         (
             "/api/projects/git_restore_paths",

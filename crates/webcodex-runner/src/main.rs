@@ -31,10 +31,8 @@ use shell_protocol::{
     ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
     ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
     ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_GENERATION_V2,
-    AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_POLLING_V2,
     JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
-    PROJECT_INVENTORY_INLINE_MAX_SUMMARIES, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
     VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
@@ -42,10 +40,7 @@ use shell_protocol::{
 #[cfg(test)]
 use runner_config::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
-use shell_protocol::{
-    AgentEnvelope, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
-    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-};
+use shell_protocol::{AgentEnvelope, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES};
 #[cfg(test)]
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -1984,128 +1979,9 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     capabilities
 }
 
-fn legacy_inline_project_inventory(
-    projects: &[ShellAgentProjectSummary],
-) -> Option<Vec<ShellAgentProjectSummary>> {
-    if projects.len() > PROJECT_INVENTORY_INLINE_MAX_SUMMARIES {
-        return None;
-    }
-    let serialized = serde_json::to_vec(projects).ok()?;
-    (serialized.len() <= PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES).then(|| projects.to_vec())
-}
-
-const PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES: usize = 512 * 1024;
-
-#[derive(Debug, Clone)]
-struct ProjectRegistrationBootstrap {
-    projects: Option<Vec<ShellAgentProjectSummary>>,
-    job_inventory: ShellJobInventory,
-    paged_inventory: bool,
-}
-
-fn project_registration_bootstrap(
-    client_id: &str,
-    projects: &[ShellAgentProjectSummary],
-    job_inventory: &ShellJobInventory,
-) -> ProjectRegistrationBootstrap {
-    if let Some(inline) = legacy_inline_project_inventory(projects) {
-        return ProjectRegistrationBootstrap {
-            projects: Some(inline),
-            job_inventory: job_inventory.clone(),
-            paged_inventory: false,
-        };
-    }
-
-    // A paged-inventory registration never carries the full project inventory. To keep an
-    // old Server able to validate same-process Job reconciliation, include only
-    // the real project summaries referenced by the bounded register-time Job
-    // inventory. Active jobs are complete and therefore have priority; terminal
-    // history is explicitly partial and may be omitted to preserve the legacy
-    // 64-summary compatibility envelope.
-    let prefix = format!("agent:{client_id}:");
-    let by_id = projects
-        .iter()
-        .filter(|project| !project.disabled)
-        .map(|project| (project.id.as_str(), project))
-        .collect::<HashMap<_, _>>();
-    let mut bootstrap_projects = Vec::new();
-    let mut bootstrap_ids = HashSet::new();
-    let mut bootstrap_jobs = Vec::new();
-    let mut active_coverage_complete = true;
-
-    for snapshot in &job_inventory.jobs {
-        let active = matches!(
-            snapshot.status.as_str(),
-            "agent_queued" | "running" | "stop_requested"
-        );
-        if let Some(runtime_project_id) = snapshot.context.runtime_project_id.as_deref() {
-            let project_id = runtime_project_id
-                .strip_prefix(&prefix)
-                .filter(|project_id| !project_id.is_empty());
-            let Some(project_id) = project_id else {
-                if active {
-                    active_coverage_complete = false;
-                    break;
-                }
-                continue;
-            };
-            if !bootstrap_ids.contains(project_id) {
-                let Some(project) = by_id.get(project_id).copied() else {
-                    if active {
-                        active_coverage_complete = false;
-                        break;
-                    }
-                    continue;
-                };
-                let mut candidate = bootstrap_projects.clone();
-                candidate.push(project.clone());
-                let candidate_fits = candidate.len() <= PROJECT_INVENTORY_INLINE_MAX_SUMMARIES
-                    && serde_json::to_vec(&candidate)
-                        .map(|encoded| {
-                            encoded.len() <= PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES
-                        })
-                        .unwrap_or(false);
-                if candidate_fits {
-                    bootstrap_projects = candidate;
-                    bootstrap_ids.insert(project_id.to_string());
-                } else if active {
-                    active_coverage_complete = false;
-                    break;
-                } else {
-                    continue;
-                }
-            }
-        }
-        bootstrap_jobs.push(snapshot.clone());
-    }
-
-    if !active_coverage_complete {
-        tracing::warn!(
-            client_id,
-            "paged project inventory cannot fit active Job project bootstrap into the legacy registration envelope; a Server upgrade is required for Job reconciliation"
-        );
-        return ProjectRegistrationBootstrap {
-            projects: None,
-            job_inventory: job_inventory.clone(),
-            paged_inventory: true,
-        };
-    }
-
-    ProjectRegistrationBootstrap {
-        projects: (!bootstrap_projects.is_empty()).then_some(bootstrap_projects),
-        job_inventory: ShellJobInventory {
-            active_complete: true,
-            jobs: bootstrap_jobs,
-        },
-        paged_inventory: true,
-    }
-}
-
 #[cfg(test)]
 fn build_register_request(
     cfg: &RunnerConfig,
-    projects: Vec<ShellAgentProjectSummary>,
-    protocol_version: &str,
     agent_instance_id: &str,
     prepared_cache_count: usize,
 ) -> ShellClientRegisterRequest {
@@ -2113,8 +1989,6 @@ fn build_register_request(
     build_register_request_with_provider_status(
         cfg,
         &runtime,
-        Some(projects),
-        protocol_version,
         agent_instance_id,
         prepared_cache_count,
         ShellJobInventory {
@@ -2128,8 +2002,6 @@ fn build_register_request(
 fn build_register_request_with_provider_status(
     cfg: &RunnerConfig,
     runtime: &ReloadableRunnerConfig,
-    projects: Option<Vec<ShellAgentProjectSummary>>,
-    protocol_version: &str,
     agent_instance_id: &str,
     prepared_cache_count: usize,
     job_inventory: ShellJobInventory,
@@ -2158,8 +2030,6 @@ fn build_register_request_with_provider_status(
             hostname: cfg.hostname.clone().or_else(hostname),
             host_context: cfg.host_context.clone(),
             capabilities: Some(capabilities),
-            projects,
-            agent_protocol_version: Some(protocol_version.to_string()),
             policy: Some(register_policy_summary(
                 &hot,
                 prepared_cache_count,
@@ -2323,31 +2193,19 @@ fn register(
         usize,
         ShellJobInventory,
         Vec<ShellAgentProjectSummary>,
-        Option<ShellProjectInventoryStatus>,
+        ShellProjectInventoryStatus,
     ),
     RegisterError,
 > {
     let projects = project_cache.get_with_shutdown(cfg, shutdown);
     let projects_count = projects.iter().filter(|project| !project.disabled).count();
     let job_inventory = jobs.inventory();
-    let bootstrap = project_registration_bootstrap(&cfg.client_id, &projects, &job_inventory);
-    // Keep projecting inline/paged inventory through the historical `*-v1/v2`
-    // wire label so older Servers preserve their registration behavior. Current
-    // Servers normalize this compatibility encoding at ingress; it is not a
-    // canonical protocol-generation switch.
-    let protocol_version = if bootstrap.paged_inventory {
-        AGENT_PROTOCOL_VERSION_POLLING_V2
-    } else {
-        AGENT_PROTOCOL_VERSION_POLLING_V1
-    };
     let (body, provider, provider_revision) = build_register_request_with_provider_status(
         cfg,
         runtime,
-        bootstrap.projects,
-        protocol_version,
         agent_instance_id,
         prepared_cache_count,
-        bootstrap.job_inventory,
+        job_inventory.clone(),
     );
     let response: ShellClientRegisterResponse = post_json(client, cfg, AGENT_REGISTER_PATH, &body)
         .map_err(|error| RegisterError::from_http(error, &cfg.client_id))?;
@@ -2356,7 +2214,11 @@ fn register(
         let inventory_status = response
             .client
             .as_ref()
-            .and_then(|client| client.project_inventory.clone());
+            .and_then(|client| client.project_inventory.clone())
+            .ok_or_else(|| RegisterError {
+                kind: RegisterErrorKind::Protocol,
+                message: "register response missing canonical project_inventory acknowledgement; Server is incompatible with this 0.4 Runner".to_string(),
+            })?;
         Ok((projects_count, job_inventory, projects, inventory_status))
     } else {
         Err(RegisterError::from_response_error(
@@ -5584,7 +5446,6 @@ fn handle_one_poll(
     jobs: &JobManager,
     persistent_shells: &webcodex_runner::PersistentShellManager,
     project_cache: &mut RunnerProjectCache,
-    poll_projects: Option<Vec<ShellAgentProjectSummary>>,
     project_inventory_page: Option<ShellProjectInventoryPage>,
     agent_instance_id: &str,
     lsp: &webcodex_runner::LspSupervisor,
@@ -5610,7 +5471,6 @@ fn handle_one_poll(
         request: ShellAgentPollRequest {
             client_id: cfg.client_id.clone(),
             agent_instance_id: agent_instance_id.to_string(),
-            projects: poll_projects,
         },
         tool_providers: provider_update
             .as_ref()

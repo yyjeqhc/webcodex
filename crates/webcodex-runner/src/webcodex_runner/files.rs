@@ -223,8 +223,6 @@ fn handle_delete_project_files_request(
 
     let output = serde_json::json!({
         "deleted_paths": payload.paths,
-        "missing_paths": [],
-        "refused_paths": [],
     });
     CommandResult {
         exit_code: Some(0),

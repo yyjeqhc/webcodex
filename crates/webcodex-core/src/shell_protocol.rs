@@ -35,12 +35,6 @@ fn default_transport_polling() -> String {
     "polling".to_string()
 }
 
-/// Polling wire label for inline project registration. The `v1`/`v2` suffix
-/// selects project inventory strategy, not the canonical agent protocol generation.
-pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
-/// Polling wire label for paged project inventory. Current Servers normalize
-/// this label at registration ingress before business logic sees it.
-pub const AGENT_PROTOCOL_VERSION_POLLING_V2: &str = "polling-v2";
 /// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
 /// escape hatch; larger program text belongs in `run_script`, while large
 /// literal data belongs in stdin/files/artifacts.
@@ -115,22 +109,6 @@ pub const GO_TEST_PACKAGE_MAX_ITEMS: usize = 8;
 /// Maximum byte length of one focused `go_test` package pattern.
 pub const GO_TEST_PACKAGE_MAX_BYTES: usize = 256;
 
-/// WebSocket wire label for inline project registration. Kept in the shared
-/// protocol module so Server and Runner agree on project-inventory semantics
-/// without treating the label as canonical transport semantics.
-pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
-/// WebSocket wire label for paged project inventory. The `v2` suffix is
-/// inventory metadata rather than a distinct canonical protocol generation.
-pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V2: &str = "websocket-v2";
-
-/// QUIC wire label for inline project registration. QUIC still uses the
-/// shared `AgentEnvelope` grammar; the actual transport identity remains the
-/// separate `"quic"` transport state maintained by the Server connection path.
-pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
-/// QUIC wire label for paged project inventory. The `v2` suffix is inventory
-/// metadata rather than a distinct canonical protocol generation.
-pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
-
 /// Raw additive protocol-generation advertisement carried by Runner registration.
 ///
 /// This wire type deliberately permits future/unsupported numeric values so a new
@@ -153,80 +131,6 @@ impl AgentProtocolGenerationNumber {
 pub const AGENT_PROTOCOL_GENERATION_V2: AgentProtocolGenerationNumber =
     AgentProtocolGenerationNumber::new(2);
 
-/// Canonical compatibility identity for the agent request/response grammar.
-///
-/// All six current transport x `v1`/`v2` labels below describe the same request/
-/// response grammar. Their suffix difference only projects registration inventory
-/// strategy; successful Runner registration separately requires protocol generation 2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentProtocolCompatibility {
-    V1,
-    Unsupported,
-}
-
-impl Default for AgentProtocolCompatibility {
-    fn default() -> Self {
-        Self::Unsupported
-    }
-}
-
-impl AgentProtocolCompatibility {
-    pub fn is_supported(self) -> bool {
-        matches!(self, Self::V1)
-    }
-
-    /// V1 project summaries have an explicit optional Git metadata contract, so
-    /// absent Git fields mean "not a Git project" rather than "old peer unknown".
-    pub fn reports_project_git_metadata(self) -> bool {
-        matches!(self, Self::V1)
-    }
-}
-
-/// Canonical project inventory synchronization strategy for one registration.
-/// This is deliberately independent from transport and protocol compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentProjectInventoryStrategy {
-    Inline,
-    Paged,
-}
-
-impl Default for AgentProjectInventoryStrategy {
-    fn default() -> Self {
-        Self::Inline
-    }
-}
-
-/// Server-normalized semantics derived once from the legacy announced wire label.
-/// Business logic must consume this representation rather than reinterpreting the
-/// raw transport/version string.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentProtocolSemantics {
-    pub compatibility: AgentProtocolCompatibility,
-    pub project_inventory: AgentProjectInventoryStrategy,
-}
-
-/// Compatibility ingress adapter for historical `transport-v1/v2` labels.
-/// Unknown labels fail closed to an unsupported compatibility identity and do
-/// not opt into paged inventory by suffix guessing.
-pub fn normalize_agent_protocol_semantics(version: &str) -> AgentProtocolSemantics {
-    match version {
-        AGENT_PROTOCOL_VERSION_POLLING_V1
-        | AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
-        | AGENT_PROTOCOL_VERSION_QUIC_V1 => AgentProtocolSemantics {
-            compatibility: AgentProtocolCompatibility::V1,
-            project_inventory: AgentProjectInventoryStrategy::Inline,
-        },
-        AGENT_PROTOCOL_VERSION_POLLING_V2
-        | AGENT_PROTOCOL_VERSION_WEBSOCKET_V2
-        | AGENT_PROTOCOL_VERSION_QUIC_V2 => AgentProtocolSemantics {
-            compatibility: AgentProtocolCompatibility::V1,
-            project_inventory: AgentProjectInventoryStrategy::Paged,
-        },
-        _ => AgentProtocolSemantics::default(),
-    }
-}
 pub const AGENT_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
 pub const SHELL_CLIENT_CAPABILITY_SHELL: &str = "shell";
@@ -507,10 +411,6 @@ pub const JOB_INVENTORY_MAX_SERIALIZED_BYTES: usize = 1024 * 1024;
 /// reconnect backoff without becoming an unbounded process-lifetime ledger.
 pub const JOB_TERMINAL_RETENTION_SECS: i64 = 15 * 60;
 
-/// Legacy registration/poll refreshes remain inline only while they fit this
-/// bounded batch. This is a wire-compatibility threshold, not a Runner project
-/// cardinality limit: larger inventories use [`ShellProjectInventoryPage`].
-pub const PROJECT_INVENTORY_INLINE_MAX_SUMMARIES: usize = 64;
 /// Maximum summaries in one project-inventory page. Cardinality is bounded per
 /// request rather than across the lifetime of a Runner.
 pub const PROJECT_INVENTORY_PAGE_MAX_SUMMARIES: usize = 64;
@@ -1054,14 +954,6 @@ pub struct ShellClientRegisterRequest {
     /// current host/service/network state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_context: Option<AgentHostContext>,
-    #[serde(default)]
-    pub projects: Option<Vec<ShellAgentProjectSummary>>,
-    /// Protocol identity announced by the agent during registration. The wire
-    /// field remains optional at deserialization so every transport can return
-    /// the same explicit registration-validation error for an omitted field;
-    /// successful registration requires a non-empty value.
-    #[serde(default)]
-    pub agent_protocol_version: Option<String>,
     /// Sanitized agent policy summary. Older agents that omit this field
     /// register with `None`; `runtime_status` / `listAgents` then expose
     /// `null` for the policy so older/minimal payloads stay compatible.
@@ -1243,13 +1135,8 @@ pub struct ShellClientView {
     /// predates paged inventory synchronization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory: Option<ShellProjectInventoryStatus>,
-    /// Agent-announced protocol identity preserved for diagnostics. Successful
-    /// registration always supplies this value; there is no omission fallback.
-    pub agent_protocol_version: String,
-    /// Canonical Server-normalized semantics for business decisions. The raw
-    /// announced label above remains diagnostics-only after registration ingress.
-    #[serde(skip)]
-    pub agent_protocol_semantics: AgentProtocolSemantics,
+    /// Canonical Runner protocol generation accepted by the Server at registration.
+    pub agent_protocol_generation: AgentProtocolGenerationNumber,
     /// Transport the agent is currently connected over: `"polling"`,
     /// `"websocket"`, or `"quic"`. Defaults to `"polling"` for older
     /// agents/views.
@@ -1573,20 +1460,17 @@ pub struct ShellAgentPollRequest {
     /// Active agent process identity. Must match the instance that currently
     /// holds the lease for `client_id`; a stale/replaced instance is rejected.
     pub agent_instance_id: String,
-    #[serde(default)]
-    pub projects: Option<Vec<ShellAgentProjectSummary>>,
 }
 
-/// Polling transport wrapper. Existing `ShellAgentPollRequest` JSON remains
-/// valid; current agents may attach changed-only sanitized runtime metadata.
+/// Polling transport wrapper. Current agents may attach changed-only sanitized
+/// runtime metadata and one bounded project-inventory page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentPollPayload {
     #[serde(flatten)]
     pub request: ShellAgentPollRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
-    /// Optional bounded project inventory page. Old Servers ignore this field;
-    /// new Runners send it only after registration negotiated support.
+    /// Optional bounded project inventory page for the canonical paged inventory protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory_page: Option<ShellProjectInventoryPage>,
 }
@@ -3098,57 +2982,6 @@ where
 mod envelope_tests {
     use super::*;
 
-    #[test]
-    fn legacy_agent_protocol_labels_normalize_into_one_protocol_generation() {
-        for version in [
-            AGENT_PROTOCOL_VERSION_POLLING_V1,
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-            AGENT_PROTOCOL_VERSION_QUIC_V1,
-        ] {
-            let semantics = normalize_agent_protocol_semantics(version);
-            assert_eq!(semantics.compatibility, AgentProtocolCompatibility::V1);
-            assert!(semantics.compatibility.reports_project_git_metadata());
-            assert_eq!(
-                semantics.project_inventory,
-                AgentProjectInventoryStrategy::Inline
-            );
-        }
-        for version in [
-            AGENT_PROTOCOL_VERSION_POLLING_V2,
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V2,
-            AGENT_PROTOCOL_VERSION_QUIC_V2,
-        ] {
-            let semantics = normalize_agent_protocol_semantics(version);
-            assert_eq!(semantics.compatibility, AgentProtocolCompatibility::V1);
-            assert!(semantics.compatibility.reports_project_git_metadata());
-            assert_eq!(
-                semantics.project_inventory,
-                AgentProjectInventoryStrategy::Paged
-            );
-        }
-
-        for version in [
-            "future-v2",
-            "websocket-next",
-            "quic-next",
-            "polling-v3",
-            "totally-random",
-        ] {
-            let unknown = normalize_agent_protocol_semantics(version);
-            assert_eq!(
-                unknown.compatibility,
-                AgentProtocolCompatibility::Unsupported,
-                "{version}"
-            );
-            assert!(!unknown.compatibility.reports_project_git_metadata());
-            assert_eq!(
-                unknown.project_inventory,
-                AgentProjectInventoryStrategy::Inline,
-                "unknown labels must not opt into paged inventory: {version}"
-            );
-        }
-    }
-
     fn sample_process_request() -> ShellAgentShellRequest {
         ShellAgentShellRequest {
             request_id: "req-process-1".to_string(),
@@ -3383,8 +3216,6 @@ mod envelope_tests {
                 coding_agent_runs: false,
                 agent_protocol_generation: None,
             }),
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
             policy: None,
             job_concurrency_limit: Some(4),
             job_inventory: None,
@@ -3426,89 +3257,17 @@ mod envelope_tests {
         match back {
             AgentEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.client_id, "ws-1");
-                assert_eq!(
-                    payload.agent_protocol_version.as_deref(),
-                    Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1),
-                );
                 assert_eq!(payload.job_concurrency_limit, Some(4));
                 let caps = payload.capabilities.expect("capabilities");
+                assert_eq!(
+                    caps.agent_protocol_generation,
+                    Some(AGENT_PROTOCOL_GENERATION_V2)
+                );
                 assert!(caps.shell);
                 assert!(!caps.file_write);
                 assert!(caps.persistent_shell);
             }
             other => panic!("expected register, got {:?}", other.kind()),
-        }
-    }
-
-    #[test]
-    fn additive_protocol_generation_is_ignored_by_frozen_pre_c4_envelope_shape() {
-        #[allow(dead_code)]
-        #[derive(Deserialize)]
-        struct LatestPreC4RegisterRequest {
-            client_id: String,
-            agent_instance_id: String,
-            #[serde(default)]
-            display_name: Option<String>,
-            #[serde(default)]
-            owner: Option<String>,
-            #[serde(default)]
-            hostname: Option<String>,
-            #[serde(default)]
-            capabilities: Option<serde_json::Value>,
-            #[serde(default)]
-            host_context: Option<AgentHostContext>,
-            #[serde(default)]
-            projects: Option<Vec<ShellAgentProjectSummary>>,
-            #[serde(default)]
-            agent_protocol_version: Option<String>,
-            #[serde(default)]
-            policy: Option<AgentPolicySummary>,
-            #[serde(default)]
-            process_started_at: Option<i64>,
-            #[serde(default)]
-            build: Option<AgentBuildInfo>,
-            #[serde(default)]
-            job_concurrency_limit: Option<usize>,
-            #[serde(default)]
-            job_inventory: Option<ShellJobInventory>,
-            #[serde(default)]
-            coding_agent_providers: Option<Vec<crate::coding_agent::CodingAgentProvider>>,
-            #[serde(default)]
-            coding_agent_inventory: Option<crate::coding_agent::CodingAgentRunInventory>,
-        }
-
-        #[derive(Deserialize)]
-        #[serde(tag = "type", rename_all = "snake_case")]
-        enum LatestPreC4Envelope {
-            Register {
-                #[serde(flatten)]
-                payload: LatestPreC4RegisterRequest,
-                #[serde(default)]
-                auth_token: Option<String>,
-            },
-        }
-
-        let mut payload = sample_register();
-        payload
-            .capabilities
-            .as_mut()
-            .unwrap()
-            .agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
-        let json = AgentEnvelope::Register { payload }.to_json().unwrap();
-        assert!(json.contains(r#""agent_protocol_generation":2"#));
-        match serde_json::from_str::<LatestPreC4Envelope>(&json).unwrap() {
-            LatestPreC4Envelope::Register {
-                payload,
-                auth_token,
-            } => {
-                assert_eq!(payload.client_id, "ws-1");
-                assert_eq!(
-                    payload.agent_protocol_version.as_deref(),
-                    Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
-                );
-                assert_eq!(payload.capabilities.unwrap()["file_read"], true);
-                assert!(auth_token.is_none());
-            }
         }
     }
 
@@ -3831,7 +3590,6 @@ mod envelope_tests {
     async fn job_reconciliation_inventory_round_trips_across_all_register_transports() {
         let inventory = reconciliation_inventory();
         let mut polling = sample_register();
-        polling.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string());
         polling
             .capabilities
             .as_mut()
@@ -3844,8 +3602,7 @@ mod envelope_tests {
         assert_eq!(polling_back.job_inventory.as_ref(), Some(&inventory));
         assert_eq!(polling_back.job_concurrency_limit, Some(4));
 
-        let mut websocket = polling.clone();
-        websocket.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string());
+        let websocket = polling.clone();
         let websocket_json = AgentEnvelope::Register { payload: websocket }
             .to_json()
             .unwrap();
@@ -3858,8 +3615,7 @@ mod envelope_tests {
             other => panic!("expected websocket register, got {:?}", other.kind()),
         }
 
-        let mut quic = polling;
-        quic.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string());
+        let quic = polling;
         let quic_frame = encode_quic_register_frame(&QuicRegisterFrame::new(
             quic,
             Some("test-only-token".to_string()),
@@ -4588,7 +4344,6 @@ mod envelope_tests {
         let poll = ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
-            projects: None,
         };
         let json = serde_json::to_string(&poll).unwrap();
         let back: ShellAgentPollRequest = serde_json::from_str(&json).unwrap();
@@ -4741,8 +4496,6 @@ mod envelope_tests {
             hostname: None,
             capabilities: None,
             host_context: None,
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
             policy: None,
             job_concurrency_limit: None,
             job_inventory: None,

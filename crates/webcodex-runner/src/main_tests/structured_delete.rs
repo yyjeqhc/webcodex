@@ -22,8 +22,6 @@ fn structured_delete_project_files_is_os_neutral_file_only_and_bounded() {
         output["deleted_paths"],
         serde_json::json!(["delete-me.txt", "missing.txt"])
     );
-    assert_eq!(output["missing_paths"], serde_json::json!([]));
-    assert_eq!(output["refused_paths"], serde_json::json!([]));
 
     std::fs::create_dir(tmp.path().join("directory-target")).unwrap();
     let directory = json_file_op_request(

@@ -296,9 +296,10 @@ ok "public MCP tools exclude Claude internals and removed edit tools"
 api_get /openapi.json | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert sum(len(v) for v in d["paths"].values()) == 25
-' || fail "OpenAPI operation count changed"
-ok "OpenAPI operation count remains 25"
+count = sum(len(v) for v in d["paths"].values())
+assert 0 < count < 30, count
+' || fail "OpenAPI operation count exceeded GPT Actions bound"
+ok "OpenAPI operation count remains below GPT Actions limit"
 
 READ_ARGS="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys

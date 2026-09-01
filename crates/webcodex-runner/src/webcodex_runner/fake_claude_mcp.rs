@@ -248,8 +248,8 @@ fn spawn_sleep_descendant() -> io::Result<std::process::Child> {
     command.spawn()
 }
 
-// Production fake_search/fake_edit plus harness tools and one non-callable discovery tool.
-const FAKE_TOOLS_BASE: &str = r#"{"name":"fake_search","description":"search","inputSchema":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"output_mode":{"type":"string"},"head_limit":{"type":"integer"},"-n":{"type":"boolean"},"-B":{"type":"integer"},"-A":{"type":"integer"}}}},{"name":"fake_edit","description":"edit","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}}}},{"name":"Read","description":"read a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["file_path"]}},{"name":"Edit","description":"edit a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["file_path","old_string","new_string"]}},{"name":"Write","description":"write a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}},"required":["file_path","content"]}},{"name":"Bash","description":"run a shell command","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}},{"name":"TaskCreate","description":"create a task (not callable via experimental harness)","inputSchema":{"type":"object","properties":{"subject":{"type":"string"},"description":{"type":"string"}},"required":["subject"]}}"#;
+// Search fixtures plus extra discovery tools used by schema and bound tests.
+const FAKE_TOOLS_BASE: &str = r#"{"name":"fake_search","description":"search","inputSchema":{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"},"output_mode":{"type":"string"},"head_limit":{"type":"integer"},"-n":{"type":"boolean"},"-B":{"type":"integer"},"-A":{"type":"integer"}}}},{"name":"fake_edit","description":"edit","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}}}},{"name":"Read","description":"read a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["file_path"]}},{"name":"Edit","description":"edit a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["file_path","old_string","new_string"]}},{"name":"Write","description":"write a file","inputSchema":{"type":"object","properties":{"file_path":{"type":"string"},"content":{"type":"string"}},"required":["file_path","content"]}},{"name":"Bash","description":"run a shell command","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}},{"name":"TaskCreate","description":"create a task outside the configured search mapping","inputSchema":{"type":"object","properties":{"subject":{"type":"string"},"description":{"type":"string"}},"required":["subject"]}}"#;
 
 fn tools_list_json(scenario: &str) -> String {
     match scenario {
@@ -264,7 +264,7 @@ fn tools_list_json(scenario: &str) -> String {
             parts.join(",")
         }
         "exp_large_schema" => {
-            // Schema body deliberately exceeds the 64 KiB experimental schema bound.
+            // Schema body deliberately exceeds the 64 KiB discovery schema bound.
             let pad = "x".repeat(70 * 1024);
             format!(
                 r#"{base},{{"name":"LargeSchemaTool","description":"oversized schema tool","inputSchema":{{"type":"object","properties":{{"payload":{{"type":"string","description":"{pad}"}}}},"required":["payload"]}}}}"#,

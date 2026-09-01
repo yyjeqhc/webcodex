@@ -45,12 +45,23 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
                     ..Default::default()
                 },
             )),
-            projects: Some(vec![registered_project(project_id, &project_path)]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![named_registered_project(
+            client_id,
+            project_id,
+            project_id,
+            &project_path,
+            1,
+        )],
+    )
+    .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 
@@ -88,14 +99,25 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![registered_project(project_id, &project_path)]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![named_registered_project(
+            client_id,
+            project_id,
+            project_id,
+            &project_path,
+            1,
+        )],
+    )
+    .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 
@@ -603,12 +625,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
             hostname: None,
             host_context: None,
             capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
-            projects: Some(vec![registered_project("agent-proj", "/tmp/agent-proj")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        vec![registered_project("agent-proj", "/tmp/agent-proj")],
+    )
+    .await;
 }
 
 pub(in crate::tool_runtime::tests) fn agent_test_project_id(client_id: &str) -> String {
@@ -641,12 +668,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
             hostname: None,
             host_context: None,
             capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
-            projects: Some(vec![registered_project("agent-proj", "/tmp/agent-proj")]),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        agent_instance_id,
+        vec![registered_project("agent-proj", "/tmp/agent-proj")],
+    )
+    .await;
 }
 
 /// Build a ToolRuntime backed by a single server-configured (local) project
@@ -718,6 +750,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
     caps: ShellClientCapabilities,
     projects: Vec<ShellAgentProjectSummary>,
 ) {
+    let agent_instance_id = format!("inst-{client_id}");
     runtime
         .shell_clients
         .register(ShellClientRegisterRequest {
@@ -728,18 +761,23 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: format!("inst-{}", client_id),
+            agent_instance_id: agent_instance_id.clone(),
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
             host_context: None,
             capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
-            projects: Some(projects),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &agent_instance_id,
+        projects,
+    )
+    .await;
 }
 
 pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
@@ -749,6 +787,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
     caps: ShellClientCapabilities,
     projects: Vec<ShellAgentProjectSummary>,
 ) {
+    let agent_instance_id = format!("inst-{client_id}");
     runtime
         .shell_clients
         .register_with_auth(
@@ -760,20 +799,25 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: format!("inst-{}", client_id),
+                agent_instance_id: agent_instance_id.clone(),
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
                 capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
-                projects: Some(projects),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        &agent_instance_id,
+        projects,
+    )
+    .await;
 }
 
 pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_client(
@@ -794,7 +838,6 @@ pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
-                projects: None,
             })
             .await
             .unwrap();
@@ -818,7 +861,6 @@ pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -907,7 +949,6 @@ pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
-                projects: None,
             })
             .await
             .unwrap();
@@ -1040,12 +1081,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
             hostname: None,
             host_context: None,
             capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
-            projects: Some(projects),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        projects,
+    )
+    .await;
 }
 
 /// Helper: register an agent carrying a sanitized shell-profiles summary
@@ -1075,12 +1121,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
             capabilities: Some(crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
             )),
-            projects: Some(projects),
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy,
         })
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        client_id,
+        "inst",
+        projects,
+    )
+    .await;
 }
 
 /// Build a canonical `webcodex.file_read_range.v1` envelope for the full file

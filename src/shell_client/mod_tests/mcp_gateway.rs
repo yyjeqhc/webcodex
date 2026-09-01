@@ -29,8 +29,6 @@ async fn register_bridge_runner(registry: &ShellClientRegistry) {
                 ShellClientCapabilities::default(),
             )),
             host_context: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: Some(AgentPolicySummary {
                 mcp_gateway_providers: Some(vec![bridge_provider("provider-instance")]),
                 ..Default::default()
@@ -66,8 +64,6 @@ fn bridge_registration(
         hostname: None,
         capabilities: Some(ShellClientCapabilities::default()),
         host_context: None,
-        projects: None,
-        agent_protocol_version: Some("polling-v1".to_string()),
         policy: providers.map(|providers| AgentPolicySummary {
             mcp_gateway_providers: Some(providers),
             ..Default::default()
@@ -261,7 +257,6 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
         .poll(ShellAgentPollRequest {
             client_id: "bridge-runner".to_string(),
             agent_instance_id: "replacement-instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -306,7 +301,6 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
         .poll(ShellAgentPollRequest {
             client_id: "bridge-runner".to_string(),
             agent_instance_id: "bridge-instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -349,7 +343,6 @@ async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
         .poll(ShellAgentPollRequest {
             client_id: "bridge-runner".to_string(),
             agent_instance_id: "bridge-instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -396,7 +389,6 @@ async fn typed_bridge_result_is_correlated_once() {
         .poll(ShellAgentPollRequest {
             client_id: "bridge-runner".to_string(),
             agent_instance_id: "bridge-instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

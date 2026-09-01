@@ -464,9 +464,9 @@ async fn send_error(
 mod tests {
     use super::*;
     use crate::shell_protocol::{
-        ShellAgentJobUpdateRequest, ShellAgentResultRequest, ShellClientCapabilities,
-        ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest,
-        AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, AGENT_QUIC_ALPN_V1,
+        AgentProtocolGenerationNumber, ShellAgentJobUpdateRequest, ShellAgentResultRequest,
+        ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest,
+        AGENT_PROTOCOL_GENERATION_V2, AGENT_QUIC_ALPN_V1,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -556,15 +556,73 @@ mod tests {
     }
 
     fn register_envelope(client_id: &str, instance: &str) -> QuicRegisterFrame {
-        register_envelope_with_protocol(client_id, instance, AGENT_PROTOCOL_VERSION_QUIC_V1, None)
+        register_envelope_with_generation(
+            client_id,
+            instance,
+            Some(AGENT_PROTOCOL_GENERATION_V2),
+            None,
+        )
     }
 
-    fn register_envelope_with_protocol(
+    fn register_envelope_with_generation(
         client_id: &str,
         instance: &str,
-        protocol: &str,
+        generation: Option<AgentProtocolGenerationNumber>,
         auth_token: Option<String>,
     ) -> QuicRegisterFrame {
+        let mut capabilities =
+            crate::test_support::current_runner_capabilities(ShellClientCapabilities {
+                shell: true,
+                file_read: true,
+                file_write: true,
+                artifact_export_chunk_read: false,
+                artifact_export_streaming_metadata: false,
+                structured_file_delete: true,
+                apply_text_edit_occurrence: false,
+                apply_text_edit_line_scope: false,
+                git: false,
+                jobs: true,
+                async_jobs: true,
+                async_shell_jobs: true,
+                ssh_shell: false,
+                persistent_shell: false,
+                ssh_persistent_shell: false,
+                structured_validation_argv: true,
+                structured_cargo_test_count_assertion: true,
+                structured_go_test_json: true,
+                structured_go_test_tool: true,
+                structured_go_test_packages: true,
+                structured_process_argv: true,
+                structured_script_payload: false,
+                internal_posix_script: false,
+                structured_execution_jobs: false,
+                detached_process_jobs: false,
+                lsp_read_only_navigation: false,
+                lsp_call_hierarchy: false,
+                project_lifecycle: false,
+                project_path_registration: false,
+                skill_store_read: false,
+                skill_store_manage: false,
+                computer_observe: false,
+                computer_application_discovery: false,
+                computer_application_launch: false,
+                computer_display_observe: false,
+                computer_pointer_control: false,
+                computer_clipboard_read: false,
+                computer_clipboard_write: false,
+                computer_snapshot_region: false,
+                computer_accessibility_observe: false,
+                computer_element_state: false,
+                computer_control: false,
+                computer_scroll_to_element: false,
+                computer_key_input: false,
+                computer_window_activate: false,
+                computer_text_input: false,
+                job_state_reconciliation: false,
+                coding_agent_runs: false,
+                agent_protocol_generation: None,
+            });
+        capabilities.agent_protocol_generation = generation;
         QuicRegisterFrame::new(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -579,61 +637,7 @@ mod tests {
                 owner: Some("tester".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
-                        shell: true,
-                        file_read: true,
-                        file_write: true,
-                        artifact_export_chunk_read: false,
-                        artifact_export_streaming_metadata: false,
-                        structured_file_delete: true,
-                        apply_text_edit_occurrence: false,
-                        apply_text_edit_line_scope: false,
-                        git: false,
-                        jobs: true,
-                        async_jobs: true,
-                        async_shell_jobs: true,
-                        ssh_shell: false,
-                        persistent_shell: false,
-                        ssh_persistent_shell: false,
-                        structured_validation_argv: true,
-                        structured_cargo_test_count_assertion: true,
-                        structured_go_test_json: true,
-                        structured_go_test_tool: true,
-                        structured_go_test_packages: true,
-                        structured_process_argv: true,
-                        structured_script_payload: false,
-                        internal_posix_script: false,
-                        structured_execution_jobs: false,
-                        detached_process_jobs: false,
-                        lsp_read_only_navigation: false,
-                        lsp_call_hierarchy: false,
-                        project_lifecycle: false,
-                        project_path_registration: false,
-                        skill_store_read: false,
-                        skill_store_manage: false,
-                        computer_observe: false,
-                        computer_application_discovery: false,
-                        computer_application_launch: false,
-                        computer_display_observe: false,
-                        computer_pointer_control: false,
-                        computer_clipboard_read: false,
-                        computer_clipboard_write: false,
-                        computer_snapshot_region: false,
-                        computer_accessibility_observe: false,
-                        computer_element_state: false,
-                        computer_control: false,
-                        computer_scroll_to_element: false,
-                        computer_key_input: false,
-                        computer_window_activate: false,
-                        computer_text_input: false,
-                        job_state_reconciliation: false,
-                        coding_agent_runs: false,
-                        agent_protocol_generation: None,
-                    },
-                )),
-                projects: None,
-                agent_protocol_version: Some(protocol.to_string()),
+                capabilities: Some(capabilities),
                 policy: None,
             },
             auth_token,
@@ -735,7 +739,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_register_requires_explicit_protocol_version() {
+    async fn quic_register_requires_explicit_protocol_generation() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -747,8 +751,12 @@ mod tests {
         .await;
         let (client_endpoint, conn, mut send, mut recv) =
             connect_quic_client(&cert_der, addr).await;
-        let mut register = register_envelope("quic-missing-protocol", "inst-missing-protocol");
-        register.payload_mut().agent_protocol_version = None;
+        let register = register_envelope_with_generation(
+            "quic-missing-generation",
+            "inst-missing-generation",
+            None,
+            None,
+        );
         write_quic_register_frame(&mut send, &register)
             .await
             .expect("write register");
@@ -760,12 +768,12 @@ mod tests {
         match error {
             AgentEnvelope::Error { code, message } => {
                 assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_version is required");
+                assert_eq!(message, "agent_protocol_generation is required");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }
         assert!(registry
-            .get_client_view("quic-missing-protocol")
+            .get_client_view("quic-missing-generation")
             .await
             .is_none());
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");
@@ -773,7 +781,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_register_rejects_unsupported_protocol_version() {
+    async fn quic_register_rejects_unsupported_protocol_generation() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -785,8 +793,12 @@ mod tests {
         .await;
         let (client_endpoint, conn, mut send, mut recv) =
             connect_quic_client(&cert_der, addr).await;
-        let mut register = register_envelope("quic-unsupported-protocol", "inst-unsupported");
-        register.payload_mut().agent_protocol_version = Some("quic-next".to_string());
+        let register = register_envelope_with_generation(
+            "quic-unsupported-generation",
+            "inst-unsupported",
+            Some(AgentProtocolGenerationNumber::new(3)),
+            None,
+        );
         write_quic_register_frame(&mut send, &register)
             .await
             .expect("write register");
@@ -798,12 +810,12 @@ mod tests {
         match error {
             AgentEnvelope::Error { code, message } => {
                 assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_version is unsupported");
+                assert_eq!(message, "agent_protocol_generation is unsupported");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }
         assert!(registry
-            .get_client_view("quic-unsupported-protocol")
+            .get_client_view("quic-unsupported-generation")
             .await
             .is_none());
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");
@@ -867,8 +879,8 @@ mod tests {
                 assert_eq!(client.client_id, "quic-rt");
                 assert_eq!(client.transport, "quic");
                 assert_eq!(
-                    client.agent_protocol_version,
-                    AGENT_PROTOCOL_VERSION_QUIC_V1
+                    client.agent_protocol_generation,
+                    AGENT_PROTOCOL_GENERATION_V2
                 );
                 assert!(client.capabilities.shell);
                 assert!(client.capabilities.file_read);
@@ -890,7 +902,7 @@ mod tests {
         assert!(view.connected);
         assert_eq!(view.status, "online");
         assert_eq!(view.transport, "quic");
-        assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
+        assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
         assert!(view.capabilities.shell);
         assert!(view.capabilities.file_read);
         assert!(view.capabilities.file_write);
@@ -926,7 +938,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_v1_request_result_roundtrip() {
+    async fn quic_request_result_roundtrip() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -941,10 +953,10 @@ mod tests {
 
         write_quic_register_frame(
             &mut send,
-            &register_envelope_with_protocol(
-                "quic-v1-rt",
+            &register_envelope_with_generation(
+                "quic-gen2-rt",
                 "inst-v2",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -961,11 +973,11 @@ mod tests {
             } => {
                 assert!(success);
                 let client = client.expect("client view");
-                assert_eq!(client.client_id, "quic-v1-rt");
+                assert_eq!(client.client_id, "quic-gen2-rt");
                 assert_eq!(client.transport, "quic");
                 assert_eq!(
-                    client.agent_protocol_version,
-                    AGENT_PROTOCOL_VERSION_QUIC_V1
+                    client.agent_protocol_generation,
+                    AGENT_PROTOCOL_GENERATION_V2
                 );
                 assert!(client.capabilities.shell);
                 assert!(client.capabilities.file_read);
@@ -980,7 +992,7 @@ mod tests {
         let (request_id, rx) = registry
             .enqueue_run(
                 ShellRunRequest {
-                    client_id: "quic-v1-rt".to_string(),
+                    client_id: "quic-gen2-rt".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),
                     stdin: None,
@@ -1009,7 +1021,7 @@ mod tests {
             &mut send,
             &AgentEnvelope::Result {
                 payload: ShellAgentResultRequest {
-                    client_id: "quic-v1-rt".to_string(),
+                    client_id: "quic-gen2-rt".to_string(),
                     agent_instance_id: "inst-v2".to_string(),
                     request_id: request_id.clone(),
                     exit_code: Some(0),
@@ -1033,7 +1045,7 @@ mod tests {
         assert_eq!(response.exit_code, Some(0));
         assert_eq!(
             registry
-                .get_client_view("quic-v1-rt")
+                .get_client_view("quic-gen2-rt")
                 .await
                 .expect("client view")
                 .pending_requests,
@@ -1061,10 +1073,10 @@ mod tests {
 
         write_quic_register_frame(
             &mut send,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-job",
                 "inst-job",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -1164,10 +1176,10 @@ mod tests {
 
         write_quic_register_frame(
             &mut send,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-disc",
                 "inst-disc",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -1273,10 +1285,10 @@ mod tests {
 
         write_quic_register_frame(
             &mut send_a,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-goodbye",
                 "inst-a",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -1315,10 +1327,10 @@ mod tests {
             connect_quic_client(&cert_der, addr).await;
         write_quic_register_frame(
             &mut send_b,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-goodbye",
                 "inst-b",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -1364,10 +1376,10 @@ mod tests {
             connect_quic_client(&cert_der, addr).await;
         write_quic_register_frame(
             &mut send,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-auth-ok",
                 "inst-auth-ok",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 Some("bootstrap-secret".to_string()),
             ),
         )
@@ -1389,10 +1401,10 @@ mod tests {
             connect_quic_client(&cert_der, addr).await;
         write_quic_register_frame(
             &mut missing_send,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-auth-missing",
                 "inst-auth-missing",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 None,
             ),
         )
@@ -1418,10 +1430,10 @@ mod tests {
             connect_quic_client(&cert_der, addr).await;
         write_quic_register_frame(
             &mut bad_send,
-            &register_envelope_with_protocol(
+            &register_envelope_with_generation(
                 "quic-auth-bad",
                 "inst-auth-bad",
-                AGENT_PROTOCOL_VERSION_QUIC_V1,
+                Some(AGENT_PROTOCOL_GENERATION_V2),
                 Some("wrong-secret".to_string()),
             ),
         )
@@ -1496,7 +1508,7 @@ mod tests {
         conn.close(quinn::VarInt::from_u32(0), b"done");
     }
 
-    /// A QUIC-registered agent must surface the `quic-v1` protocol version and
+    /// A QUIC-registered agent must surface protocol generation 2 and the
     /// `quic` transport in `list_clients` (used by runtime_status / listAgents).
     #[tokio::test]
     async fn quic_agent_surfaces_transport_and_protocol_in_list() {
@@ -1543,7 +1555,7 @@ mod tests {
         let c = &clients[0];
         assert_eq!(c.client_id, "quic-list");
         assert_eq!(c.transport, "quic");
-        assert_eq!(c.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
+        assert_eq!(c.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
         assert!(c.connected);
         assert!(c.capabilities.shell);
         assert!(c.capabilities.file_read);
@@ -1552,13 +1564,6 @@ mod tests {
         assert!(c.capabilities.jobs);
         assert!(c.capabilities.async_jobs);
         assert!(c.capabilities.async_shell_jobs);
-
-        // Ensure the websocket protocol label is distinct (sanity for the
-        // status sanitization test requirement).
-        assert_ne!(
-            c.agent_protocol_version,
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
-        );
 
         send.finish().unwrap();
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");

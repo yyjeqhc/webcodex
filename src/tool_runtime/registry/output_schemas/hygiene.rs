@@ -96,20 +96,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
-                "missing_paths",
-                array_schema(
-                    schema_type("string", "Missing project-relative path."),
-                    "Reserved for future missing-path detail; currently empty for compatible cleanup success.",
-                ),
-            ),
-            (
-                "refused_paths",
-                array_schema(
-                    schema_type("string", "Refused project-relative path."),
-                    "Reserved for future refused-path detail; cleanup path validation failures still return a failed tool result.",
-                ),
-            ),
-            (
                 "stdout_present",
                 schema_type(
                     "boolean",

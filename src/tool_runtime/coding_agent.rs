@@ -1817,11 +1817,8 @@ mod tests {
             pending_requests: 0,
             projects: Vec::new(),
             project_inventory: None,
-            agent_protocol_version: "websocket-v1".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             transport: "websocket".to_string(),
-            agent_protocol_semantics: crate::shell_protocol::normalize_agent_protocol_semantics(
-                "websocket-v1",
-            ),
             policy: None,
             registered_at: 0,
             connected_at: 0,

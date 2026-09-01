@@ -1,7 +1,7 @@
 use super::*;
 use crate::validation_bridge::{
-    failure_kinds, value_contains_absolute_path_leak, ValidationBridgeOptions,
-    ValidationBridgeRequest, MAX_BRIDGE_DIAGNOSTICS, MAX_VALIDATION_STDERR_CAPTURE_BYTES,
+    failure_kinds, value_contains_absolute_path_leak, ValidationBridgeRequest,
+    MAX_BRIDGE_DIAGNOSTICS, MAX_VALIDATION_STDERR_CAPTURE_BYTES,
     MAX_VALIDATION_STDERR_SUMMARY_CHARS, MAX_VALIDATION_STDOUT_BYTES,
     VALIDATION_BRIDGE_PROTOCOL_VERSION,
 };
@@ -18,7 +18,6 @@ fn typecheck_request(project_id: &str) -> ValidationBridgeRequest {
         cwd: None,
         targets: vec![],
         timeout_secs: 30,
-        options: ValidationBridgeOptions::default(),
     }
 }
 

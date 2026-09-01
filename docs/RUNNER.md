@@ -86,11 +86,12 @@ omitting or contradicting one rejects registration rather than degrading it to
 unavailable. RegistrationRequired additive capabilities remain explicit and
 fail closed as unavailable when omitted.
 
-Agent protocol labels such as `polling-v1`, `websocket-v1`, `quic-v1` and their
-`v2` inventory variants remain current ingress semantics. They select project
-inventory strategy and do not select an older protocol generation or promise to
-accept an arbitrary older release binary. `agent_protocol_version` must still be
-present and supported.
+In `v0.4`, protocol generation is the only Runner protocol-version identity.
+Transport is an independent ingress fact (`polling`, `websocket`, or `quic`), and
+project inventory always uses the bounded paged synchronization protocol after
+registration. The pre-0.4 `polling-v1/v2`, `websocket-v1/v2`, and `quic-v1/v2`
+labels and inline registration inventory are not accepted across this breaking
+boundary; upgrade first-party Server and Runner together when crossing it.
 
 QUIC upgrade note: `[quic].keepalive_interval_secs` now actively configures
 Quinn transport keepalive. The default remains 20 seconds and the accepted

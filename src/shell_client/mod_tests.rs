@@ -1,10 +1,8 @@
 use super::*;
 use crate::shell_protocol::{
     AgentProtocolGenerationNumber, ShellCommandExecutionState, AGENT_PROTOCOL_GENERATION_V2,
-    AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES, AGENT_PROTOCOL_VERSION_POLLING_V1,
-    AGENT_PROTOCOL_VERSION_POLLING_V2, AGENT_PROTOCOL_VERSION_QUIC_V1,
-    AGENT_PROTOCOL_VERSION_QUIC_V2, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V2, SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
 };
 
@@ -101,7 +99,7 @@ fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
 fn runner_registration(
     client_id: &str,
     agent_instance_id: &str,
-    projects: Vec<ShellAgentProjectSummary>,
+    _projects: Vec<ShellAgentProjectSummary>,
 ) -> ShellClientRegisterRequest {
     ShellClientRegisterRequest {
         process_started_at: None,
@@ -117,8 +115,6 @@ fn runner_registration(
         hostname: None,
         host_context: None,
         capabilities: Some(async_job_capabilities()),
-        projects: Some(projects),
-        agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
         policy: None,
     }
 }
@@ -277,8 +273,6 @@ async fn register_computer_test_client(
                 computer_text_input: text_input_capable,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
             policy: None,
         }))
         .await
@@ -304,8 +298,6 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: Some(vec![project_summary("webcodex", "/tmp/webcodex")]),
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
             policy: None,
         })
         .await
@@ -346,8 +338,6 @@ async fn register_instance_with_capabilities(
             hostname: None,
             host_context: None,
             capabilities: Some(capabilities),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -417,8 +407,6 @@ async fn register_with_instance(
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         })
         .await

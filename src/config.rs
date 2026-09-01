@@ -260,7 +260,6 @@ impl CodexConfig {
 pub(crate) struct EnvFileLoad {
     pub(crate) path: PathBuf,
     pub(crate) loaded_count: usize,
-    pub(crate) legacy: bool,
 }
 
 pub(crate) fn parse_env_file_line(line: &str) -> Option<Result<(String, String), String>> {
@@ -315,14 +314,7 @@ fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
     Ok(EnvFileLoad {
         path: path.to_path_buf(),
         loaded_count,
-        legacy: false,
     })
-}
-
-fn load_env_file_candidate(path: &Path, legacy: bool) -> Result<EnvFileLoad, String> {
-    let mut loaded = load_env_file(path)?;
-    loaded.legacy = legacy;
-    Ok(loaded)
 }
 
 pub(crate) fn env_flag(key: &str) -> Option<bool> {
@@ -412,17 +404,17 @@ pub(crate) fn mcp_compact_schemas_enabled() -> bool {
 
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
-        return Ok(vec![load_env_file_candidate(Path::new(&path), false)?]);
+        return Ok(vec![load_env_file(Path::new(&path))?]);
     }
     let candidates = [
-        (PathBuf::from("./webcodex.env"), false),
-        (PathBuf::from("/opt/webcodex/webcodex.env"), false),
-        (PathBuf::from("/etc/webcodex/webcodex.env"), false),
+        PathBuf::from("./webcodex.env"),
+        PathBuf::from("/opt/webcodex/webcodex.env"),
+        PathBuf::from("/etc/webcodex/webcodex.env"),
     ];
     let mut loaded = Vec::new();
-    for (path, legacy) in candidates {
+    for path in candidates {
         if path.exists() {
-            loaded.push(load_env_file_candidate(&path, legacy)?);
+            loaded.push(load_env_file(&path)?);
         }
     }
     Ok(loaded)

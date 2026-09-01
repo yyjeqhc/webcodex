@@ -250,29 +250,34 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: config.executor_project_id.clone(),
-                    name: Some(config.project_name.clone()),
-                    path: config.root.to_string_lossy().into_owned(),
-                    allow_patch: true,
-                    kind: Some("auto".to_string()),
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    revision: None,
-                    git_branch: Some("main".to_string()),
-                    git_head: None,
-                    git_dirty: Some(false),
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
             Some(&agent_auth),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        &config.executor_client_id,
+        "project-agent-instance",
+        vec![ShellAgentProjectSummary {
+            id: config.executor_project_id.clone(),
+            name: Some(config.project_name.clone()),
+            path: config.root.to_string_lossy().into_owned(),
+            allow_patch: true,
+            kind: Some("auto".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: Some("main".to_string()),
+            git_head: None,
+            git_dirty: Some(false),
+            updated_at: 1,
+            shell_profile: None,
+        }],
+    )
+    .await;
     let db = Arc::new(crate::Database::open(&state.join("data/webcodex.db")).unwrap());
     let tools = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
         registry.clone(),
@@ -390,7 +395,6 @@ fn agent_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value);
             serde_json::json!({
                 "client_id": client_id,
                 "agent_instance_id": PROJECT_AGENT_INSTANCE,
-                "agent_protocol_version": "polling-v1",
                 "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
                 "owner": "local-owner"
             }),
@@ -466,7 +470,6 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
         serde_json::json!({
             "client_id": "bootstrap-client",
             "agent_instance_id": "bootstrap-instance",
-            "agent_protocol_version": "polling-v1",
             "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
             "owner": "local-owner"
         }),
@@ -486,7 +489,6 @@ async fn next_project_agent_request(
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
-                projects: None,
             })
             .await
             .unwrap()

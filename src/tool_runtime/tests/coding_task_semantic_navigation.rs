@@ -522,7 +522,7 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 23);
+    assert_eq!(operation_count, 22);
     assert!(!known_tool_names().any(|name| name == "semantic_navigation"));
     assert!(crate::shell_protocol::SHELL_CLIENT_CAPABILITY_NAMES
         .contains(&SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION));

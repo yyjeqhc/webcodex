@@ -66,10 +66,7 @@ pub(super) struct ShellClientRecord {
     /// staging failure never changes liveness or partially publishes projects.
     pub(super) project_inventory: ProjectInventoryState,
     pub(super) last_seen: i64,
-    pub(super) agent_protocol_version: String,
-    /// Supported generation + project-inventory semantics accepted once at
-    /// registration ingress. Unsupported raw generation/label states cannot be
-    /// represented in a successful record.
+    /// Supported protocol generation accepted once at registration ingress.
     pub(super) accepted_protocol: AcceptedRunnerProtocol,
     /// Authoritative transport from the concrete ingress path. External
     /// projections serialize this typed state as `polling`, `websocket`, or `quic`.

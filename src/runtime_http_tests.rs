@@ -234,7 +234,6 @@ fn build_projects_router(
                         .post(projects_apply_unified_diff),
                 )
                 .push(Router::with_path("projects/run_shell").post(projects_run_shell))
-                .push(Router::with_path("projects/delete_files").post(projects_delete_files))
                 .push(
                     Router::with_path("projects/git_restore_paths")
                         .post(projects_git_restore_paths),
@@ -281,28 +280,33 @@ async fn register_import_agent_with_capabilities(
                 hostname: None,
                 host_context: None,
                 capabilities,
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("Demo".to_string()),
-                    path: root.to_string_lossy().to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: vec![],
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 0,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "importer",
+        "inst-import",
+        vec![ShellAgentProjectSummary {
+            id: "demo".to_string(),
+            name: Some("demo".to_string()),
+            path: root.to_string_lossy().to_string(),
+            allow_patch: true,
+            kind: Some("repo".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 1,
+            shell_profile: None,
+        }],
+    )
+    .await;
     let runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
         registry.clone(),
     ));
@@ -327,7 +331,6 @@ async fn complete_one_agent_request(
             .poll(ShellAgentPollRequest {
                 client_id: "importer".to_string(),
                 agent_instance_id: "inst-import".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -401,7 +404,6 @@ fn spawn_startup_agent_executor(registry: Arc<ShellClientRegistry>) -> tokio::ta
                 .poll(ShellAgentPollRequest {
                     client_id: "importer".to_string(),
                     agent_instance_id: "inst-import".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -1673,7 +1675,6 @@ async fn api_show_changes_with_session_id() {
                 .poll(ShellAgentPollRequest {
                     client_id: "importer".to_string(),
                     agent_instance_id: "inst-import".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap();

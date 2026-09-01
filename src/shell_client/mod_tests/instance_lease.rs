@@ -43,8 +43,6 @@ async fn lease_different_online_instance_rejected() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -86,7 +84,6 @@ async fn lease_stale_instance_poll_rejected() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst-a".to_string(),
-            projects: None,
         })
         .await
         .unwrap_err();
@@ -100,7 +97,6 @@ async fn lease_stale_instance_poll_rejected() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst-b".to_string(),
-            projects: None,
         })
         .await
         .expect("active instance must poll");
@@ -129,7 +125,6 @@ async fn lease_stale_instance_result_rejected() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst-a".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -526,8 +521,6 @@ async fn lease_register_rejects_empty_instance_id() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -567,8 +560,6 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             hostname: None,
             host_context: None,
             capabilities: Some(capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -609,7 +600,6 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst-a".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -695,8 +685,6 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             hostname: None,
             host_context: None,
             capabilities: Some(capabilities()),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await

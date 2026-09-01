@@ -153,20 +153,6 @@ pub(crate) fn check_runtime_tool_scope(
                 Ok(())
             }
         }
-        OAuthToolScopePolicy::FirstPartyOnly => {
-            if matches!(
-                auth.kind,
-                crate::auth::AuthKind::Bootstrap | crate::auth::AuthKind::ApiToken
-            ) {
-                Ok(())
-            } else {
-                Err(ToolCallErrorStatus::InsufficientScope {
-                    required_scope: None,
-                    description: "tool requires a first-party bootstrap or personal API token"
-                        .to_string(),
-                })
-            }
-        }
         OAuthToolScopePolicy::Unknown => {
             if auth.is_bootstrap() {
                 Ok(())

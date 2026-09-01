@@ -119,8 +119,6 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
                 capabilities: Some(crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities::default(),
                 )),
-                projects: None,
-                agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
             },
             Some(&grant_b),
@@ -185,14 +183,19 @@ async fn fixture_built(
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![project_summary("project", &project)]),
-                agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
             },
             Some(&owner),
         )
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "hosted",
+        "instance",
+        vec![project_summary("project", &project)],
+    )
+    .await;
     let db = Arc::new(Database::open(&temp.path().join("connector.db")).unwrap());
     let mut tools = ToolRuntime::new_for_tests_with_shell_clients(registry.clone());
     if restricted {
@@ -309,7 +312,6 @@ async fn poll(registry: &ShellClientRegistry) -> Option<ShellAgentShellRequest> 
         .poll(ShellAgentPollRequest {
             client_id: "hosted".into(),
             agent_instance_id: "instance".into(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -3926,11 +3928,6 @@ async fn read_only_commands_run_is_denied_even_when_agent_supports_shell() {
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![project_summary(
-                    "project",
-                    Path::new(&fixture.connector.context.executor_root),
-                )]),
-                agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
             },
             Some(&fixture.owner),
@@ -4015,7 +4012,6 @@ async fn read_only_denial_creates_no_approval_reservation_or_agent_request() {
         .poll(ShellAgentPollRequest {
             client_id: "hosted".to_string(),
             agent_instance_id: "instance".to_string(),
-            projects: None,
         })
         .await
         .unwrap();
@@ -4312,8 +4308,6 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                         ..Default::default()
                     },
                 )),
-                projects: Some(vec![project_summary("project", &project)]),
-                agent_protocol_version: Some("polling-v1".into()),
                 policy: None,
             },
             Some(&owner),

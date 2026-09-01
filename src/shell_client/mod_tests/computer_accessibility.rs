@@ -36,7 +36,6 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-ax".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -95,8 +94,6 @@ async fn computer_element_state_requires_its_own_additive_capability() {
                 computer_element_state: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -116,7 +113,6 @@ async fn computer_element_state_requires_its_own_additive_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-state-capable".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

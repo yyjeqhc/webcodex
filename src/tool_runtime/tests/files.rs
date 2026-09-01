@@ -199,7 +199,7 @@ async fn delete_project_files_capable_agent_uses_structured_delete_without_outpu
         "cleanup-delete",
         &req.request_id,
         0,
-        r#"{"deleted_paths":["tmp.txt"],"missing_paths":[],"refused_paths":[]}"#,
+        r#"{"deleted_paths":["tmp.txt"]}"#,
         "/private/runner/path raw stderr must not leak\n",
     )
     .await;
@@ -209,8 +209,6 @@ async fn delete_project_files_capable_agent_uses_structured_delete_without_outpu
     assert_eq!(result.output["ok"], true);
     assert_eq!(result.output["state_changed"], true);
     assert_eq!(result.output["deleted_paths"], json!(["tmp.txt"]));
-    assert_eq!(result.output["missing_paths"], json!([]));
-    assert_eq!(result.output["refused_paths"], json!([]));
     assert_eq!(result.output["stdout_present"], false);
     assert_eq!(result.output["stderr_present"], false);
     let serialized = serde_json::to_string(&result.output).unwrap();
@@ -377,10 +375,7 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
             agent_instance_id: "inst-b".to_string(),
             request_id: req.request_id,
             exit_code: Some(0),
-            stdout: Some(
-                r#"{"deleted_paths":["tmp.txt"],"missing_paths":[],"refused_paths":[]}"#
-                    .to_string(),
-            ),
+            stdout: Some(r#"{"deleted_paths":["tmp.txt"]}"#.to_string()),
             stderr: None,
             duration_ms: Some(1),
             error: None,

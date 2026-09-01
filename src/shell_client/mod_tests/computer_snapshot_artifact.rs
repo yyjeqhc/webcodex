@@ -27,39 +27,39 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         wait_timeout_secs: 60,
     }
     };
-    let register =
-        |client_id: &str, instance_id: &str, project_path: &str| ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            agent_instance_id: instance_id.to_string(),
-            display_name: None,
-            owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities {
-                    shell: true,
-                    ..Default::default()
-                },
-            )),
-            projects: Some(vec![project_summary("demo", project_path)]),
-            agent_protocol_version: Some("polling-v1".to_string()),
-            policy: None,
-        };
+    let register = |client_id: &str, instance_id: &str| ShellClientRegisterRequest {
+        process_started_at: None,
+        build: None,
+        job_concurrency_limit: None,
+        job_inventory: None,
+        coding_agent_providers: None,
+        coding_agent_inventory: None,
+        client_id: client_id.to_string(),
+        agent_instance_id: instance_id.to_string(),
+        display_name: None,
+        owner: Some("alice".to_string()),
+        hostname: None,
+        host_context: None,
+        capabilities: Some(crate::test_support::current_runner_capabilities(
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )),
+        policy: None,
+    };
 
     registry
-        .register(register(
-            "computer-artifact-write",
-            "artifact-inst",
-            "/tmp/project",
-        ))
+        .register(register("computer-artifact-write", "artifact-inst"))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-write",
+        "artifact-inst",
+        vec![project_summary("demo", "/tmp/project")],
+    )
+    .await;
     let (request_id, _rx) = registry
         .enqueue_computer_snapshot_artifact(
             request("computer-artifact-write"),
@@ -74,7 +74,6 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .poll(ShellAgentPollRequest {
             client_id: "computer-artifact-write".to_string(),
             agent_instance_id: "artifact-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -89,10 +88,16 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .register(register(
             "computer-artifact-poll-change",
             "artifact-poll-inst",
-            "/tmp/project",
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-poll-change",
+        "artifact-poll-inst",
+        vec![project_summary("demo", "/tmp/project")],
+    )
+    .await;
     let (_request_id, response_rx) = registry
         .enqueue_computer_snapshot_artifact(
             request("computer-artifact-poll-change"),
@@ -103,13 +108,19 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         )
         .await
         .unwrap();
-    // Poll may refresh project projection for the same process. The pending
-    // placement fence is checked after that refresh but before dispatched=true.
+    // Authoritative inventory may change before dispatch. The pending placement
+    // fence is checked against the new snapshot before dispatched=true.
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-poll-change",
+        "artifact-poll-inst",
+        vec![project_summary("demo", "/tmp/replaced")],
+    )
+    .await;
     assert!(registry
         .poll(ShellAgentPollRequest {
             client_id: "computer-artifact-poll-change".to_string(),
             agent_instance_id: "artifact-poll-inst".to_string(),
-            projects: Some(vec![project_summary("demo", "/tmp/replaced")]),
         })
         .await
         .unwrap()
@@ -137,10 +148,16 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .register(register(
             "computer-artifact-owner-change",
             "artifact-owner-inst",
-            "/tmp/project",
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-owner-change",
+        "artifact-owner-inst",
+        vec![project_summary("demo", "/tmp/project")],
+    )
+    .await;
     let (_request_id, response_rx) = registry
         .enqueue_computer_snapshot_artifact(
             request("computer-artifact-owner-change"),
@@ -151,18 +168,13 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         )
         .await
         .unwrap();
-    let mut changed_owner = register(
-        "computer-artifact-owner-change",
-        "artifact-owner-inst",
-        "/tmp/project",
-    );
+    let mut changed_owner = register("computer-artifact-owner-change", "artifact-owner-inst");
     changed_owner.owner = Some("bob".to_string());
     registry.register(changed_owner).await.unwrap();
     assert!(registry
         .poll(ShellAgentPollRequest {
             client_id: "computer-artifact-owner-change".to_string(),
             agent_instance_id: "artifact-owner-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -189,20 +201,25 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .register(register(
             "computer-artifact-replaced",
             "artifact-replaced-inst",
-            "/tmp/project",
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-replaced",
+        "artifact-replaced-inst",
+        vec![project_summary("demo", "/tmp/project")],
+    )
+    .await;
     // Model a placement captured before a reconnect: by admission time the same
     // Runner identity reports the project at a different path.
-    registry
-        .register(register(
-            "computer-artifact-replaced",
-            "artifact-replaced-inst",
-            "/tmp/replaced",
-        ))
-        .await
-        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "computer-artifact-replaced",
+        "artifact-replaced-inst",
+        vec![project_summary("demo", "/tmp/replaced")],
+    )
+    .await;
     let error = registry
         .enqueue_computer_snapshot_artifact(
             request("computer-artifact-replaced"),
@@ -218,7 +235,6 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .poll(ShellAgentPollRequest {
             client_id: "computer-artifact-replaced".to_string(),
             agent_instance_id: "artifact-replaced-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

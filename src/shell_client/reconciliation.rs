@@ -389,6 +389,7 @@ fn validate_job_inventory_inner(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn validate_job_inventory(
     client_id: &str,
     projects: &[ShellAgentProjectSummary],

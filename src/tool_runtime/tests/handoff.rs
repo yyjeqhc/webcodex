@@ -3105,9 +3105,12 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     );
     assert!(!metadata.destructive);
     assert!(!metadata.shell_like);
-    assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
+    assert_eq!(
+        metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require("runtime:read")
+    );
 
-    // OpenAPI operation count must stay 25 after retiring legacy edits.
+    // OpenAPI operation set stays bounded after retiring dedicated compatibility actions.
     let spec = crate::openapi::build_openapi_spec();
     let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
         ["description"]
@@ -3152,7 +3155,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 23, "OpenAPI operation count must remain 23");
+    assert_eq!(count, 22, "OpenAPI operation count must remain 22");
 }
 
 // =========================================================================

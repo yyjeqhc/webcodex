@@ -335,8 +335,10 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
     assert!(definition.visibility.is_model_visible());
     assert_eq!(definition.category, "job");
     assert_eq!(
-        definition.metadata.legacy_oauth_scope_hint,
-        Some(crate::auth::SCOPE_RUNTIME_READ)
+        definition.metadata.authority,
+        crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(
+            crate::auth::SCOPE_RUNTIME_READ
+        )
     );
     assert_eq!(
         definition.metadata.effect,
@@ -819,16 +821,18 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
                 hostname: None,
                 host_context: None,
                 capabilities: Some(recovering_caps),
-                projects: Some(vec![registered_project(
-                    "agent-proj",
-                    "/tmp/observe-recovering",
-                )]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.shell_clients,
+        "observe-recovering",
+        "inst",
+        vec![registered_project("agent-proj", "/tmp/observe-recovering")],
+    )
+    .await;
     let auth = bootstrap_auth_context();
     let started = runtime
         .dispatch_with_auth(

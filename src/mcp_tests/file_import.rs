@@ -276,28 +276,33 @@ async fn mcp_import_runtime(
                     file_write: true,
                     ..Default::default()
                 }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("Demo".to_string()),
-                    path: root.to_string_lossy().to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: vec![],
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 0,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "importer",
+        "inst-import",
+        vec![ShellAgentProjectSummary {
+            id: "demo".to_string(),
+            name: Some("demo".to_string()),
+            path: root.to_string_lossy().into_owned(),
+            allow_patch: true,
+            kind: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: chrono::Utc::now().timestamp(),
+            shell_profile: None,
+        }],
+    )
+    .await;
     let runtime = Arc::new(
         ToolRuntime::new_for_tests_with_shell_clients(registry.clone())
             .with_model_surface(ModelSurface::FullOperatorRuntime),
@@ -321,7 +326,6 @@ async fn complete_mcp_import_save(
                 .poll(ShellAgentPollRequest {
                     client_id: "importer".to_string(),
                     agent_instance_id: "inst-import".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -472,7 +476,6 @@ async fn complete_mcp_import_until_abort(
                 .poll(ShellAgentPollRequest {
                     client_id: "importer".to_string(),
                     agent_instance_id: "inst-import".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()

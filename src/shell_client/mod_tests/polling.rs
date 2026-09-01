@@ -18,8 +18,6 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -42,7 +40,6 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
         .poll(ShellAgentPollRequest {
             client_id: "xrh".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -86,8 +83,6 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
             hostname: None,
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -125,7 +120,6 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
         .poll(ShellAgentPollRequest {
             client_id: "ordered".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -134,7 +128,6 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
         .poll(ShellAgentPollRequest {
             client_id: "ordered".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

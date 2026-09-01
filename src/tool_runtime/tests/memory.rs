@@ -1555,8 +1555,6 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
                 hostname: None,
                 host_context: None,
                 capabilities: Some(ShellClientCapabilities::default()),
-                projects: None,
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))

@@ -1066,10 +1066,7 @@ impl ToolRuntime {
                 }
             };
         let expected = json!(paths);
-        if output.get("deleted_paths") != Some(&expected)
-            || output.get("missing_paths") != Some(&json!([]))
-            || output.get("refused_paths") != Some(&json!([]))
-        {
+        if output.get("deleted_paths") != Some(&expected) {
             return Self::delete_project_files_lifecycle_failure(
                 Self::delete_project_files_outcome_unknown_message(),
                 ShellCommandExecutionState::OutcomeUnknown,
@@ -1079,8 +1076,6 @@ impl ToolRuntime {
             "ok": true,
             "state_changed": !paths.is_empty(),
             "deleted_paths": paths,
-            "missing_paths": [],
-            "refused_paths": [],
             "stdout_present": false,
             "stderr_present": false,
         }))
@@ -1154,8 +1149,6 @@ impl ToolRuntime {
             "ok": true,
             "state_changed": state_changed,
             "deleted_paths": paths,
-            "missing_paths": [],
-            "refused_paths": [],
             "stdout_present": false,
             "stderr_present": false,
         }))

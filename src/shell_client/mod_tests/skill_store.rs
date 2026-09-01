@@ -22,8 +22,6 @@ fn skill_store_registration(
             ..Default::default()
         }),
         host_context: None,
-        projects: None,
-        agent_protocol_version: Some("polling-v1".to_string()),
         policy: None,
         process_started_at: None,
         build: None,
@@ -137,7 +135,6 @@ async fn skill_store_dequeue_rejects_replacement_runner_before_dispatch() {
         .poll(ShellAgentPollRequest {
             client_id: "skill-store-runner".to_string(),
             agent_instance_id: "instance-b".to_string(),
-            projects: None,
         })
         .await
         .unwrap();

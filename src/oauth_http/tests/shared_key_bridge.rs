@@ -272,8 +272,6 @@ async fn register_shared_key_runner_with_capabilities(
                     capabilities,
                 )),
                 host_context: None,
-                projects: None,
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
                 process_started_at: None,
                 build: None,

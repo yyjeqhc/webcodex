@@ -162,7 +162,6 @@ fn openapi_consequential_flags_match_operation_risk() {
         "applyUnifiedDiff",
         "runProjectShellCommand",
         "startProjectShellJob",
-        "deleteProjectFiles",
         "gitRestorePaths",
         "discardUntrackedFiles",
         "callRuntimeTool",
@@ -178,7 +177,7 @@ fn openapi_consequential_flags_match_operation_risk() {
     for id in consequential {
         assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
     }
-    assert_eq!(flags.len(), 23);
+    assert_eq!(flags.len(), 22);
 }
 
 #[test]
@@ -510,7 +509,7 @@ fn openapi_call_runtime_tool_lists_accepted_tool_names() {
         .collect::<Vec<_>>();
     assert!(!operation_ids.contains(&"hover"));
     assert!(!operation_ids.contains(&"workspaceSymbols"));
-    assert_eq!(operation_ids.len(), 23);
+    assert_eq!(operation_ids.len(), 22);
 }
 
 #[test]
@@ -627,7 +626,6 @@ fn openapi_key_actions_have_examples() {
         ("/api/projects/search_text", "searchProjectText"),
         ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
-        ("/api/projects/delete_files", "deleteProjectFiles"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
         ("/api/projects/discard_untracked", "discardUntrackedFiles"),
         ("/api/projects/run_job", "startProjectShellJob"),
@@ -673,7 +671,6 @@ fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
         ("/api/projects/search_text", "searchProjectText"),
         ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
-        ("/api/projects/delete_files", "deleteProjectFiles"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
         ("/api/projects/discard_untracked", "discardUntrackedFiles"),
         ("/api/artifacts/import", "importConversationFilesToProject"),
@@ -715,7 +712,6 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
     for path in [
         "/api/projects/apply_unified_diff",
         "/api/projects/run_shell",
-        "/api/projects/delete_files",
         "/api/projects/git_restore_paths",
         "/api/projects/discard_untracked",
         "/api/projects/run_job",
@@ -737,7 +733,6 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
     for path in [
         "/api/projects/apply_unified_diff",
         "/api/projects/run_shell",
-        "/api/projects/delete_files",
     ] {
         let desc = spec["paths"][path]["post"]["description"]
             .as_str()
@@ -934,7 +929,6 @@ fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
         "ProjectGitDiffRequest",
         "SearchProjectTextRequest",
         "ApplyUnifiedDiffRequest",
-        "DeleteProjectFilesRequest",
         "GitRestorePathsRequest",
         "DiscardUntrackedRequest",
         "StartProjectShellJobRequest",
@@ -1182,7 +1176,7 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fiel
     );
 
     let count = operation_ids(&spec).len();
-    assert_eq!(count, 23, "GPT Actions operation count must stay 23");
+    assert_eq!(count, 22, "GPT Actions operation count must stay 22");
 }
 
 #[test]
@@ -1223,7 +1217,7 @@ fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 23, "operation count must stay 23");
+    assert_eq!(count, 22, "operation count must stay 22");
 }
 
 #[test]
@@ -1305,7 +1299,7 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 23, "operation count must stay 23");
+    assert_eq!(count, 22, "operation count must stay 22");
 }
 
 #[test]
@@ -1416,7 +1410,7 @@ fn openapi_artifact_upload_tools_remain_generic_and_under_action_limit() {
         );
     }
     let count = ids.len();
-    assert_eq!(count, 23, "GPT Actions operation count must stay 23");
+    assert_eq!(count, 22, "GPT Actions operation count must stay 22");
     assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];

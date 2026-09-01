@@ -233,7 +233,6 @@ fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
 async fn current_protocol_generation_never_infers_registration_required_host_features() {
     let registry = ShellClientRegistry::default();
     let mut registration = runner_registration("no-inference", "inst-a", Vec::new());
-    registration.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string());
     let mut capabilities = v2_baseline_capabilities();
     capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
     registration.capabilities = Some(capabilities);

@@ -4,6 +4,7 @@
 //! manifests, and bounded `list_tools` filtering close together while leaving
 //! dispatch and authorization flow in `mod.rs`.
 
+use super::metadata::ToolAuthorityPolicy;
 use super::registry::{accepted_flattened_args_for_spec, registered_tool_specs};
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
@@ -498,6 +499,23 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
         .collect()
 }
 
+fn manifest_authority(policy: ToolAuthorityPolicy) -> Value {
+    match policy {
+        ToolAuthorityPolicy::Require(scope) => json!({
+            "policy": "require",
+            "scopes": [scope],
+        }),
+        ToolAuthorityPolicy::RequireAll(scopes) => json!({
+            "policy": "require_all",
+            "scopes": scopes,
+        }),
+        ToolAuthorityPolicy::Unknown => json!({
+            "policy": "unknown",
+            "scopes": [],
+        }),
+    }
+}
+
 pub(super) fn compact_manifest_tool_entry(
     spec: &ToolSpec,
     model_surface: crate::model_surface::ModelSurface,
@@ -520,7 +538,7 @@ pub(super) fn compact_manifest_tool_entry(
         "path_hint": m.path_hint.manifest_label(),
         "destructive": m.destructive,
         "shell_like": m.shell_like,
-        "oauth_scope": m.legacy_oauth_scope_hint,
+        "authority": manifest_authority(m.authority),
         "availability": availability,
         "gateway_tool": gateway_tool,
     })

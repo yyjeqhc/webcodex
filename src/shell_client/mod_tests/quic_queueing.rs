@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn registry_allows_quic_v1_run_queueing() {
+async fn registry_allows_quic_run_queueing() {
     let registry = ShellClientRegistry::default();
     register_quic_v1_client(&registry, "quic-run").await;
 
@@ -21,7 +21,7 @@ async fn registry_allows_quic_v1_run_queueing() {
         .unwrap();
     let view = registry.get_client_view("quic-run").await.unwrap();
     assert_eq!(view.transport, TRANSPORT_QUIC);
-    assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
+    assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
     assert_eq!(view.pending_requests, 1);
     assert!(view.capabilities.shell);
     assert!(view.capabilities.async_shell_jobs);
@@ -44,7 +44,6 @@ async fn enqueue_file_op_allows_read_with_line_range() {
         .poll(ShellAgentPollRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -177,8 +176,6 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
             hostname: None,
             host_context: None,
             capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
             policy: None,
         }))
         .await
@@ -206,7 +203,6 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
         .poll(ShellAgentPollRequest {
             client_id: "quic-stop".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

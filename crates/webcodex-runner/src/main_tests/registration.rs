@@ -1,84 +1,5 @@
 use super::*;
 
-fn bootstrap_project(index: usize) -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
-        id: format!("project-{index:04}"),
-        name: Some(format!("Project {index:04}")),
-        path: format!("/tmp/project-{index:04}"),
-        allow_patch: true,
-        kind: Some("repo".to_string()),
-        description: None,
-        hooks: Vec::new(),
-        disabled: false,
-        revision: Some(format!("sha256:{}", "a".repeat(64))),
-        git_branch: None,
-        git_head: None,
-        git_dirty: None,
-        updated_at: 1,
-        shell_profile: None,
-    }
-}
-
-fn bootstrap_active_job(project_index: usize) -> ShellJobSnapshot {
-    ShellJobSnapshot {
-        job_id: "job-bootstrap-active".to_string(),
-        request_id: "request-bootstrap-active".to_string(),
-        status: "running".to_string(),
-        update_seq: 1,
-        created_at: 1_700_000_000,
-        started_at: Some(1_700_000_001),
-        ended_at: None,
-        exit_code: None,
-        duration_ms: None,
-        error: None,
-        command_execution_state: None,
-        context: ShellJobContext {
-            runtime_project_id: Some(format!("agent:oe:project-{project_index:04}")),
-            workflow_session_id: None,
-            ssh_resource: None,
-            project_cwd: Some(format!("/tmp/project-{project_index:04}")),
-            cwd: Some(format!("/tmp/project-{project_index:04}")),
-            purpose: Some("test".to_string()),
-            shell: Some("bash".to_string()),
-            command_preview: "sleep 30".to_string(),
-            validation_steps: Vec::new(),
-            validation: None,
-            structured_execution: None,
-        },
-        stdout: ShellJobStreamSnapshot::default(),
-        stderr: ShellJobStreamSnapshot::default(),
-        validation_progress: None,
-    }
-}
-
-#[test]
-fn large_inventory_registration_bootstrap_keeps_active_job_project_within_legacy_bound() {
-    let projects = (0..65).map(bootstrap_project).collect::<Vec<_>>();
-    let job_inventory = ShellJobInventory {
-        active_complete: true,
-        jobs: vec![bootstrap_active_job(64)],
-    };
-
-    let bootstrap = project_registration_bootstrap("oe", &projects, &job_inventory);
-    assert!(bootstrap.paged_inventory);
-    let summaries = bootstrap.projects.expect("active Job project bootstrap");
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].id, "project-0064");
-    assert!(summaries.len() <= PROJECT_INVENTORY_INLINE_MAX_SUMMARIES);
-    assert!(
-        serde_json::to_vec(&summaries).unwrap().len()
-            <= PROJECT_REGISTRATION_BOOTSTRAP_MAX_SERIALIZED_BYTES
-    );
-    assert_eq!(bootstrap.job_inventory.jobs.len(), 1);
-    assert_eq!(
-        bootstrap.job_inventory.jobs[0]
-            .context
-            .runtime_project_id
-            .as_deref(),
-        Some("agent:oe:project-0064")
-    );
-}
-
 #[test]
 fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_local_launch_details() {
     let tmp = tempfile::tempdir().unwrap();
@@ -96,13 +17,7 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
         timeout_secs: Some(5),
     }];
 
-    let body = build_register_request(
-        &cfg,
-        Vec::new(),
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        "runner-instance",
-        0,
-    );
+    let body = build_register_request(&cfg, "runner-instance", 0);
     let providers = body
         .policy
         .as_ref()
@@ -125,13 +40,7 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
 fn current_runner_registration_advertises_v2_and_complete_generation_baseline() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
-    let body = build_register_request(
-        &cfg,
-        Vec::new(),
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        "baseline-instance",
-        0,
-    );
+    let body = build_register_request(&cfg, "baseline-instance", 0);
     assert_eq!(
         body.capabilities
             .as_ref()
@@ -161,7 +70,7 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
 }
 
 #[test]
-fn computer_register_request_announces_platform_capability_and_protocol_version() {
+fn computer_register_request_announces_platform_capabilities_and_generation() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/projects.d"));
     // A stale or hand-edited config cannot force capability advertisement:
@@ -183,40 +92,15 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         project_path_registration: false,
         ..Default::default()
     });
-    for (version, expected_str) in [
-        (AGENT_PROTOCOL_VERSION_POLLING_V1, "polling-v1"),
-        (AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, "websocket-v1"),
-        (AGENT_PROTOCOL_VERSION_QUIC_V1, "quic-v1"),
-    ] {
-        let body = build_register_request(&cfg, Vec::new(), version, "inst-1", 0);
-        let caps = body.capabilities.as_ref().expect("transport capabilities");
-        assert!(caps.structured_go_test_tool, "{expected_str}");
-        assert!(caps.structured_go_test_packages, "{expected_str}");
-        assert!(caps.structured_file_delete, "{expected_str}");
-        assert!(caps.apply_text_edit_occurrence, "{expected_str}");
-        assert!(caps.apply_text_edit_line_scope, "{expected_str}");
-        assert_eq!(body.agent_instance_id, "inst-1");
-        assert_eq!(
-            body.agent_protocol_version.as_deref(),
-            Some(version),
-            "version mismatch for {expected_str}"
-        );
-        assert_eq!(body.agent_protocol_version.as_deref(), Some(expected_str));
-        assert_eq!(
-            body.capabilities
-                .as_ref()
-                .and_then(|capabilities| capabilities.agent_protocol_generation),
-            Some(AGENT_PROTOCOL_GENERATION_V2)
-        );
-    }
-    // Also verify capabilities are advertised (check once for polling).
-    let body = build_register_request(
-        &cfg,
-        Vec::new(),
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        "inst-1",
-        0,
+    let body = build_register_request(&cfg, "inst-1", 0);
+    assert_eq!(body.agent_instance_id, "inst-1");
+    assert_eq!(
+        body.capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.agent_protocol_generation),
+        Some(AGENT_PROTOCOL_GENERATION_V2)
     );
+    // Verify all effective capabilities are advertised from the real host probe.
     let caps = body.capabilities.expect("agent registers capabilities");
     assert!(caps.shell);
     assert!(caps.file_read);
@@ -342,18 +226,12 @@ fn phase_e2_register_request_reports_effective_job_concurrency_limit() {
         (Some(128), 64),
     ] {
         cfg.max_concurrent_jobs = configured;
-        for protocol in [
-            AGENT_PROTOCOL_VERSION_POLLING_V1,
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-            AGENT_PROTOCOL_VERSION_QUIC_V1,
-        ] {
-            let body = build_register_request(&cfg, Vec::new(), protocol, "inst-limit", 0);
-            assert_eq!(
-                body.job_concurrency_limit,
-                Some(expected),
-                "configured={configured:?} protocol={protocol}"
-            );
-        }
+        let body = build_register_request(&cfg, "inst-limit", 0);
+        assert_eq!(
+            body.job_concurrency_limit,
+            Some(expected),
+            "configured={configured:?}"
+        );
     }
 }
 
@@ -380,13 +258,7 @@ fn register_request_carries_sanitized_shell_profiles_summary() {
             },
         )],
     );
-    let body = build_register_request(
-        &cfg,
-        Vec::new(),
-        AGENT_PROTOCOL_VERSION_POLLING_V1,
-        "inst-1",
-        0,
-    );
+    let body = build_register_request(&cfg, "inst-1", 0);
     let policy = body.policy.expect("agent registers a policy");
     let summary = policy
         .shell_profiles

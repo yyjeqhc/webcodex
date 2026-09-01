@@ -122,7 +122,6 @@ async fn next_import_agent_request(
                 .poll(ShellAgentPollRequest {
                     client_id: "importer".to_string(),
                     agent_instance_id: "inst-import".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()

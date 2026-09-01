@@ -350,7 +350,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "tools",
                 array_schema(
                     open_object_schema(
-                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, effect, risk, approval, idempotency, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope, availability, gateway_tool. availability is MCP ModelSurface routing only, not authorization."
+                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, effect, risk, approval, idempotency, read_only, requires_project, path_hint, destructive, shell_like, authority, availability, gateway_tool. authority is the canonical required-scope policy; availability is MCP ModelSurface routing only, not authorization."
                     ),
                     "Compact tool entries without input/output schemas.",
                 ),

@@ -48,7 +48,10 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         let metadata = lookup_tool_metadata(name).expect("metadata");
         assert!(!metadata.destructive);
         assert!(!metadata.shell_like);
-        assert_eq!(metadata.legacy_oauth_scope_hint, Some("runtime:read"));
+        assert_eq!(
+            metadata.authority,
+            crate::tool_runtime::metadata::ToolAuthorityPolicy::Require("runtime:read")
+        );
     }
     let start_metadata = lookup_tool_metadata("start_coding_task").expect("start metadata");
     assert_eq!(
@@ -252,7 +255,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 23, "no dedicated OpenAPI operations added");
+    assert_eq!(operation_count, 22, "no dedicated OpenAPI operations added");
 
     let call =
         internal_start_coding_task_call(json!({"project": "agent:test:demo", "detail": "full"}));

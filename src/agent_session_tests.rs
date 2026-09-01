@@ -35,8 +35,6 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
         hostname: None,
         host_context: None,
         capabilities: Some(capabilities),
-        projects: Some(Vec::new()),
-        agent_protocol_version: Some("websocket-v1".to_string()),
         policy: None,
     })
 }

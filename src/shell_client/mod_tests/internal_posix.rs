@@ -32,7 +32,6 @@ async fn enqueue_internal_posix_script_is_typed_and_capability_fenced() {
         .poll(ShellAgentPollRequest {
             client_id: "internal-posix-on".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

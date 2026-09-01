@@ -59,7 +59,6 @@ async fn assert_no_pending_shell_request(
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .expect("poll should succeed");

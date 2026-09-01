@@ -2,7 +2,6 @@ use super::jobs::{
     assert_active_instance_locked, observe_job_terminal, replace_log_limited, request_preview,
     truncate_output, truncate_output_to,
 };
-use super::project_inventory::apply_legacy_refresh;
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
 use super::validation::{validate_agent_instance_id, validate_id};
 use super::{now_ts, RunnerFeature, ShellClientRegistry};
@@ -78,13 +77,7 @@ impl ShellClientRegistry {
                     ));
                 }
             }
-            let now = now_ts();
-            if let Some(projects) = body.projects {
-                // A bad legacy inventory refresh degrades only project routing;
-                // the active Runner lease and heartbeat still succeed.
-                apply_legacy_refresh(client, projects, now);
-            }
-            client.last_seen = now;
+            client.last_seen = now_ts();
         }
         loop {
             let request_id = {

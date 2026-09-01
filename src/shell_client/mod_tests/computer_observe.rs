@@ -67,7 +67,6 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-owned".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -127,8 +126,6 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 computer_snapshot_region: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -167,8 +164,6 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 computer_snapshot_region: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -188,7 +183,6 @@ async fn computer_snapshot_region_requires_additive_capability() {
         .poll(ShellAgentPollRequest {
             client_id: "computer-region-new".to_string(),
             agent_instance_id: "computer-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -220,8 +214,6 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
                 computer_display_observe: true,
                 ..Default::default()
             }),
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await
@@ -243,7 +235,6 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
         .poll(ShellAgentPollRequest {
             client_id: "computer-display-large".to_string(),
             agent_instance_id: "display-large-inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

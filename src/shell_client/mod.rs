@@ -150,9 +150,8 @@ pub const TRANSPORT_QUIC: &str = "quic";
 
 /// Canonical Server-side transport authority for one registered Runner.
 ///
-/// This value comes from the actual polling/WebSocket/QUIC ingress path. It is
-/// deliberately independent from the `agent_protocol_version` inventory-strategy label,
-/// which is normalized separately from transport authority.
+/// This value comes from the actual polling/WebSocket/QUIC ingress path and is
+/// deliberately independent from the canonical protocol generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentTransport {
     Polling,

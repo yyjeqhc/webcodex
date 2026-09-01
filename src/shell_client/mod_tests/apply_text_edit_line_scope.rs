@@ -79,7 +79,6 @@ async fn enqueue_scoped_apply_text_edits_requires_explicit_line_scope_capability
         .poll(ShellAgentPollRequest {
             client_id: "scope-off".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -131,7 +130,6 @@ async fn generic_file_enqueue_rejects_scoped_edit_without_line_scope_capability(
         .poll(ShellAgentPollRequest {
             client_id: "generic-scope-off".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -160,7 +158,6 @@ async fn generic_file_enqueue_preserves_unscoped_edit_without_line_scope_capabil
         .poll(ShellAgentPollRequest {
             client_id: "generic-unscoped".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -190,7 +187,6 @@ async fn generic_file_enqueue_treats_null_optional_fences_as_absent() {
         .poll(ShellAgentPollRequest {
             client_id: "generic-null-fences".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -215,7 +211,6 @@ async fn generic_file_enqueue_scoped_edit_uses_capability_fenced_path() {
         .poll(ShellAgentPollRequest {
             client_id: "generic-scope-on".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -247,7 +242,6 @@ async fn enqueue_scoped_apply_text_edits_preserves_scope_and_global_occurrence_p
         .poll(ShellAgentPollRequest {
             client_id: "scope-on".to_string(),
             agent_instance_id: "inst".to_string(),
-            projects: None,
         })
         .await
         .unwrap()

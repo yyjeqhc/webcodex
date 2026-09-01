@@ -133,6 +133,64 @@ pub(crate) fn current_runner_registration(
     registration
 }
 
+static TEST_PROJECT_INVENTORY_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Publish one authoritative paged project-inventory snapshot for a registered
+/// test Runner. Tests must use the same post-registration protocol as production
+/// rather than smuggling projects through the retired inline registration field.
+pub(crate) async fn apply_project_inventory_snapshot(
+    registry: &crate::shell_client::ShellClientRegistry,
+    client_id: &str,
+    agent_instance_id: &str,
+    projects: Vec<crate::shell_protocol::ShellAgentProjectSummary>,
+) {
+    use std::sync::atomic::Ordering;
+
+    let snapshot_sequence = TEST_PROJECT_INVENTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let generation = format!("test-inventory-{snapshot_sequence}");
+    let chunks = projects
+        .chunks(crate::shell_protocol::PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
+        .collect::<Vec<_>>();
+    if chunks.is_empty() {
+        registry
+            .apply_project_inventory_page(
+                client_id,
+                agent_instance_id,
+                crate::shell_protocol::ShellProjectInventoryPage {
+                    generation,
+                    snapshot_sequence,
+                    page_index: 0,
+                    total_reported: 0,
+                    complete: true,
+                    projects: Vec::new(),
+                },
+            )
+            .await
+            .expect("empty test project inventory snapshot");
+        return;
+    }
+
+    let last = chunks.len() - 1;
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        registry
+            .apply_project_inventory_page(
+                client_id,
+                agent_instance_id,
+                crate::shell_protocol::ShellProjectInventoryPage {
+                    generation: generation.clone(),
+                    snapshot_sequence,
+                    page_index: index as u32,
+                    total_reported: projects.len(),
+                    complete: index == last,
+                    projects: chunk.to_vec(),
+                },
+            )
+            .await
+            .expect("test project inventory page");
+    }
+}
+
 /// Bootstrap helper: create a user with the given role directly via the DB
 /// so tests can mint tokens for them.
 pub(crate) fn seed_user_with_role(

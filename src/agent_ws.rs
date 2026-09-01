@@ -297,9 +297,9 @@ async fn send_envelope_or_log(ws: &mut WebSocket, env: AgentEnvelope, context: &
 mod tests {
     use super::*;
     use crate::shell_protocol::{
-        AgentPolicySummary, ClaudeCodeProviderStatus, ProviderCallSummary, ShellAgentResultRequest,
-        ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest,
-        ToolProvidersStatus,
+        AgentPolicySummary, AgentProtocolGenerationNumber, ClaudeCodeProviderStatus,
+        ProviderCallSummary, ShellAgentResultRequest, ShellClientCapabilities,
+        ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest, ToolProvidersStatus,
     };
     use salvo::conn::{Acceptor, Listener};
     use std::net::SocketAddr;
@@ -417,10 +417,6 @@ mod tests {
                         agent_protocol_generation: None,
                     },
                 )),
-                projects: None,
-                agent_protocol_version: Some(
-                    crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string(),
-                ),
                 policy: Some(AgentPolicySummary::default()),
             },
         }
@@ -537,33 +533,13 @@ mod tests {
         connect_async(request).await.expect("ws connect").0
     }
 
-    fn shared_key_register_envelope(
-        client_id: &str,
-        instance_id: &str,
-        project_id: &str,
-    ) -> AgentEnvelope {
+    fn shared_key_register_envelope(client_id: &str, instance_id: &str) -> AgentEnvelope {
         let AgentEnvelope::Register { mut payload, .. } =
             register_envelope_with_instance(client_id, instance_id)
         else {
             unreachable!()
         };
         payload.owner = Some("untrusted-owner".to_string());
-        payload.projects = Some(vec![crate::shell_protocol::ShellAgentProjectSummary {
-            id: project_id.to_string(),
-            name: Some(project_id.to_string()),
-            path: format!("/tmp/{project_id}"),
-            allow_patch: true,
-            kind: None,
-            description: None,
-            hooks: Vec::new(),
-            disabled: false,
-            revision: None,
-            git_branch: None,
-            git_head: None,
-            git_dirty: None,
-            updated_at: chrono::Utc::now().timestamp(),
-            shell_profile: None,
-        }]);
         AgentEnvelope::Register { payload }
     }
 
@@ -577,7 +553,7 @@ mod tests {
 
         let mut ws_a = connect_with_bearer(&url, "shared-key-a").await;
         ws_a.send(TungsteniteMessage::Text(
-            shared_key_register_envelope("shared-a", "instance-a", "project-a")
+            shared_key_register_envelope("shared-a", "instance-a")
                 .to_json()
                 .unwrap()
                 .into(),
@@ -609,7 +585,7 @@ mod tests {
         let mut ws_collision = connect_with_bearer(&url, "shared-key-b").await;
         ws_collision
             .send(TungsteniteMessage::Text(
-                shared_key_register_envelope("shared-a", "instance-a", "project-b")
+                shared_key_register_envelope("shared-a", "instance-a")
                     .to_json()
                     .unwrap()
                     .into(),
@@ -624,7 +600,7 @@ mod tests {
 
         let mut ws_b = connect_with_bearer(&url, "shared-key-b").await;
         ws_b.send(TungsteniteMessage::Text(
-            shared_key_register_envelope("shared-b", "instance-b", "project-b")
+            shared_key_register_envelope("shared-b", "instance-b")
                 .to_json()
                 .unwrap()
                 .into(),
@@ -712,7 +688,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ws_register_requires_explicit_protocol_version() {
+    async fn ws_register_requires_explicit_protocol_generation() {
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_server(registry.clone()).await;
         let url = format!("ws://{}/api/agents/ws", addr);
@@ -721,7 +697,11 @@ mod tests {
         let AgentEnvelope::Register { payload, .. } = &mut register else {
             unreachable!("register helper must return Register")
         };
-        payload.agent_protocol_version = None;
+        payload
+            .capabilities
+            .as_mut()
+            .unwrap()
+            .agent_protocol_generation = None;
         ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
             .await
             .unwrap();
@@ -729,7 +709,7 @@ mod tests {
         match recv_envelope(&mut ws).await {
             AgentEnvelope::Error { code, message } => {
                 assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_version is required");
+                assert_eq!(message, "agent_protocol_generation is required");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }
@@ -740,7 +720,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ws_register_rejects_unsupported_protocol_version() {
+    async fn ws_register_rejects_unsupported_protocol_generation() {
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_server(registry.clone()).await;
         let url = format!("ws://{}/api/agents/ws", addr);
@@ -749,7 +729,11 @@ mod tests {
         let AgentEnvelope::Register { payload, .. } = &mut register else {
             unreachable!("register helper must return Register")
         };
-        payload.agent_protocol_version = Some("websocket-next".to_string());
+        payload
+            .capabilities
+            .as_mut()
+            .unwrap()
+            .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
         ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
             .await
             .unwrap();
@@ -757,7 +741,7 @@ mod tests {
         match recv_envelope(&mut ws).await {
             AgentEnvelope::Error { code, message } => {
                 assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_version is unsupported");
+                assert_eq!(message, "agent_protocol_generation is unsupported");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }

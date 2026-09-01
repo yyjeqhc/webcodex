@@ -58,8 +58,6 @@ async fn registry_registers_and_lists_client() {
             hostname: Some("fineserver".to_string()),
             host_context: None,
             capabilities: None,
-            projects: None,
-            agent_protocol_version: Some("polling-v1".to_string()),
             policy: None,
         }))
         .await

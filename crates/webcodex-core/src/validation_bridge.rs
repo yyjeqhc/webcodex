@@ -94,19 +94,10 @@ pub struct ValidationBridgeRequest {
     pub targets: Vec<String>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
-    #[serde(default)]
-    pub options: ValidationBridgeOptions,
 }
 
 fn default_timeout_secs() -> u64 {
     DEFAULT_TIMEOUT_SECS
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ValidationBridgeOptions {
-    /// Reserved for future bounded options; empty in v1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_diagnostics: Option<usize>,
 }
 
 /// Sanitized diagnostic returned across the bridge (project-relative paths only).
@@ -639,7 +630,6 @@ mod tests {
             cwd: None,
             targets: vec![],
             timeout_secs: 60,
-            options: ValidationBridgeOptions::default(),
         };
         assert!(validate_bridge_request(&req).is_ok());
         req.timeout_secs = 300;

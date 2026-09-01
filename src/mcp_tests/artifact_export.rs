@@ -27,28 +27,33 @@ async fn mcp_export_runtime(
                 hostname: None,
                 host_context: None,
                 capabilities: Some(ShellClientCapabilities::default()),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("Demo".to_string()),
-                    path: root.to_string_lossy().to_string(),
-                    allow_patch: true,
-                    kind: None,
-                    description: None,
-                    hooks: vec![],
-                    disabled: false,
-                    revision: None,
-                    git_branch: None,
-                    git_head: None,
-                    git_dirty: None,
-                    updated_at: 0,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("polling-v1".to_string()),
                 policy: None,
             },
         ))
         .await
         .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "exporter",
+        "inst-export",
+        vec![ShellAgentProjectSummary {
+            id: "demo".to_string(),
+            name: Some("demo".to_string()),
+            path: root.to_string_lossy().into_owned(),
+            allow_patch: true,
+            kind: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: chrono::Utc::now().timestamp(),
+            shell_profile: None,
+        }],
+    )
+    .await;
     let runtime = Arc::new(
         ToolRuntime::new_for_tests_with_shell_clients(registry.clone())
             .with_model_surface(ModelSurface::FullOperatorRuntime),
@@ -65,7 +70,6 @@ async fn poll_mcp_export_request(
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -152,7 +156,6 @@ async fn complete_mcp_export_metadata_with_max(
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -234,7 +237,6 @@ async fn complete_mcp_export_resource_read(
                 .poll(ShellAgentPollRequest {
                     client_id: "exporter".to_string(),
                     agent_instance_id: "inst-export".to_string(),
-                    projects: None,
                 })
                 .await
                 .unwrap()
@@ -586,7 +588,6 @@ async fn mcp_artifact_export_oauth_resource_read_uses_project_read_and_stable_id
         .poll(ShellAgentPollRequest {
             client_id: "exporter".to_string(),
             agent_instance_id: "inst-export".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -618,7 +619,6 @@ async fn export_project_artifact_non_mcp_path_fails_before_runner_read() {
         .poll(ShellAgentPollRequest {
             client_id: "exporter".to_string(),
             agent_instance_id: "inst-export".to_string(),
-            projects: None,
         })
         .await
         .unwrap()
@@ -925,7 +925,6 @@ async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_o
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -946,7 +945,6 @@ async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_o
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -975,7 +973,6 @@ async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_o
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()
@@ -1360,7 +1357,6 @@ async fn mcp_artifact_export_backpressure_is_two_way_bounded_and_retryable() {
             .poll(ShellAgentPollRequest {
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
-                projects: None,
             })
             .await
             .unwrap()

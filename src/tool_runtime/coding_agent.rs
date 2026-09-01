@@ -1871,6 +1871,32 @@ mod tests {
             .bind(&client, terminal_regression, None)
             .await
             .is_err());
+        let lost_run_id = "wc_agent_run_lost_recovery";
+        let mut lost =
+            test_server_binding(lost_run_id.to_string(), CodingAgentRunState::Running, now)
+                .snapshot;
+        lost.state = CodingAgentRunState::Lost;
+        lost.execution_state = CodingAgentExecutionState::OutcomeUnknown;
+        lost.observation_revision = 2;
+        lost.terminal = Some(CodingAgentTerminal {
+            stop_reason: None,
+            error_code: Some("coding_agent_transport_lost".to_string()),
+            message: Some("outcome is uncertain".to_string()),
+            completed_at: now,
+        });
+        state.bind(&client, lost, None).await.unwrap();
+
+        let mut recovered =
+            test_server_binding(lost_run_id.to_string(), CodingAgentRunState::Completed, now)
+                .snapshot;
+        recovered.observation_revision = 4;
+        let accepted = state.bind(&client, recovered.clone(), None).await.unwrap();
+        assert_eq!(accepted.snapshot, recovered);
+        assert_eq!(
+            state.get(lost_run_id).await.unwrap().snapshot.state,
+            CodingAgentRunState::Completed
+        );
+
         assert_eq!(state.get(run_id).await.unwrap().snapshot, completed);
     }
 

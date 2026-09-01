@@ -987,6 +987,28 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
             .state,
         AgentTaskState::Active
     );
+    let completed_after_lost = coding_observation(&lost_intent, "completed", "completed", 6);
+    let recovered = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &lost_task,
+            &lost_started.attempt.attempt_id,
+            &completed_after_lost,
+            Some("recovered definitive result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+    assert_eq!(recovered.task.state, AgentTaskState::Succeeded);
+    assert_eq!(recovered.attempt.state, AgentTaskAttemptState::Succeeded);
+    assert_eq!(
+        recovered.binding.dispatch_state,
+        AgentTaskCodingRunDispatchState::Terminal
+    );
+    assert_eq!(recovered.binding.last_observation_revision, Some(6));
+    assert_eq!(
+        recovered.binding.last_observed_run_state.as_deref(),
+        Some("completed")
+    );
 }
 
 #[test]

@@ -736,8 +736,30 @@ pub fn validate_coding_agent_run_transition(
     if incoming.observation_revision <= stored.observation_revision {
         return Err("CodingAgentRun transition does not advance observation revision".to_string());
     }
-    if stored.state.terminal() {
-        return Err("terminal CodingAgentRun observation cannot advance to new truth".to_string());
+    if matches!(
+        stored.state,
+        CodingAgentRunState::Completed
+            | CodingAgentRunState::Failed
+            | CodingAgentRunState::Cancelled
+    ) {
+        return Err(
+            "definitive terminal CodingAgentRun observation cannot advance to new truth"
+                .to_string(),
+        );
+    }
+    if stored.state == CodingAgentRunState::Lost
+        && !matches!(
+            incoming.state,
+            CodingAgentRunState::Lost
+                | CodingAgentRunState::Completed
+                | CodingAgentRunState::Failed
+                | CodingAgentRunState::Cancelled
+        )
+    {
+        return Err(
+            "lost CodingAgentRun may only reconcile to newer lost or definitive terminal truth"
+                .to_string(),
+        );
     }
     if stored.state != CodingAgentRunState::Starting
         && incoming.state == CodingAgentRunState::Starting
@@ -1210,6 +1232,35 @@ mod tests {
         terminal_regression.observation_revision = 3;
         terminal_regression.updated_at = 3;
         assert!(merge_coding_agent_run_snapshot(&completed, &terminal_regression).is_err());
+
+        let mut lost = snapshot(
+            CodingAgentRunState::Lost,
+            CodingAgentExecutionState::OutcomeUnknown,
+            None,
+            Some("coding_agent_transport_lost"),
+        );
+        lost.observation_revision = 2;
+        lost.updated_at = 2;
+        lost.terminal.as_mut().unwrap().completed_at = 2;
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&running, &lost).unwrap(),
+            CodingAgentObservationMerge::Advance
+        );
+
+        let mut completed_after_lost = completed.clone();
+        completed_after_lost.observation_revision = 4;
+        completed_after_lost.updated_at = 4;
+        completed_after_lost.terminal.as_mut().unwrap().completed_at = 4;
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&lost, &completed_after_lost).unwrap(),
+            CodingAgentObservationMerge::Advance,
+            "Lost is outcome-unknown recovery state, not definitive effect truth"
+        );
+
+        let mut active_after_lost = running.clone();
+        active_after_lost.observation_revision = 3;
+        active_after_lost.updated_at = 3;
+        assert!(merge_coding_agent_run_snapshot(&lost, &active_after_lost).is_err());
 
         let mut execution_regression = running.clone();
         execution_regression.observation_revision = 2;

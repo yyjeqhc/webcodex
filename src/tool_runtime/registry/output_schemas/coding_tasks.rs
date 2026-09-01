@@ -324,7 +324,7 @@ fn startup_session_schema() -> Value {
         "type": "object",
         "properties": {
             "session_id": {"type": "string", "pattern": "^wc_sess_[A-Za-z0-9_]+$"},
-            "mode": {"type": "string", "enum": ["normal", "inspect", "read_only"]},
+            "mode": {"type": "string", "enum": ["normal", "read_only"]},
             "execution_context": session_execution_context_schema(
                 "Persistent execution defaults currently stored for this Workflow Session."
             ),

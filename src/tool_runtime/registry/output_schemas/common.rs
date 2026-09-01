@@ -592,7 +592,7 @@ pub(crate) fn handoff_brief_schema(description: &str) -> Value {
                     },
                     "mode": {
                         "type": "string",
-                        "enum": ["normal", "inspect", "read_only"]
+                        "enum": ["normal", "read_only"]
                     }
                 },
                 "required": ["session_id", "lifecycle", "mode"]

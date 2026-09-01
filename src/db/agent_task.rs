@@ -10,6 +10,10 @@ use rusqlite::{
 };
 use serde::Serialize;
 use serde_json::json;
+use webcodex_core::coding_agent::{
+    merge_coding_agent_run_snapshot, validate_coding_agent_run_snapshot, CodingAgentExecutionState,
+    CodingAgentObservationMerge, CodingAgentRunSnapshot, CodingAgentRunState, CodingAgentTerminal,
+};
 
 pub(crate) const AGENT_TASK_ID_PREFIX: &str = "wc_agent_task_";
 pub(crate) const AGENT_TASK_ATTEMPT_ID_PREFIX: &str = "wc_agent_task_attempt_";
@@ -1962,53 +1966,8 @@ impl Database {
                     "AgentTaskAttempt has no bound CodingAgentRun",
                 )
             })?;
-        require_coding_run_observation_identity(&binding, observation)?;
-        validate_coding_run_observation(observation)?;
-        let dispatch_state = if binding.dispatch_state == AgentTaskCodingRunDispatchState::Terminal
-        {
-            AgentTaskCodingRunDispatchState::Terminal
-        } else if observation.run_state == "lost"
-            || observation.execution_state == "outcome_unknown"
-        {
-            AgentTaskCodingRunDispatchState::OutcomeUnknown
-        } else {
-            AgentTaskCodingRunDispatchState::Bound
-        };
-        transaction
-            .execute(
-                "UPDATE wc_agent_task_coding_runs
-                 SET dispatch_state = ?3,
-                     last_observed_run_state = ?4,
-                     last_observed_execution_state = ?5,
-                     last_observation_revision = ?6,
-                     terminal_stop_reason = ?7,
-                     terminal_error_code = ?8,
-                     terminal_message = ?9,
-                     completed_at_unix = ?10,
-                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?11)
-                 WHERE task_id = ?1 AND attempt_id = ?2",
-                params![
-                    task_id,
-                    attempt_id,
-                    dispatch_state.as_str(),
-                    observation.run_state,
-                    observation.execution_state,
-                    observation.observation_revision,
-                    observation.terminal_stop_reason,
-                    observation.terminal_error_code,
-                    observation.terminal_message,
-                    observation.completed_at_unix,
-                    now,
-                ],
-            )
-            .map_err(store_error)?;
-        let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
-            .ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "agent_task_storage_invariant",
-                    "AgentTask CodingAgent binding disappeared after observation",
-                )
-            })?;
+        let (binding, _) =
+            merge_agent_task_coding_run_observation(&transaction, &binding, observation, now)?;
         transaction.commit().map_err(store_error)?;
         Ok(binding)
     }
@@ -2065,17 +2024,6 @@ impl Database {
         validate_communication_principal(principal)?;
         let terminal_result = validate_optional_terminal_text(terminal_result, "terminal_result")?;
         let terminal_reason = validate_optional_terminal_text(terminal_reason, "terminal_reason")?;
-        let desired_task_state = match observation.run_state.as_str() {
-            "completed" => AgentTaskState::Succeeded,
-            "failed" | "cancelled" => AgentTaskState::Failed,
-            _ => {
-                return Err(CommunicationStoreError::new(
-                    "agent_task_coding_run_not_terminal",
-                    "CodingAgentRun is not an authoritative terminal result for AgentTask reconciliation",
-                ))
-            }
-        };
-        validate_coding_run_observation(observation)?;
         let now = now_unix_ms();
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
@@ -2100,7 +2048,30 @@ impl Database {
                     "AgentTaskAttempt has no bound CodingAgentRun",
                 )
             })?;
-        require_coding_run_observation_identity(&binding, observation)?;
+        let (binding, disposition) =
+            merge_agent_task_coding_run_observation(&transaction, &binding, observation, now)?;
+        if disposition == CodingAgentObservationMerge::Stale {
+            return Err(CommunicationStoreError::new(
+                "agent_task_coding_run_observation_stale",
+                "stale CodingAgentRun observation cannot terminalize AgentTask state",
+            ));
+        }
+        let desired_task_state = match binding.last_observed_run_state.as_deref() {
+            Some("completed") => AgentTaskState::Succeeded,
+            Some("failed" | "cancelled") => AgentTaskState::Failed,
+            _ => {
+                return Err(CommunicationStoreError::new(
+                    "agent_task_coding_run_not_terminal",
+                    "CodingAgentRun is not an authoritative terminal result for AgentTask reconciliation",
+                ))
+            }
+        };
+        let observation_revision = binding.last_observation_revision.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                "terminal CodingAgent reconciliation lacks an authoritative observation revision",
+            )
+        })?;
         let attempt =
             load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
                 CommunicationStoreError::new(
@@ -2124,13 +2095,6 @@ impl Database {
                     "AgentTask is already terminal from a different authoritative result",
                 ));
             }
-            let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
-                .ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "agent_task_storage_invariant",
-                    "Terminal AgentTask lost its CodingAgent binding",
-                )
-            })?;
             transaction.commit().map_err(store_error)?;
             return Ok(AgentTaskCodingRunReconcileMutation {
                 task: task.summary(now),
@@ -2168,34 +2132,22 @@ impl Database {
                 params![task_id, desired_task_state.as_str(), attempt_id, now],
             )
             .map_err(store_error)?;
-        transaction
+        let binding_updated = transaction
             .execute(
                 "UPDATE wc_agent_task_coding_runs
                  SET dispatch_state = 'terminal',
-                     last_observed_run_state = ?3,
-                     last_observed_execution_state = ?4,
-                     last_observation_revision = ?5,
-                     terminal_stop_reason = ?6,
-                     terminal_error_code = ?7,
-                     terminal_message = ?8,
-                     completed_at_unix = ?9,
-                     terminal_at_unix_ms = ?10,
-                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?10)
-                 WHERE task_id = ?1 AND attempt_id = ?2",
-                params![
-                    task_id,
-                    attempt_id,
-                    observation.run_state,
-                    observation.execution_state,
-                    observation.observation_revision,
-                    observation.terminal_stop_reason,
-                    observation.terminal_error_code,
-                    observation.terminal_message,
-                    observation.completed_at_unix,
-                    now,
-                ],
+                     terminal_at_unix_ms = ?4,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?4)
+                 WHERE task_id = ?1 AND attempt_id = ?2 AND last_observation_revision = ?3",
+                params![task_id, attempt_id, observation_revision, now],
             )
             .map_err(store_error)?;
+        if binding_updated != 1 {
+            return Err(CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                "terminal CodingAgent binding revision CAS did not update the exact durable binding",
+            ));
+        }
         let task = load_owned_task(&transaction, principal, task_id, now)?;
         let attempt =
             load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
@@ -2240,34 +2192,9 @@ fn require_coding_run_observation_identity(
     Ok(())
 }
 
-fn validate_coding_run_observation(
+fn canonical_coding_run_snapshot(
     observation: &AgentTaskCodingRunObservation,
-) -> Result<(), CommunicationStoreError> {
-    if !matches!(
-        observation.run_state.as_str(),
-        "starting"
-            | "running"
-            | "waiting_permission"
-            | "completed"
-            | "failed"
-            | "cancelled"
-            | "lost"
-    ) {
-        return Err(CommunicationStoreError::new(
-            "invalid_agent_task_coding_run_observation",
-            "CodingAgentRun snapshot contains an unsupported run state",
-        ));
-    }
-    if !matches!(
-        observation.execution_state.as_str(),
-        "not_started" | "started" | "outcome_unknown" | "completed"
-    ) || observation.observation_revision < 0
-    {
-        return Err(CommunicationStoreError::new(
-            "invalid_agent_task_coding_run_observation",
-            "CodingAgentRun snapshot contains an unsupported execution state or revision",
-        ));
-    }
+) -> Result<CodingAgentRunSnapshot, String> {
     for (label, value) in [
         (
             "terminal_stop_reason",
@@ -2281,14 +2208,241 @@ fn validate_coding_run_observation(
     ] {
         if let Some(value) = value {
             if value.len() > MAX_AGENT_TASK_TERMINAL_TEXT_BYTES {
-                return Err(CommunicationStoreError::new(
-                    "invalid_agent_task_coding_run_observation",
-                    format!("{label} exceeds the AgentTask bounded terminal text limit"),
+                return Err(format!(
+                    "{label} exceeds the AgentTask bounded terminal text limit"
                 ));
             }
         }
     }
-    Ok(())
+
+    let state = match observation.run_state.as_str() {
+        "starting" => CodingAgentRunState::Starting,
+        "running" => CodingAgentRunState::Running,
+        "waiting_permission" => CodingAgentRunState::WaitingPermission,
+        "completed" => CodingAgentRunState::Completed,
+        "failed" => CodingAgentRunState::Failed,
+        "cancelled" => CodingAgentRunState::Cancelled,
+        "lost" => CodingAgentRunState::Lost,
+        _ => return Err("CodingAgentRun snapshot contains an unsupported run state".to_string()),
+    };
+    let execution_state = match observation.execution_state.as_str() {
+        "not_started" => CodingAgentExecutionState::NotStarted,
+        "started" => CodingAgentExecutionState::Started,
+        "outcome_unknown" => CodingAgentExecutionState::OutcomeUnknown,
+        "completed" => CodingAgentExecutionState::Completed,
+        _ => {
+            return Err(
+                "CodingAgentRun snapshot contains an unsupported execution state".to_string(),
+            )
+        }
+    };
+    let observation_revision = u64::try_from(observation.observation_revision).map_err(|_| {
+        "CodingAgentRun snapshot contains a negative observation revision".to_string()
+    })?;
+    let has_terminal_metadata = observation.terminal_stop_reason.is_some()
+        || observation.terminal_error_code.is_some()
+        || observation.terminal_message.is_some()
+        || observation.completed_at_unix.is_some();
+    let terminal = if has_terminal_metadata {
+        Some(CodingAgentTerminal {
+            stop_reason: observation.terminal_stop_reason.clone(),
+            error_code: observation.terminal_error_code.clone(),
+            message: observation.terminal_message.clone(),
+            completed_at: observation.completed_at_unix.ok_or_else(|| {
+                "CodingAgentRun terminal observation lacks completed timestamp".to_string()
+            })?,
+        })
+    } else {
+        None
+    };
+    let snapshot = CodingAgentRunSnapshot {
+        run_id: observation.run_id.clone(),
+        intent_fingerprint: observation.coding_agent_intent_fingerprint.clone(),
+        authority_fingerprint: observation.authority_fingerprint.clone(),
+        runtime_project_id: observation.runtime_project_id.clone(),
+        provider_id: observation.provider_id.clone(),
+        provider_instance_id: observation.provider_instance_id.clone(),
+        state,
+        execution_state,
+        observation_revision,
+        // AgentTask persists the authoritative semantic observation fields but not
+        // Runner wall-clock snapshot metadata. Neutralize those non-persisted fields
+        // so durable replay/conflict classification compares exactly what is stored.
+        created_at: 0,
+        updated_at: 0,
+        terminal,
+    };
+    validate_coding_agent_run_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+fn validate_coding_run_observation(
+    observation: &AgentTaskCodingRunObservation,
+) -> Result<CodingAgentRunSnapshot, CommunicationStoreError> {
+    canonical_coding_run_snapshot(observation).map_err(|message| {
+        CommunicationStoreError::new("invalid_agent_task_coding_run_observation", message)
+    })
+}
+
+fn stored_coding_run_snapshot(
+    binding: &AgentTaskCodingRunBindingRecord,
+) -> Result<Option<CodingAgentRunSnapshot>, CommunicationStoreError> {
+    let Some(revision) = binding.last_observation_revision else {
+        if binding.last_observed_run_state.is_some()
+            || binding.last_observed_execution_state.is_some()
+            || binding.terminal_stop_reason.is_some()
+            || binding.terminal_error_code.is_some()
+            || binding.terminal_message.is_some()
+            || binding.completed_at_unix.is_some()
+        {
+            return Err(CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                "CodingAgent binding has observation fields without an observation revision",
+            ));
+        }
+        return Ok(None);
+    };
+    let observation = AgentTaskCodingRunObservation {
+        run_id: binding.run_id.clone(),
+        runtime_project_id: binding.runtime_project_id.clone(),
+        provider_id: binding.provider_id.clone(),
+        provider_instance_id: binding.provider_instance_id.clone(),
+        authority_fingerprint: binding.authority_fingerprint.clone(),
+        coding_agent_intent_fingerprint: binding.coding_agent_intent_fingerprint.clone(),
+        run_state: binding.last_observed_run_state.clone().ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                "CodingAgent binding observation revision lacks run state",
+            )
+        })?,
+        execution_state: binding
+            .last_observed_execution_state
+            .clone()
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "CodingAgent binding observation revision lacks execution state",
+                )
+            })?,
+        observation_revision: revision,
+        terminal_stop_reason: binding.terminal_stop_reason.clone(),
+        terminal_error_code: binding.terminal_error_code.clone(),
+        terminal_message: binding.terminal_message.clone(),
+        completed_at_unix: binding.completed_at_unix,
+    };
+    canonical_coding_run_snapshot(&observation)
+        .map(Some)
+        .map_err(|message| {
+            CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                format!("stored CodingAgent observation is invalid: {message}"),
+            )
+        })
+}
+
+fn merge_agent_task_coding_run_observation(
+    transaction: &Transaction<'_>,
+    binding: &AgentTaskCodingRunBindingRecord,
+    observation: &AgentTaskCodingRunObservation,
+    now: i64,
+) -> Result<(AgentTaskCodingRunBindingRecord, CodingAgentObservationMerge), CommunicationStoreError>
+{
+    require_coding_run_observation_identity(binding, observation)?;
+    let incoming = validate_coding_run_observation(observation)?;
+    let disposition = match stored_coding_run_snapshot(binding)? {
+        Some(stored) => merge_coding_agent_run_snapshot(&stored, &incoming).map_err(|message| {
+            CommunicationStoreError::new("agent_task_coding_run_observation_conflict", message)
+        })?,
+        None => CodingAgentObservationMerge::Advance,
+    };
+    if matches!(
+        disposition,
+        CodingAgentObservationMerge::Stale | CodingAgentObservationMerge::ExactReplay
+    ) {
+        return Ok((binding.clone(), disposition));
+    }
+
+    let dispatch_state =
+        if observation.run_state == "lost" || observation.execution_state == "outcome_unknown" {
+            AgentTaskCodingRunDispatchState::OutcomeUnknown
+        } else {
+            AgentTaskCodingRunDispatchState::Bound
+        };
+    let updated = if let Some(expected_revision) = binding.last_observation_revision {
+        transaction
+            .execute(
+                "UPDATE wc_agent_task_coding_runs
+                 SET dispatch_state = ?3,
+                     last_observed_run_state = ?4,
+                     last_observed_execution_state = ?5,
+                     last_observation_revision = ?6,
+                     terminal_stop_reason = ?7,
+                     terminal_error_code = ?8,
+                     terminal_message = ?9,
+                     completed_at_unix = ?10,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?11)
+                 WHERE task_id = ?1 AND attempt_id = ?2 AND last_observation_revision = ?12",
+                params![
+                    binding.task_id,
+                    binding.attempt_id,
+                    dispatch_state.as_str(),
+                    observation.run_state,
+                    observation.execution_state,
+                    observation.observation_revision,
+                    observation.terminal_stop_reason,
+                    observation.terminal_error_code,
+                    observation.terminal_message,
+                    observation.completed_at_unix,
+                    now,
+                    expected_revision,
+                ],
+            )
+            .map_err(store_error)?
+    } else {
+        transaction
+            .execute(
+                "UPDATE wc_agent_task_coding_runs
+                 SET dispatch_state = ?3,
+                     last_observed_run_state = ?4,
+                     last_observed_execution_state = ?5,
+                     last_observation_revision = ?6,
+                     terminal_stop_reason = ?7,
+                     terminal_error_code = ?8,
+                     terminal_message = ?9,
+                     completed_at_unix = ?10,
+                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?11)
+                 WHERE task_id = ?1 AND attempt_id = ?2 AND last_observation_revision IS NULL",
+                params![
+                    binding.task_id,
+                    binding.attempt_id,
+                    dispatch_state.as_str(),
+                    observation.run_state,
+                    observation.execution_state,
+                    observation.observation_revision,
+                    observation.terminal_stop_reason,
+                    observation.terminal_error_code,
+                    observation.terminal_message,
+                    observation.completed_at_unix,
+                    now,
+                ],
+            )
+            .map_err(store_error)?
+    };
+    if updated != 1 {
+        return Err(CommunicationStoreError::new(
+            "agent_task_storage_invariant",
+            "CodingAgent observation revision CAS did not update the exact durable binding",
+        ));
+    }
+    let binding =
+        load_coding_run_binding_for_attempt(transaction, &binding.task_id, &binding.attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask CodingAgent binding disappeared after monotonic observation merge",
+                )
+            })?;
+    Ok((binding, disposition))
 }
 
 fn task_request_hash(value: &serde_json::Value) -> String {

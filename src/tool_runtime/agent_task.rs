@@ -46,13 +46,44 @@ fn agent_task_recovery_kind(
         "agent_task_attempt_stale"
         | "agent_task_execution_active"
         | "agent_task_execution_outcome_unknown"
-        | "agent_task_coding_run_identity_mismatch" => RecoveryKind::Reconcile,
+        | "agent_task_coding_run_identity_mismatch"
+        | "agent_task_coding_run_observation_conflict"
+        | "agent_task_coding_run_observation_stale" => RecoveryKind::Reconcile,
         "agent_task_attempt_active"
         | "agent_task_assignee_mismatch"
         | "agent_task_unassigned"
         | "agent_task_terminal"
         | "communication_idempotency_conflict" => RecoveryKind::Reobserve,
         _ => RecoveryKind::FixInput,
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn coding_run_observation_revision_overflow_fails_closed() {
+        let run = CodingAgentRunSnapshot {
+            run_id: "wc_agent_run_revision_overflow".to_string(),
+            intent_fingerprint: "intent-overflow".to_string(),
+            authority_fingerprint: "auth_overflow".to_string(),
+            runtime_project_id: "agent:test:overflow".to_string(),
+            provider_id: "codex".to_string(),
+            provider_instance_id: "provider-overflow".to_string(),
+            state: CodingAgentRunState::Running,
+            execution_state: CodingAgentExecutionState::Started,
+            observation_revision: u64::MAX,
+            created_at: 1,
+            updated_at: 1,
+            terminal: None,
+        };
+        let error = coding_run_observation(&run).unwrap_err();
+        assert!(!error.success);
+        assert_eq!(
+            error.output["error_kind"],
+            "agent_task_coding_run_revision_out_of_range"
+        );
     }
 }
 
@@ -151,8 +182,21 @@ fn bounded_optional_terminal(value: Option<&str>) -> Option<String> {
     value.map(|value| truncate_utf8_bytes(value, MAX_AGENT_TASK_TERMINAL_TEXT_BYTES))
 }
 
-fn coding_run_observation(run: &CodingAgentRunSnapshot) -> AgentTaskCodingRunObservation {
-    AgentTaskCodingRunObservation {
+fn coding_run_observation(
+    run: &CodingAgentRunSnapshot,
+) -> Result<AgentTaskCodingRunObservation, ToolResult> {
+    let observation_revision = i64::try_from(run.observation_revision).map_err(|_| {
+        ToolResult::err_with_output(
+            "CodingAgentRun observation revision exceeds the durable AgentTask range",
+            json!({
+                "error_kind": "agent_task_coding_run_revision_out_of_range",
+                "run_id": run.run_id,
+                "state_changed": false,
+            }),
+        )
+        .with_recovery(RecoveryKind::Reconcile, None)
+    })?;
+    Ok(AgentTaskCodingRunObservation {
         run_id: run.run_id.clone(),
         runtime_project_id: run.runtime_project_id.clone(),
         provider_id: run.provider_id.clone(),
@@ -161,7 +205,7 @@ fn coding_run_observation(run: &CodingAgentRunSnapshot) -> AgentTaskCodingRunObs
         coding_agent_intent_fingerprint: run.intent_fingerprint.clone(),
         run_state: coding_run_state_name(&run.state).to_string(),
         execution_state: coding_execution_state_name(run.execution_state).to_string(),
-        observation_revision: i64::try_from(run.observation_revision).unwrap_or(i64::MAX),
+        observation_revision,
         terminal_stop_reason: bounded_optional_terminal(
             run.terminal
                 .as_ref()
@@ -178,7 +222,7 @@ fn coding_run_observation(run: &CodingAgentRunSnapshot) -> AgentTaskCodingRunObs
                 .and_then(|terminal| terminal.message.as_deref()),
         ),
         completed_at_unix: run.terminal.as_ref().map(|terminal| terminal.completed_at),
-    }
+    })
 }
 
 fn binding_execution_status(binding: &AgentTaskCodingRunBindingRecord) -> &'static str {
@@ -542,7 +586,10 @@ impl ToolRuntime {
             .await
         {
             CodingAgentTypedStartOutcome::Run(run) => {
-                let observation = coding_run_observation(&run);
+                let observation = match coding_run_observation(&run) {
+                    Ok(observation) => observation,
+                    Err(result) => return result,
+                };
                 match db.record_agent_task_coding_run_observation(
                     &principal,
                     &task_id,
@@ -618,7 +665,10 @@ impl ToolRuntime {
             return ToolResult::ok(coding_run_binding_projection(&binding, false, false));
         };
 
-        let observation = coding_run_observation(&run);
+        let observation = match coding_run_observation(&run) {
+            Ok(observation) => observation,
+            Err(result) => return result,
+        };
         let observed_binding = match db.record_agent_task_coding_run_observation(
             &principal,
             &task_id,
@@ -628,12 +678,12 @@ impl ToolRuntime {
             Ok(binding) => binding,
             Err(error) => return agent_task_error(error, RecoveryKind::Reconcile),
         };
-        if !matches!(
-            run.state,
-            CodingAgentRunState::Completed
-                | CodingAgentRunState::Failed
-                | CodingAgentRunState::Cancelled
-        ) {
+        if observed_binding.last_observation_revision != Some(observation.observation_revision)
+            || !matches!(
+                observed_binding.last_observed_run_state.as_deref(),
+                Some("completed" | "failed" | "cancelled")
+            )
+        {
             return ToolResult::ok(coding_run_binding_projection(
                 &observed_binding,
                 false,

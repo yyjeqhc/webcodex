@@ -14,8 +14,9 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use webcodex_core::coding_agent::{
-    CodingAgentCancelRequest, CodingAgentConfigValue, CodingAgentDispatchState, CodingAgentEvent,
-    CodingAgentExecutionState, CodingAgentObserveRequest, CodingAgentObserveResult,
+    merge_coding_agent_run_snapshot, validate_coding_agent_run_snapshot, CodingAgentCancelRequest,
+    CodingAgentConfigValue, CodingAgentDispatchState, CodingAgentEvent, CodingAgentExecutionState,
+    CodingAgentObservationMerge, CodingAgentObserveRequest, CodingAgentObserveResult,
     CodingAgentRequest, CodingAgentResponse, CodingAgentResponsePayload, CodingAgentRunSnapshot,
     CodingAgentRunState, CodingAgentStartRequest, CodingAgentTerminal,
     CODING_AGENT_MAX_CONFIG_OPTIONS, CODING_AGENT_MAX_EVENTS_PER_RESPONSE,
@@ -139,6 +140,37 @@ fn run_matches_binding_identity(binding: &ServerRunBinding, run: &CodingAgentRun
         && run.provider_instance_id == binding.provider_instance_id
 }
 
+fn merge_server_run_binding_locked(
+    runs: &mut HashMap<String, ServerRunBinding>,
+    mut incoming: ServerRunBinding,
+) -> Result<ServerRunBinding, String> {
+    let run_id = incoming.snapshot.run_id.clone();
+    let Some(existing) = runs.get_mut(&run_id) else {
+        validate_coding_agent_run_snapshot(&incoming.snapshot)?;
+        runs.insert(run_id, incoming.clone());
+        return Ok(incoming);
+    };
+
+    let disposition = merge_coding_agent_run_snapshot(&existing.snapshot, &incoming.snapshot)?;
+    match disposition {
+        CodingAgentObservationMerge::Stale | CodingAgentObservationMerge::ExactReplay => {
+            if existing.recording_session_id.is_none() {
+                existing.recording_session_id = incoming.recording_session_id.take();
+            }
+            Ok(existing.clone())
+        }
+        CodingAgentObservationMerge::Advance => {
+            incoming.recording_session_id = existing
+                .recording_session_id
+                .clone()
+                .or(incoming.recording_session_id);
+            incoming.recorded_lifecycle_mask = existing.recorded_lifecycle_mask;
+            *existing = incoming;
+            Ok(existing.clone())
+        }
+    }
+}
+
 impl Default for CodingAgentServerState {
     fn default() -> Self {
         Self::with_observation_mac_key(new_observation_mac_key())
@@ -172,30 +204,51 @@ impl CodingAgentServerState {
         client: &crate::shell_protocol::ShellClientView,
         run: CodingAgentRunSnapshot,
         recording_session_id: Option<String>,
-    ) {
+    ) -> Result<ServerRunBinding, String> {
+        let incoming = ServerRunBinding {
+            authority_fingerprint: run.authority_fingerprint.clone(),
+            client_id: client.client_id.clone(),
+            agent_instance_id: client.agent_instance_id.clone(),
+            runtime_project_id: run.runtime_project_id.clone(),
+            provider_id: run.provider_id.clone(),
+            provider_instance_id: run.provider_instance_id.clone(),
+            recording_session_id,
+            recorded_lifecycle_mask: 0,
+            snapshot: run,
+        };
         let mut runs = self.runs.lock().await;
         prune_server_runs_locked(&mut runs, Utc::now().timestamp());
-        let existing = runs.get(&run.run_id);
-        let recording_session_id = existing
-            .and_then(|binding| binding.recording_session_id.clone())
-            .or(recording_session_id);
-        let recorded_lifecycle_mask = existing
-            .map(|binding| binding.recorded_lifecycle_mask)
-            .unwrap_or_default();
-        runs.insert(
-            run.run_id.clone(),
-            ServerRunBinding {
-                authority_fingerprint: run.authority_fingerprint.clone(),
-                client_id: client.client_id.clone(),
-                agent_instance_id: client.agent_instance_id.clone(),
-                runtime_project_id: run.runtime_project_id.clone(),
-                provider_id: run.provider_id.clone(),
-                provider_instance_id: run.provider_instance_id.clone(),
-                recording_session_id,
-                recorded_lifecycle_mask,
-                snapshot: run,
-            },
-        );
+        merge_server_run_binding_locked(&mut runs, incoming)
+    }
+
+    async fn mark_lost(
+        &self,
+        run_id: &str,
+        code: &str,
+    ) -> Result<Option<ServerRunBinding>, String> {
+        let mut runs = self.runs.lock().await;
+        prune_server_runs_locked(&mut runs, Utc::now().timestamp());
+        let Some(current) = runs.get(run_id).cloned() else {
+            return Ok(None);
+        };
+        if current.snapshot.state.terminal() {
+            return Ok(Some(current));
+        }
+        let mut lost = current.clone();
+        mark_server_binding_lost(&mut lost, code)?;
+        merge_server_run_binding_locked(&mut runs, lost).map(Some)
+    }
+
+    async fn merge_bound_snapshot(
+        &self,
+        binding: &ServerRunBinding,
+        run: CodingAgentRunSnapshot,
+    ) -> Result<ServerRunBinding, String> {
+        let mut incoming = binding.clone();
+        incoming.snapshot = run;
+        let mut runs = self.runs.lock().await;
+        prune_server_runs_locked(&mut runs, Utc::now().timestamp());
+        merge_server_run_binding_locked(&mut runs, incoming)
     }
 
     async fn attach_recorder(&self, run_id: &str, recording_session_id: Option<String>) {
@@ -419,10 +472,22 @@ impl ToolRuntime {
         recording_session_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> CodingAgentTypedStartOutcome {
-        if let Some(existing) = self
+        let existing = match self
             .reconcile_run(&prepared.run_id, &prepared.authority_fingerprint, auth)
             .await
         {
+            Ok(existing) => existing,
+            Err(message) => {
+                return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                    kind: "coding_agent_observation_conflict".to_string(),
+                    message,
+                    certainty: CodingAgentStartCertainty::OutcomeUnknown,
+                    recovery: RecoveryKind::Reconcile,
+                    run_id: prepared.run_id,
+                })
+            }
+        };
+        if let Some(existing) = existing {
             if existing.snapshot.intent_fingerprint != prepared.intent_fingerprint
                 || existing.runtime_project_id != prepared.runtime_project_id
             {
@@ -513,12 +578,25 @@ impl ToolRuntime {
                         run_id: prepared.run_id,
                     });
                 }
-                self.coding_agent_runs
-                    .bind(&prepared.client, run.clone(), recording_session_id)
-                    .await;
+                let binding = match self
+                    .coding_agent_runs
+                    .bind(&prepared.client, run, recording_session_id)
+                    .await
+                {
+                    Ok(binding) => binding,
+                    Err(message) => {
+                        return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                            kind: "coding_agent_observation_conflict".to_string(),
+                            message,
+                            certainty: CodingAgentStartCertainty::OutcomeUnknown,
+                            recovery: RecoveryKind::Reconcile,
+                            run_id: prepared.run_id,
+                        })
+                    }
+                };
                 self.record_coding_agent_lifecycle_if_needed(&prepared.run_id)
                     .await;
-                CodingAgentTypedStartOutcome::Run(run)
+                CodingAgentTypedStartOutcome::Run(binding.snapshot)
             }
             _ => CodingAgentTypedStartOutcome::Failure(coding_agent_start_failure_from_response(
                 response,
@@ -542,9 +620,19 @@ impl ToolRuntime {
             )
         })?;
         let authority = authority_fingerprint(&principal);
-        Ok(self
+        let binding = self
             .reconcile_run(run_id, &authority, auth)
             .await
+            .map_err(|error| {
+                coding_agent_error(
+                    "coding_agent_observation_conflict",
+                    error,
+                    "outcome_unknown",
+                    RecoveryKind::Reconcile,
+                    Some(run_id),
+                )
+            })?;
+        Ok(binding
             .filter(|binding| binding.authority_fingerprint == authority)
             .map(|binding| binding.snapshot))
     }
@@ -578,14 +666,26 @@ impl ToolRuntime {
                 )
             }
         };
-        let Some(binding) = self.reconcile_run(&run_id, &authority, auth).await else {
-            return coding_agent_error(
-                "unknown_coding_agent_run",
-                "CodingAgentRun is not visible to this caller",
-                "not_started",
-                RecoveryKind::Reobserve,
-                Some(&run_id),
-            );
+        let binding = match self.reconcile_run(&run_id, &authority, auth).await {
+            Ok(Some(binding)) => binding,
+            Ok(None) => {
+                return coding_agent_error(
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not visible to this caller",
+                    "not_started",
+                    RecoveryKind::Reobserve,
+                    Some(&run_id),
+                )
+            }
+            Err(error) => {
+                return coding_agent_error(
+                    "coding_agent_observation_conflict",
+                    error,
+                    "outcome_unknown",
+                    RecoveryKind::Reconcile,
+                    Some(&run_id),
+                )
+            }
         };
         if binding.authority_fingerprint != authority {
             return coding_agent_error(
@@ -740,9 +840,23 @@ impl ToolRuntime {
                         )
                     }
                 };
-                self.coding_agent_runs
+                let merged = match self
+                    .coding_agent_runs
                     .bind(&client, observation.run.clone(), None)
-                    .await;
+                    .await
+                {
+                    Ok(binding) => binding,
+                    Err(error) => {
+                        return coding_agent_error(
+                            "coding_agent_observation_conflict",
+                            error,
+                            "outcome_unknown",
+                            RecoveryKind::Reconcile,
+                            Some(&run_id),
+                        )
+                    }
+                };
+                observation.run = merged.snapshot;
                 self.record_coding_agent_lifecycle_if_needed(&run_id).await;
                 ToolResult::ok(observe_projection(
                     observation,
@@ -771,14 +885,26 @@ impl ToolRuntime {
                 )
             }
         };
-        let Some(binding) = self.reconcile_run(&run_id, &authority, auth).await else {
-            return coding_agent_error(
-                "unknown_coding_agent_run",
-                "CodingAgentRun is not visible to this caller",
-                "not_started",
-                RecoveryKind::Reobserve,
-                Some(&run_id),
-            );
+        let binding = match self.reconcile_run(&run_id, &authority, auth).await {
+            Ok(Some(binding)) => binding,
+            Ok(None) => {
+                return coding_agent_error(
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not visible to this caller",
+                    "not_started",
+                    RecoveryKind::Reobserve,
+                    Some(&run_id),
+                )
+            }
+            Err(error) => {
+                return coding_agent_error(
+                    "coding_agent_observation_conflict",
+                    error,
+                    "outcome_unknown",
+                    RecoveryKind::Reconcile,
+                    Some(&run_id),
+                )
+            }
         };
         self.record_coding_agent_lifecycle_if_needed(&run_id).await;
         if binding.snapshot.state.terminal() {
@@ -855,12 +981,25 @@ impl ToolRuntime {
                             Some(&run_id),
                         );
                     }
-                    self.coding_agent_runs
-                        .bind(&client, run.clone(), None)
-                        .await;
                 }
+                let merged = match self
+                    .coding_agent_runs
+                    .merge_bound_snapshot(&binding, run)
+                    .await
+                {
+                    Ok(binding) => binding,
+                    Err(error) => {
+                        return coding_agent_error(
+                            "coding_agent_observation_conflict",
+                            error,
+                            "outcome_unknown",
+                            RecoveryKind::Reconcile,
+                            Some(&run_id),
+                        )
+                    }
+                };
                 self.record_coding_agent_lifecycle_if_needed(&run_id).await;
-                ToolResult::ok(cancel_projection(&run))
+                ToolResult::ok(cancel_projection(&merged.snapshot))
             }
             _ => response_to_tool_error(response, Some(&run_id)),
         }
@@ -878,12 +1017,24 @@ impl ToolRuntime {
             .shell_clients
             .cancel_request_dispatch_state(request_id)
             .await;
-        if let Some(binding) = self.reconcile_run(run_id, authority, auth).await {
-            self.coding_agent_runs
-                .attach_recorder(run_id, recording_session_id)
-                .await;
-            self.record_coding_agent_lifecycle_if_needed(run_id).await;
-            return CodingAgentTypedStartOutcome::Run(binding.snapshot);
+        match self.reconcile_run(run_id, authority, auth).await {
+            Ok(Some(binding)) => {
+                self.coding_agent_runs
+                    .attach_recorder(run_id, recording_session_id)
+                    .await;
+                self.record_coding_agent_lifecycle_if_needed(run_id).await;
+                return CodingAgentTypedStartOutcome::Run(binding.snapshot);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                return CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
+                    kind: "coding_agent_observation_conflict".to_string(),
+                    message,
+                    certainty: CodingAgentStartCertainty::OutcomeUnknown,
+                    recovery: RecoveryKind::Reconcile,
+                    run_id: run_id.to_string(),
+                })
+            }
         }
         match dispatched {
             Some(false) => CodingAgentTypedStartOutcome::Failure(CodingAgentStartFailure {
@@ -933,11 +1084,11 @@ impl ToolRuntime {
         run_id: &str,
         authority: &str,
         auth: Option<&AuthContext>,
-    ) -> Option<ServerRunBinding> {
+    ) -> Result<Option<ServerRunBinding>, String> {
         let existing = self.coding_agent_runs.get(run_id).await;
-        if let Some(mut binding) = existing {
+        if let Some(binding) = existing {
             if binding.authority_fingerprint != authority {
-                return None;
+                return Ok(None);
             }
             // Once the Server has a binding, only the exact bound client may
             // refresh it. Another visible Runner advertising the same run_id is
@@ -948,33 +1099,28 @@ impl ToolRuntime {
                 .await
             {
                 if run.authority_fingerprint != authority {
-                    return None;
+                    return Ok(None);
                 }
                 let identity_changed = !run_matches_binding_identity(&binding, &run);
                 let runner_replaced_while_active =
                     client.agent_instance_id != binding.agent_instance_id && !run.state.terminal();
                 if identity_changed || runner_replaced_while_active {
-                    mark_server_binding_lost(
-                        &mut binding,
-                        if identity_changed {
-                            "coding_agent_identity_changed_uncertain"
-                        } else {
-                            "runner_replaced_uncertain"
-                        },
-                    );
-                    self.coding_agent_runs
-                        .runs
-                        .lock()
-                        .await
-                        .insert(run_id.to_string(), binding.clone());
-                    return Some(binding);
+                    let code = if identity_changed {
+                        "coding_agent_identity_changed_uncertain"
+                    } else {
+                        "runner_replaced_uncertain"
+                    };
+                    return self.coding_agent_runs.mark_lost(run_id, code).await;
                 }
-                self.coding_agent_runs.bind(&client, run, None).await;
-                return self.coding_agent_runs.get(run_id).await;
+                return self
+                    .coding_agent_runs
+                    .bind(&client, run, None)
+                    .await
+                    .map(Some);
             }
 
             if binding.snapshot.state.terminal() {
-                return Some(binding);
+                return Ok(Some(binding));
             }
 
             // A temporary disconnect of the same Runner is not proof of loss: keep
@@ -1003,29 +1149,29 @@ impl ToolRuntime {
                     } else {
                         "provider_replaced_uncertain"
                     };
-                    mark_server_binding_lost(&mut binding, code);
-                    self.coding_agent_runs
-                        .runs
-                        .lock()
-                        .await
-                        .insert(run_id.to_string(), binding.clone());
+                    return self.coding_agent_runs.mark_lost(run_id, code).await;
                 }
             }
-            return Some(binding);
+            return Ok(self.coding_agent_runs.get(run_id).await);
         }
 
         // After a Server restart there is no process-local binding. Recover only
         // from a unique visible Runner inventory match; the registry fails closed
         // on duplicate run ids instead of choosing by iteration order.
-        let (client, run) = self
+        let Some((client, run)) = self
             .shell_clients
             .coding_agent_run_for_auth(auth, run_id)
-            .await?;
+            .await
+        else {
+            return Ok(None);
+        };
         if run.authority_fingerprint != authority {
-            return None;
+            return Ok(None);
         }
-        self.coding_agent_runs.bind(&client, run, None).await;
-        self.coding_agent_runs.get(run_id).await
+        self.coding_agent_runs
+            .bind(&client, run, None)
+            .await
+            .map(Some)
     }
 
     async fn current_agent_instance(
@@ -1040,15 +1186,20 @@ impl ToolRuntime {
     }
 }
 
-fn mark_server_binding_lost(binding: &mut ServerRunBinding, code: &str) {
+fn mark_server_binding_lost(binding: &mut ServerRunBinding, code: &str) -> Result<(), String> {
     if binding.snapshot.state.terminal() {
-        return;
+        return Ok(());
     }
+    let next_revision = binding
+        .snapshot
+        .observation_revision
+        .checked_add(1)
+        .ok_or_else(|| "CodingAgentRun observation revision is exhausted".to_string())?;
     let completed_at = chrono::Utc::now().timestamp();
     binding.snapshot.state = CodingAgentRunState::Lost;
     binding.snapshot.execution_state = CodingAgentExecutionState::OutcomeUnknown;
     binding.snapshot.updated_at = completed_at;
-    binding.snapshot.observation_revision = binding.snapshot.observation_revision.saturating_add(1);
+    binding.snapshot.observation_revision = next_revision;
     binding.snapshot.terminal = Some(CodingAgentTerminal {
         stop_reason: None,
         error_code: Some(code.to_string()),
@@ -1058,6 +1209,7 @@ fn mark_server_binding_lost(binding: &mut ServerRunBinding, code: &str) {
         ),
         completed_at,
     });
+    Ok(())
 }
 
 fn validate_start_input(
@@ -1647,6 +1799,79 @@ mod tests {
                 terminal,
             },
         }
+    }
+
+    fn test_shell_client() -> crate::shell_protocol::ShellClientView {
+        crate::shell_protocol::ShellClientView {
+            client_id: "client".to_string(),
+            agent_instance_id: "instance".to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            status: "online".to_string(),
+            connected: true,
+            last_seen: 0,
+            capabilities: Default::default(),
+            coding_agent_providers: None,
+            pending_requests: 0,
+            projects: Vec::new(),
+            project_inventory: None,
+            agent_protocol_version: "websocket-v1".to_string(),
+            transport: "websocket".to_string(),
+            agent_protocol_semantics: crate::shell_protocol::normalize_agent_protocol_semantics(
+                "websocket-v1",
+            ),
+            policy: None,
+            registered_at: 0,
+            connected_at: 0,
+            disconnected_at: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn server_run_binding_rejects_out_of_order_and_conflicting_observations() {
+        let state = CodingAgentServerState::default();
+        let client = test_shell_client();
+        let run_id = "wc_agent_run_monotonic";
+        let now = chrono::Utc::now().timestamp();
+
+        let mut running =
+            test_server_binding(run_id.to_string(), CodingAgentRunState::Running, now).snapshot;
+        running.observation_revision = 1;
+        state.bind(&client, running.clone(), None).await.unwrap();
+
+        let mut completed =
+            test_server_binding(run_id.to_string(), CodingAgentRunState::Completed, now).snapshot;
+        completed.observation_revision = 2;
+        let accepted = state.bind(&client, completed.clone(), None).await.unwrap();
+        assert_eq!(accepted.snapshot, completed);
+
+        let stale = state.bind(&client, running.clone(), None).await.unwrap();
+        assert_eq!(stale.snapshot, completed);
+        let replay = state.bind(&client, completed.clone(), None).await.unwrap();
+        assert_eq!(replay.snapshot, completed);
+
+        let mut same_revision_conflict = running.clone();
+        same_revision_conflict.observation_revision = 2;
+        same_revision_conflict.updated_at = now;
+        assert!(state
+            .bind(&client, same_revision_conflict, None)
+            .await
+            .is_err());
+        assert_eq!(state.get(run_id).await.unwrap().snapshot, completed);
+
+        let mut terminal_regression = running;
+        terminal_regression.observation_revision = 3;
+        terminal_regression.updated_at = now;
+        assert!(state
+            .bind(&client, terminal_regression, None)
+            .await
+            .is_err());
+        assert_eq!(state.get(run_id).await.unwrap().snapshot, completed);
     }
 
     #[test]

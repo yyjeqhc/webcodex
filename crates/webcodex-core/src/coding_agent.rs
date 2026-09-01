@@ -195,6 +195,13 @@ pub struct CodingAgentRunSnapshot {
     pub terminal: Option<CodingAgentTerminal>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodingAgentObservationMerge {
+    Stale,
+    ExactReplay,
+    Advance,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CodingAgentRunInventory {
@@ -668,6 +675,105 @@ pub fn validate_coding_agent_run_snapshot(run: &CodingAgentRunSnapshot) -> Resul
     Ok(())
 }
 
+/// Classify one newer observation against the canonical snapshot already retained
+/// for the same CodingAgentRun. Revision ordering is authoritative: stale snapshots
+/// are ignored, exact same-revision replays are idempotent, conflicting same-revision
+/// truth fails closed, and only legal higher-revision state transitions may advance.
+pub fn merge_coding_agent_run_snapshot(
+    stored: &CodingAgentRunSnapshot,
+    incoming: &CodingAgentRunSnapshot,
+) -> Result<CodingAgentObservationMerge, String> {
+    validate_coding_agent_run_snapshot(stored)?;
+    validate_coding_agent_run_snapshot(incoming)?;
+    validate_coding_agent_run_identity_transition(stored, incoming)?;
+
+    match incoming
+        .observation_revision
+        .cmp(&stored.observation_revision)
+    {
+        std::cmp::Ordering::Less => Ok(CodingAgentObservationMerge::Stale),
+        std::cmp::Ordering::Equal => {
+            if incoming == stored {
+                Ok(CodingAgentObservationMerge::ExactReplay)
+            } else {
+                Err(
+                    "CodingAgentRun observation revision has conflicting authoritative snapshots"
+                        .to_string(),
+                )
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            validate_coding_agent_run_transition(stored, incoming)?;
+            Ok(CodingAgentObservationMerge::Advance)
+        }
+    }
+}
+
+fn validate_coding_agent_run_identity_transition(
+    stored: &CodingAgentRunSnapshot,
+    incoming: &CodingAgentRunSnapshot,
+) -> Result<(), String> {
+    if stored.run_id != incoming.run_id
+        || stored.intent_fingerprint != incoming.intent_fingerprint
+        || stored.authority_fingerprint != incoming.authority_fingerprint
+        || stored.runtime_project_id != incoming.runtime_project_id
+        || stored.provider_id != incoming.provider_id
+        || stored.provider_instance_id != incoming.provider_instance_id
+        || stored.created_at != incoming.created_at
+    {
+        return Err("CodingAgentRun observation identity changed across revisions".to_string());
+    }
+    Ok(())
+}
+
+/// Validate an accepted higher-revision transition using the existing ACP v1 Run
+/// state machine. The validator intentionally permits skipped intermediate revisions:
+/// an observer may see Starting and then a terminal snapshot without seeing Running.
+pub fn validate_coding_agent_run_transition(
+    stored: &CodingAgentRunSnapshot,
+    incoming: &CodingAgentRunSnapshot,
+) -> Result<(), String> {
+    if incoming.observation_revision <= stored.observation_revision {
+        return Err("CodingAgentRun transition does not advance observation revision".to_string());
+    }
+    if stored.state.terminal() {
+        return Err("terminal CodingAgentRun observation cannot advance to new truth".to_string());
+    }
+    if stored.state != CodingAgentRunState::Starting
+        && incoming.state == CodingAgentRunState::Starting
+    {
+        return Err("CodingAgentRun state cannot regress to starting".to_string());
+    }
+
+    let execution_transition_valid = match stored.execution_state {
+        CodingAgentExecutionState::NotStarted => true,
+        CodingAgentExecutionState::OutcomeUnknown => {
+            matches!(
+                incoming.execution_state,
+                CodingAgentExecutionState::OutcomeUnknown
+                    | CodingAgentExecutionState::Started
+                    | CodingAgentExecutionState::Completed
+            ) || (incoming.execution_state == CodingAgentExecutionState::NotStarted
+                && matches!(
+                    incoming.state,
+                    CodingAgentRunState::Failed | CodingAgentRunState::Cancelled
+                ))
+        }
+        CodingAgentExecutionState::Started => {
+            matches!(
+                incoming.execution_state,
+                CodingAgentExecutionState::Started | CodingAgentExecutionState::Completed
+            ) || (incoming.execution_state == CodingAgentExecutionState::OutcomeUnknown
+                && incoming.state == CodingAgentRunState::Lost)
+        }
+        CodingAgentExecutionState::Completed => false,
+    };
+    if !execution_transition_valid {
+        return Err("CodingAgentRun execution state regressed across observations".to_string());
+    }
+    Ok(())
+}
+
 fn terminal_for_state(
     run: &CodingAgentRunSnapshot,
     execution_state: CodingAgentExecutionState,
@@ -1060,6 +1166,87 @@ mod tests {
         );
         terminal_without_metadata.terminal = None;
         assert!(validate_coding_agent_run_snapshot(&terminal_without_metadata).is_err());
+    }
+
+    #[test]
+    fn observation_merge_is_revision_monotonic_and_terminal_absorbing() {
+        let mut running = snapshot(
+            CodingAgentRunState::Running,
+            CodingAgentExecutionState::Started,
+            None,
+            None,
+        );
+        running.observation_revision = 1;
+
+        let mut completed = snapshot(
+            CodingAgentRunState::Completed,
+            CodingAgentExecutionState::Completed,
+            Some(CODING_AGENT_STOP_REASON_END_TURN),
+            None,
+        );
+        completed.observation_revision = 2;
+        completed.updated_at = 2;
+        completed.terminal.as_mut().unwrap().completed_at = 2;
+
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&running, &completed).unwrap(),
+            CodingAgentObservationMerge::Advance
+        );
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&completed, &running).unwrap(),
+            CodingAgentObservationMerge::Stale
+        );
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&completed, &completed).unwrap(),
+            CodingAgentObservationMerge::ExactReplay
+        );
+
+        let mut same_revision_conflict = running.clone();
+        same_revision_conflict.observation_revision = 2;
+        same_revision_conflict.updated_at = 2;
+        assert!(merge_coding_agent_run_snapshot(&completed, &same_revision_conflict).is_err());
+
+        let mut terminal_regression = running.clone();
+        terminal_regression.observation_revision = 3;
+        terminal_regression.updated_at = 3;
+        assert!(merge_coding_agent_run_snapshot(&completed, &terminal_regression).is_err());
+
+        let mut execution_regression = running.clone();
+        execution_regression.observation_revision = 2;
+        execution_regression.updated_at = 2;
+        execution_regression.execution_state = CodingAgentExecutionState::OutcomeUnknown;
+        assert!(merge_coding_agent_run_snapshot(&running, &execution_regression).is_err());
+
+        let mut identity_change = completed.clone();
+        identity_change.observation_revision = 3;
+        identity_change.provider_instance_id = "provider_456".to_string();
+        assert!(merge_coding_agent_run_snapshot(&completed, &identity_change).is_err());
+
+        let mut uncertain = snapshot(
+            CodingAgentRunState::Running,
+            CodingAgentExecutionState::OutcomeUnknown,
+            None,
+            None,
+        );
+        uncertain.observation_revision = 1;
+        let mut proved_not_started = snapshot(
+            CodingAgentRunState::Cancelled,
+            CodingAgentExecutionState::NotStarted,
+            None,
+            None,
+        );
+        proved_not_started.observation_revision = 2;
+        proved_not_started.updated_at = 2;
+        proved_not_started.terminal = Some(CodingAgentTerminal {
+            stop_reason: None,
+            error_code: None,
+            message: Some("ACP prompt was not dispatched".to_string()),
+            completed_at: 2,
+        });
+        assert_eq!(
+            merge_coding_agent_run_snapshot(&uncertain, &proved_not_started).unwrap(),
+            CodingAgentObservationMerge::Advance
+        );
     }
 
     #[test]

@@ -89,7 +89,7 @@ fn coding_binding_intent(label: &str) -> AgentTaskCodingRunBindingIntent {
         runtime_project_id: "agent:special:reference-only".to_string(),
         provider_id: "codex".to_string(),
         provider_instance_id: format!("provider-instance-{label}"),
-        authority_fingerprint: format!("authority-{label}"),
+        authority_fingerprint: format!("auth_{label}"),
         coding_agent_intent_fingerprint: format!("coding-intent-{label}"),
         binding_intent_fingerprint: format!("binding-intent-{label}"),
     }
@@ -111,12 +111,19 @@ fn coding_observation(
         run_state: run_state.to_string(),
         execution_state: execution_state.to_string(),
         observation_revision: revision,
-        terminal_stop_reason: matches!(run_state, "completed" | "failed" | "cancelled")
-            .then(|| format!("stop-{run_state}")),
-        terminal_error_code: (run_state == "failed").then(|| "provider_failed".to_string()),
-        terminal_message: matches!(run_state, "completed" | "failed" | "cancelled")
+        terminal_stop_reason: match (run_state, execution_state) {
+            ("completed", _) => Some("end_turn".to_string()),
+            ("cancelled", "completed") => Some("cancelled".to_string()),
+            _ => None,
+        },
+        terminal_error_code: match run_state {
+            "failed" => Some("provider_failed".to_string()),
+            "lost" => Some("coding_agent_transport_lost".to_string()),
+            _ => None,
+        },
+        terminal_message: matches!(run_state, "completed" | "failed" | "cancelled" | "lost")
             .then(|| format!("terminal-{run_state}")),
-        completed_at_unix: matches!(run_state, "completed" | "failed" | "cancelled")
+        completed_at_unix: matches!(run_state, "completed" | "failed" | "cancelled" | "lost")
             .then_some(1234),
     }
 }
@@ -564,6 +571,291 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
         )
         .unwrap();
     assert!(!replay.state_changed);
+}
+
+#[test]
+fn coding_run_observation_merge_preserves_newer_terminal_truth() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-monotonic.db")).unwrap();
+    let owner = principal('a');
+    let assignee = agent(&db, &owner, "coding-monotonic-agent");
+    let now = wall_now_ms();
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-monotonic-task");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "coding-monotonic-start",
+        now,
+    );
+    let intent = coding_binding_intent("monotonic-run");
+    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &assignee,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+
+    let running_rev1 = coding_observation(&intent, "running", "started", 1);
+    db.record_agent_task_coding_run_observation(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &running_rev1,
+    )
+    .unwrap();
+
+    let mut completed_rev2 = coding_observation(&intent, "completed", "completed", 2);
+    completed_rev2.terminal_message = Some("authoritative rev2 completion".to_string());
+    completed_rev2.completed_at_unix = Some(2222);
+    db.record_agent_task_coding_run_observation(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &completed_rev2,
+    )
+    .unwrap();
+    let terminal = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+            Some("authoritative result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+    assert_eq!(terminal.task.state, AgentTaskState::Succeeded);
+    assert_eq!(terminal.attempt.state, AgentTaskAttemptState::Succeeded);
+
+    let stale = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &running_rev1,
+        )
+        .unwrap();
+    assert_eq!(
+        stale.dispatch_state,
+        AgentTaskCodingRunDispatchState::Terminal
+    );
+    assert_eq!(stale.last_observation_revision, Some(2));
+    assert_eq!(stale.last_observed_run_state.as_deref(), Some("completed"));
+    assert_eq!(
+        stale.last_observed_execution_state.as_deref(),
+        Some("completed")
+    );
+    assert_eq!(stale.terminal_stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(stale.terminal_error_code, None);
+    assert_eq!(
+        stale.terminal_message.as_deref(),
+        Some("authoritative rev2 completion")
+    );
+    assert_eq!(stale.completed_at_unix, Some(2222));
+
+    let exact_replay = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+        )
+        .unwrap();
+    assert_eq!(exact_replay, stale);
+    let replay_terminal = db
+        .terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+            Some("authoritative result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+    assert!(!replay_terminal.state_changed);
+
+    let running_rev3 = coding_observation(&intent, "running", "started", 3);
+    let regression = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &running_rev3,
+        )
+        .unwrap_err();
+    assert_eq!(
+        regression.code(),
+        "agent_task_coding_run_observation_conflict"
+    );
+    let unchanged = db
+        .read_agent_task_coding_run_binding(&owner, &task_id, &started.attempt.attempt_id)
+        .unwrap();
+    assert_eq!(unchanged, stale);
+    let task = db.read_agent_task(&owner, &task_id).unwrap();
+    assert_eq!(task.summary.state, AgentTaskState::Succeeded);
+    assert_eq!(
+        task.summary.latest_attempt.unwrap().state,
+        AgentTaskAttemptState::Succeeded
+    );
+}
+
+#[test]
+fn coding_run_observation_equal_revision_conflict_keeps_stored_truth() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-revision-conflict.db")).unwrap();
+    let owner = principal('b');
+    let assignee = agent(&db, &owner, "coding-revision-conflict-agent");
+    let now = wall_now_ms();
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-revision-conflict-task");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "coding-revision-conflict-start",
+        now,
+    );
+    let intent = coding_binding_intent("revision-conflict-run");
+    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &assignee,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+
+    let running_rev2 = coding_observation(&intent, "running", "started", 2);
+    let stored = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &running_rev2,
+        )
+        .unwrap();
+    let completed_rev2 = coding_observation(&intent, "completed", "completed", 2);
+    let conflict = db
+        .record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+        )
+        .unwrap_err();
+    assert_eq!(
+        conflict.code(),
+        "agent_task_coding_run_observation_conflict"
+    );
+    let unchanged = db
+        .read_agent_task_coding_run_binding(&owner, &task_id, &started.attempt.attempt_id)
+        .unwrap();
+    assert_eq!(unchanged, stored);
+    assert_eq!(unchanged.last_observation_revision, Some(2));
+    assert_eq!(
+        unchanged.last_observed_run_state.as_deref(),
+        Some("running")
+    );
+    assert_eq!(unchanged.terminal_stop_reason, None);
+    assert_eq!(unchanged.terminal_message, None);
+}
+
+#[test]
+fn coding_run_terminal_observation_stays_monotonic_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-task-coding-monotonic-restart.db");
+    let owner = principal('c');
+    let now = wall_now_ms();
+    let (task_id, attempt_id, running_rev1, completed_rev2) = {
+        let db = Database::open(&path).unwrap();
+        let assignee = agent(&db, &owner, "coding-monotonic-restart-agent");
+        let task_id = create_assigned_task(&db, &owner, &assignee, "coding-monotonic-restart-task");
+        let started = start(
+            &db,
+            &owner,
+            &task_id,
+            &assignee,
+            "coding-monotonic-restart-start",
+            now,
+        );
+        let intent = coding_binding_intent("monotonic-restart-run");
+        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+        db.claim_agent_task_coding_run_dispatch(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            &intent.binding_intent_fingerprint,
+        )
+        .unwrap();
+        let running_rev1 = coding_observation(&intent, "running", "started", 1);
+        db.record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &running_rev1,
+        )
+        .unwrap();
+        let mut completed_rev2 = coding_observation(&intent, "completed", "completed", 2);
+        completed_rev2.terminal_message = Some("restart rev2 completion".to_string());
+        completed_rev2.completed_at_unix = Some(3333);
+        db.record_agent_task_coding_run_observation(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+        )
+        .unwrap();
+        db.terminalize_agent_task_coding_run(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &completed_rev2,
+            Some("restart result"),
+            Some("coding_agent_completed"),
+        )
+        .unwrap();
+        (
+            task_id,
+            started.attempt.attempt_id,
+            running_rev1,
+            completed_rev2,
+        )
+    };
+
+    let reopened = Database::open(&path).unwrap();
+    let stale = reopened
+        .record_agent_task_coding_run_observation(&owner, &task_id, &attempt_id, &running_rev1)
+        .unwrap();
+    assert_eq!(
+        stale.dispatch_state,
+        AgentTaskCodingRunDispatchState::Terminal
+    );
+    assert_eq!(stale.last_observation_revision, Some(2));
+    assert_eq!(stale.last_observed_run_state.as_deref(), Some("completed"));
+    assert_eq!(
+        stale.terminal_message.as_deref(),
+        completed_rev2.terminal_message.as_deref()
+    );
+    assert_eq!(stale.completed_at_unix, Some(3333));
+    let task = reopened.read_agent_task(&owner, &task_id).unwrap();
+    assert_eq!(task.summary.state, AgentTaskState::Succeeded);
+    assert_eq!(
+        task.summary.latest_attempt.unwrap().state,
+        AgentTaskAttemptState::Succeeded
+    );
 }
 
 #[test]

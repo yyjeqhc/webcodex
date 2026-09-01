@@ -5193,6 +5193,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-computer"
+version = "0.3.9"
+dependencies = [
+ "base64",
+ "block2",
+ "image",
+ "libc",
+ "objc2-app-kit",
+ "objc2-application-services",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+ "windows",
+ "windows-sys 0.61.2",
+ "xcap",
+]
+
+[[package]]
 name = "webcodex-core"
 version = "0.3.9"
 dependencies = [
@@ -5228,18 +5251,11 @@ version = "0.3.9"
 dependencies = [
  "agent-client-protocol-schema",
  "base64",
- "block2",
  "chrono",
  "flate2",
  "fs2",
  "futures-util",
- "image",
  "libc",
- "objc2-app-kit",
- "objc2-application-services",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
  "quinn",
  "reqwest 0.12.28",
  "rustls",
@@ -5254,6 +5270,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "webcodex-computer",
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-process",
@@ -5261,9 +5278,7 @@ dependencies = [
  "webcodex-sandbox",
  "webcodex-workspace",
  "webpki-roots 0.26.11",
- "windows",
  "windows-sys 0.61.2",
- "xcap",
  "xml",
  "zip",
 ]

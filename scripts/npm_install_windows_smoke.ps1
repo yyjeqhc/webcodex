@@ -402,6 +402,27 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "could not initialize isolated Git repo for Windows share smoke"
     }
+    # ProjectConnector normal-mode readiness requires a real Git baseline so the
+    # first writable task can create its managed isolated worktree. An empty
+    # `git init` repository is intentionally not writable-ready.
+    $ShareReadme = Join-Path $ShareRepo "README.md"
+    [System.IO.File]::WriteAllText(
+        $ShareReadme,
+        "Windows share smoke`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    & git -C $ShareRepo add README.md
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not stage initial Windows share smoke fixture"
+    }
+    & git -C $ShareRepo -c user.name="WebCodex CI" -c user.email="ci@webcodex.invalid" commit --quiet -m "Initialize Windows share smoke"
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not create initial Windows share smoke commit"
+    }
+    & git -C $ShareRepo rev-parse --verify HEAD | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows share smoke fixture does not have a readable Git HEAD"
+    }
 
     $ShareEnvNames = @(
         "CONTROL_PLANE_API_KEY",

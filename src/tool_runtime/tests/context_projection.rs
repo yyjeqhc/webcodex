@@ -435,7 +435,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
         "context-write",
         &write.request_id,
         0,
-        r#"{"path":"written.txt","bytes_written":23,"sha256":"abc","changed":true}"#,
+        r#"{"path":"written.txt","bytes_written":23,"sha256":"abc","changed":true,"state_changed":true,"execution_state":"completed"}"#,
         "",
     )
     .await;

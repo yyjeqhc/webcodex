@@ -128,9 +128,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     for phrase in [
         "create new files",
         "whole-file",
-        "not preferred for ordinary local",
+        "inspect current content",
         "prefer apply_text_edits",
-        "do not silently clobber",
+        "expected_sha256",
     ] {
         assert!(
             write_file_desc.contains(phrase),

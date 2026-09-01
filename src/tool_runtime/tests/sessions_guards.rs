@@ -278,7 +278,7 @@ async fn read_only_recording_session_does_not_guard_same_project_write() {
         "guard-recorder",
         &request.request_id,
         0,
-        r#"{"path":"recorder-does-not-guard.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
+        r#"{"path":"recorder-does-not-guard.txt","bytes_written":8,"sha256":"abc","changed":true,"state_changed":true,"execution_state":"completed"}"#,
         "",
     )
     .await;
@@ -354,7 +354,7 @@ async fn closed_recording_session_remains_provenance_only_for_business_write() {
         "guard-closed-recorder",
         &request.request_id,
         0,
-        r#"{"path":"closed-recorder-write.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
+        r#"{"path":"closed-recorder-write.txt","bytes_written":8,"sha256":"abc","changed":true,"state_changed":true,"execution_state":"completed"}"#,
         "",
     )
     .await;
@@ -973,7 +973,7 @@ async fn deny_shell_only_allows_write_tools() {
         "guard-shell-only",
         &req.request_id,
         0,
-        r#"{"path":"allowed.txt","created":true,"overwritten":false,"bytes_written":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","changed":true}"#,
+        r#"{"path":"allowed.txt","created":true,"overwritten":false,"bytes_written":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","changed":true,"state_changed":true,"execution_state":"completed"}"#,
         "",
     )
     .await;

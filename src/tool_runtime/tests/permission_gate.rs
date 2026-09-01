@@ -62,7 +62,7 @@ async fn complete_write_ok(runtime: &ToolRuntime, client_id: &str, path: &str) {
         client_id,
         &req.request_id,
         0,
-        &format!(r#"{{"path":"{path}","bytes_written":4,"sha256":"abc","changed":true}}"#),
+        &format!(r#"{{"path":"{path}","bytes_written":4,"sha256":"abc","changed":true,"state_changed":true,"execution_state":"completed"}}"#),
         "",
     )
     .await;
@@ -411,7 +411,6 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
                             "project": project,
                             "path": "src/kernel-once.txt",
                             "content": "x\n",
-                            "overwrite": true,
                             "session_id": recording_id,
                         }),
                     },
@@ -577,7 +576,6 @@ async fn kernel_logical_invocation_correlation_is_session_local_across_recorder_
                             "project": project,
                             "path": "src/logical-cross-session.txt",
                             "content": "x\n",
-                            "overwrite": true,
                             "session_id": business_id,
                         }),
                     },

@@ -62,8 +62,8 @@ Server 与 Runner。只有当前合同明确保留的兼容面才属于受支持
 在 `v0.4.x` 内，generation 2 是 compatibility floor：first-party Server/Runner
 应保持滚动互操作，新功能优先通过 additive capability 演进。缺少增量 capability
 时，仅该功能不可用/fail closed；不应因此把一个原本有效的 `v0.4` Runner 整体判为
-不兼容。patch release 也不应任意扩大 generation-2 baseline-required capability set。
-这一承诺不向 pre-0.4 二进制提供滚动兼容保证。
+不兼容。patch release 不扩大 generation-2 baseline-required capability set；新增要求使用
+additive `RegistrationRequired` capability。这一承诺不向 pre-0.4 二进制提供滚动兼容保证。
 
 当前 first-party Runner 注册只接受 protocol generation 2：
 `capabilities.agent_protocol_generation` 必须精确为 `2`。缺失、generation `1` 或未知

@@ -74,8 +74,9 @@ first-party Server/Runner releases should remain rolling-interoperable, and new
 feature evolution should prefer additive capabilities. A missing additive
 capability makes that feature unavailable/fail closed; it should not turn an
 otherwise-valid `v0.4` Runner into an incompatible Runner. Patch releases do not
-arbitrarily enlarge the generation-2 baseline-required capability set. This
-promise does not extend rolling compatibility back to pre-0.4 binaries.
+enlarge the generation-2 baseline-required capability set; new requirements use
+additive `RegistrationRequired` capabilities. This promise does not extend rolling
+compatibility back to pre-0.4 binaries.
 
 Current first-party Runner registration is generation-2-only:
 `capabilities.agent_protocol_generation` must be exactly `2`. A missing value,

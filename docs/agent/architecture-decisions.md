@@ -392,11 +392,11 @@ standing rule for `0.4.x` is compatibility-first:
    safe defaults. Patch releases do not force a filename or field rename merely
    to make Runner terminology more uniform.
 3. **Server/Runner protocol.** Protocol generation 2 is the `0.4` baseline.
-   `0.4.x` does not introduce another required generation or arbitrarily expand
-   the generation-2 baseline-required capability set. New features should use
-   additive capabilities; when an otherwise-valid `0.4` Runner lacks such a
-   capability, that feature is unavailable/fails closed instead of invalidating
-   the entire Runner registration. First-party Server and Runner releases in
+   `0.4.x` does not introduce another required generation or expand the
+   generation-2 baseline-required capability set. New requirements use additive
+   `RegistrationRequired` capabilities; when an otherwise-valid `0.4` Runner lacks
+   such a capability, that feature is unavailable/fails closed instead of
+   invalidating the entire Runner registration. First-party Server and Runner releases in
    `0.4.x` should preserve rolling interoperability as far as security and
    correctness allow.
 4. **Persisted state.** The durable DB, Workflow Session state, and other

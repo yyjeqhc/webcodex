@@ -41,7 +41,7 @@ const HANDOFF_MESSAGE_CHARS: usize = 240;
 /// correlation when the same logical validation is intentionally rerun, but is
 /// never a requirement to clean stale audit history.
 pub(crate) const VALIDATION_IDENTITY_REUSE_ACTION: &str =
-    "address the current validation failure; when intentionally rerunning the same logical validation, reuse its validation identity and original assertion_name when supplied";
+    "address the current validation failure; when intentionally rerunning it, reuse the original assertion_name when supplied and the same validation identity";
 
 impl ToolRuntime {
     pub(crate) async fn session_handoff_summary(

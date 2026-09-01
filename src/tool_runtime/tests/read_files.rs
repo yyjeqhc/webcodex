@@ -1066,6 +1066,27 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
                 .unwrap();
         }
     }
+    // Seed an explicit retained attempt boundary after the deliberately large
+    // historical overlay. Current validation evidence must not infer a complete
+    // attempt from a truncated Session tail.
+    runtime
+        .sessions
+        .ensure_coding_session(crate::tool_runtime::sessions::CodingSessionRequest {
+            project: project.clone(),
+            authority_fingerprint:
+                crate::tool_runtime::sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
+                    .to_string(),
+            resume_session_id: Some(session.session_id.clone()),
+            instruction: Some("validate bounded recovery overlays".to_string()),
+            mode: crate::tool_runtime::SessionMode::Normal,
+            guards: crate::tool_runtime::sessions::SessionGuards::default(),
+            execution_context: None,
+            project_instructions: None,
+            transport: crate::tool_runtime::sessions::SessionTransport::Api,
+            context_refreshed: true,
+            write_scope_verified: true,
+        })
+        .unwrap();
     let assertion_name = "recovery websocket validation";
     let validation_request = json!({
         "project": project,

@@ -158,7 +158,7 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(implementation_guidance.iter().any(|item| {
         item.as_str().is_some_and(|value| {
             value.contains("intentionally rerunning the same logical validation")
-                && value.contains("reuse assertion_name for strong correlation")
+                && value.contains("reuse the same assertion_name")
                 && value
                     .contains("do not rerun solely to clear stale historical validation evidence")
         })

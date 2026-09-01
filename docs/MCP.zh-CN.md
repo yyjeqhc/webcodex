@@ -269,6 +269,12 @@ task_start
 - `read_only` 只用于分析。read/search/LSP/impact analysis 仍可使用；structured write、
   command 与 check 均会被拒绝。
 
+同一 task 可以保持当前 mode，也可以在写权限和隔离 workspace 准备成功后从
+`read_only` 升级到 `normal`。已经进入 writable `normal` 的 task 不能降级为
+`read_only`；应先 finish 或 reject 当前 writable task，再新建 `read_only` task。
+任何 isolated writable result 在 `task_finish` 前都必须有 structured checks，不能依赖
+持久化 mode 字符串绕过。
+
 pre-0.4 `inspect` mode 已退休：没有 executable alias，也没有 OS-specific restricted-shell
 替代模式。已有的 durable pre-0.4 inspect task 仍可 review/reject，但不能继续执行或修改；
 需要分析请新建 `read_only` task，需要修改/执行/验证请新建 `normal` task。Linux、macOS 与

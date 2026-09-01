@@ -1023,6 +1023,47 @@ async fn read_only_to_write_keeps_task_and_rechecks_write_authority() {
     assert_eq!(task.mode, "normal");
     assert!(task.isolated);
     assert_ne!(task.execution_root, task.target_root);
+    std::fs::write(
+        Path::new(&task.execution_root).join("README.md"),
+        "unvalidated writable change\n",
+    )
+    .unwrap();
+    let downgrade = connector
+        .call_for_window(
+            "task_start",
+            json!({"goal": "switch back to analysis", "mode": "read_only"}),
+            Some(&owner),
+            ConnectorTransport::Mcp,
+            Some(&window),
+        )
+        .await;
+    assert!(!downgrade.ok, "{}", downgrade.body);
+    assert_eq!(downgrade.http_status, 409);
+    assert_eq!(downgrade.body["error"]["code"], "mode_transition_invalid");
+    let after_downgrade = connector
+        .db
+        .connector_task(&task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
+        .unwrap();
+    assert_eq!(after_downgrade.mode, "normal");
+    assert!(after_downgrade.isolated);
+    assert_eq!(after_downgrade.execution_root, task.execution_root);
+    assert_eq!(after_downgrade.event_cursor, task.event_cursor);
+
+    let unfinished = connector
+        .call(
+            "task_finish",
+            json!({"task_id": task_id, "summary": "must still require checks"}),
+            Some(&owner),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(!unfinished.ok, "{}", unfinished.body);
+    assert_eq!(unfinished.body["error"]["code"], "checks_required");
+    assert_eq!(
+        std::fs::read_to_string(project.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+
     let events = connector
         .db
         .connector_task_events(

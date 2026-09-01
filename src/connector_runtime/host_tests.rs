@@ -627,6 +627,38 @@ fn interrupted_no_result_reject_is_the_only_identity_exception() {
 }
 
 #[test]
+fn persisted_read_only_isolated_result_cannot_be_accepted() {
+    let fx = fixture(true);
+    fx.db
+        .conn_for_tests()
+        .execute(
+            "UPDATE wc_tasks SET mode = 'read_only' WHERE id = ?1",
+            [TASK_ID],
+        )
+        .unwrap();
+    let malformed = fx
+        .db
+        .local_connector_task(TASK_ID, &fx.context.project_id)
+        .unwrap();
+    assert_eq!(malformed.mode, "read_only");
+    assert!(malformed.isolated);
+
+    assert_decision_error(
+        fx.decide(Some(RESULT_ID), LocalResultDecision::Accept, 4),
+        "result_precondition_failed",
+    );
+    assert_eq!(fs::read_to_string(target(&fx.context)).unwrap(), "before\n");
+    assert_eq!(
+        fx.db
+            .local_connector_task_result(TASK_ID, &fx.context.project_id)
+            .unwrap()
+            .unwrap()
+            .decision_status,
+        "pending"
+    );
+}
+
+#[test]
 fn legacy_inspect_interrupted_task_can_be_rejected_but_never_accepted() {
     let fx = fixture(false);
     fx.db

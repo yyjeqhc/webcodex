@@ -302,6 +302,12 @@ task_start
 - `read_only` is analysis only. Reads, search, LSP navigation, and impact analysis
   remain available; structured writes, commands, and checks are rejected.
 
+A task may remain in its current mode, and `read_only` may upgrade to `normal`
+after write authority and isolated-workspace preparation succeed. A `normal` task
+cannot downgrade to `read_only`: finish or reject the writable task, then start a
+new `read_only` task. Any isolated writable result requires structured checks
+before `task_finish`, independent of the persisted mode label.
+
 The pre-0.4 `inspect` mode is retired. There is no executable alias and no
 OS-specific restricted-shell replacement. Existing durable pre-0.4 inspect tasks
 remain reviewable/rejectable but cannot execute or mutate; start a new `read_only`

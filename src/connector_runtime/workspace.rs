@@ -876,14 +876,46 @@ impl WorkspaceManager {
         result: &ConnectorTaskResult,
         recovering: bool,
     ) -> Result<Option<String>, ConnectorTaskStoreError> {
-        if !task.isolated {
-            if read_verified_patch(result)?.is_some() || !result.changed_paths.is_empty() {
+        match task.mode.as_str() {
+            "inspect" => {
                 return Err(ConnectorTaskStoreError::decision(
-                    "result_precondition_failed",
-                    "read-only task result unexpectedly contains changes",
+                    "inspect_mode_retired",
+                    "a pre-0.4 inspect task cannot be accepted as writable work; reject it locally and start a new task",
                 ));
             }
-            return Ok(None);
+            "read_only" => {
+                if task.isolated || task.execution_root != task.target_root {
+                    return Err(ConnectorTaskStoreError::decision(
+                        "result_precondition_failed",
+                        "read_only task has inconsistent writable workspace state; result was not applied",
+                    ));
+                }
+                if read_verified_patch(result)?.is_some() || !result.changed_paths.is_empty() {
+                    return Err(ConnectorTaskStoreError::decision(
+                        "result_precondition_failed",
+                        "read-only task result unexpectedly contains changes",
+                    ));
+                }
+                return Ok(None);
+            }
+            "normal" => {
+                if !task.isolated
+                    || task.execution_root == task.target_root
+                    || task.baseline_commit.as_deref().is_none_or(str::is_empty)
+                    || task.baseline_tree.as_deref().is_none_or(str::is_empty)
+                {
+                    return Err(ConnectorTaskStoreError::decision(
+                        "result_precondition_failed",
+                        "normal task result is not backed by a canonical isolated writable workspace",
+                    ));
+                }
+            }
+            _ => {
+                return Err(ConnectorTaskStoreError::decision(
+                    "result_precondition_failed",
+                    "task result mode is not part of the canonical Connector execution contract",
+                ));
+            }
         }
         let baseline = task
             .baseline_commit

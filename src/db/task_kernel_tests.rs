@@ -258,6 +258,107 @@ fn failed_continuation_binding_rolls_back_mode_workspace_and_instruction() {
 }
 
 #[test]
+fn normal_task_cannot_downgrade_to_read_only() {
+    let (_temp, db) = database();
+    bind(&db, "user:one");
+    let task = start(&db, "user:one", "writable task");
+    let root_sha256 = "c".repeat(64);
+    let fingerprint = fingerprint(&root_sha256, "");
+
+    let error = db
+        .continue_connector_task_and_bind(
+            ConnectorTaskContinuation {
+                task_id: &task.task_id,
+                project_id: "wc_proj_demo",
+                subject_id: "user:one",
+                instruction: "analyze without changing mode",
+                mode: "read_only",
+                workspace: None,
+                now: 102,
+            },
+            ConnectorWindowBinding {
+                window_key: "mcp:normal-downgrade",
+                window_source: "mcp_session",
+                project_root_sha256: &root_sha256,
+                target_path: "",
+                fingerprint: &fingerprint,
+                now: 102,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ConnectorTaskStoreError::InvalidState(message)
+            if message.contains("normal tasks cannot transition to read_only")
+    ));
+    let restored = db
+        .connector_task(&task.task_id, "wc_proj_demo", "user:one")
+        .unwrap();
+    assert_eq!(restored.mode, "normal");
+    assert!(restored.isolated);
+    assert_eq!(restored.execution_root, task.execution_root);
+    assert_eq!(restored.event_cursor, 1);
+    assert!(db
+        .connector_window_context(
+            "mcp:normal-downgrade",
+            "wc_proj_demo",
+            "user:one",
+            &root_sha256,
+        )
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn malformed_persisted_read_only_isolated_task_cannot_continue() {
+    let (_temp, db) = database();
+    bind(&db, "user:one");
+    let task = start(&db, "user:one", "historical malformed task");
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_tasks SET mode = 'read_only' WHERE id = ?1",
+            [&task.task_id],
+        )
+        .unwrap();
+    let root_sha256 = "d".repeat(64);
+    let fingerprint = fingerprint(&root_sha256, "");
+
+    let error = db
+        .continue_connector_task_and_bind(
+            ConnectorTaskContinuation {
+                task_id: &task.task_id,
+                project_id: "wc_proj_demo",
+                subject_id: "user:one",
+                instruction: "must remain fail closed",
+                mode: "read_only",
+                workspace: None,
+                now: 102,
+            },
+            ConnectorWindowBinding {
+                window_key: "mcp:malformed-read-only",
+                window_source: "mcp_session",
+                project_root_sha256: &root_sha256,
+                target_path: "",
+                fingerprint: &fingerprint,
+                now: 102,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ConnectorTaskStoreError::InvalidState(message)
+            if message == "read_only tasks must use the target workspace without isolation"
+    ));
+    let restored = db
+        .connector_task(&task.task_id, "wc_proj_demo", "user:one")
+        .unwrap();
+    assert_eq!(restored.mode, "read_only");
+    assert!(restored.isolated);
+    assert_eq!(restored.execution_root, task.execution_root);
+    assert_eq!(restored.event_cursor, 1);
+}
+
+#[test]
 fn new_inspect_task_is_rejected_before_persistence() {
     let (_temp, db) = database();
     bind(&db, "user:one");

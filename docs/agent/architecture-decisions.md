@@ -110,6 +110,14 @@ OS-specific restricted-shell successor. A durable legacy inspect Connector Task
 keeps its historical row for review/reject/diagnosis but fails closed on any
 execution, mutation, continuation upgrade, or accept path.
 
+Mode transitions are one-way with respect to writable authority: `read_only →
+read_only`, `read_only → normal`, and `normal → normal` are valid; `normal →
+read_only` is rejected. Canonical durable shape is part of the same contract:
+`read_only` is non-isolated and executes at the target root, while `normal` is
+isolated with a Git baseline. Any inconsistent persisted row fails closed, any
+isolated writable result requires structured checks before finish, and only a
+canonical normal isolated result may apply a patch during host-local accept.
+
 ### Correlation decision (standing)
 
 If the two systems are linked later, use **optional, explicit, one-way**

@@ -947,6 +947,9 @@ impl ConnectorRuntime {
                 if task.mode == "inspect" {
                     return Self::retired_inspect_task_outcome(&task);
                 }
+                if let Some(outcome) = Self::invalid_mode_transition_outcome(&task, mode) {
+                    return outcome;
+                }
                 let refresh =
                     compare_project_context(Some(&existing_context.fingerprint), &fingerprint);
                 if task.task_status == "active" && task.run_status == "running" {
@@ -1241,6 +1244,9 @@ impl ConnectorRuntime {
         let event_cursor_before = task.event_cursor;
         if task.mode == "inspect" {
             return Self::retired_inspect_task_outcome(&task);
+        }
+        if let Some(outcome) = Self::invalid_mode_transition_outcome(&task, mode) {
+            return outcome;
         }
         let prepared = if mode == "normal" && !task.isolated {
             match self
@@ -2957,6 +2963,12 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        if visible_task.mode == "inspect" {
+            return Self::retired_inspect_task_outcome(&visible_task);
+        }
+        if let Some(outcome) = Self::invalid_task_workspace_outcome(&visible_task) {
+            return outcome;
+        }
         let blocker = match self.db.connector_finish_blocker(&input.task_id) {
             Ok(blocker) => blocker,
             Err(error) => return store_error_outcome(error, Some(&visible_task)),
@@ -2996,11 +3008,11 @@ impl ConnectorRuntime {
             Ok(execution) => execution,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
-        if task.mode == "normal" && check_execution.is_none() {
+        if task.isolated && check_execution.is_none() {
             return ConnectorCallOutcome::error_for_task(
                 409,
                 "checks_required",
-                "a normal coding result must run structured checks before task_finish",
+                "an isolated writable coding result must run structured checks before task_finish",
                 false,
                 true,
                 Some("Call checks_run with a new operation_id, then retry task_finish."),
@@ -3215,12 +3227,71 @@ impl ConnectorRuntime {
         )
     }
 
+    fn invalid_mode_transition_outcome(
+        task: &ConnectorTaskSnapshot,
+        requested_mode: &str,
+    ) -> Option<ConnectorCallOutcome> {
+        (task.mode == "normal" && requested_mode == "read_only").then(|| {
+            ConnectorCallOutcome::error_for_task(
+                409,
+                "mode_transition_invalid",
+                "a writable normal task cannot transition to read_only",
+                false,
+                true,
+                Some("Finish or reject the current writable task, then start a new read_only task for analysis."),
+                task,
+                json!({
+                    "previous_mode": task.mode,
+                    "requested_mode": requested_mode,
+                }),
+            )
+        })
+    }
+
+    fn invalid_task_workspace_outcome(
+        task: &ConnectorTaskSnapshot,
+    ) -> Option<ConnectorCallOutcome> {
+        let message = match task.mode.as_str() {
+            "normal"
+                if !task.isolated
+                    || task.execution_root == task.target_root
+                    || task.baseline_commit.as_deref().is_none_or(str::is_empty)
+                    || task.baseline_tree.as_deref().is_none_or(str::is_empty) =>
+            {
+                "normal task has an invalid isolated writable-workspace state"
+            }
+            "read_only" if task.isolated || task.execution_root != task.target_root => {
+                "read_only task has an invalid workspace state"
+            }
+            "normal" | "read_only" | "inspect" => return None,
+            _ => "task mode is not part of the canonical Connector execution contract",
+        };
+        Some(ConnectorCallOutcome::error_for_task(
+            409,
+            "task_state_invalid",
+            message,
+            false,
+            true,
+            Some("Reject or clean up this inconsistent task, then start a new normal or read_only task."),
+            task,
+            json!({
+                "mode": task.mode,
+                "isolated": task.isolated,
+            }),
+        ))
+    }
+
     fn active_task(
         &self,
         task_id: &str,
         subject_id: &str,
     ) -> Result<ConnectorTaskSnapshot, ConnectorCallOutcome> {
         let task = self.task(task_id, subject_id)?;
+        if task.mode != "inspect" {
+            if let Some(outcome) = Self::invalid_task_workspace_outcome(&task) {
+                return Err(outcome);
+            }
+        }
         if task.run_status == "interrupted" {
             return Err(ConnectorCallOutcome::error_for_task(
                 409,

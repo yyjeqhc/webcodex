@@ -493,29 +493,14 @@ impl Database {
         task: NewConnectorTask<'_>,
         binding: Option<ConnectorWindowBinding<'_>>,
     ) -> Result<ConnectorTaskSnapshot, ConnectorTaskStoreError> {
-        match task.mode {
-            "normal"
-                if !task.isolated
-                    || task.baseline_commit.is_none()
-                    || task.baseline_tree.is_none()
-                    || task.execution_root == task.target_root =>
-            {
-                return Err(ConnectorTaskStoreError::InvalidState(
-                    "normal tasks require an isolated execution root and Git baseline".to_string(),
-                ));
-            }
-            "read_only" if task.isolated || task.execution_root != task.target_root => {
-                return Err(ConnectorTaskStoreError::InvalidState(
-                    "read_only tasks must use the target workspace without isolation".to_string(),
-                ));
-            }
-            "normal" | "read_only" => {}
-            _ => {
-                return Err(ConnectorTaskStoreError::InvalidState(
-                    "task mode must be normal or read_only".to_string(),
-                ))
-            }
-        }
+        validate_connector_task_workspace_shape(
+            task.mode,
+            task.isolated,
+            task.target_root,
+            task.execution_root,
+            task.baseline_commit,
+            task.baseline_tree,
+        )?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let granted = tx
@@ -647,6 +632,12 @@ impl Database {
                 "only an active task can continue".to_string(),
             ));
         }
+        if task.mode == "normal" && continuation.mode == "read_only" {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "normal tasks cannot transition to read_only; finish or reject the current writable task and start a new read_only task"
+                    .to_string(),
+            ));
+        }
         if continuation.mode == "normal" && !task.isolated && continuation.workspace.is_none() {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "read-only workspace must be upgraded before enabling writes".to_string(),
@@ -654,17 +645,37 @@ impl Database {
         }
         let previous_mode = task.mode.clone();
         let workspace_upgraded = continuation.workspace.is_some();
+        let (
+            final_isolated,
+            final_target_root,
+            final_execution_root,
+            final_baseline_commit,
+            final_baseline_tree,
+        ) = match continuation.workspace.as_ref() {
+            Some(workspace) => (
+                true,
+                workspace.target_root,
+                workspace.execution_root,
+                Some(workspace.baseline_commit),
+                Some(workspace.baseline_tree),
+            ),
+            None => (
+                task.isolated,
+                task.target_root.as_str(),
+                task.execution_root.as_str(),
+                task.baseline_commit.as_deref(),
+                task.baseline_tree.as_deref(),
+            ),
+        };
+        validate_connector_task_workspace_shape(
+            continuation.mode,
+            final_isolated,
+            final_target_root,
+            final_execution_root,
+            final_baseline_commit,
+            final_baseline_tree,
+        )?;
         if let Some(workspace) = continuation.workspace {
-            if continuation.mode != "normal"
-                || workspace.execution_root == workspace.target_root
-                || workspace.baseline_commit.is_empty()
-                || workspace.baseline_tree.is_empty()
-            {
-                return Err(ConnectorTaskStoreError::InvalidState(
-                    "writable transition requires an isolated workspace and Git baseline"
-                        .to_string(),
-                ));
-            }
             tx.execute(
                 "UPDATE wc_run_contexts
                  SET target_executor_ref = ?1, execution_executor_ref = ?2,
@@ -768,6 +779,25 @@ impl Database {
                     .to_string(),
             ));
         }
+        if !matches!(requested_mode, "normal" | "read_only") {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "task mode must be normal or read_only".to_string(),
+            ));
+        }
+        if task.mode == "normal" && requested_mode == "read_only" {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "normal tasks cannot transition to read_only; finish or reject the current writable task and start a new read_only task"
+                    .to_string(),
+            ));
+        }
+        validate_connector_task_workspace_shape(
+            &task.mode,
+            task.isolated,
+            &task.target_root,
+            &task.execution_root,
+            task.baseline_commit.as_deref(),
+            task.baseline_tree.as_deref(),
+        )?;
         if task.run_status != "interrupted" || task.task_status != "needs_attention" {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task accepts a blocked continuation instruction".to_string(),
@@ -1841,6 +1871,14 @@ impl Database {
                     .to_string(),
             ));
         }
+        validate_connector_task_workspace_shape(
+            &task.mode,
+            task.isolated,
+            &task.target_root,
+            &task.execution_root,
+            task.baseline_commit.as_deref(),
+            task.baseline_tree.as_deref(),
+        )?;
         if task.run_status != "interrupted" || task.task_status != "needs_attention" {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task can be resumed".to_string(),
@@ -2451,6 +2489,37 @@ pub(super) fn expire_task_approvals(
          WHERE task_id = ?1 AND state IN ('pending', 'approved')",
         params![task_id],
     )
+}
+
+fn validate_connector_task_workspace_shape(
+    mode: &str,
+    isolated: bool,
+    target_root: &str,
+    execution_root: &str,
+    baseline_commit: Option<&str>,
+    baseline_tree: Option<&str>,
+) -> Result<(), ConnectorTaskStoreError> {
+    match mode {
+        "normal"
+            if !isolated
+                || execution_root == target_root
+                || baseline_commit.is_none_or(str::is_empty)
+                || baseline_tree.is_none_or(str::is_empty) =>
+        {
+            Err(ConnectorTaskStoreError::InvalidState(
+                "normal tasks require an isolated execution root and Git baseline".to_string(),
+            ))
+        }
+        "read_only" if isolated || execution_root != target_root => {
+            Err(ConnectorTaskStoreError::InvalidState(
+                "read_only tasks must use the target workspace without isolation".to_string(),
+            ))
+        }
+        "normal" | "read_only" => Ok(()),
+        _ => Err(ConnectorTaskStoreError::InvalidState(
+            "task mode must be normal or read_only".to_string(),
+        )),
+    }
 }
 
 pub(super) fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStoreError> {

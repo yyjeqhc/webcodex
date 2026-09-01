@@ -3751,6 +3751,60 @@ async fn files_list_rejects_out_of_range_input_without_reaching_the_agent() {
 }
 
 #[tokio::test]
+async fn persisted_read_only_isolated_task_cannot_finish_or_capture_result() {
+    let fixture = fixture(20).await;
+    let before = std::fs::read_to_string(
+        Path::new(&fixture.connector.context.executor_root).join("README.md"),
+    )
+    .unwrap();
+    let execution_root = task(&fixture).execution_root;
+    std::fs::write(
+        Path::new(&execution_root).join("README.md"),
+        "malformed unvalidated patch\n",
+    )
+    .unwrap();
+    fixture
+        .connector
+        .db
+        .conn_for_tests()
+        .execute(
+            "UPDATE wc_tasks SET mode = 'read_only' WHERE id = ?1",
+            [&fixture.task_id],
+        )
+        .unwrap();
+    let malformed = task(&fixture);
+    assert_eq!(malformed.mode, "read_only");
+    assert!(malformed.isolated);
+    assert_ne!(malformed.execution_root, malformed.target_root);
+
+    let outcome = finish(&fixture, "must not capture malformed writable state").await;
+    assert!(!outcome.ok, "{}", outcome.body);
+    assert_eq!(outcome.http_status, 409);
+    assert_eq!(outcome.body["error"]["code"], "task_state_invalid");
+    let result_count: i64 = fixture
+        .connector
+        .db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM wc_task_results WHERE task_id = ?1",
+            [&fixture.task_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        result_count, 0,
+        "malformed task must not capture a stable result"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            Path::new(&fixture.connector.context.executor_root).join("README.md")
+        )
+        .unwrap(),
+        before
+    );
+}
+
+#[tokio::test]
 async fn persisted_legacy_inspect_task_is_observable_but_never_executable() {
     let fixture = fixture(20).await;
     fixture
@@ -3808,6 +3862,10 @@ async fn persisted_legacy_inspect_task_is_observable_but_never_executable() {
                 "checks": ["check"],
                 "timeout_secs": 30
             }),
+        ),
+        (
+            "task_finish",
+            json!({ "task_id": fixture.task_id, "summary": "must not finish" }),
         ),
         ("task_resume", json!({ "task_id": fixture.task_id })),
     ];

@@ -38,6 +38,30 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-BoundedShareLogTail {
+    param(
+        [string]$Path,
+        [int]$Lines = 80
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return "<missing>"
+    }
+    try {
+        $text = (@(Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction Stop) -join [Environment]::NewLine)
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return "<empty>"
+        }
+        # These logs should already avoid credentials, but keep failure diagnostics
+        # safe even if a future log message accidentally includes an auth header or
+        # one of WebCodex's opaque credential forms.
+        $text = $text -replace '(?i)(authorization\s*:\s*bearer\s+)[^\s"]+', '$1<redacted>'
+        $text = $text -replace '\b(?:wc_pat|wc_agent|wc_csec|webcodex)_[A-Za-z0-9_-]{8,}\b', '<redacted>'
+        return $text
+    } catch {
+        return "<unreadable>"
+    }
+}
+
 $Root = Split-Path -Parent $PSScriptRoot
 $Version = (Get-Content -LiteralPath (Join-Path $Root "npm\webcodex\package.json") -Raw | ConvertFrom-Json).version
 if (-not $Platform) {
@@ -390,6 +414,7 @@ try {
         "WEBCODEX_CLOUDFLARED_BIN",
         "WEBCODEX_TUNNEL_CLIENT_BIN",
         "WEBCODEX_ENV_FILE",
+        "WEBCODEX_MCP_MODEL_SURFACE",
         "WEBCODEX_ADDR",
         "WEBCODEX_DATA",
         "WEBCODEX_TOKEN",
@@ -464,7 +489,9 @@ try {
             $shareOutput = $ShareStdoutBuffer.ToString()
             if ($ShareCliProcess.HasExited) {
                 $shareError = $ShareStderrBuffer.ToString().Trim()
-                throw "webcodex share --tunnel none exited before readiness (exit $($ShareCliProcess.ExitCode)): $shareError"
+                $agentTail = Get-BoundedShareLogTail -Path (Join-Path $ShareState "logs\agent.log")
+                $serverTail = Get-BoundedShareLogTail -Path (Join-Path $ShareState "logs\server.log")
+                throw "webcodex share --tunnel none exited before readiness (exit $($ShareCliProcess.ExitCode)): $shareError`n--- agent.log tail ---`n$agentTail`n--- server.log tail ---`n$serverTail"
             }
             $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ShareCliProcess.Id)" -ErrorAction SilentlyContinue)
             if ($null -eq $ShareServerPid) {
@@ -482,7 +509,9 @@ try {
             Start-Sleep -Milliseconds 100
         }
         if (-not $shareReady) {
-            throw "Windows share --tunnel none did not become ready before the absolute smoke deadline"
+            $agentTail = Get-BoundedShareLogTail -Path (Join-Path $ShareState "logs\agent.log")
+            $serverTail = Get-BoundedShareLogTail -Path (Join-Path $ShareState "logs\server.log")
+            throw "Windows share --tunnel none did not become ready before the absolute smoke deadline`n--- agent.log tail ---`n$agentTail`n--- server.log tail ---`n$serverTail"
         }
         if ($null -eq $ShareServerPid -or $null -eq $ShareRunnerPid) {
             throw "Windows share readiness did not expose the expected exact Server + Runner child processes"

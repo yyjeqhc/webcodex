@@ -164,7 +164,7 @@ async fn mcp_2026_task_request(
 }
 
 #[tokio::test]
-async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities() {
+async fn http_project_connector_lists_and_dispatches_only_project_capabilities() {
     // The runtime surface is explicit below and the request path never
     // re-reads WEBCODEX_MCP_MODEL_SURFACE, so no env lock is needed.
     let config = test_config(Some("secret"));
@@ -172,7 +172,9 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
     let project = tmp.path().join("connector-project");
     crate::connector_runtime::tests::init_repo(&project);
     let user_token = "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let service = Service::new(build_connector_test_router(config, db, runtime, &project));
 
     let mut discovery = TestClient::get("http://localhost/mcp")
@@ -182,9 +184,11 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
     assert_eq!(effective_status(&discovery), StatusCode::OK);
     let discovery_body: Value = discovery.take_json().await.unwrap();
     assert_eq!(
-        discovery_body["modelSurface"],
-        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+        discovery_body["runtimeExposure"],
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR
     );
+    assert!(discovery_body.get("modelSurface").is_none());
+    assert!(!discovery_body.to_string().contains("canonical_connector"));
 
     let mut schema = TestClient::get("http://localhost/openapi.json")
         .send(&service)
@@ -231,6 +235,10 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
+    assert_eq!(names.len(), 14);
+    for raw_runtime_tool in ["runtime_status", "work_on_project", "call_runtime_tool"] {
+        assert!(!names.contains(&raw_runtime_tool));
+    }
     let mcp_checks_schema = listed_body["result"]["tools"]
         .as_array()
         .unwrap()
@@ -296,9 +304,13 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
         .to_string();
     let initialized_body: Value = initialized.take_json().await.unwrap();
     assert_eq!(
-        initialized_body["result"]["serverInfo"]["modelSurface"],
-        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+        initialized_body["result"]["serverInfo"]["runtimeExposure"],
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR
     );
+    assert!(initialized_body["result"]["serverInfo"]
+        .get("modelSurface")
+        .is_none());
+    assert!(!initialized_body.to_string().contains("canonical_connector"));
 
     let mut action_started = TestClient::post("http://localhost/api/connector/task/start")
         .bearer_auth(user_token)
@@ -473,7 +485,9 @@ async fn http_project_connector_2026_uses_explicit_task_ids_without_transport_wi
     let project = tmp.path().join("connector-2026-project");
     crate::connector_runtime::tests::init_repo(&project);
     let user_token = "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let service = Service::new(build_connector_test_router(config, db, runtime, &project));
 
     let start_params = |goal: &str| {
@@ -589,7 +603,9 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
     let db_path = tmp.path().join("test.db");
     let project = tmp.path().join("connector-2026-task-project");
     crate::connector_runtime::tests::init_repo(&project);
-    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let service = Service::new(build_connector_test_router(
         config,
         db.clone(),
@@ -619,6 +635,33 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
         discover_body["result"]["capabilities"]["extensions"][MCP_TASKS_EXTENSION],
         json!({})
     );
+    assert_eq!(
+        discover_body["result"]["runtimeExposure"],
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR
+    );
+    assert!(discover_body["result"]["capabilities"]
+        .get("resources")
+        .is_none());
+
+    let mut resources = TestClient::post("http://localhost/mcp")
+        .bearer_auth(CONNECTOR_TEST_CREDENTIAL)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "resources/list", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 300,
+            "method": "resources/list",
+            "params": mcp_2026_params(json!({}))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resources), StatusCode::NOT_FOUND);
+    let resources_body: Value = resources.take_json().await.unwrap();
+    assert_eq!(resources_body["error"]["code"], -32601);
 
     let execution = seed_mcp_execution(&db, &project);
     let task_id = execution.execution_id.clone();
@@ -764,7 +807,9 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
     drop(service);
     drop(db);
     let reopened_db = Arc::new(crate::Database::open(&db_path).unwrap());
-    let reopened_runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let reopened_runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let reopened_service = Service::new(build_connector_test_router(
         test_config(Some("secret")),
         reopened_db,
@@ -790,7 +835,9 @@ async fn http_project_connector_2026_tasks_reject_unmaterialized_execution_ids()
     let (tmp, db) = test_db();
     let project = tmp.path().join("connector-2026-unmaterialized-task");
     crate::connector_runtime::tests::init_repo(&project);
-    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let service = Service::new(build_connector_test_router(
         config,
         db.clone(),
@@ -861,7 +908,9 @@ async fn http_project_connector_2026_tasks_cancel_reuses_execution_cancellation(
     let (tmp, db) = test_db();
     let project = tmp.path().join("connector-2026-task-cancel");
     crate::connector_runtime::tests::init_repo(&project);
-    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::CanonicalConnector));
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
     let service = Service::new(build_connector_test_router(
         config,
         db.clone(),

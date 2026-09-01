@@ -357,17 +357,17 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         ]
     );
 
-    for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
-        let payload = mcp_tools_list_payload_with_features_for_auth(
-            surface,
-            false,
-            false,
-            true,
-            true,
-            Some(&direct),
-        );
-        assert!(memory_names(&payload).is_empty());
-    }
+    let local = mcp_tools_list_payload_with_features_for_auth(
+        ModelSurface::LocalCoding,
+        false,
+        false,
+        true,
+        true,
+        Some(&direct),
+    );
+    assert!(memory_names(&local).is_empty());
+    let project_connector = project_connector_tools_list_payload_with_compact(false);
+    assert!(memory_names(&project_connector).is_empty());
     let legacy_full = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
     assert!(memory_names(&legacy_full).is_empty());
 }
@@ -442,9 +442,17 @@ fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
         "Skill package count must not alter MCP tool schemas"
     );
 
-    for surface in [ModelSurface::CanonicalConnector, ModelSurface::LocalCoding] {
-        let payload =
-            mcp_tools_list_payload_with_features_for_auth(surface, false, false, true, true, None);
+    for payload in [
+        mcp_tools_list_payload_with_features_for_auth(
+            ModelSurface::LocalCoding,
+            false,
+            false,
+            true,
+            true,
+            None,
+        ),
+        project_connector_tools_list_payload_with_compact(false),
+    ] {
         assert!(payload["tools"]
             .as_array()
             .unwrap()
@@ -548,11 +556,9 @@ fn skill_management_tools_require_admin_and_remain_fixed_schema() {
 }
 
 #[test]
-fn stateless_workflow_recorder_metadata_does_not_expand_connector_or_generic_tool_schema() {
-    let mut connector =
-        mcp_tools_list_payload_with_compact(ModelSurface::CanonicalConnector, false);
-    add_stateless_workflow_recorder_metadata(&mut connector, ModelSurface::CanonicalConnector);
-    for tool in connector["tools"].as_array().unwrap() {
+fn stateless_workflow_recorder_metadata_does_not_expand_project_connector_or_local_schema() {
+    let project_connector = project_connector_tools_list_payload_with_compact(false);
+    for tool in project_connector["tools"].as_array().unwrap() {
         let properties = tool["inputSchema"]["properties"].as_object().unwrap();
         assert!(!properties
             .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
@@ -1377,9 +1383,8 @@ fn computer_snapshot_frames_native_image_without_structured_base64() {
 }
 
 #[test]
-fn project_connector_tools_list_is_exact_canonical_surface() {
-    // Explicit non-compact rendering: no env involvement.
-    let payload = mcp_tools_list_payload_with_compact(ModelSurface::CanonicalConnector, false);
+fn project_connector_tools_list_is_exact_capability_registry() {
+    let payload = project_connector_tools_list_payload_with_compact(false);
     let tools = payload["tools"].as_array().expect("tools array");
     let names = tools
         .iter()

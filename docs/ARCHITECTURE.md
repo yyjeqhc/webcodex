@@ -32,13 +32,14 @@ project id `agent:<client_id>:<project_id>`.
 
 WebCodex exposes the same runtime through several thin adapters:
 
-- **MCP** — a startup-selected model-facing surface. A complete project-first
-  Connector configuration selects the fourteen-capability `canonical_connector`
-  surface; without Connector configuration, MCP defaults to the broader
-  `local_coding` surface. `adaptive_runtime` is an opt-in admission-focused
-  surface with a small typed coding core plus one long-tail runtime gateway;
-  `full_operator_runtime` remains the explicit fully expanded advanced surface
-  for management tooling.
+- **MCP** — a startup-selected model-facing `RuntimeExposure`. General runtime
+  exposure is `Runtime(ModelSurface)` where `ModelSurface` is one of
+  `local_coding`, `adaptive_runtime`, or `full_operator_runtime`. A complete
+  project-first Connector configuration instead selects the separate
+  `project_connector` exposure with its fourteen Connector capabilities;
+  ProjectConnector is not a `ModelSurface`. `adaptive_runtime` keeps a small
+  typed coding core plus one long-tail runtime gateway, while
+  `full_operator_runtime` remains the explicitly expanded runtime surface.
 - **GPT Actions** — `/openapi.json` follows the Server mode: a configured
   Connector returns the project-bound Connector schema, while a generic Server
   returns the standard runtime OpenAPI schema.
@@ -48,9 +49,10 @@ WebCodex exposes the same runtime through several thin adapters:
 
 All adapters share the same Server, project registration, authentication, and
 policy boundaries. A regular Server is the normal long-lived coding runtime and
-exposes its configured runtime surface. The project-bound Connector is the
-isolated project-first adapter used by flows such as `webcodex run` and
-`webcodex share`; it is intentionally a different, narrower execution contract.
+exposes its configured runtime `ModelSurface`. The project-bound Connector is the
+separate `ProjectConnector` RuntimeExposure used by flows such as `webcodex run`
+and `webcodex share`; it is intentionally a different, narrower execution
+contract rather than another runtime-tool surface.
 
 The canonical Connector has two execution modes. `normal` requires write
 authority and uses a WebCodex-managed isolated Git worktree; edits, commands, and

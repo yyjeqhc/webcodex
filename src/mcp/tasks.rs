@@ -6,7 +6,7 @@ use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::{AuthContext, SCOPE_JOB_RUN};
 use crate::connector_runtime::{ConnectorCallOutcome, ConnectorRuntime};
 use crate::db::ConnectorExecution;
-use crate::model_surface::ModelSurface;
+use crate::model_surface::RuntimeExposure;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -34,8 +34,30 @@ pub(super) fn request_supports_tasks(params: &Value) -> bool {
         .is_some_and(Value::is_object)
 }
 
-pub(super) fn model_surface_supports_tasks(model_surface: ModelSurface) -> bool {
-    model_surface == ModelSurface::CanonicalConnector
+pub(super) fn runtime_exposure_supports_tasks(exposure: RuntimeExposure) -> bool {
+    matches!(exposure, RuntimeExposure::ProjectConnector)
+}
+
+#[cfg(test)]
+mod exposure_tests {
+    use super::*;
+    use crate::model_surface::ModelSurface;
+
+    #[test]
+    fn mcp_tasks_are_owned_only_by_project_connector_exposure() {
+        assert!(runtime_exposure_supports_tasks(
+            RuntimeExposure::ProjectConnector
+        ));
+        for surface in [
+            ModelSurface::LocalCoding,
+            ModelSurface::AdaptiveRuntime,
+            ModelSurface::FullOperatorRuntime,
+        ] {
+            assert!(!runtime_exposure_supports_tasks(RuntimeExposure::Runtime(
+                surface
+            )));
+        }
+    }
 }
 
 pub(super) fn server_capabilities() -> Value {

@@ -629,7 +629,7 @@ async fn http_mcp_initialize_success() {
     assert_eq!(body["id"], 1);
     assert_eq!(body["result"]["serverInfo"]["name"], "webcodex");
     assert_eq!(
-        body["result"]["serverInfo"]["modelSurface"],
+        body["result"]["serverInfo"]["runtimeExposure"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
     assert!(body["result"]["protocolVersion"].is_string());
@@ -2677,7 +2677,7 @@ async fn http_mcp_get_discovery_returns_metadata() {
     assert!(body["version"].is_string());
     assert_eq!(body["protocol"], "mcp");
     assert_eq!(
-        body["modelSurface"],
+        body["runtimeExposure"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
     assert!(body["protocolVersion"].is_string());

@@ -4,10 +4,10 @@
 
 Use GPT Actions when a Custom GPT should call WebCodex through the Server's
 OpenAPI surface. Use [MCP](MCP.md) when the client supports MCP directly.
-Both are adapters over the same runtime, but the exposed schema depends on the
-Server mode: a Connector-configured project-first Server exposes the
-project-bound Connector schema, while a generic hosted/self-hosted Server
-exposes the standard runtime OpenAPI schema.
+Both are adapters over the same Server, but the exposed schema follows its
+top-level RuntimeExposure: `project_connector` exposes the project-bound
+Connector schema, while `Runtime(ModelSurface)` exposes the standard runtime
+OpenAPI schema for the selected runtime surface.
 
 ## What a GPT Action is
 

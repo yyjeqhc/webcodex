@@ -82,13 +82,16 @@ advanced identity flow.
 
 ## Advanced / reference
 
-### MCP model surfaces
+### Runtime exposure and MCP model surfaces
 
-The project-first `webcodex run` / `webcodex share` path starts a Server with the
-project-bound `canonical_connector` surface. `webcodex connect <server>` uses
-the MCP surface selected by that existing Server; without Connector
-configuration, the default is the broader `local_coding` surface. Operators may
-explicitly select `adaptive_runtime` with
+WebCodex has one startup-selected `RuntimeExposure`. General runtime exposure is
+`Runtime(ModelSurface)`, where the model surface is `local_coding`,
+`adaptive_runtime`, or `full_operator_runtime`. The project-first `webcodex run`
+/ `webcodex share` path instead starts a Server with the separate
+`project_connector` exposure and ConnectorTask capability contract;
+ProjectConnector is not a ModelSurface. `webcodex connect <server>` uses the
+exposure selected by that existing Server. Without Connector configuration, the
+default is `local_coding`. Operators may explicitly select `adaptive_runtime` with
 `WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1`, or `full_operator_runtime` with
 `WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1`. `adaptive_runtime` keeps a small
 high-frequency coding core directly typed in `tools/list` and exposes one
@@ -97,7 +100,7 @@ primitives such as `read_files`, `run_process`, and `observe_jobs` stay direct;
 less frequent convenience tools such as `list_projects`, `project_overview`,
 `run_script`, `validation_summary`, and `git_status` stay behind the gateway. After
 compact discovery, `tool_manifest(tool_name="<exact-name>")` returns exactly one
-tool's description, input schema, annotations, and current MCP surface routing
+tool's description, input schema, annotations, and current runtime ModelSurface routing
 without expanding its output schema. `availability` is `direct`, `gateway`, or
 `unavailable`; `gateway_tool` is `call_runtime_tool` only for the gateway case.
 These fields describe invocation routing, not authorization or feature readiness.
@@ -207,13 +210,14 @@ Common setup failures:
 See xAI's [Connector documentation](https://docs.x.ai/grok/connectors) for the
 current Grok Custom MCP UI and availability.
 
-## The project-bound surface
+## The ProjectConnector exposure
 
-When the Server is started with project-first Connector configuration
-(`canonical_connector`), MCP `tools/list` contains exactly these fourteen
-operations. This is the surface used by `webcodex run` and `webcodex share`;
-a generic hosted/self-hosted Server without Connector context exposes
-`local_coding` by default (or explicit `full_operator_runtime`) instead:
+When the Server is started with project-first Connector configuration, the
+top-level RuntimeExposure is `project_connector` and MCP `tools/list` contains
+exactly these fourteen operations. This is the project-first contract used by
+`webcodex run` and `webcodex share`; a generic hosted/self-hosted Server without
+Connector context uses a runtime ModelSurface: `local_coding` by default, or
+explicit `adaptive_runtime` / `full_operator_runtime`:
 
 ```text
 task_start
@@ -246,7 +250,7 @@ property and is not Workflow Session or model-context identity.
 
 ### Stateless MCP 2026 Tasks extension
 
-For `canonical_connector`, `server/discover` advertises the official
+For the `project_connector` RuntimeExposure, `server/discover` advertises the official
 `io.modelcontextprotocol/tasks` extension. Support is negotiated per request via
 `_meta.io.modelcontextprotocol/clientCapabilities.extensions`; no capability is
 remembered from an earlier request or from `Mcp-Session-Id`.

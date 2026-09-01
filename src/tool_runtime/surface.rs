@@ -169,6 +169,12 @@ impl ToolRuntime {
         include_risk_summary: bool,
     ) -> Result<Value, ToolResult> {
         let tool_name = raw_tool_name.trim();
+        let model_surface = self.model_surface().ok_or_else(|| {
+            ToolResult::err(
+                "tool_manifest is unavailable under the project_connector runtime exposure"
+                    .to_string(),
+            )
+        })?;
         if tool_name.is_empty() {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         }
@@ -179,9 +185,8 @@ impl ToolRuntime {
         };
         let category = runtime_tool_category(spec.name.as_str());
         let metadata = runtime_tool_metadata(spec.name.as_str());
-        let (availability, gateway_tool) = self
-            .model_surface()
-            .runtime_tool_invocation_route(spec.name.as_str());
+        let (availability, gateway_tool) =
+            model_surface.runtime_tool_invocation_route(spec.name.as_str());
         let mut exact_categories = serde_json::Map::new();
         exact_categories.insert(category.to_string(), json!([spec.name]));
         let mut output = json!({
@@ -215,7 +220,7 @@ impl ToolRuntime {
             "limit_applied": false,
             "requested_limit": Value::Null,
             "categories": Value::Object(exact_categories),
-            "tools": [compact_manifest_tool_entry(spec, self.model_surface())],
+            "tools": [compact_manifest_tool_entry(spec, model_surface)],
         });
         if include_risk_summary {
             output["risk_summary"] = build_risk_summary(&[spec]);
@@ -308,7 +313,12 @@ impl ToolRuntime {
             None => filtered_specs,
         };
         let risk_summary = include_risk_summary.then(|| build_risk_summary(&returned_specs));
-        let model_surface = self.model_surface();
+        let model_surface = self.model_surface().ok_or_else(|| {
+            ToolResult::err(
+                "tool_manifest is unavailable under the project_connector runtime exposure"
+                    .to_string(),
+            )
+        })?;
         let tools: Vec<Value> = returned_specs
             .iter()
             .map(|spec| compact_manifest_tool_entry(spec, model_surface))

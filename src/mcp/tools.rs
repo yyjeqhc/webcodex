@@ -7,8 +7,8 @@ use super::tasks;
 use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::AuthContext;
 use crate::connector_runtime::{ConnectorRuntime, ConnectorTransport};
-use crate::model_surface::ModelSurface;
 pub(super) use crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
+use crate::model_surface::{ModelSurface, RuntimeExposure};
 use crate::tool_request_trace::ToolRequestLifecycle;
 use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
@@ -254,9 +254,6 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
     auth: Option<&AuthContext>,
 ) -> Value {
     let specs = match model_surface {
-        ModelSurface::CanonicalConnector => {
-            filter_specs_for_oauth(crate::connector_runtime::surface::capability_specs(), auth)
-        }
         ModelSurface::LocalCoding => {
             filter_specs_for_oauth(crate::model_surface::local_coding_tool_specs(), auth)
         }
@@ -275,6 +272,22 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
         .collect::<Vec<_>>();
     json!({ "tools": tools })
+}
+
+fn project_connector_tools_list_payload_for_auth(
+    compact: bool,
+    auth: Option<&AuthContext>,
+) -> Value {
+    let tools = filter_specs_for_oauth(crate::connector_runtime::surface::capability_specs(), auth)
+        .into_iter()
+        .map(|spec| mcp_tool_spec_json(spec, compact, false))
+        .collect::<Vec<_>>();
+    json!({ "tools": tools })
+}
+
+#[cfg(test)]
+pub(super) fn project_connector_tools_list_payload_with_compact(compact: bool) -> Value {
+    project_connector_tools_list_payload_for_auth(compact, None)
 }
 
 fn adapt_computer_snapshot_output_schema_for_mcp(spec: &mut ToolSpec) {
@@ -363,9 +376,6 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
     payload: &mut Value,
     model_surface: ModelSurface,
 ) {
-    if matches!(model_surface, ModelSurface::CanonicalConnector) {
-        return;
-    }
     let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
         return;
     };
@@ -525,31 +535,39 @@ pub(super) fn handle_list(
     stateless_2026: bool,
     compact_schemas: bool,
 ) -> McpOutcome {
-    let mut result = mcp_tools_list_payload_with_features_for_auth(
-        runtime.model_surface(),
-        compact_schemas,
-        stateless_2026 && resources::model_surface_supports_computer_app(runtime.model_surface()),
-        stateless_2026,
-        stateless_2026,
-        auth,
-    );
-    if runtime.model_surface() == ModelSurface::AdaptiveRuntime {
-        if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
-            tools.push(mcp_tool_spec_json(
-                adaptive_runtime_gateway_tool_spec(),
+    let result = match runtime.runtime_exposure() {
+        RuntimeExposure::ProjectConnector => {
+            project_connector_tools_list_payload_for_auth(compact_schemas, auth)
+        }
+        RuntimeExposure::Runtime(model_surface) => {
+            let mut result = mcp_tools_list_payload_with_features_for_auth(
+                model_surface,
                 compact_schemas,
-                false,
-            ));
+                stateless_2026 && resources::model_surface_supports_computer_app(model_surface),
+                stateless_2026,
+                stateless_2026,
+                auth,
+            );
+            if model_surface == ModelSurface::AdaptiveRuntime {
+                if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                    tools.push(mcp_tool_spec_json(
+                        adaptive_runtime_gateway_tool_spec(),
+                        compact_schemas,
+                        false,
+                    ));
+                }
+            }
+            if stateless_2026 {
+                add_stateless_workflow_recorder_metadata(&mut result, model_surface);
+            }
+            if crate::mcp_gateway::authorized(auth) {
+                if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                    tools.push(crate::mcp_gateway::tool_spec());
+                }
+            }
+            result
         }
-    }
-    if stateless_2026 {
-        add_stateless_workflow_recorder_metadata(&mut result, runtime.model_surface());
-    }
-    if crate::mcp_gateway::authorized(auth) {
-        if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
-            tools.push(crate::mcp_gateway::tool_spec());
-        }
-    }
+    };
     McpOutcome::Ok(rpc_result(
         id,
         if stateless_2026 {
@@ -1036,108 +1054,8 @@ pub(super) async fn handle_call(
     if let Some(lc) = lifecycle.as_deref() {
         lc.capture_payload("raw_arguments", &params.arguments);
     }
-    let via_adaptive_runtime_gateway = runtime.model_surface() == ModelSurface::AdaptiveRuntime
-        && params.name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
-    if via_adaptive_runtime_gateway {
-        let (target, arguments) =
-            match unwrap_adaptive_runtime_gateway_arguments(params.arguments, stateless_2026) {
-                Ok(target) => target,
-                Err(message) => {
-                    return McpOutcome::BadRequest(rpc_error(id, -32602, message));
-                }
-            };
-        params.name = target;
-        params.arguments = arguments;
-    }
-    // Emit dispatch_started only after params parse succeeds and before
-    // ToolRuntime work begins.
-    if let Some(lc) = lifecycle.as_deref_mut() {
-        lc.set_tool_name(Some(params.name.clone()));
-        lc.dispatch_started();
-    }
-    if params.name == crate::mcp_gateway::MCP_TOOL_NAME {
-        if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_MCP_LOCAL) {
-            if let Some(lc) = lifecycle.as_deref() {
-                lc.dispatch_failed("forbidden");
-                lc.dispatch_finished(false, Some(false), "forbidden");
-            }
-            return outcome;
-        }
-        if let Some(lc) = lifecycle.as_deref() {
-            lc.capture_payload("effective_arguments", &params.arguments);
-        }
-        let result = crate::mcp_gateway::call(runtime, params.arguments, auth).await;
-        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
-        if let Some(lc) = lifecycle.as_deref() {
-            lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
-        }
-        return McpOutcome::Ok(rpc_result(
-            id,
-            if stateless_2026 {
-                mcp_stateless_result(result, false)
-            } else {
-                result
-            },
-        ));
-    }
-    // Focused model surfaces reject direct tools they do not advertise at the
-    // MCP boundary. Adaptive gateway calls are already reduced to an allowed
-    // full-operator target and continue through the normal runtime checks.
-    let surface_denied = match runtime.model_surface() {
-        ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
-        ModelSurface::AdaptiveRuntime => {
-            !via_adaptive_runtime_gateway && !is_adaptive_runtime_direct_tool(&params.name)
-        }
-        ModelSurface::FullOperatorRuntime | ModelSurface::CanonicalConnector => false,
-    };
-    if surface_denied {
-        if let Some(lc) = lifecycle.as_deref() {
-            lc.dispatch_failed("surface_denied");
-            lc.dispatch_finished(false, Some(false), "surface_denied");
-        }
-        let message = if runtime.model_surface() == ModelSurface::AdaptiveRuntime {
-            format!(
-                "tool '{}' is not a direct adaptive_runtime tool; use the adaptive runtime gateway for discovered long-tail tools or select full_operator_runtime explicitly",
-                params.name
-            )
-        } else {
-            format!(
-                "tool '{}' is not available on the local_coding MCP surface; the full operator runtime must be selected explicitly with WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1",
-                params.name
-            )
-        };
-        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
-    }
-    // From here on, the MCP boundary has established a model-visible runtime
-    // tool identity. A few MCP-only validations still happen before the
-    // shared ToolRuntime kernel; preserve those failed attempts in generic
-    // telemetry without creating a second record for normal kernel calls.
-    let mut pre_kernel_model_ergonomics = ModelErgonomicsTimer::start(&params.name);
-    let resource_tool_call = match resources::prepare_tool_call(
-        &params.name,
-        stateless_2026,
-        runtime.model_surface(),
-        auth,
-    ) {
-        Ok(context) => context,
-        Err(error) => {
-            if error.records_model_ergonomics_failure() {
-                if let (Some(slot), Some(timer)) = (
-                    model_ergonomics_out.as_deref_mut(),
-                    pre_kernel_model_ergonomics.take(),
-                ) {
-                    *slot = Some(
-                        timer
-                            .finish()
-                            .record_for_pre_result_failure("invalid_arguments"),
-                    );
-                }
-            }
-            return McpOutcome::BadRequest(rpc_error(id, -32602, error.message()));
-        }
-    };
-    if runtime.model_surface() == ModelSurface::CanonicalConnector {
-        let connector = connector.expect("validated canonical Connector state");
+    if runtime.runtime_exposure() == RuntimeExposure::ProjectConnector {
+        let connector = connector.expect("validated ProjectConnector runtime state");
         if !stateless_2026 && params.name == "task_start" && window.is_none() {
             if let Some(lc) = lifecycle.as_deref() {
                 lc.dispatch_failed("window_identity_unavailable");
@@ -1222,6 +1140,105 @@ pub(super) async fn handle_call(
             },
         ));
     }
+    let RuntimeExposure::Runtime(model_surface) = runtime.runtime_exposure() else {
+        unreachable!("ProjectConnector returned before runtime ModelSurface dispatch");
+    };
+    let via_adaptive_runtime_gateway = model_surface == ModelSurface::AdaptiveRuntime
+        && params.name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
+    if via_adaptive_runtime_gateway {
+        let (target, arguments) =
+            match unwrap_adaptive_runtime_gateway_arguments(params.arguments, stateless_2026) {
+                Ok(target) => target,
+                Err(message) => {
+                    return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                }
+            };
+        params.name = target;
+        params.arguments = arguments;
+    }
+    // Emit dispatch_started only after params parse succeeds and before
+    // ToolRuntime work begins.
+    if let Some(lc) = lifecycle.as_deref_mut() {
+        lc.set_tool_name(Some(params.name.clone()));
+        lc.dispatch_started();
+    }
+    if params.name == crate::mcp_gateway::MCP_TOOL_NAME {
+        if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_MCP_LOCAL) {
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_failed("forbidden");
+                lc.dispatch_finished(false, Some(false), "forbidden");
+            }
+            return outcome;
+        }
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload("effective_arguments", &params.arguments);
+        }
+        let result = crate::mcp_gateway::call(runtime, params.arguments, auth).await;
+        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+        }
+        return McpOutcome::Ok(rpc_result(
+            id,
+            if stateless_2026 {
+                mcp_stateless_result(result, false)
+            } else {
+                result
+            },
+        ));
+    }
+    // Focused model surfaces reject direct tools they do not advertise at the
+    // MCP boundary. Adaptive gateway calls are already reduced to an allowed
+    // full-operator target and continue through the normal runtime checks.
+    let surface_denied = match model_surface {
+        ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
+        ModelSurface::AdaptiveRuntime => {
+            !via_adaptive_runtime_gateway && !is_adaptive_runtime_direct_tool(&params.name)
+        }
+        ModelSurface::FullOperatorRuntime => false,
+    };
+    if surface_denied {
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.dispatch_failed("surface_denied");
+            lc.dispatch_finished(false, Some(false), "surface_denied");
+        }
+        let message = if model_surface == ModelSurface::AdaptiveRuntime {
+            format!(
+                "tool '{}' is not a direct adaptive_runtime tool; use the adaptive runtime gateway for discovered long-tail tools or select full_operator_runtime explicitly",
+                params.name
+            )
+        } else {
+            format!(
+                "tool '{}' is not available on the local_coding MCP surface; the full operator runtime must be selected explicitly with WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1",
+                params.name
+            )
+        };
+        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+    }
+    // From here on, the MCP boundary has established a model-visible runtime
+    // tool identity. A few MCP-only validations still happen before the
+    // shared ToolRuntime kernel; preserve those failed attempts in generic
+    // telemetry without creating a second record for normal kernel calls.
+    let mut pre_kernel_model_ergonomics = ModelErgonomicsTimer::start(&params.name);
+    let resource_tool_call =
+        match resources::prepare_tool_call(&params.name, stateless_2026, model_surface, auth) {
+            Ok(context) => context,
+            Err(error) => {
+                if error.records_model_ergonomics_failure() {
+                    if let (Some(slot), Some(timer)) = (
+                        model_ergonomics_out.as_deref_mut(),
+                        pre_kernel_model_ergonomics.take(),
+                    ) {
+                        *slot = Some(
+                            timer
+                                .finish()
+                                .record_for_pre_result_failure("invalid_arguments"),
+                        );
+                    }
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, error.message()));
+            }
+        };
     let session_id = match strip_recording_session_id(&mut params.arguments) {
         Ok(session_id) => session_id,
         Err(message) => {
@@ -1326,18 +1343,14 @@ pub(super) async fn handle_call(
         }
     }
     let context_continuity_surface_capable =
-        stateless_2026 && runtime.model_surface().supports_operator_extensions();
+        stateless_2026 && model_surface.supports_operator_extensions();
     let context_continuity_capable =
         context_continuity_surface_capable && runtime_tool_accepts_context_ack(&params.name);
     // context_request remains surface-scoped and independent from ACK policy.
-    let context_sidecar_capable =
-        stateless_2026 && runtime.model_surface().supports_operator_extensions();
-    let skill_runtime_capable =
-        stateless_2026 && runtime.model_surface().supports_operator_extensions();
-    let skill_management_capable =
-        stateless_2026 && runtime.model_surface().supports_operator_extensions();
-    let memory_surface_capable =
-        stateless_2026 && runtime.model_surface().supports_operator_extensions();
+    let context_sidecar_capable = stateless_2026 && model_surface.supports_operator_extensions();
+    let skill_runtime_capable = stateless_2026 && model_surface.supports_operator_extensions();
+    let skill_management_capable = stateless_2026 && model_surface.supports_operator_extensions();
+    let memory_surface_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let context_request = if context_sidecar_capable {
         match strip_stateless_context_request(&mut params.arguments) {
             Ok(keys) => keys,

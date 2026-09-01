@@ -898,7 +898,7 @@ async fn mcp_tools_call_tasks_extension_switches_only_active_command_results_to_
     let fixture = fixture(20).await;
     let mcp_runtime = Arc::new(
         ToolRuntime::new_for_tests_with_shell_clients(fixture.registry.clone())
-            .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector),
+            .with_runtime_exposure(crate::model_surface::RuntimeExposure::ProjectConnector),
     );
     let service = Arc::new(salvo::Service::new(
         salvo::Router::new()
@@ -1123,7 +1123,7 @@ async fn mcp_tools_call_tasks_extension_keeps_terminal_before_yield_ordinary() {
     let fixture = fixture(1_000).await;
     let mcp_runtime = Arc::new(
         ToolRuntime::new_for_tests_with_shell_clients(fixture.registry.clone())
-            .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector),
+            .with_runtime_exposure(crate::model_surface::RuntimeExposure::ProjectConnector),
     );
     let service = Arc::new(salvo::Service::new(
         salvo::Router::new()

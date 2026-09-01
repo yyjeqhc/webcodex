@@ -10,10 +10,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "runtime_status" => Some(wrapped_output_schema(vec![
             ("service", schema_type("string", "Runtime service name.")),
             (
-                "model_surface",
+                "runtime_exposure",
                 schema_type(
                     "string",
-                    "Configured MCP model surface: canonical_connector, local_coding, adaptive_runtime, or full_operator_runtime.",
+                    "Configured runtime exposure: local_coding, adaptive_runtime, full_operator_runtime, or project_connector.",
                 ),
             ),
             (
@@ -34,8 +34,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
-                                "shared_key_enabled": {"type": "boolean", "description": "Whether direct shared-key quick-start authentication is effective for the running Server; false on the project-bound canonical Connector surface."},
-                                "anonymous_enabled": {"type": "boolean", "description": "Whether explicit open-anonymous access is effective for the running Server; false on the project-bound canonical Connector surface."},
+                                "shared_key_enabled": {"type": "boolean", "description": "Whether direct shared-key quick-start authentication is effective for the running Server; false under the project-bound ProjectConnector exposure."},
+                                "anonymous_enabled": {"type": "boolean", "description": "Whether explicit open-anonymous access is effective for the running Server; false under the project-bound ProjectConnector exposure."},
                                 "oauth2_enabled": {"type": "boolean", "description": "Whether OAuth2 support was enabled in the running Server configuration."},
                                 "oauth2_shared_key_bridge_enabled": {"type": "boolean", "description": "Whether the OAuth2 shared-key bridge is enabled in the running OAuth2 configuration; false whenever OAuth2 itself is disabled. This public OAuth flow is distinct from direct Bearer shared-key authentication."}
                             },

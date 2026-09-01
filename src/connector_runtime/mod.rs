@@ -212,18 +212,10 @@ impl ConnectorRuntime {
         db: Arc<Database>,
         context: Option<ConnectorContext>,
     ) -> Result<ConnectorRuntimeSlot, String> {
-        match (tools.model_surface(), context.is_some()) {
-            (crate::model_surface::ModelSurface::CanonicalConnector, true)
-            | (crate::model_surface::ModelSurface::LocalCoding, false)
-            | (crate::model_surface::ModelSurface::AdaptiveRuntime, false)
-            | (crate::model_surface::ModelSurface::FullOperatorRuntime, false) => {}
-            (surface, connector_present) => {
-                return Err(format!(
-                    "model surface '{}' is inconsistent with Connector runtime state (present={connector_present})",
-                    surface.name()
-                ));
-            }
-        }
+        crate::model_surface::validate_connector_runtime_presence(
+            tools.runtime_exposure(),
+            context.is_some(),
+        )?;
         let Some(context) = context else {
             return Ok(ConnectorRuntimeSlot::default());
         };

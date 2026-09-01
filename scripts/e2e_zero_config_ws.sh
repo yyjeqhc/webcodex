@@ -564,11 +564,12 @@ fi
 # 6. MCP surface smoke
 # ----------------------------------------------------------------------------
 
-# The model surface is startup-selected and immutable. The default local_coding
-# surface is the focused 46-tool coding loop. adaptive-runtime-v1 exposes a
-# smaller typed core plus one long-tail runtime gateway, while full-operator-v1
-# exposes the complete operator tool set. No surface re-exposes removed legacy
-# edit tools or ModelHidden tools (job_tail) via MCP tools/list.
+# The runtime exposure is startup-selected and immutable. Without Connector
+# configuration, Runtime(ModelSurface) defaults to the focused local_coding
+# coding loop. adaptive-runtime-v1 exposes a smaller typed core plus one long-tail
+# runtime gateway, while full-operator-v1 exposes the complete operator tool set.
+# No runtime surface re-exposes removed legacy edit tools or ModelHidden tools
+# (job_tail) via MCP tools/list.
 MODEL_SURFACE_ENV="${WEBCODEX_MCP_MODEL_SURFACE:-}"
 case "$MODEL_SURFACE_ENV" in
     "" | "local-coding-v1")
@@ -585,7 +586,7 @@ case "$MODEL_SURFACE_ENV" in
         EXPECTED_SURFACE="local_coding"
         ;;
 esac
-log "expected model surface: $EXPECTED_SURFACE"
+log "expected runtime exposure: $EXPECTED_SURFACE"
 
 log "---- MCP surface (/mcp) ----"
 
@@ -597,11 +598,11 @@ if [ -n "$proto" ] && [ "$proto" != "" ]; then
 else
     fail "MCP initialize did not return a protocolVersion (body: ${body:0:300})"
 fi
-mcp_surface="$(json_get "$body" result.serverInfo.modelSurface)"
-if [ "$mcp_surface" = "$EXPECTED_SURFACE" ]; then
-    pass "MCP initialize modelSurface=$mcp_surface"
+runtime_exposure="$(json_get "$body" result.serverInfo.runtimeExposure)"
+if [ "$runtime_exposure" = "$EXPECTED_SURFACE" ]; then
+    pass "MCP initialize runtimeExposure=$runtime_exposure"
 else
-    fail "MCP initialize modelSurface mismatch (expected $EXPECTED_SURFACE got '$mcp_surface' body: ${body:0:300})"
+    fail "MCP initialize runtimeExposure mismatch (expected $EXPECTED_SURFACE got '$runtime_exposure' body: ${body:0:300})"
 fi
 
 # tools/list

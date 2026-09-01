@@ -1797,12 +1797,6 @@ async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
             "direct",
             None,
         ),
-        (
-            ModelSurface::CanonicalConnector,
-            "run_process",
-            "unavailable",
-            None,
-        ),
     ] {
         let runtime = test_runtime().with_model_surface(surface);
         let result = runtime
@@ -1830,6 +1824,26 @@ async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
             gateway_tool.map_or(Value::Null, |name| json!(name))
         );
     }
+}
+
+#[tokio::test]
+async fn tool_manifest_is_not_a_project_connector_runtime_route() {
+    let runtime = test_runtime()
+        .with_runtime_exposure(crate::model_surface::RuntimeExposure::ProjectConnector);
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("run_process".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("project_connector")));
 }
 
 #[tokio::test]

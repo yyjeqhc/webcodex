@@ -17,7 +17,7 @@ async fn mcp_initialize_returns_protocol_and_server_info() {
             assert_eq!(value["result"]["serverInfo"]["name"], "webcodex");
             assert!(value["result"]["serverInfo"]["version"].is_string());
             assert_eq!(
-                value["result"]["serverInfo"]["modelSurface"],
+                value["result"]["serverInfo"]["runtimeExposure"],
                 crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
             );
             assert_eq!(

@@ -109,7 +109,7 @@ pub struct ToolRuntime {
     pub(crate) mcp_gateway: Arc<crate::mcp_gateway::McpGatewayRuntime>,
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
-    model_surface: crate::model_surface::ModelSurface,
+    runtime_exposure: crate::model_surface::RuntimeExposure,
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
     pub(crate) session_shells: SessionShellRegistry,
@@ -174,7 +174,9 @@ impl ToolRuntime {
             mcp_gateway: Arc::new(crate::mcp_gateway::McpGatewayRuntime::default()),
             coding_agent_runs: Arc::new(super::coding_agent::CodingAgentServerState::default()),
             runtime_info,
-            model_surface: crate::model_surface::ModelSurface::LocalCoding,
+            runtime_exposure: crate::model_surface::RuntimeExposure::Runtime(
+                crate::model_surface::ModelSurface::LocalCoding,
+            ),
             checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
             session_shells: SessionShellRegistry::default(),
@@ -206,16 +208,30 @@ impl ToolRuntime {
         }
     }
 
-    pub(crate) fn with_model_surface(
+    pub(crate) fn with_runtime_exposure(
         mut self,
-        model_surface: crate::model_surface::ModelSurface,
+        runtime_exposure: crate::model_surface::RuntimeExposure,
     ) -> Self {
-        self.model_surface = model_surface;
+        self.runtime_exposure = runtime_exposure;
         self
     }
 
-    pub(crate) fn model_surface(&self) -> crate::model_surface::ModelSurface {
-        self.model_surface
+    #[cfg(test)]
+    pub(crate) fn with_model_surface(
+        self,
+        model_surface: crate::model_surface::ModelSurface,
+    ) -> Self {
+        self.with_runtime_exposure(crate::model_surface::RuntimeExposure::Runtime(
+            model_surface,
+        ))
+    }
+
+    pub(crate) fn runtime_exposure(&self) -> crate::model_surface::RuntimeExposure {
+        self.runtime_exposure
+    }
+
+    pub(crate) fn model_surface(&self) -> Option<crate::model_surface::ModelSurface> {
+        self.runtime_exposure.model_surface()
     }
 
     /// Attach a durable workspace-activity recorder (server wiring).

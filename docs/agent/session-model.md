@@ -656,7 +656,7 @@ summary shape is:
   "tool_surface": {
     "schema_version": 1,
     "protocol_era": "legacy | stateless_2026",
-    "model_surface": "local_coding | adaptive_runtime | full_operator_runtime | canonical_connector",
+    "runtime_exposure": "local_coding | adaptive_runtime | full_operator_runtime | project_connector",
     "compact_schemas": false,
     "tool_count": 0,
     "serialized_tools_bytes": 0,

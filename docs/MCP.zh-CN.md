@@ -76,11 +76,14 @@ OAuth 仍是独立的高级身份路径。
 
 ## Advanced / reference
 
-### MCP model surface
+### Runtime exposure 与 MCP model surface
 
-project-first 的 `webcodex run` / `webcodex share` 使用 project-bound
-`canonical_connector` surface。`webcodex connect <server>` 使用已有 Server 选择的 MCP
-surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator 可通过
+WebCodex 在启动时只选择一个顶层 `RuntimeExposure`。通用 runtime exposure 是
+`Runtime(ModelSurface)`，其中 ModelSurface 只有 `local_coding`、`adaptive_runtime`、
+`full_operator_runtime`。project-first 的 `webcodex run` / `webcodex share` 则使用独立的
+`project_connector` exposure 与 ConnectorTask capability contract；ProjectConnector 不是
+ModelSurface。`webcodex connect <server>` 使用已有 Server 选择的 exposure；没有 Connector
+配置时默认是 `local_coding`。operator 可通过
 `WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1` 显式选择 `adaptive_runtime`，或通过
 `WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1` 选择 `full_operator_runtime`。`adaptive_runtime`
 只把高频 coding core 直接放进 `tools/list`，低频 runtime tool 则通过
@@ -88,7 +91,7 @@ surface；没有 Connector 配置时默认是更宽的 `local_coding`。operator
 coding loop 中的原语保持 direct；`list_projects`、`project_overview`、`run_script`、
 `validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。compact discovery 后可用
 `tool_manifest(tool_name="<exact-name>")` 只读取一个工具的 description、input schema、
-annotations 与当前 MCP surface routing，不展开庞大的 output schema。`availability` 明确为
+annotations 与当前 runtime ModelSurface routing，不展开庞大的 output schema。`availability` 明确为
 `direct`、`gateway` 或 `unavailable`；只有 `gateway` 时 `gateway_tool` 才是
 `call_runtime_tool`。这些字段只描述调用路由，不代表授权或 feature readiness；目标 tool 原有的
 OAuth scope、project authority、permission gate、参数校验、effect 与 Session/ACK 语义保持不变。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
@@ -183,12 +186,13 @@ OAuth access token 会绑定到该用户，同时继续受 client 注册权限�
 Grok Custom MCP UI 与可用范围以 xAI 的
 [Connector 文档](https://docs.x.ai/grok/connectors)为准。
 
-## project-bound surface
+## ProjectConnector exposure
 
-Server 以 project-first Connector 配置（`canonical_connector`）启动时，MCP
-`tools/list` 恰好包含以下十四个操作。这是 `webcodex run` 与 `webcodex share`
-使用的 surface；没有 Connector context 的普通 hosted/self-hosted Server 默认暴露
-`local_coding`（也可显式选择 `adaptive_runtime` 或 `full_operator_runtime`）而不是这十四个操作：
+Server 以 project-first Connector 配置启动时，顶层 RuntimeExposure 是
+`project_connector`，MCP `tools/list` 恰好包含以下十四个操作。这是 `webcodex run` 与
+`webcodex share` 使用的 project-first contract；没有 Connector context 的普通
+hosted/self-hosted Server 使用 runtime ModelSurface：默认 `local_coding`，也可显式选择
+`adaptive_runtime` 或 `full_operator_runtime`：
 
 ```text
 task_start
@@ -219,7 +223,7 @@ Workflow Session 或 model-context identity。
 
 ### Stateless MCP 2026 Tasks extension
 
-对于 `canonical_connector`，`server/discover` 会声明官方
+对于 `project_connector` RuntimeExposure，`server/discover` 会声明官方
 `io.modelcontextprotocol/tasks` extension。能力只按**当前请求**的
 `_meta.io.modelcontextprotocol/clientCapabilities.extensions` 协商；不会从前一次请求、
 `Mcp-Session-Id` 或其他隐藏状态记住能力。

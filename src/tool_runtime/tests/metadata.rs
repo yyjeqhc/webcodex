@@ -1536,21 +1536,22 @@ fn runtime_status_input_schema_exposes_compact_flags() {
         .expect("runtime_status agents output description");
     assert!(agents_description.contains("stale_count"));
     assert!(!agents_description.contains("offline_count"));
-    let model_surface_description = output_schema["properties"]["output"]["properties"]
-        ["model_surface"]["description"]
+    let runtime_exposure_description = output_schema["properties"]["output"]["properties"]
+        ["runtime_exposure"]["description"]
         .as_str()
-        .expect("runtime_status model_surface output description");
-    for surface in [
-        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR,
+        .expect("runtime_status runtime_exposure output description");
+    for exposure in [
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING,
         crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME,
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME,
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR,
     ] {
         assert!(
-            model_surface_description.contains(surface),
-            "runtime_status model_surface output description missing {surface}"
+            runtime_exposure_description.contains(exposure),
+            "runtime_status runtime_exposure output description missing {exposure}"
         );
     }
+    assert!(!runtime_exposure_description.contains("canonical_connector"));
     let compact_schemas =
         &output_schema["properties"]["output"]["properties"]["mcp_compact_schemas"];
     assert_eq!(compact_schemas["type"], "boolean");
@@ -2122,7 +2123,7 @@ async fn runtime_status_includes_build_metadata() {
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(
-        result.output["model_surface"],
+        result.output["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
     assert_eq!(
@@ -2218,13 +2219,13 @@ async fn runtime_status_defaults_to_local_coding_surface() {
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(
-        result.output["model_surface"],
+        result.output["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING
     );
 }
 
 #[tokio::test]
-async fn runtime_status_reports_canonical_connector_surface_when_configured() {
+async fn runtime_status_reports_project_connector_exposure_when_configured() {
     let mut env = crate::test_support::TestEnvGuard::new();
     env.set("WEBCODEX_SHARED_KEY_ENABLED", "true");
     env.set("WEBCODEX_ALLOW_ANONYMOUS", "true");
@@ -2234,11 +2235,11 @@ async fn runtime_status_reports_canonical_connector_surface_when_configured() {
         oauth2_shared_key_bridge_enabled: true,
         ..RuntimeInfo::default()
     })
-    .with_model_surface(crate::model_surface::ModelSurface::CanonicalConnector);
+    .with_runtime_exposure(crate::model_surface::RuntimeExposure::ProjectConnector);
     let full = runtime.dispatch(runtime_status_call()).await;
     assert_eq!(
-        full.output["model_surface"],
-        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+        full.output["runtime_exposure"],
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR
     );
     assert_eq!(
         full.output["effective_config"]["auth"]["shared_key_enabled"],
@@ -2260,8 +2261,8 @@ async fn runtime_status_reports_canonical_connector_surface_when_configured() {
         .dispatch(ToolCall::from_tool_name("runtime_status", json!({"compact": true})).unwrap())
         .await;
     assert_eq!(
-        compact.output["model_surface"],
-        crate::model_surface::MODEL_SURFACE_CANONICAL_CONNECTOR
+        compact.output["runtime_exposure"],
+        crate::model_surface::RUNTIME_EXPOSURE_PROJECT_CONNECTOR
     );
     assert_eq!(
         compact.output["mcp_compact_schemas"],

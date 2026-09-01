@@ -63,7 +63,7 @@ async fn http_mcp_tools_list_success() {
     assert_eq!(surface["schema_version"], 1);
     assert_eq!(surface["protocol_era"], "legacy");
     assert_eq!(
-        surface["model_surface"],
+        surface["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING
     );
     assert_eq!(surface["compact_schemas"], false);
@@ -133,7 +133,7 @@ async fn http_mcp_tools_list_stateless_audit_measures_final_compact_result_and_s
     let surface = &summary["tool_surface"];
     assert_eq!(surface["protocol_era"], "stateless_2026");
     assert_eq!(
-        surface["model_surface"],
+        surface["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING
     );
     assert_eq!(surface["compact_schemas"], true);

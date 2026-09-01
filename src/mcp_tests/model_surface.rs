@@ -149,7 +149,7 @@ async fn local_coding_default_initialize_and_discovery_report_local_coding() {
         other => panic!("expected Ok, got {:?}", other),
     };
     assert_eq!(
-        value["result"]["serverInfo"]["modelSurface"],
+        value["result"]["serverInfo"]["runtimeExposure"],
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING
     );
 }
@@ -684,7 +684,7 @@ async fn explicit_adaptive_runtime_v1_reports_adaptive_surface() {
         panic!("adaptive initialize must succeed");
     };
     assert_eq!(
-        value["result"]["serverInfo"]["modelSurface"],
+        value["result"]["serverInfo"]["runtimeExposure"],
         crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
 }
@@ -705,7 +705,7 @@ async fn explicit_full_operator_v1_reports_full_operator_surface() {
         other => panic!("expected Ok, got {:?}", other),
     };
     assert_eq!(
-        value["result"]["serverInfo"]["modelSurface"],
+        value["result"]["serverInfo"]["runtimeExposure"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
 }
@@ -717,7 +717,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     // actively requests the opposite surface; restore it before any await.
     with_model_surface_env(
         Some(crate::model_surface::MCP_MODEL_SURFACE_FULL_OPERATOR_V1),
-        || assert_eq!(local.model_surface(), ModelSurface::LocalCoding),
+        || assert_eq!(local.model_surface(), Some(ModelSurface::LocalCoding)),
     );
     for method in ["initialize", "tools/list"] {
         let outcome =
@@ -727,7 +727,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
         };
         if method == "initialize" {
             assert_eq!(
-                value["result"]["serverInfo"]["modelSurface"],
+                value["result"]["serverInfo"]["runtimeExposure"],
                 crate::model_surface::MODEL_SURFACE_LOCAL_CODING
             );
         } else {
@@ -756,13 +756,16 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     assert!(matches!(denied, McpOutcome::BadRequest(_)));
     let status = local.runtime_status(None).await;
     assert_eq!(
-        status.output["model_surface"],
+        status.output["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_LOCAL_CODING
     );
 
     let full = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     with_model_surface_env(Some("broken-after-startup"), || {
-        assert_eq!(full.model_surface(), ModelSurface::FullOperatorRuntime);
+        assert_eq!(
+            full.model_surface(),
+            Some(ModelSurface::FullOperatorRuntime)
+        );
     });
     let listed = handle_mcp_request(
         &full,
@@ -786,7 +789,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
         expected["tools"].as_array().unwrap().len()
     );
     assert_eq!(
-        full.runtime_status(None).await.output["model_surface"],
+        full.runtime_status(None).await.output["runtime_exposure"],
         crate::model_surface::MODEL_SURFACE_FULL_OPERATOR_RUNTIME
     );
 }

@@ -251,10 +251,10 @@ only for local/trusted-network demos."
     let quic_cfg = config::QuicServerConfig::from_env();
     let connector_context =
         connector_runtime::ConnectorContext::from_env().map_err(std::io::Error::other)?;
-    // Resolve the model surface exactly once at startup, after Connector
-    // configuration has been parsed and validated. Every request-time
+    // Resolve the top-level runtime exposure exactly once at startup, after
+    // Connector configuration has been parsed and validated. Every request-time
     // projection reads this immutable enum from ToolRuntime.
-    let model_surface = model_surface::resolve_model_surface(connector_context.as_ref())
+    let runtime_exposure = model_surface::resolve_runtime_exposure(connector_context.as_ref())
         .map_err(std::io::Error::other)?;
     let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_config_with_quic_config(
         &config, &quic_cfg,
@@ -262,7 +262,7 @@ only for local/trusted-network demos."
     let runtime_state_dir = config.runtime_state_dir();
     let mut tool_runtime_builder =
         tool_runtime::ToolRuntime::new(shell_registry.clone(), runtime_info.clone())
-            .with_model_surface(model_surface)
+            .with_runtime_exposure(runtime_exposure)
             .with_memory_database(db.clone())
             .with_communication_database(db.clone())
             .with_checkpoint_state_dir(runtime_state_dir.clone())
@@ -285,14 +285,14 @@ only for local/trusted-network demos."
             project_id = %runtime.context().project_id,
             profile = %runtime.context().profile,
             capabilities = connector_runtime::surface::CAPABILITY_NAMES.len(),
-            model_surface = model_surface.name(),
-            "Project-bound connector surface enabled"
+            runtime_exposure = runtime_exposure.name(),
+            "Project-bound Connector exposure enabled"
         );
     } else {
         tracing::info!(
-            model_surface = model_surface.name(),
+            runtime_exposure = runtime_exposure.name(),
             config = "WEBCODEX_MCP_MODEL_SURFACE",
-            "MCP model surface enabled"
+            "MCP runtime exposure enabled"
         );
     }
 

@@ -32,8 +32,12 @@ fn test_runtime() -> ToolRuntime {
     test_runtime_with_surface(ModelSurface::LocalCoding)
 }
 
+fn test_runtime_with_exposure(runtime_exposure: RuntimeExposure) -> ToolRuntime {
+    ToolRuntime::new_for_tests().with_runtime_exposure(runtime_exposure)
+}
+
 fn test_runtime_with_surface(model_surface: ModelSurface) -> ToolRuntime {
-    ToolRuntime::new_for_tests().with_model_surface(model_surface)
+    test_runtime_with_exposure(RuntimeExposure::Runtime(model_surface))
 }
 
 /// Run one synchronous operation with a temporary model-surface env value.
@@ -74,9 +78,9 @@ fn with_model_surface_env<T>(value: Option<&str>, operation: impl FnOnce() -> T)
 
 fn test_runtime_from_model_surface_env(value: Option<&str>) -> ToolRuntime {
     with_model_surface_env(value, || {
-        let model_surface = crate::model_surface::resolve_model_surface(None)
-            .expect("test model surface configuration");
-        test_runtime_with_surface(model_surface)
+        let runtime_exposure = crate::model_surface::resolve_runtime_exposure(None)
+            .expect("test runtime exposure configuration");
+        test_runtime_with_exposure(runtime_exposure)
     })
 }
 

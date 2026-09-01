@@ -28,9 +28,6 @@ fn mcp_2026_ui_capability_detection_is_explicit_and_mime_aware() {
     assert!(!model_surface_supports_computer_app(
         ModelSurface::LocalCoding
     ));
-    assert!(!model_surface_supports_computer_app(
-        ModelSurface::CanonicalConnector
-    ));
 }
 
 #[tokio::test]

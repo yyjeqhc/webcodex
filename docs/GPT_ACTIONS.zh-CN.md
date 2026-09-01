@@ -3,10 +3,10 @@
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
 Custom GPT 需要通过 Server 的 OpenAPI surface 调用 WebCodex 时使用 GPT Actions；
-客户端直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)。两者都适配同一个 runtime，但
-实际暴露的 schema 取决于 Server mode：带 Connector 配置的 project-first Server
-暴露 project-bound Connector schema；普通 hosted/self-hosted Server 暴露标准
-runtime OpenAPI schema。
+客户端直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)。两者都适配同一个 Server，但
+实际暴露的 schema 由顶层 RuntimeExposure 决定：`project_connector` 暴露
+project-bound Connector schema；`Runtime(ModelSurface)` 则按选定 runtime surface
+暴露标准 runtime OpenAPI schema。
 
 ## 什么是 GPT Action
 

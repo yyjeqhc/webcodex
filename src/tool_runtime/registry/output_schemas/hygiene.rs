@@ -85,6 +85,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "state_changed",
+                schema_type("boolean", "True only when successful cleanup evidence proves at least one requested project file was deleted."),
+            ),
+            (
                 "deleted_paths",
                 array_schema(
                     schema_type("string", "Deleted project-relative path."),

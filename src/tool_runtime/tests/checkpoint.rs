@@ -642,6 +642,8 @@ async fn checkpoint_restore_tracked_changes() {
     .await;
     assert!(restored.success, "{:?}", restored.error);
     assert_eq!(restored.output["restored"], true);
+    assert_eq!(restored.output["state_changed"], true);
+    assert_eq!(restored.output["changed_paths"], json!(["a.txt"]));
     assert_eq!(restored.output["checkpoint_id"], checkpoint_id);
     assert_eq!(restored.output["session_recorded"], true);
     assert_eq!(
@@ -656,6 +658,14 @@ async fn checkpoint_restore_tracked_changes() {
     assert_eq!(event.status.as_deref(), Some("succeeded"));
     assert!(event.write_like);
     assert!(!event.read_like);
+    assert_eq!(event.changed_paths, vec!["a.txt".to_string()]);
+    assert_eq!(
+        event
+            .effect_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.state_changed),
+        Some(true)
+    );
 }
 
 #[tokio::test]

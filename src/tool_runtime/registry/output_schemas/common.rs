@@ -678,6 +678,7 @@ pub(crate) fn handoff_brief_schema(description: &str) -> Value {
                         "enum": [
                             "passed",
                             "failed",
+                            "stale",
                             "not_run",
                             "not_requested",
                             "unavailable"
@@ -915,9 +916,13 @@ fn attempt_exploration_schema() -> Value {
 fn attempt_validation_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Current-attempt validation verdict (projection only; never a new verdict).",
+        "description": "Current-attempt validation evidence after the latest trusted material workspace-content change. Historical validation remains separate.",
         "additionalProperties": false,
         "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["passed", "failed", "stale", "not_run", "unknown"]
+            },
             "latest_status": {
                 "type": "string",
                 "enum": ["passed", "failed", "not_run", "unknown", "unavailable"]
@@ -925,13 +930,15 @@ fn attempt_validation_schema() -> Value {
             "latest_kind": nullable_schema("string", "Validation kind of the latest run, when present."),
             "latest_at": nullable_schema("integer", "Unix timestamp of the latest run, when present."),
             "unresolved_failure_count": schema_type("integer", "Unresolved failure event count from this attempt."),
+            "validation_events": schema_type("integer", "Validation event count in the current evidence window."),
+            "stale_failure_count": schema_type("integer", "Failure events from this attempt that predate the latest trusted material workspace-content change."),
             "open_failures": array_schema(failure_identity_schema(), "Bounded stable identities for currently unresolved failures in this attempt."),
             "total_open_failures": schema_type("integer", "Total unresolved failure identities before bounding."),
             "failures_truncated": schema_type("boolean", "True when open_failures was capped at the bound."),
             "delta_available": schema_type("boolean", "Whether the validation delta is comparable."),
             "delta_reason_code": nullable_schema("string", "Reason code when the delta is not available; null otherwise.")
         },
-        "required": ["latest_status", "unresolved_failure_count", "open_failures", "total_open_failures", "failures_truncated", "delta_available"]
+        "required": ["status", "latest_status", "unresolved_failure_count", "validation_events", "stale_failure_count", "open_failures", "total_open_failures", "failures_truncated", "delta_available"]
     })
 }
 

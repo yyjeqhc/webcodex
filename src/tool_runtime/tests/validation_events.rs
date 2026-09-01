@@ -1,6 +1,8 @@
 use super::support::*;
 use crate::tool_runtime::cargo::parse_cargo_test_run_metadata;
-use crate::tool_runtime::sessions::{SessionStore, SessionTransport, MAX_VALIDATION_EXCERPT_CHARS};
+use crate::tool_runtime::sessions::{
+    self, SessionGuards, SessionStore, SessionTransport, MAX_VALIDATION_EXCERPT_CHARS,
+};
 use crate::tool_runtime::validation_events::{
     validation_kind_for_tool, validation_summary_for_session,
 };
@@ -2588,6 +2590,283 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     );
     assert!(finish_compact.output["validation"].get("events").is_none());
     assert!(finish_compact.output["validation"].get("latest").is_none());
+}
+
+#[test]
+fn current_evidence_failure_then_content_change_then_different_success_passes() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_content_mutation(&store, &session.session_id, true);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(validation["current_evidence"]["stale_failure_count"], 1);
+    assert_eq!(
+        validation["current_evidence"]["boundary_reason"],
+        "workspace_content_changed"
+    );
+}
+
+#[test]
+fn current_evidence_different_success_without_mutation_keeps_failure_open() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "failed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+    assert_eq!(validation["current_evidence"]["stale_failure_count"], 0);
+    assert_eq!(
+        validation["current_evidence"]["boundary_reason"],
+        "attempt_start"
+    );
+}
+
+#[test]
+fn current_evidence_same_identity_failure_success_resolves_inside_window() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_check");
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["resolved_failures"]["count"], 1);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+    assert_eq!(validation["current_evidence"]["resolved_failure_count"], 1);
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+}
+
+#[test]
+fn current_evidence_pass_then_content_change_is_stale() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+    record_content_mutation(&store, &session.session_id, true);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+    assert_eq!(
+        validation["current_evidence"]["evidence_after_latest_content_change"],
+        false
+    );
+}
+
+#[test]
+fn current_evidence_failure_then_content_change_without_validation_is_stale_not_failed() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_content_mutation(&store, &session.session_id, true);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(validation["current_evidence"]["stale_failure_count"], 1);
+}
+
+#[test]
+fn current_evidence_failed_noop_mutation_does_not_reset() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "apply_text_edits",
+        json!({"project": "agent:eval:demo", "changes": [{"kind": "edit", "path": "src/lib.rs"}]}),
+        false,
+        json!({"state_changed": false, "failure_kind": "stale_precondition"}),
+    );
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "failed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+}
+
+#[test]
+fn current_evidence_metadata_only_state_change_does_not_reset() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "git_push",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"state_changed": true}),
+    );
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "failed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+    assert_eq!(
+        validation["current_evidence"]["boundary_reason"],
+        "attempt_start"
+    );
+}
+
+#[test]
+fn current_evidence_second_content_change_resets_post_first_change_validation() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_content_mutation(&store, &session.session_id, true);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+    record_content_mutation(&store, &session.session_id, true);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+}
+
+#[test]
+fn current_evidence_old_attempt_failure_is_excluded() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_task_instruction(&store, &session.session_id, "review current workspace");
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "read_file",
+        json!({"project": "agent:eval:demo", "path": "src/lib.rs"}),
+        true,
+        json!({}),
+    );
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["current_evidence"]["status"], "not_run");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+}
+
+#[test]
+fn current_evidence_legacy_mutation_without_effect_proof_is_conservative() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_failure(&store, &session.session_id, "cargo_test");
+    record_content_mutation(&store, &session.session_id, false);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "failed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+    assert_eq!(
+        validation["current_evidence"]["boundary_reason"],
+        "attempt_start"
+    );
+}
+
+fn record_validation_failure(store: &SessionStore, session_id: &str, tool_name: &str) {
+    record_finished_tool(
+        store,
+        session_id,
+        tool_name,
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101, "failure_kind": "validation_failed"}),
+    );
+}
+
+fn record_validation_success(store: &SessionStore, session_id: &str, tool_name: &str) {
+    record_finished_tool(
+        store,
+        session_id,
+        tool_name,
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+}
+
+fn record_content_mutation(store: &SessionStore, session_id: &str, proven: bool) {
+    record_finished_tool(
+        store,
+        session_id,
+        "apply_text_edits",
+        json!({"project": "agent:eval:demo", "changes": [{"kind": "edit", "path": "src/lib.rs"}]}),
+        true,
+        if proven {
+            json!({"state_changed": true})
+        } else {
+            json!({})
+        },
+    );
+}
+
+fn record_task_instruction(store: &SessionStore, session_id: &str, instruction: &str) {
+    store
+        .ensure_coding_session(sessions::CodingSessionRequest {
+            project: "agent:eval:demo".to_string(),
+            authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
+                .to_string(),
+            resume_session_id: Some(session_id.to_string()),
+            instruction: Some(instruction.to_string()),
+            mode: SessionMode::Normal,
+            guards: SessionGuards::default(),
+            execution_context: None,
+            project_instructions: None,
+            transport: SessionTransport::Api,
+            context_refreshed: true,
+            write_scope_verified: true,
+        })
+        .unwrap();
 }
 
 fn record_finished_tool(

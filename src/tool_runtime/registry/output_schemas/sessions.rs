@@ -619,6 +619,31 @@ fn validation_summary_tool_output_schema() -> Value {
 }
 
 fn validation_evidence_schema() -> Value {
+    fn current_validation_evidence_schema() -> Value {
+        json!({
+            "type": "object",
+            "description": "Current workspace validation evidence for the current attempt after the latest trusted material workspace-content change. Historical ledger failures remain separately visible and are not erased by this projection.",
+            "additionalProperties": false,
+            "properties": {
+                "status": {"type": "string", "enum": ["passed", "failed", "stale", "not_run", "unknown"]},
+                "reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "latest_status": {"type": "string", "enum": ["passed", "failed", "not_run", "unknown"]},
+                "events_total": {"type": "integer", "minimum": 0},
+                "successes": {"type": "integer", "minimum": 0},
+                "failures": {"type": "integer", "minimum": 0},
+                "resolved_failure_count": {"type": "integer", "minimum": 0},
+                "unresolved_failure_count": {"type": "integer", "minimum": 0},
+                "stale_failure_count": {"type": "integer", "minimum": 0},
+                "evidence_after_latest_content_change": {"type": "boolean"},
+                "boundary_reason": {"type": "string", "enum": ["attempt_start", "workspace_content_changed", "attempt_boundary_unavailable"]}
+            },
+            "required": [
+                "status", "reason", "latest_status", "events_total", "successes", "failures",
+                "resolved_failure_count", "unresolved_failure_count", "stale_failure_count",
+                "evidence_after_latest_content_change", "boundary_reason"
+            ]
+        })
+    }
     let event = validation_event_schema();
     json!({
         "type": "object",
@@ -630,6 +655,7 @@ fn validation_evidence_schema() -> Value {
             "reason": { "anyOf": [{"type": "string"}, {"type": "null"}] },
             "latest": { "anyOf": [event.clone(), {"type": "null"}] },
             "latest_status": { "type": "string", "enum": ["not_run", "passed", "failed", "unknown"] },
+            "current_evidence": current_validation_evidence_schema(),
             "historical_failures": validation_historical_failures_schema(),
             "resolved_failures": validation_failure_set_schema(),
             "unresolved_failures": validation_failure_set_schema(),
@@ -650,7 +676,7 @@ fn validation_evidence_schema() -> Value {
             "skipped": schema_type("boolean", "True only when validation summary generation was explicitly skipped by a closeout caller.")
         },
         "required": [
-            "available", "status", "reason", "latest", "latest_status",
+            "available", "status", "reason", "latest", "latest_status", "current_evidence",
             "historical_failures", "resolved_failures", "unresolved_failures",
             "source", "events_total", "events", "parser",
             "cargo_test_zero_tests_run"

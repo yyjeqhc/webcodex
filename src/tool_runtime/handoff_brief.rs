@@ -397,27 +397,50 @@ fn project_validation(requested: bool, validation: Option<&Value>) -> Validation
         };
     };
 
-    let available = validation.get("available").and_then(Value::as_bool);
-    let status = validation.get("status").and_then(Value::as_str);
-    let latest_status = validation.get("latest_status").and_then(Value::as_str);
-    let unresolved = validation
-        .pointer("/unresolved_failures/count")
-        .and_then(Value::as_u64);
-    let projected = if available == Some(false)
-        && (status == Some("not_run") || latest_status == Some("not_run"))
+    let current = validation
+        .get("current_evidence")
+        .filter(|value| value.is_object());
+    let projected = if let Some(status) = current
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
     {
-        "not_run"
-    } else if unresolved.is_some_and(|count| count > 0)
-        || latest_status == Some("failed")
-        || status == Some("failed")
-    {
-        "failed"
-    } else if available == Some(true) && latest_status == Some("passed") && unresolved == Some(0) {
-        "passed"
-    } else if status == Some("not_run") || latest_status == Some("not_run") {
-        "not_run"
+        match status {
+            "passed" => "passed",
+            "failed" => "failed",
+            "stale" => "stale",
+            "not_run" => "not_run",
+            _ => "unavailable",
+        }
     } else {
-        "unavailable"
+        // Additive compatibility for callers/tests that still provide the
+        // pre-current-evidence validation shape. Production closeout summaries
+        // carry current_evidence and therefore never derive a current verdict
+        // from these historical fields.
+        let available = validation.get("available").and_then(Value::as_bool);
+        let status = validation.get("status").and_then(Value::as_str);
+        let latest_status = validation.get("latest_status").and_then(Value::as_str);
+        let unresolved = validation
+            .pointer("/unresolved_failures/count")
+            .and_then(Value::as_u64);
+        if available == Some(false)
+            && (status == Some("not_run") || latest_status == Some("not_run"))
+        {
+            "not_run"
+        } else if unresolved.is_some_and(|count| count > 0)
+            || latest_status == Some("failed")
+            || status == Some("failed")
+        {
+            "failed"
+        } else if available == Some(true)
+            && latest_status == Some("passed")
+            && unresolved == Some(0)
+        {
+            "passed"
+        } else if status == Some("not_run") || latest_status == Some("not_run") {
+            "not_run"
+        } else {
+            "unavailable"
+        }
     };
     let reason_code = (projected == "unavailable").then_some("validation_unavailable");
     ValidationProjection {
@@ -572,7 +595,9 @@ fn progress_state(
     {
         return "blocked";
     }
-    if workspace.dirty == Some(true) && validation.status != "passed" {
+    if validation.status == "stale"
+        || (workspace.dirty == Some(true) && validation.status != "passed")
+    {
         return "needs_validation";
     }
     if !continuation_available
@@ -624,7 +649,7 @@ fn next_actions(
     if open_risks.is_some_and(|count| count > 0) {
         push_unique(&mut actions, "review open risk guidance before continuing");
     }
-    if validation.status == "not_run" {
+    if matches!(validation.status, "not_run" | "stale") {
         push_known_or(
             &mut actions,
             &known,

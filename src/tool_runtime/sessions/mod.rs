@@ -35,7 +35,7 @@ pub(crate) use console::{
     WorkflowSessionConsoleList, WorkflowSessionConsoleListItem,
 };
 pub(crate) use events::{
-    canonical_tool_call_finished_events, exploration_tool_kind,
+    canonical_tool_call_finished_events, current_attempt_event_view, exploration_tool_kind,
     is_tool_call_expectation_metadata_field, is_valid_session_id, normalize_observed_project_path,
     safe_model_facing_assertion_name, strip_tool_call_expectation_metadata,
     tool_failure_summary_from_events, tool_supports_model_facing_assertion_name,

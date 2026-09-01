@@ -2119,8 +2119,194 @@ async fn session_handoff_does_not_resolve_a_different_validation_identity() {
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
     assert_eq!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], true);
-    assert_reason_list_contains(verdict, "blocking_reasons", "validation_mixed");
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["status"],
+        "failed"
+    );
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+    assert_reason_list_contains(verdict, "blocking_reasons", "validation_failed");
     assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        VALIDATION_IDENTITY_REUSE_ACTION,
+    );
+}
+
+#[tokio::test]
+async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(
+        &runtime,
+        "handoff-current-evidence-pass",
+        "demo",
+        tmp.path(),
+    )
+    .await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("current validation evidence pass".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": project.clone()}),
+        false,
+        json!({"exit_code": 101, "failure_kind": "validation_failed"}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "apply_text_edits",
+        json!({
+            "project": project.clone(),
+            "changes": [{"kind": "edit", "path": "src/lib.rs"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_check",
+        json!({"project": project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = dispatch_handoff_summary_only_with_agent(
+        &runtime,
+        "handoff-current-evidence-pass",
+        sid,
+        Some(project),
+        true,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        true
+    );
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["status"],
+        "passed"
+    );
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_unresolved"
+    );
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "validation_failed",
+    );
+    assert_action_list_not_contains(
+        &result.output["suggested_next_actions"],
+        VALIDATION_IDENTITY_REUSE_ACTION,
+    );
+}
+
+#[tokio::test]
+async fn session_handoff_stale_validation_after_content_change_warns_without_blocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(
+        &runtime,
+        "handoff-current-evidence-stale",
+        "demo",
+        tmp.path(),
+    )
+    .await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("stale validation handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": project.clone()}),
+        false,
+        json!({"exit_code": 101, "failure_kind": "validation_failed"}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "apply_text_edits",
+        json!({
+            "project": project.clone(),
+            "changes": [{"kind": "edit", "path": "src/lib.rs"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+
+    let result = dispatch_handoff_summary_only_with_agent(
+        &runtime,
+        "handoff-current-evidence-stale",
+        sid,
+        Some(project),
+        true,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["status"],
+        "stale"
+    );
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "warn");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "warning_reasons",
+        "validation_stale_after_changes",
+    );
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "validation_failed",
+    );
+    assert_action_list_not_contains(
         &result.output["suggested_next_actions"],
         VALIDATION_IDENTITY_REUSE_ACTION,
     );
@@ -2284,8 +2470,16 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         result.output["tool_failures"]["actionable_unexpected_count"],
         0
     );
-    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["status"],
+        "passed"
+    );
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["unresolved_failure_count"],
+        0
+    );
     assert_eq!(
         result.output["validation"]["historical_failures"]["resolved"],
         true
@@ -2580,7 +2774,11 @@ async fn session_handoff_summary_only_verdict_fails_for_unresolved_mixed_validat
     );
     assert_eq!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], true);
-    assert_reason_list_contains(verdict, "blocking_reasons", "validation_mixed");
+    assert_eq!(
+        result.output["validation"]["current_evidence"]["status"],
+        "failed"
+    );
+    assert_reason_list_contains(verdict, "blocking_reasons", "validation_failed");
     assert_reason_list_not_contains(
         verdict,
         "warning_reasons",

@@ -401,12 +401,20 @@ impl ToolRuntime {
                 output: helper_output,
             };
         }
+        let changed_paths = helper_output
+            .get("changed_paths")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let state_changed = changed_paths
+            .as_array()
+            .is_some_and(|paths| !paths.is_empty());
         ToolResult::ok(json!({
             "restored": true,
             "checkpoint_id": checkpoint_id,
             "project": project,
             "resolved_project": resolved.resolved_id,
-            "changed_paths": helper_output.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
+            "state_changed": state_changed,
+            "changed_paths": changed_paths,
             "warnings": helper_output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         }))
     }

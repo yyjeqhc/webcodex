@@ -54,7 +54,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Validation closeout evidence. Full closeout preserves bounded historical/resolved/unresolved evidence by stable identity; summary_only keeps only final status/reason, success/failure counts, resolved/unresolved failure counts, and the zero-test integrity flag."),
+                open_object_schema("Validation closeout evidence. Full closeout preserves bounded historical/resolved/unresolved evidence by stable identity and adds current_evidence for the current attempt after the latest trusted material content change. summary_only keeps final status/reason, historical and current success/failure counts, resolved/unresolved counts, current_status/stale_failure_count, and the zero-test integrity flag."),
             ),
             (
                 "continuation_feedback",

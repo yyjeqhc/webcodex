@@ -112,6 +112,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("string", "sha256 of the written file, current file on sha guard mismatch, or null when unavailable."),
             ),
             (
+                "state_changed",
+                schema_type("boolean", "Authoritative whole-file write effect derived from the agent's changed result; false means the successful write left file content unchanged."),
+            ),
+            (
                 "warning",
                 nullable_schema("string", "Whole-file write safety warning, such as an unguarded overwrite warning; null otherwise."),
             ),

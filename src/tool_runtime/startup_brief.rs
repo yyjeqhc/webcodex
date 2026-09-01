@@ -70,7 +70,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
                     "Close it end to end before local hardening.",
                     "Minimize new concepts, not touched-file count.",
                     "Use compiler/schema/exhaustiveness failures to find missing adapters and projections.",
-                    "When used, reuse the same assertion_name after a fix to resolve that validation identity.",
+                    "When intentionally rerunning the same logical validation, reuse assertion_name for strong correlation; do not rerun solely to clear stale historical validation evidence after material workspace changes.",
                     "After validation, review completeness, trust, bounds, privacy, and replay.",
                     "Fix discovered correctness issues; do not fragment the change around speculative concerns."
                 ]

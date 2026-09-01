@@ -24,12 +24,13 @@ use super::console::{
     WorkflowSessionConsoleDetail, WorkflowSessionConsoleList,
 };
 use super::events::{
-    actual_failure_kind_for_tool_result, changed_paths_for_tool, classify_failure_expectation,
-    context_result_summary_for_tool_result, diff_review_like_for_tool, extract_job_id,
-    extract_project, is_valid_session_id, observed_input_paths_for_tool,
-    observed_paths_for_successful_result, persistent_shell_event_evidence_for_tool_result,
-    sanitize_tool_execution_state, session_input_summary_for_tool,
-    validation_output_summary_for_tool_result, SessionToolClassification,
+    actual_failure_kind_for_tool_result, changed_paths_for_tool, changed_paths_for_tool_result,
+    classify_failure_expectation, context_result_summary_for_tool_result,
+    diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
+    observed_input_paths_for_tool, observed_paths_for_successful_result,
+    persistent_shell_event_evidence_for_tool_result, sanitize_tool_execution_state,
+    session_input_summary_for_tool, validation_output_summary_for_tool_result,
+    SessionToolClassification,
 };
 use super::model::{
     CodingSessionError, CodingSessionOutcome, CodingSessionRequest, ColdSessionRecord,
@@ -1558,6 +1559,12 @@ impl SessionStore {
         let persistent_shell =
             persistent_shell_event_evidence_for_tool_result(&start.tool_name, output);
         let effect_evidence = Self::tool_effect_event_evidence_for_result(output);
+        let mut changed_paths = start.changed_paths.clone();
+        for path in changed_paths_for_tool_result(&start.tool_name, output) {
+            if !changed_paths.iter().any(|existing| existing == &path) {
+                changed_paths.push(path);
+            }
+        }
         let event = SessionEvent {
             event_id,
             session_id: start.session_id,
@@ -1598,7 +1605,7 @@ impl SessionStore {
             session_project,
             request_project,
             error_message_summary,
-            changed_paths: start.changed_paths,
+            changed_paths,
             observed_paths,
             job_id: extract_job_id(output),
             persistent_shell,

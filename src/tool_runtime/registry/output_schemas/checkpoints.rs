@@ -159,6 +159,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Resolved runtime project id."),
             ),
             (
+                "state_changed",
+                schema_type("boolean", "True when the authoritative restore result reports one or more changed project paths."),
+            ),
+            (
                 "changed_paths",
                 array_schema(
                     schema_type("string", "Project-relative path."),

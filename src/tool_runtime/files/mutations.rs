@@ -834,6 +834,7 @@ impl ToolRuntime {
         }
         ToolResult::ok(json!({
             "ok": true,
+            "state_changed": !paths.is_empty(),
             "deleted_paths": paths,
             "missing_paths": [],
             "refused_paths": [],
@@ -847,6 +848,7 @@ impl ToolRuntime {
             Ok(root) => root,
             Err(_) => return ToolResult::err("project root is unavailable"),
         };
+        let mut state_changed = false;
         for path in &paths {
             let target = canonical_root.join(path);
             match std::fs::symlink_metadata(&target) {
@@ -869,7 +871,7 @@ impl ToolRuntime {
                         );
                     }
                     match std::fs::remove_file(&target) {
-                        Ok(()) => {}
+                        Ok(()) => state_changed = true,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(_) => return ToolResult::err("delete_project_files failed"),
                     }
@@ -907,6 +909,7 @@ impl ToolRuntime {
         }
         ToolResult::ok(json!({
             "ok": true,
+            "state_changed": state_changed,
             "deleted_paths": paths,
             "missing_paths": [],
             "refused_paths": [],
@@ -969,7 +972,7 @@ impl ToolRuntime {
             "expected_sha256": expected_sha256,
             "expected_content_prefix": expected_content_prefix,
         });
-        let obj = match self
+        let mut obj = match self
             .run_agent_json_file_op(
                 client_id,
                 proj.path.clone(),
@@ -993,6 +996,9 @@ impl ToolRuntime {
                 output: obj,
                 error: Some(err),
             };
+        }
+        if let Some(changed) = obj.get("changed").and_then(Value::as_bool) {
+            obj["state_changed"] = json!(changed);
         }
         ToolResult::ok(obj)
     }

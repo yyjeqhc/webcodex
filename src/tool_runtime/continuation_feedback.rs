@@ -32,8 +32,8 @@ use std::collections::BTreeSet;
 
 use super::handoff::closeout_work_projection;
 use super::sessions::{
-    canonical_tool_call_finished_events, SessionDiscussionSummary, SessionEvent, SessionMessage,
-    SessionSummary,
+    canonical_tool_call_finished_events, current_attempt_event_view, SessionDiscussionSummary,
+    SessionEvent, SessionMessage, SessionSummary,
 };
 use super::sessions::{
     exploration_tool_kind, normalize_observed_project_path, ExplorationToolKind,
@@ -170,13 +170,17 @@ pub(crate) struct AttemptExploration {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AttemptValidation {
-    /// `available`, `not_run`, or `unknown`.
+    /// Current workspace evidence status: `passed`, `failed`, `stale`, `not_run`, or `unknown`.
+    pub(crate) status: String,
+    /// Latest validation event status inside the current evidence window.
     pub(crate) latest_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) latest_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) latest_at: Option<i64>,
     pub(crate) unresolved_failure_count: usize,
+    pub(crate) validation_events: usize,
+    pub(crate) stale_failure_count: usize,
     pub(crate) open_failures: Vec<FailureIdentity>,
     pub(crate) total_open_failures: usize,
     pub(crate) failures_truncated: bool,
@@ -329,36 +333,24 @@ impl ContinuationFeedback {
             return not_applicable_continuation_feedback_value(reason_code);
         }
 
-        let boundary = resolve_attempt_boundary(events, input.session_summary);
-        // Attempt events start *after* the boundary task_instruction event.
-        let attempt_start = boundary.event_index.map(|index| index + 1).unwrap_or(0);
+        let attempt_view = current_attempt_event_view(input.session_summary);
+        // Attempt events start *after* the boundary task_instruction event. The
+        // shared view canonicalizes finished recorder/business evidence against
+        // the whole retained Session before slicing.
+        let attempt_start = attempt_view.attempt_start;
         let attempt_events = &events[attempt_start..];
-        // Canonicalize finished evidence against the whole retained Session,
-        // not only the post-boundary slice. A concurrent request may publish its
-        // business finish just before a new task_instruction and its outer
-        // recorder finish just after it; treating the slice in isolation would
-        // recount that prior logical invocation in the new attempt.
-        let canonical_finished_ids = canonical_tool_call_finished_events(events)
-            .into_iter()
-            .map(|event| event.event_id.as_str())
-            .collect::<BTreeSet<_>>();
-        let semantic_attempt_events = attempt_events
-            .iter()
-            .filter(|event| {
-                event.kind != "tool_call_finished"
-                    || canonical_finished_ids.contains(event.event_id.as_str())
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let boundary_event = boundary.event_index.map(|index| &events[index]);
+        let semantic_attempt_events = attempt_view.semantic_events;
+        let boundary_event = attempt_view
+            .boundary_event_index
+            .map(|index| &events[index]);
 
         let attempt = build_attempt_summary(
             attempt_events,
             &semantic_attempt_events,
             boundary_event,
-            boundary.event_index,
-            boundary.source,
-            boundary.reason_code,
+            attempt_view.boundary_event_index,
+            attempt_view.boundary_source,
+            attempt_view.boundary_reason_code,
             attempt_start,
             input.session_summary,
             input.validation,
@@ -433,10 +425,13 @@ fn empty_attempt() -> AttemptSummary {
             complete: true,
         },
         validation: AttemptValidation {
+            status: "not_run".to_string(),
             latest_status: "not_run".to_string(),
             latest_kind: None,
             latest_at: None,
             unresolved_failure_count: 0,
+            validation_events: 0,
+            stale_failure_count: 0,
             open_failures: Vec::new(),
             total_open_failures: 0,
             failures_truncated: false,
@@ -465,61 +460,6 @@ fn empty_attempt() -> AttemptSummary {
             reason_codes: Vec::new(),
         },
         suggested_next_actions: Vec::new(),
-    }
-}
-
-/// Return the index and event id of the last `task_instruction` event.
-fn last_task_instruction(events: &[SessionEvent]) -> (Option<usize>, Option<String>) {
-    events
-        .iter()
-        .rposition(|event| event.kind == "task_instruction")
-        .map(|index| (Some(index), Some(events[index].event_id.clone())))
-        .unwrap_or((None, None))
-}
-
-/// Resolved attempt boundary: where the current attempt begins, and whether the
-/// boundary is genuinely observed, a real session-start fallback, or unknown
-/// because the durable ledger truncated the most recent `task_instruction`.
-struct AttemptBoundaryResolution {
-    source: &'static str,
-    reason_code: Option<&'static str>,
-    event_index: Option<usize>,
-}
-
-/// Determine the attempt boundary from the retained summary window.
-///
-/// - When a `task_instruction` is present in the retained window, it is the
-///   boundary (`source = task_instruction`).
-/// - When none is present and the window was *not* truncated, the session
-///   genuinely has no instruction and we fall back to `session_start`.
-/// - When none is present and the window *was* truncated, the most recent
-///   `task_instruction` was evicted by the per-session event cap: report
-///   `unavailable` with `attempt_boundary_evicted` rather than masquerading the
-///   retained tail as a complete `session_start` attempt. We never guess the
-///   true session start.
-fn resolve_attempt_boundary(
-    events: &[SessionEvent],
-    summary: &SessionSummary,
-) -> AttemptBoundaryResolution {
-    if let (Some(index), Some(_event_id)) = last_task_instruction(events) {
-        return AttemptBoundaryResolution {
-            source: "task_instruction",
-            reason_code: None,
-            event_index: Some(index),
-        };
-    }
-    if summary.events_truncated {
-        AttemptBoundaryResolution {
-            source: "unavailable",
-            reason_code: Some("attempt_boundary_evicted"),
-            event_index: None,
-        }
-    } else {
-        AttemptBoundaryResolution {
-            source: "session_start",
-            reason_code: None,
-            event_index: None,
-        }
     }
 }
 
@@ -594,16 +534,24 @@ fn build_attempt_summary(
                 == "matched_expected_failure"
         })
         .count();
-    // The session-wide resolved/unresolved counts span every prior attempt,
-    // so failures from an earlier attempt (before the boundary task_instruction)
-    // would pollute the current attempt's activity. Re-derive the counts from
-    // the attempt-scoped events only: a failure counts as resolved only when a
-    // later success within *this* attempt resolves it, and unresolved
-    // otherwise. The session-wide `validation` is still used for the validation
-    // block's latest verdict and for the cross-attempt delta.
-    let attempt_validation =
-        super::validation_events::validation_summary_from_events(semantic_attempt_events, 20);
-    let (resolved_failures, unresolved_failures) = validation_failure_counts(&attempt_validation);
+    // Current attempt validation is additionally reset by the latest trusted
+    // material workspace-content change. Historical validation remains intact
+    // in the session-wide summary, while activity/open-failure counts use only
+    // evidence that still describes the current workspace state.
+    let current_validation =
+        super::validation_events::current_validation_evidence_for_session(session_summary, 20);
+    let current_evidence = validation
+        .get("current_evidence")
+        .filter(|value| value.is_object())
+        .unwrap_or(&current_validation.evidence);
+    let resolved_failures = current_evidence
+        .get("resolved_failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let unresolved_failures = current_evidence
+        .get("unresolved_failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
 
     // --- changes (deduped, deterministic order via closeout_work_projection) ---
     let (_, changed_paths_value) = closeout_work_projection(semantic_attempt_events);
@@ -624,7 +572,7 @@ fn build_attempt_summary(
 
     // --- validation (current attempt verdict, history must not pollute) ---
     let delta = validation_delta(validation);
-    let validation_block = build_attempt_validation(validation, &attempt_validation, &delta);
+    let validation_block = build_attempt_validation(validation, &current_validation, &delta);
 
     // --- jobs (reuse existing lifecycle fields) ---
     let jobs_block = build_attempt_jobs(jobs);
@@ -800,25 +748,9 @@ fn is_meaningful_tool(tool_name: &str) -> bool {
         || runtime_tool_captures_validation_output(tool_name)
 }
 
-/// Reuse the existing `validation_summary` resolved/unresolved failure sets
-/// to count failures for the current attempt. Historical failures that were
-/// resolved by a later success within the attempt are *resolved*; failures
-/// with no later success are *unresolved*. This never re-parses stdout/stderr.
-fn validation_failure_counts(validation: &Value) -> (usize, usize) {
-    let resolved = validation
-        .pointer("/resolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let unresolved = validation
-        .pointer("/unresolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    (resolved, unresolved)
-}
-
 fn build_attempt_validation(
     validation: &Value,
-    attempt_validation: &Value,
+    current_validation: &super::validation_events::CurrentValidationEvidenceProjection,
     delta: &ValidationDelta,
 ) -> AttemptValidation {
     // When the caller explicitly did not request validation (handoff with
@@ -828,22 +760,40 @@ fn build_attempt_validation(
         .get("not_requested")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let available = validation
-        .get("available")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let (open_failures, total_open_failures, failures_truncated) = if not_requested {
+    let evidence = validation
+        .get("current_evidence")
+        .filter(|value| value.is_object())
+        .unwrap_or(&current_validation.evidence);
+    let current_status = if not_requested {
+        "unknown"
+    } else {
+        evidence
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    };
+    let current_unresolved = if not_requested {
+        0
+    } else {
+        evidence
+            .get("unresolved_failure_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize
+    };
+    let (open_failures, observed_open_failures, observed_truncated) = if not_requested {
         (Vec::new(), 0, false)
     } else {
-        attempt_open_failures(attempt_validation)
+        attempt_open_failures(&current_validation.current_validation)
     };
+    let total_open_failures = observed_open_failures.max(current_unresolved);
+    let failures_truncated = observed_truncated || total_open_failures > open_failures.len();
     let latest_status = if not_requested {
         "unavailable".to_string()
     } else {
-        validation
+        evidence
             .get("latest_status")
             .and_then(Value::as_str)
-            .unwrap_or("not_run")
+            .unwrap_or("unknown")
             .to_string()
     };
     let delta_available = !not_requested && delta.comparison.status == "available";
@@ -858,20 +808,7 @@ fn build_attempt_validation(
             .map(|code| code.to_string())
             .or_else(|| Some("no_previous_validation".to_string()))
     };
-    if !available {
-        return AttemptValidation {
-            latest_status,
-            latest_kind: None,
-            latest_at: None,
-            unresolved_failure_count: 0,
-            open_failures,
-            total_open_failures,
-            failures_truncated,
-            delta_available,
-            delta_reason_code,
-        };
-    }
-    let latest = validation.get("latest");
+    let latest = current_validation.current_validation.get("latest");
     let latest_kind = latest
         .and_then(|event| event.get("validation_kind"))
         .and_then(Value::as_str)
@@ -883,17 +820,30 @@ fn build_attempt_validation(
                 .or_else(|| event.get("started_at"))
         })
         .and_then(Value::as_i64);
-    // Unresolved count is attempt-scoped so an earlier attempt's resolved
-    // failure does not surface as an open failure for the current attempt.
-    let unresolved_failure_count = attempt_validation
-        .pointer("/unresolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let validation_events = if not_requested {
+        0
+    } else {
+        evidence
+            .get("events_total")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize
+    };
+    let stale_failure_count = if not_requested {
+        0
+    } else {
+        evidence
+            .get("stale_failure_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize
+    };
     AttemptValidation {
+        status: current_status.to_string(),
         latest_status,
         latest_kind,
         latest_at,
-        unresolved_failure_count,
+        unresolved_failure_count: current_unresolved,
+        validation_events,
+        stale_failure_count,
         open_failures,
         total_open_failures,
         failures_truncated,
@@ -1015,8 +965,11 @@ fn build_attempt_outcome(
     if guidance.open_count > 0 {
         push_unique(&mut reasons, "open_guidance");
     }
-    if validation.latest_status == "not_run" && !meaningful.is_empty() {
+    if validation.status == "not_run" && !meaningful.is_empty() {
         push_unique(&mut reasons, "validation_not_run");
+    }
+    if validation.status == "stale" {
+        push_unique(&mut reasons, "validation_stale_after_changes");
     }
     let status = if reasons.is_empty() {
         "in_progress".to_string()
@@ -1074,7 +1027,7 @@ fn build_suggested_next_actions(
             "address open guidance on the session message board",
         );
     }
-    if validation.latest_status == "not_run" {
+    if matches!(validation.status.as_str(), "not_run" | "stale") {
         push_unique(
             &mut actions,
             "run validation before proceeding when the task warrants it",

@@ -1568,7 +1568,7 @@ impl ToolRuntime {
         });
         let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
-            &closeout_session_summary.events,
+            &closeout_session_summary,
             output.get("validation").unwrap_or(&Value::Null),
         );
         output["tool_failures"] = reconciliation.tool_failures;
@@ -2610,6 +2610,7 @@ fn compact_finish_output(decision: &Value) -> Value {
 }
 
 fn compact_finish_validation(validation: &Value) -> Value {
+    let current = validation.get("current_evidence").unwrap_or(&Value::Null);
     json!({
         "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
         "reason": validation.get("reason").cloned().unwrap_or(Value::Null),
@@ -2618,6 +2619,14 @@ fn compact_finish_validation(validation: &Value) -> Value {
         "failures": validation.get("failures").and_then(Value::as_u64).unwrap_or(0),
         "resolved_failure_count": validation.pointer("/resolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
         "unresolved_failure_count": validation.pointer("/unresolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
+        "current_status": current.get("status").cloned().unwrap_or_else(|| json!("unknown")),
+        "current_reason": current.get("reason").cloned().unwrap_or(Value::Null),
+        "current_validation_events": current.get("events_total").and_then(Value::as_u64).unwrap_or(0),
+        "current_successes": current.get("successes").and_then(Value::as_u64).unwrap_or(0),
+        "current_failures": current.get("failures").and_then(Value::as_u64).unwrap_or(0),
+        "current_resolved_failure_count": current.get("resolved_failure_count").and_then(Value::as_u64).unwrap_or(0),
+        "current_unresolved_failure_count": current.get("unresolved_failure_count").and_then(Value::as_u64).unwrap_or(0),
+        "stale_failure_count": current.get("stale_failure_count").and_then(Value::as_u64).unwrap_or(0),
         "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
     })
 }

@@ -152,14 +152,21 @@ fn assert_builtin_workflow(output: &Value) {
                 <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS
         );
     }
-    assert!(workflow["roles"]["implementation_owner"]["guidance"]
+    let implementation_guidance = workflow["roles"]["implementation_owner"]["guidance"]
         .as_array()
-        .unwrap()
-        .iter()
-        .any(|item| item.as_str().is_some_and(|value| {
-            value.contains("reuse the same assertion_name")
-                && value.contains("resolve that validation identity")
-        })));
+        .unwrap();
+    assert!(implementation_guidance.iter().any(|item| {
+        item.as_str().is_some_and(|value| {
+            value.contains("intentionally rerunning the same logical validation")
+                && value.contains("reuse assertion_name for strong correlation")
+                && value
+                    .contains("do not rerun solely to clear stale historical validation evidence")
+        })
+    }));
+    assert!(!implementation_guidance.iter().any(|item| {
+        item.as_str()
+            .is_some_and(|value| value.contains("resolve that validation identity"))
+    }));
     let serialized = workflow.to_string();
     for forbidden in ["ChatGPT", "browser", "another window", "online", "offline"] {
         assert!(

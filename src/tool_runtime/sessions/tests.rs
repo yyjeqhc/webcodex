@@ -124,6 +124,85 @@ fn changed_paths_single_path_and_path_list_from_metadata() {
 }
 
 #[test]
+fn apply_unified_diff_finished_event_records_trusted_result_changed_paths() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("demo".to_string()), Some("patch evidence".to_string()));
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "apply_unified_diff",
+        &json!({"project": "demo", "diff": "@@ -1 +1 @@\n-old\n+new\n"}),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "state_changed": true,
+            "affected_files": ["src/lib.rs", "src/lib.rs", "../escape.rs"]
+        }),
+        None,
+        None,
+    );
+
+    let summary = store.summary(&session.session_id, Some(20)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "apply_unified_diff")
+        .unwrap();
+    assert_eq!(finished.changed_paths, vec!["src/lib.rs".to_string()]);
+    assert_eq!(
+        finished
+            .effect_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.state_changed),
+        Some(true)
+    );
+}
+
+#[test]
+fn checkpoint_restore_finished_event_records_trusted_result_changed_paths() {
+    let store = SessionStore::default();
+    let session = store.start_session(
+        Some("demo".to_string()),
+        Some("restore evidence".to_string()),
+    );
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "workspace_checkpoint_restore",
+        &json!({"project": "demo", "checkpoint_id": "wc_ckpt_demo", "confirm": true}),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "state_changed": true,
+            "changed_paths": ["src/lib.rs", "src/lib.rs", "../escape.rs"]
+        }),
+        None,
+        None,
+    );
+
+    let summary = store.summary(&session.session_id, Some(20)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "workspace_checkpoint_restore"
+        })
+        .unwrap();
+    assert_eq!(finished.changed_paths, vec!["src/lib.rs".to_string()]);
+    assert_eq!(
+        finished
+            .effect_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.state_changed),
+        Some(true)
+    );
+}
+
+#[test]
 fn exploration_paths_are_normalized_and_reject_escape_absolute_and_uri_forms() {
     for (raw, expected) in [
         (
@@ -2786,7 +2865,7 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
     assert!(finished.effect_evidence.is_none());
     let projected = crate::tool_runtime::handoff::reconcile_closeout_evidence(
         &json!({"unexpected_count": 1}),
-        &summary.events,
+        &summary,
         &json!({}),
     )
     .tool_failures;

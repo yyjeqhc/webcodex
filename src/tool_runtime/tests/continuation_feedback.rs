@@ -2285,6 +2285,42 @@ fn is_meaningful(name: &str) -> bool {
         || runtime_tool_captures_validation_output(name)
 }
 
+#[test]
+fn current_validation_window_excludes_pre_mutation_failure_from_attempt_activity() {
+    let runtime = test_runtime();
+    let session = create_session(&runtime, "current validation window");
+    add_instruction(
+        &runtime,
+        &session,
+        "fix validation and continue",
+        SessionMode::Normal,
+    );
+    record_validation_event(
+        &runtime,
+        &session,
+        "cargo_test",
+        false,
+        test_output(0, 1, 0, &["tests::parser"]),
+    );
+    record_write(&runtime, &session, &["src/parser.rs"]);
+    record_validation_event(&runtime, &session, "cargo_check", true, check_output(0, 1));
+
+    let summary = runtime.sessions.summary(&session, Some(200)).unwrap();
+    let historical = validation_summary_from_events(&summary.events, 20);
+    assert_eq!(historical["status"], "mixed");
+    assert_eq!(historical["unresolved_failures"]["count"], 1);
+
+    let feedback = feedback_for(&runtime, &summary, "continued");
+    assert_eq!(feedback["attempt"]["activity"]["unresolved_failures"], 0);
+    assert_eq!(feedback["attempt"]["validation"]["status"], "passed");
+    assert_eq!(
+        feedback["attempt"]["validation"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(feedback["attempt"]["validation"]["validation_events"], 1);
+    assert_eq!(feedback["attempt"]["validation"]["stale_failure_count"], 1);
+}
+
 // =========================================================================
 // Helpers
 // =========================================================================
@@ -2360,9 +2396,13 @@ fn record_write_for(runtime: &ToolRuntime, session_id: &str, project: &str, path
             "changes": changes,
         }),
     );
-    runtime
-        .sessions
-        .record_tool_call_finished(start, true, &json!({"applied": true}), None, None);
+    runtime.sessions.record_tool_call_finished(
+        start,
+        true,
+        &json!({"applied": true, "state_changed": true}),
+        None,
+        None,
+    );
 }
 
 fn record_exploration_event(

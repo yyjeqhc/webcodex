@@ -1,6 +1,7 @@
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
+use crate::tool_runtime::handoff::VALIDATION_IDENTITY_REUSE_ACTION;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
@@ -1765,9 +1766,76 @@ async fn finish_coding_task_does_not_resolve_a_different_validation_identity() {
     assert_reason_list_contains(
         &result.output["task_outcome"],
         "blocking_reasons",
-        "validation_mixed",
+        "validation_failed",
     );
     assert_finish_uses_canonical_outcomes(&result.output);
+}
+
+#[tokio::test]
+async fn finish_coding_task_historical_unresolved_current_pass_does_not_request_ledger_cleanup() {
+    let fixture = finish_summary_fixture("coding-finish-current-evidence-pass").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({"project": fixture.project.clone()}),
+        false,
+        json!({"exit_code": 101, "failure_kind": "validation_failed"}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({
+            "project": fixture.project.clone(),
+            "changes": [{"kind": "edit", "path": "src/lib.rs"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["unresolved_failure_count"], 1);
+    assert_eq!(result.output["validation"]["current_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_unresolved_failure_count"],
+        0
+    );
+    assert_eq!(result.output["validation"]["stale_failure_count"], 1);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_action_list_not_contains(
+        &result.output["suggested_next_actions"],
+        VALIDATION_IDENTITY_REUSE_ACTION,
+    );
 }
 
 #[tokio::test]
@@ -1848,11 +1916,24 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         result.output["tool_failures"]["actionable_unexpected_count"],
         0
     );
-    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(full.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["current_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_unresolved_failure_count"],
+        0
+    );
+    assert_eq!(full.output["validation"]["status"], "mixed");
+    assert_eq!(
+        full.output["validation"]["current_evidence"]["status"],
+        "passed"
+    );
     assert!(handoff.success, "{:?}", handoff.error);
-    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_eq!(handoff.output["validation"]["status"], "mixed");
+    assert_eq!(
+        handoff.output["validation"]["current_evidence"]["status"],
+        "passed"
+    );
     assert_eq!(
         handoff.output["validation"]["resolved_failures"]["count"],
         result.output["validation"]["resolved_failure_count"]
@@ -2142,10 +2223,15 @@ async fn finish_coding_task_resolved_history_keeps_real_workspace_advisory() {
     .await;
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
     assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
+    assert_eq!(result.output["validation"]["current_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_unresolved_failure_count"],
+        0
+    );
     assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["task_outcome"]["status"], "warn");
     assert_eq!(result.output["task_outcome"]["blocking"], false);
@@ -2204,10 +2290,15 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
     .await;
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(result.output["validation"]["resolved_failure_count"], 1);
     assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
+    assert_eq!(result.output["validation"]["current_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_unresolved_failure_count"],
+        0
+    );
     assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["task_outcome"]["status"], "fail");
     assert_eq!(result.output["task_outcome"]["blocking"], true);

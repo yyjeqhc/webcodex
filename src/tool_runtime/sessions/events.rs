@@ -14,12 +14,12 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::model::{
-    PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, ToolCallExpectation,
-    ToolCallRecorderMetadata, ToolCallSessionMessageResolution, LOGICAL_INVOCATION_ID_PREFIX,
-    LOGICAL_INVOCATION_ROLE_BUSINESS, LOGICAL_INVOCATION_ROLE_RECORDER,
-    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_OBSERVED_PATHS_PER_EVENT,
-    MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX, TOOL_ASSERTION_NAME_FIELD,
-    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, SessionSummary,
+    ToolCallExpectation, ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
+    LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
+    LOGICAL_INVOCATION_ROLE_RECORDER, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
+    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
     TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
     TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
@@ -196,6 +196,55 @@ pub(crate) fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Ve
 
     selected.sort_by_key(|(event_index, _)| *event_index);
     selected.into_iter().map(|(_, event)| event).collect()
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CurrentAttemptEventView {
+    pub(crate) semantic_events: Vec<SessionEvent>,
+    pub(crate) attempt_start: usize,
+    pub(crate) boundary_source: &'static str,
+    pub(crate) boundary_reason_code: Option<&'static str>,
+    pub(crate) boundary_event_index: Option<usize>,
+    pub(crate) complete: bool,
+}
+
+/// Resolve the current semantic attempt once for all read-only projections.
+/// Finished recorder/business duplicates are canonicalized against the whole
+/// retained Session before the post-instruction slice is taken, so a recorder
+/// finish that lands just after a new instruction cannot contaminate it.
+pub(crate) fn current_attempt_event_view(summary: &SessionSummary) -> CurrentAttemptEventView {
+    let events = &summary.events;
+    let boundary_event_index = events
+        .iter()
+        .rposition(|event| event.kind == "task_instruction");
+    let (boundary_source, boundary_reason_code) = if boundary_event_index.is_some() {
+        ("task_instruction", None)
+    } else if summary.events_truncated {
+        ("unavailable", Some("attempt_boundary_evicted"))
+    } else {
+        ("session_start", None)
+    };
+    let attempt_start = boundary_event_index.map(|index| index + 1).unwrap_or(0);
+    let canonical_finished_ids = canonical_tool_call_finished_events(events)
+        .into_iter()
+        .map(|event| event.event_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let semantic_events = events[attempt_start..]
+        .iter()
+        .filter(|event| {
+            event.kind != "tool_call_finished"
+                || canonical_finished_ids.contains(event.event_id.as_str())
+        })
+        .cloned()
+        .collect();
+    CurrentAttemptEventView {
+        semantic_events,
+        attempt_start,
+        boundary_source,
+        boundary_reason_code,
+        boundary_event_index,
+        complete: boundary_reason_code.is_none(),
+    }
 }
 
 pub(crate) fn extract_project(value: &Value) -> Option<String> {
@@ -553,6 +602,22 @@ pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<
         ToolPathHint::Patch | ToolPathHint::None => {}
     }
     paths
+}
+
+/// Add trusted result-side changed paths for canonical mutations whose input
+/// intentionally does not expose a structured path list. Never parses raw diff
+/// text; only authoritative bounded runtime result metadata is accepted.
+pub(crate) fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
+    let key = match tool_name {
+        "apply_unified_diff" => "affected_files",
+        "workspace_checkpoint_restore" => "changed_paths",
+        _ => return Vec::new(),
+    };
+    output
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| sanitize_observed_paths(values.iter().filter_map(Value::as_str)))
+        .unwrap_or_default()
 }
 
 /// Internal exploration classification derived from the canonical

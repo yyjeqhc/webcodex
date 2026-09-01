@@ -36,14 +36,12 @@ const MAX_OPEN_ITEMS: usize = 20;
 const MAX_RECENT_CHECKPOINTS: usize = 10;
 const HANDOFF_MESSAGE_CHARS: usize = 240;
 
-/// Actionable guidance for an unresolved validation identity, accurate for
-/// both identity forms: `assertion:<name>` identities resolve by reusing the
-/// original assertion_name, while command-derived identities (which never had
-/// an assertion_name) resolve by rerunning the same logical validation
-/// consistently. The conditional phrasing never claims an original
-/// assertion_name exists for command-derived validations.
+/// Actionable guidance only for a validation failure that still belongs to the
+/// current evidence window. Identity reuse is conditional: it strengthens
+/// correlation when the same logical validation is intentionally rerun, but is
+/// never a requirement to clean stale audit history.
 pub(crate) const VALIDATION_IDENTITY_REUSE_ACTION: &str =
-    "rerun the same logical validation using the same validation identity; if assertion_name was supplied, reuse the original assertion_name";
+    "address the current validation failure; when intentionally rerunning the same logical validation, reuse its validation identity and original assertion_name when supplied";
 
 impl ToolRuntime {
     pub(crate) async fn session_handoff_summary(
@@ -317,7 +315,7 @@ impl ToolRuntime {
         });
         let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
-            &closeout_session.events,
+            &closeout_session,
             &feedback_validation,
         );
         output["tool_failures"] = reconciliation.tool_failures;
@@ -971,6 +969,10 @@ fn compact_workflow_outcomes(
     }
 
     let validation_status = validation.get("status").and_then(Value::as_str);
+    let current_validation_status = validation
+        .pointer("/current_evidence/status")
+        .and_then(Value::as_str)
+        .or(validation_status);
     let resolved_failure_count = validation
         .pointer("/resolved_failures/count")
         .and_then(Value::as_u64)
@@ -979,6 +981,10 @@ fn compact_workflow_outcomes(
         .pointer("/unresolved_failures/count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let current_unresolved_failure_count = validation
+        .pointer("/current_evidence/unresolved_failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(unresolved_failure_count);
     let evidence_history_status = if validation_historical_failures_resolved(validation) {
         "mixed_resolved"
     } else {
@@ -990,7 +996,7 @@ fn compact_workflow_outcomes(
         }
     };
 
-    match validation_status {
+    match current_validation_status {
         Some("not_run") => {
             let review_evidence_total = output
                 .get("review_evidence")
@@ -1014,32 +1020,20 @@ fn compact_workflow_outcomes(
                 );
             }
         }
-        Some("failed") if unresolved_failure_count > 0 => {
-            push_unique(&mut blocking_reasons, "validation_failed");
-            push_unique_action(&mut actions, "review validation failures before closeout");
+        Some("stale") => {
+            push_unique(&mut warning_reasons, "validation_stale_after_changes");
+            push_unique_action(
+                &mut actions,
+                "run task-appropriate validation when warranted",
+            );
         }
-        Some("mixed") => {
-            if unresolved_failure_count == 0 {
-                push_unique(
-                    &mut informational_notes,
-                    "historical validation failures were resolved by later successful validation",
-                );
-            } else {
-                push_unique(&mut blocking_reasons, "validation_mixed");
-                if validation_historical_failures_unresolved(validation) {
-                    push_unique_action(&mut actions, VALIDATION_IDENTITY_REUSE_ACTION);
-                } else {
-                    push_unique_action(
-                        &mut actions,
-                        "review mixed validation results before closeout",
-                    );
-                }
-            }
+        Some("failed") if current_unresolved_failure_count > 0 => {
+            push_unique(&mut blocking_reasons, "validation_failed");
+            push_unique_action(&mut actions, VALIDATION_IDENTITY_REUSE_ACTION);
         }
         Some("unknown") | None => {
             push_unique(&mut warning_reasons, "validation_unknown");
         }
-        Some("failed") => {}
         Some(_) => {}
     }
     if validation_historical_failures_resolved(validation) {
@@ -1047,13 +1041,13 @@ fn compact_workflow_outcomes(
             &mut informational_notes,
             "historical validation failures were resolved by later successful validation",
         );
-    }
-    if unresolved_failure_count > 0 && !matches!(validation_status, Some("failed" | "mixed")) {
+    } else if validation_historical_failures_unresolved(validation)
+        && current_unresolved_failure_count == 0
+    {
         push_unique(
-            &mut blocking_reasons,
-            "validation_historical_failures_unresolved",
+            &mut informational_notes,
+            "historical validation failures remain without exact identity resolution but are not current workspace blockers",
         );
-        push_unique_action(&mut actions, VALIDATION_IDENTITY_REUSE_ACTION);
     }
     if validation_has_cargo_test_zero_tests(validation) {
         push_unique(&mut integrity_warnings, "cargo_test_zero_tests");
@@ -1104,7 +1098,7 @@ fn compact_workflow_outcomes(
         .get("events")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    let validation_skipped = matches!(validation_status, Some("not_run"))
+    let validation_skipped = matches!(current_validation_status, Some("not_run" | "stale"))
         || validation
             .get("skipped")
             .and_then(Value::as_bool)
@@ -1177,17 +1171,21 @@ pub(crate) struct CloseoutEvidenceReconciliation {
 /// events remain intact; only their current actionability/status is projected.
 pub(crate) fn reconcile_closeout_evidence(
     tool_failures: &Value,
-    events: &[SessionEvent],
+    summary: &SessionSummary,
     validation: &Value,
 ) -> CloseoutEvidenceReconciliation {
-    let validation = reconcile_closeout_validation(validation);
+    let validation = validation.clone();
+    let current = super::validation_events::current_validation_evidence_for_session(summary, 100);
     let mut projected = tool_failures.clone();
     let raw_unexpected = count_field(tool_failures, "unexpected_count");
-    let historical_non_actionable = canonical_tool_call_finished_events(events)
+    let historical_non_actionable = canonical_tool_call_finished_events(&summary.events)
         .into_iter()
         .filter(|event| unexpected_failure_event(event))
         .filter(|event| {
             is_resolved_unexpected_validation_failure(event, &validation)
+                || current
+                    .non_current_failure_event_ids
+                    .contains(&event.event_id)
                 || unexpected_failure_is_proven_non_actionable(event)
         })
         .count() as u64;
@@ -1199,25 +1197,6 @@ pub(crate) fn reconcile_closeout_evidence(
         validation,
         tool_failures: projected,
     }
-}
-
-fn reconcile_closeout_validation(validation: &Value) -> Value {
-    let mut projected = validation.clone();
-    let current_validation_passed = validation.get("latest_status").and_then(Value::as_str)
-        == Some("passed")
-        && validation
-            .get("successes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0
-        && validation
-            .pointer("/unresolved_failures/count")
-            .and_then(Value::as_u64)
-            == Some(0);
-    if projected.is_object() && current_validation_passed {
-        projected["status"] = json!("passed");
-    }
-    projected
 }
 
 fn unexpected_failure_event(event: &SessionEvent) -> bool {
@@ -1462,7 +1441,17 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
         }
     }
     let validation = output.get("validation").unwrap_or(&Value::Null);
-    if validation_historical_failures_unresolved(validation) {
+    if validation
+        .pointer("/current_evidence/unresolved_failure_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            validation
+                .pointer("/unresolved_failures/count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        > 0
+    {
         push(&mut actions, VALIDATION_IDENTITY_REUSE_ACTION);
     }
     if validation_has_cargo_test_zero_tests(validation) {

@@ -67,6 +67,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["permission"]["required"], true);
+    assert_eq!(result.output["state_changed"], true);
     assert_eq!(result.output["permission"]["policy"], "trusted_agent");
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(
@@ -82,6 +83,13 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     let event = finished_event(&summary, "write_project_file");
     assert!(event.write_like);
     assert_eq!(event.changed_paths, vec!["src/new.txt".to_string()]);
+    assert_eq!(
+        event
+            .effect_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.state_changed),
+        Some(true)
+    );
     let permission = event.permission.as_ref().expect("permission metadata");
     assert!(permission.required);
     assert_eq!(permission.policy, "trusted_agent");
@@ -200,6 +208,7 @@ async fn delete_project_files_capable_agent_uses_structured_delete_without_outpu
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["ok"], true);
+    assert_eq!(result.output["state_changed"], true);
     assert_eq!(result.output["deleted_paths"], json!(["tmp.txt"]));
     assert_eq!(result.output["missing_paths"], json!([]));
     assert_eq!(result.output["refused_paths"], json!([]));

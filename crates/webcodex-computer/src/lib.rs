@@ -878,6 +878,9 @@ impl ComputerRuntime {
     }
 
     pub fn list_windows(&self, limit: usize) -> Result<Value, String> {
+        if !(1..=MAX_WINDOWS).contains(&limit) {
+            return Err("invalid_request: window discovery limit is invalid".to_string());
+        }
         let candidates = platform::list_windows(MAX_WINDOWS + 1)?;
         let truncated = candidates.len() > limit;
         let mut surfaces = HashMap::new();
@@ -962,6 +965,9 @@ impl ComputerRuntime {
     }
 
     pub fn list_applications(&self, limit: usize) -> Result<Value, String> {
+        if !(1..=MAX_APPLICATIONS).contains(&limit) {
+            return Err("invalid_request: application discovery limit is invalid".to_string());
+        }
         let candidates = platform::list_applications(MAX_APPLICATION_SCAN)?;
         self.replace_application_candidates(candidates, limit)
     }
@@ -1011,6 +1017,9 @@ impl ComputerRuntime {
     }
 
     pub fn list_displays(&self, limit: usize) -> Result<Value, String> {
+        if !(1..=MAX_DISPLAYS).contains(&limit) {
+            return Err("invalid_request: display discovery limit is invalid".to_string());
+        }
         let candidates = platform::list_displays(MAX_DISPLAYS + 1)?;
         self.replace_display_candidates(candidates, limit)
     }
@@ -1454,6 +1463,43 @@ impl ComputerRuntime {
             "captured_at_unix_ms": captured_at_unix_ms,
             "content_base64": general_purpose::STANDARD.encode(encoded.bytes),
         }))
+    }
+}
+
+#[cfg(test)]
+mod public_runtime_bounds_tests {
+    use super::*;
+
+    fn runtime() -> ComputerRuntime {
+        ComputerRuntime::new(ComputerConfig {
+            max_encoded_image_bytes: usize::MAX,
+        })
+    }
+
+    #[test]
+    fn discovery_limits_fail_closed_before_native_observation() {
+        let runtime = runtime();
+        for error in [
+            runtime.list_windows(0).unwrap_err(),
+            runtime.list_windows(MAX_WINDOWS + 1).unwrap_err(),
+        ] {
+            assert_eq!(error, "invalid_request: window discovery limit is invalid");
+        }
+        for error in [
+            runtime.list_applications(0).unwrap_err(),
+            runtime.list_applications(MAX_APPLICATIONS + 1).unwrap_err(),
+        ] {
+            assert_eq!(
+                error,
+                "invalid_request: application discovery limit is invalid"
+            );
+        }
+        for error in [
+            runtime.list_displays(0).unwrap_err(),
+            runtime.list_displays(MAX_DISPLAYS + 1).unwrap_err(),
+        ] {
+            assert_eq!(error, "invalid_request: display discovery limit is invalid");
+        }
     }
 }
 

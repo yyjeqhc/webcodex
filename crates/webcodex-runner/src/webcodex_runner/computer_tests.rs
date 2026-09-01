@@ -32,6 +32,7 @@ fn request(kind: &str, payload: &str) -> ShellAgentShellRequest {
     }
 }
 
+#[cfg(not(any(target_os = "macos", windows)))]
 #[test]
 fn computer_unsupported_platform_fails_closed_without_shell_fallback() {
     let result = handle_computer_request(&request("computer_list_windows", r#"{"limit":1}"#));

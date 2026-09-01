@@ -3104,7 +3104,6 @@ mod unsupported_platform_tests {
 }
 
 #[cfg(any(target_os = "macos", windows))]
-#[path = "platform.rs"]
 mod platform;
 
 #[cfg(all(test, windows))]

@@ -114,28 +114,33 @@ mod input;
 
 pub(crate) use accessibility::{
     accessibility_status, accessibility_tree, activate_window, control, element_state,
-    scroll_to_element, test_uia_is_offscreen, test_windows_focused_element_belongs_to_surface,
-    uia_control_role, uia_semantic_focus_role, uia_semantic_text_input_role, win_hwnd,
-    windows_control_attempt_error, windows_scroll_attempt_error,
-    windows_window_activation_attempt_error,
+    scroll_to_element, uia_semantic_text_input_role, win_hwnd,
 };
 use accessibility::{
     exact_uia_window, resolve_uia_element, uia_element_has_exact_focus, uia_error,
     uia_text_pattern, uia_value_pattern_current_value, uia_value_pattern_writable,
     validate_windows_key_input_target, UiaContext,
 };
+#[cfg(test)]
+pub(crate) use accessibility::{
+    test_uia_is_offscreen, test_windows_focused_element_belongs_to_surface, uia_control_role,
+    uia_semantic_focus_role, windows_control_attempt_error, windows_scroll_attempt_error,
+    windows_window_activation_attempt_error,
+};
+#[cfg(test)]
 pub(crate) use applications::{
     application_identity_revalidates_for_test, application_shell_execute_contract_for_test,
-    launch_application, list_applications,
 };
+pub(crate) use applications::{launch_application, list_applications};
 pub(crate) use capture::capture_display;
 pub(super) use capture::{
     capture_window_gdi, ensure_capture_permission, ensure_platform_capture_bound, focus_state,
 };
+#[cfg(test)]
 pub(crate) use clipboard::{
-    clipboard_close_cleanup_armed_for_test, clipboard_owner_hwnd_contract_for_test, read_clipboard,
-    write_clipboard,
+    clipboard_close_cleanup_armed_for_test, clipboard_owner_hwnd_contract_for_test,
 };
+pub(crate) use clipboard::{read_clipboard, write_clipboard};
 pub(crate) use display::list_displays;
 use display::{
     find_exact_display, windows_monitor_rect, windows_virtual_desktop_metrics,
@@ -145,6 +150,9 @@ use display::{
 pub(crate) use input::PointerCoordinateContext;
 pub(crate) use input::{
     dispatch_pointer, enter_pointer_coordinate_context, input_text, key_input, prepare_pointer,
+};
+#[cfg(test)]
+pub(crate) use input::{
     test_windows_key_input_plan, test_windows_keyboard_state_guard,
     test_windows_pointer_button_send_input_count, test_windows_pointer_coordinate_spaces,
     test_windows_pointer_dispatch_trace, test_windows_pointer_dpi_context_metrics,

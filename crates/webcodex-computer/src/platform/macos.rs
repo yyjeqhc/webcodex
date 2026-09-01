@@ -2473,7 +2473,7 @@ pub(crate) fn macos_application_launch_lost_completion_for_test() -> (bool, bool
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn ensure_capture_permission() -> Result<(), String> {
+pub(super) fn ensure_capture_permission() -> Result<(), String> {
     let granted = objc2_core_graphics::CGPreflightScreenCaptureAccess();
     if granted {
         Ok(())
@@ -3587,7 +3587,7 @@ pub(crate) fn input_text(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn ensure_platform_capture_bound(
+pub(super) fn ensure_platform_capture_bound(
     _window: &Window,
     width: u32,
     height: u32,
@@ -3624,7 +3624,7 @@ pub(crate) fn ensure_platform_capture_bound(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn focus_state(window: &Window) -> (Option<bool>, Option<bool>) {
+pub(super) fn focus_state(window: &Window) -> (Option<bool>, Option<bool>) {
     // xcap 0.9.8 reports frontmost-application state on macOS, not exact
     // window focus. Preserve that reliable signal as `active` only.
     (None, window.is_focused().ok())

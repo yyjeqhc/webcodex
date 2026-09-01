@@ -1171,7 +1171,7 @@ pub(crate) fn dispatch_pointer(plan: PointerPlan, action: PointerAction) -> Resu
 }
 
 #[cfg(windows)]
-pub(crate) fn ensure_capture_permission() -> Result<(), String> {
+pub(super) fn ensure_capture_permission() -> Result<(), String> {
     Ok(())
 }
 
@@ -2688,7 +2688,7 @@ fn create_bounded_bitmap(
 }
 
 #[cfg(windows)]
-pub(crate) fn capture_window_gdi(
+pub(super) fn capture_window_gdi(
     native_id: u32,
     output_width: u32,
     output_height: u32,
@@ -2780,7 +2780,7 @@ pub(crate) fn capture_window_gdi(
 }
 
 #[cfg(windows)]
-pub(crate) fn ensure_platform_capture_bound(
+pub(super) fn ensure_platform_capture_bound(
     window: &Window,
     width: u32,
     height: u32,
@@ -2799,7 +2799,7 @@ pub(crate) fn ensure_platform_capture_bound(
 }
 
 #[cfg(windows)]
-pub(crate) fn focus_state(window: &Window) -> (Option<bool>, Option<bool>) {
+pub(super) fn focus_state(window: &Window) -> (Option<bool>, Option<bool>) {
     // Windows xcap compares this HWND with GetForegroundWindow(), which is
     // an exact-window signal suitable for both CU-1 fields.
     let focused = window.is_focused().ok();

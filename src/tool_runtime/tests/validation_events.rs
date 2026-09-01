@@ -2618,6 +2618,159 @@ fn current_evidence_failure_then_content_change_then_different_success_passes() 
 }
 
 #[test]
+fn current_evidence_validation_started_before_content_change_then_pass_is_stale() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let validation_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": "agent:eval:demo"}),
+    );
+    record_content_mutation(&store, &session.session_id, true);
+    store.record_tool_call_finished(validation_start, true, &json!({"exit_code": 0}), None, None);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+    assert_eq!(
+        validation["current_evidence"]["evidence_after_latest_content_change"],
+        false
+    );
+}
+
+#[test]
+fn current_evidence_validation_started_before_content_change_then_fail_is_stale() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let validation_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_test",
+        &json!({"project": "agent:eval:demo"}),
+    );
+    record_content_mutation(&store, &session.session_id, true);
+    store.record_tool_call_finished(
+        validation_start,
+        false,
+        &json!({"exit_code": 101, "failure_kind": "validation_failed"}),
+        Some("validation failed"),
+        None,
+    );
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        0
+    );
+    assert_eq!(validation["current_evidence"]["stale_failure_count"], 1);
+}
+
+#[test]
+fn current_evidence_validation_started_after_content_change_can_pass() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_content_mutation(&store, &session.session_id, true);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+    assert_eq!(validation["current_evidence"]["events_total"], 1);
+    assert_eq!(
+        validation["current_evidence"]["evidence_after_latest_content_change"],
+        true
+    );
+}
+
+#[test]
+fn current_evidence_validation_started_before_new_attempt_does_not_enter_new_attempt() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let validation_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": "agent:eval:demo"}),
+    );
+    record_task_instruction(&store, &session.session_id, "review current workspace");
+    store.record_tool_call_finished(validation_start, true, &json!({"exit_code": 0}), None, None);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["current_evidence"]["status"], "not_run");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+}
+
+#[test]
+fn current_evidence_validation_job_started_before_content_change_is_stale() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let job_id = "job_current_evidence_overlap";
+    let validation_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": "agent:eval:demo"}),
+    );
+    store.record_tool_call_finished(
+        validation_start,
+        true,
+        &json!({"job_id": job_id, "execution_state": "started"}),
+        None,
+        None,
+    );
+    record_content_mutation(&store, &session.session_id, true);
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        job_id,
+        &[job_id],
+        "cargo_check",
+        Some("agent:eval:demo".to_string()),
+        "target:aaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+        "completed",
+        Some(0),
+        Some(true),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        None,
+    ));
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["current_evidence"]["status"], "stale");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+}
+
+#[test]
+fn current_evidence_legacy_validation_without_exact_start_correlation_is_not_current() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_validation_success(&store, &session.session_id, "cargo_check");
+
+    let mut summary = store.summary(&session.session_id, Some(50)).unwrap();
+    for event in &mut summary.events {
+        if event.tool_name == "cargo_check" {
+            event.call_id = None;
+        }
+    }
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["current_evidence"]["status"], "not_run");
+    assert_eq!(validation["current_evidence"]["events_total"], 0);
+}
+
+#[test]
 fn current_evidence_different_success_without_mutation_keeps_failure_open() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

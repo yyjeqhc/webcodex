@@ -686,15 +686,21 @@ fn validation_summary_for_session_events(
     limit: usize,
 ) -> Value {
     let mut historical = validation_summary_from_events(events, limit);
-    let mut projected_summary = summary.clone();
-    projected_summary.events = events.to_vec();
-    let current = current_validation_evidence_for_session(&projected_summary, limit);
+    let current = current_validation_evidence_for_events(summary, events, limit);
     historical["current_evidence"] = current.evidence;
     historical
 }
 
 pub(crate) fn current_validation_evidence_for_session(
     summary: &SessionSummary,
+    limit: usize,
+) -> CurrentValidationEvidenceProjection {
+    current_validation_evidence_for_events(summary, &summary.events, limit)
+}
+
+fn current_validation_evidence_for_events(
+    summary: &SessionSummary,
+    events: &[SessionEvent],
     limit: usize,
 ) -> CurrentValidationEvidenceProjection {
     let attempt = current_attempt_event_view(summary);
@@ -718,13 +724,67 @@ pub(crate) fn current_validation_evidence_for_session(
         };
     }
 
-    let reset_index = attempt
-        .semantic_events
+    // Attempt and mutation boundaries are durable ledger-order fences. A
+    // validation can prove the current workspace only when its exact execution
+    // start is after the effective fence; completing after the fence is not
+    // sufficient because the execution may have overlapped a content change.
+    let canonical_finished_ids = canonical_tool_call_finished_events(&summary.events)
+        .into_iter()
+        .map(|event| event.event_id.as_str())
+        .collect::<HashSet<_>>();
+    let reset_index = summary
+        .events
         .iter()
-        .rposition(material_workspace_content_change);
-    let current_start = reset_index.map(|index| index + 1).unwrap_or(0);
-    let current_events = &attempt.semantic_events[current_start..];
-    let current_validation = validation_summary_from_events(current_events, limit);
+        .enumerate()
+        .skip(attempt.attempt_start)
+        .filter(|(_, event)| {
+            event.kind != "tool_call_finished"
+                || canonical_finished_ids.contains(event.event_id.as_str())
+        })
+        .filter(|(_, event)| material_workspace_content_change(event))
+        .map(|(index, _)| index)
+        .last();
+    let effective_boundary_index = reset_index.or(attempt.boundary_event_index);
+
+    let validation_records = extract_validation_event_records(events);
+    let mut current_source_event_ids = HashSet::new();
+    let mut current_failure_ids = HashSet::new();
+    let mut stale_failure_count = 0usize;
+    let mut stale_validation_count = 0usize;
+
+    for record in &validation_records {
+        let start_index = authoritative_validation_start_event_index(&summary.events, record);
+        let started_in_attempt = start_index.is_some_and(|index| index >= attempt.attempt_start);
+        let started_after_boundary = start_index.is_some_and(|index| {
+            started_in_attempt && effective_boundary_index.is_none_or(|boundary| index > boundary)
+        });
+        if started_after_boundary {
+            current_source_event_ids.insert(record.source_event_id.clone());
+            if !record.event.success {
+                current_failure_ids.insert(record.source_event_id.clone());
+            }
+        } else if reset_index.is_some_and(|boundary| {
+            start_index.is_some_and(|index| index >= attempt.attempt_start && index <= boundary)
+        }) {
+            stale_validation_count += 1;
+            if !record.event.success {
+                stale_failure_count += 1;
+            }
+        }
+    }
+
+    // Keep all starts so exact call_id correlation and validation identity
+    // extraction remain unchanged, but admit only validation outcomes whose
+    // source execution was proven to start after the effective boundary.
+    let current_events = events
+        .iter()
+        .filter(|event| {
+            event.kind == "tool_call_started"
+                || current_source_event_ids.contains(event.event_id.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let current_validation = validation_summary_from_events(&current_events, limit);
     let current_events_total = current_validation
         .get("events_total")
         .and_then(Value::as_u64)
@@ -745,21 +805,11 @@ pub(crate) fn current_validation_evidence_for_session(
         .pointer("/unresolved_failures/count")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
-    let stale_failure_count = reset_index
-        .map(|index| {
-            extract_validation_event_records(&attempt.semantic_events[..=index])
-                .into_iter()
-                .filter(|record| !record.event.success)
-                .count()
-        })
-        .unwrap_or(0);
-    let attempt_had_validation =
-        !extract_validation_event_records(&attempt.semantic_events).is_empty();
     let (status, reason) = if current_events_total > 0 && unresolved_failure_count > 0 {
         ("failed", Some("current_validation_failures"))
     } else if current_events_total > 0 && successes > 0 {
         ("passed", None)
-    } else if reset_index.is_some() && attempt_had_validation {
+    } else if reset_index.is_some() && stale_validation_count > 0 {
         ("stale", Some("validation_stale_after_changes"))
     } else if current_events_total == 0 {
         ("not_run", Some("no_validation_in_current_attempt"))
@@ -776,12 +826,7 @@ pub(crate) fn current_validation_evidence_for_session(
         "attempt_start"
     };
 
-    let current_failure_ids = extract_validation_event_records(current_events)
-        .into_iter()
-        .filter(|record| !record.event.success)
-        .map(|record| record.source_event_id)
-        .collect::<HashSet<_>>();
-    let non_current_failure_event_ids = extract_validation_event_records(&summary.events)
+    let non_current_failure_event_ids = validation_records
         .into_iter()
         .filter(|record| !record.event.success)
         .map(|record| record.source_event_id)
@@ -805,6 +850,52 @@ pub(crate) fn current_validation_evidence_for_session(
         current_validation,
         non_current_failure_event_ids,
     }
+}
+
+fn authoritative_validation_start_event_index(
+    ledger_events: &[SessionEvent],
+    record: &ExtractedValidationEvent,
+) -> Option<usize> {
+    let (source_index, source) = ledger_events
+        .iter()
+        .enumerate()
+        .find(|(_, event)| event.event_id == record.source_event_id)?;
+    match source.kind.as_str() {
+        "tool_call_finished" => exact_tool_start_event_index(ledger_events, source_index, source),
+        "validation_job_terminal" => {
+            let job_id = source.job_id.as_deref()?;
+            let (acceptance_index, acceptance) = ledger_events[..source_index]
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, event)| {
+                    event.kind == "tool_call_finished"
+                        && event.job_id.as_deref() == Some(job_id)
+                        && job_acceptance_only(event)
+                })?;
+            exact_tool_start_event_index(ledger_events, acceptance_index, acceptance)
+        }
+        _ => None,
+    }
+}
+
+fn exact_tool_start_event_index(
+    ledger_events: &[SessionEvent],
+    finish_index: usize,
+    finished: &SessionEvent,
+) -> Option<usize> {
+    let call_id = finished.call_id.as_deref()?;
+    ledger_events[..finish_index]
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, event)| {
+            event.kind == "tool_call_started"
+                && event.call_id.as_deref() == Some(call_id)
+                && event.session_id == finished.session_id
+                && event.tool_name == finished.tool_name
+        })
+        .map(|(index, _)| index)
 }
 
 fn material_workspace_content_change(event: &SessionEvent) -> bool {

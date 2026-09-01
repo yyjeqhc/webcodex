@@ -3792,7 +3792,6 @@ fn main() {
             None,
             5,
             None,
-            None,
         );
         assert_eq!(
             result.execution_state,
@@ -3940,7 +3939,6 @@ fn main() {
             Some(caller_stdin),
             5,
             None,
-            None,
         );
         assert_eq!(
             result.execution_state,
@@ -3978,7 +3976,6 @@ fn main() {
             None,
             5,
             None,
-            None,
         );
         assert_eq!(
             result.execution_state,
@@ -4015,7 +4012,6 @@ fn main() {
             &program,
             None,
             1,
-            None,
             None,
         );
         assert!(started.elapsed() < Duration::from_secs(4), "{result:?}");
@@ -4061,7 +4057,6 @@ fn main() {
             None,
             30,
             Some(stop_requested.as_ref()),
-            None,
         );
         stopper.join().unwrap();
         assert!(started.elapsed() < Duration::from_secs(4), "{result:?}");
@@ -4107,7 +4102,6 @@ fn main() {
             None,
             5,
             None,
-            None,
         );
         assert_eq!(
             ok.execution_state,
@@ -4127,7 +4121,6 @@ fn main() {
             "WC_FAKE_EXIT_7",
             None,
             5,
-            None,
             None,
         );
         assert_eq!(
@@ -4149,7 +4142,6 @@ fn main() {
             "WC_FAKE_STDIN_FAILURE",
             Some(&large_stdin),
             5,
-            None,
             None,
         );
         assert_eq!(
@@ -4179,7 +4171,6 @@ fn main() {
             &format!("WC_FAKE_EXIT_255::{}", starts.display()),
             None,
             5,
-            None,
             None,
         );
         assert_eq!(
@@ -4234,7 +4225,6 @@ fn main() {
             None,
             30,
             Some(stop_requested.as_ref()),
-            None,
         );
         stopper.join().expect("join one-shot SSH stopper");
         let pid = std::fs::read_to_string(&started_marker)
@@ -4277,7 +4267,6 @@ fn main() {
             "printf never",
             None,
             5,
-            None,
             None,
         );
         assert_eq!(
@@ -4435,7 +4424,6 @@ fn main() {
             &format!("WC_FAKE_TREE::{}", delayed_marker.display()),
             None,
             2,
-            None,
             None,
         );
         assert_eq!(
@@ -4767,7 +4755,6 @@ fn main() {
                 None,
                 15,
                 None,
-                None,
             )
         };
         let assert_direct_equivalent = |program: &str| {
@@ -4916,7 +4903,6 @@ fn main() {
             "cat",
             Some(caller_stdin),
             15,
-            None,
             None,
         );
         assert_eq!(
@@ -5067,7 +5053,6 @@ fn main() {
             "printf never",
             None,
             5,
-            None,
             None,
         );
         assert_eq!(

@@ -26,7 +26,6 @@ fn ops_help_entrypoints_print_usage() {
             &[
                 "Usage: webcodex ops status",
                 "--server-url URL",
-                "--url URL",
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
@@ -39,7 +38,6 @@ fn ops_help_entrypoints_print_usage() {
             &[
                 "Usage: webcodex ops agents",
                 "--server-url URL",
-                "--url URL",
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
@@ -64,7 +62,6 @@ fn ops_help_entrypoints_print_usage() {
             &[
                 "Usage: webcodex ops projects",
                 "--server-url URL",
-                "--url URL",
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
@@ -78,7 +75,6 @@ fn ops_help_entrypoints_print_usage() {
                 "Usage: webcodex ops smoke-preflight",
                 "--project PROJECT_ID",
                 "--server-url URL",
-                "--url URL",
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
@@ -103,7 +99,9 @@ fn ops_help_entrypoints_print_usage() {
 #[test]
 fn top_level_help_mentions_ops() {
     let out = cli_exit(["--help"]).unwrap();
-    assert!(out.contains("ops status|agents|runner|projects|smoke-preflight"));
+    assert!(out
+        .lines()
+        .any(|line| line.trim_start().starts_with("ops ")));
 }
 
 #[test]
@@ -127,7 +125,7 @@ fn ops_common_flags_parse_without_printing_token() {
     match cli_action([
         "ops",
         "status",
-        "--url",
+        "--server-url",
         "http://runtime.example",
         "--env-file",
         "/tmp/webcodex.env",
@@ -150,6 +148,20 @@ fn ops_common_flags_parse_without_printing_token() {
             assert!(opts.strict);
         }
         other => panic!("expected ops status action, got {other:?}"),
+    }
+}
+
+#[test]
+fn ops_rejects_removed_server_url_alias() {
+    match cli_action(["ops", "status", "--url", "http://runtime.example"]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(
+                stderr.contains("unknown ops status flag: --url"),
+                "{stderr}"
+            );
+        }
+        other => panic!("removed --url alias still dispatched: {other:?}"),
     }
 }
 

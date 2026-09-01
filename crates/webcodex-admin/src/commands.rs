@@ -52,10 +52,7 @@ impl FlagParser {
 }
 
 pub fn is_admin_group(arg: &str) -> bool {
-    matches!(
-        arg,
-        "user" | "users" | "token" | "tokens" | "agent-token" | "agent-tokens"
-    )
+    matches!(arg, "users" | "tokens" | "agent-tokens")
 }
 
 pub fn usage() -> &'static str {
@@ -63,12 +60,10 @@ pub fn usage() -> &'static str {
       webcodex users create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--display-name NAME] [--role ROLE] [--issue-credential]\n\
       webcodex users list --server-url URL [--token TOKEN|--token-file PATH]\n\
       webcodex tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--name NAME] [--scope SCOPE...]\n\
-      webcodex token register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
       webcodex agent-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
-      webcodex agent-token register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex agent-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
@@ -86,16 +81,16 @@ pub fn parse_admin_cli(args: &[String]) -> Result<AdminCliCommand, String> {
     let action = args[1].as_str();
     let rest = &args[2..];
     match (group, action) {
-        ("users" | "user", "create") => parse_users_create(rest),
-        ("users" | "user", "list") => parse_users_list(rest),
-        ("tokens" | "token", "create") => parse_tokens_create(rest),
-        ("tokens" | "token", "register-hash") => parse_tokens_register_hash(rest),
-        ("tokens" | "token", "list") => parse_tokens_list(rest),
-        ("tokens" | "token", "revoke") => parse_tokens_revoke(rest),
-        ("agent-token" | "agent-tokens", "create") => parse_agent_tokens_create(rest),
-        ("agent-token" | "agent-tokens", "register-hash") => parse_agent_tokens_register_hash(rest),
-        ("agent-token" | "agent-tokens", "list") => parse_agent_tokens_list(rest),
-        ("agent-token" | "agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
+        ("users", "create") => parse_users_create(rest),
+        ("users", "list") => parse_users_list(rest),
+        ("tokens", "create") => parse_tokens_create(rest),
+        ("tokens", "register-hash") => parse_tokens_register_hash(rest),
+        ("tokens", "list") => parse_tokens_list(rest),
+        ("tokens", "revoke") => parse_tokens_revoke(rest),
+        ("agent-tokens", "create") => parse_agent_tokens_create(rest),
+        ("agent-tokens", "register-hash") => parse_agent_tokens_register_hash(rest),
+        ("agent-tokens", "list") => parse_agent_tokens_list(rest),
+        ("agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
         _ => Err(format!(
             "unknown admin command: {} {}\n{}",
             group,
@@ -111,15 +106,15 @@ fn parse_common_flag(
     flag: &str,
 ) -> Result<bool, String> {
     match flag {
-        "--server-url" | "--server" => {
+        "--server-url" => {
             opts.server_url = p.value(flag)?;
             Ok(true)
         }
-        "--token" | "--admin-token" => {
+        "--token" => {
             opts.token = Some(p.value(flag)?);
             Ok(true)
         }
-        "--token-env" | "--admin-token-env" => {
+        "--token-env" => {
             opts.token_env = Some(p.value(flag)?);
             Ok(true)
         }
@@ -156,7 +151,7 @@ fn require_common(opts: &AdminOptions) -> Result<(), String> {
         return Err("--server-url is required".to_string());
     }
     if opts.token.is_some() && opts.token_file.is_some() {
-        return Err("use only one of --token/--admin-token or --token-file".to_string());
+        return Err("use only one of --token or --token-file".to_string());
     }
     opts.server_http.validate()?;
     Ok(())
@@ -193,10 +188,10 @@ fn parse_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, String
             continue;
         }
         match flag.as_str() {
-            "--username" | "--user" => t.username = p.value(&flag)?,
+            "--username" => t.username = p.value(&flag)?,
             "--name" => t.name = Some(p.value(&flag)?),
-            "--hash" | "--token-hash" => t.token_hash = p.value(&flag)?,
-            "--prefix" | "--token-prefix" => t.token_prefix = p.value(&flag)?,
+            "--hash" => t.token_hash = p.value(&flag)?,
+            "--prefix" => t.token_prefix = p.value(&flag)?,
             "--scope" => t.scopes.push(p.value(&flag)?),
             "--scopes" => {
                 t.scopes.extend(
@@ -297,11 +292,11 @@ fn parse_agent_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, 
             continue;
         }
         match flag.as_str() {
-            "--username" | "--user" => t.username = p.value(&flag)?,
+            "--username" => t.username = p.value(&flag)?,
             "--client-id" => t.client_id = p.value(&flag)?,
             "--name" => t.name = Some(p.value(&flag)?),
-            "--hash" | "--token-hash" => t.token_hash = p.value(&flag)?,
-            "--prefix" | "--token-prefix" => t.token_prefix = p.value(&flag)?,
+            "--hash" => t.token_hash = p.value(&flag)?,
+            "--prefix" => t.token_prefix = p.value(&flag)?,
             "--scope" => t.scopes.push(p.value(&flag)?),
             "--scopes" => {
                 t.scopes.extend(

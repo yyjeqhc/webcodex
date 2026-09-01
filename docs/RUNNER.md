@@ -68,6 +68,15 @@ authentication compatibility, so upgrade the first-party Server and Runner
 together when crossing those changes. A compatibility surface is supported only
 when the current contract explicitly retains it.
 
+For the `v0.3.9`-and-older to `v0.4` boundary, upgrade the first-party Server and
+Runner together. Within `v0.4.x`, generation 2 is the compatibility floor:
+first-party Server/Runner releases should remain rolling-interoperable, and new
+feature evolution should prefer additive capabilities. A missing additive
+capability makes that feature unavailable/fail closed; it should not turn an
+otherwise-valid `v0.4` Runner into an incompatible Runner. Patch releases do not
+arbitrarily enlarge the generation-2 baseline-required capability set. This
+promise does not extend rolling compatibility back to pre-0.4 binaries.
+
 Current first-party Runner registration is generation-2-only:
 `capabilities.agent_protocol_generation` must be exactly `2`. A missing value,
 generation `1`, or an unknown generation fails closed before the Runner record is

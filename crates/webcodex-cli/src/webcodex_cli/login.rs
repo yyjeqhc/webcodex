@@ -1,11 +1,10 @@
 //! `login` / `logout` / `status` — the everyday device commands.
 //!
-//! `client enroll` needs the server URL, a pairing code, a client id, and a
-//! profile name, and the client id has to match what the server put in the
-//! pairing record — so the device name is typed twice, once on each side.
-//! `login` keeps the two values a person actually has (which server, which
-//! code) and derives the rest: the device name from the hostname, and the
-//! destination from the username the server returns.
+//! `login` keeps the ordinary managed-enrollment input small: the person supplies
+//! the Server and one-time pairing code, while the CLI derives the default device
+//! identity from the hostname and the destination from the username returned by
+//! the Server. Explicit device and local-base overrides remain available when a
+//! deployment needs them.
 //!
 //! # Why publishing is transactional
 //!

@@ -157,10 +157,6 @@ pub(crate) fn client_profile_state_dir(profile: &str) -> Result<PathBuf, String>
     ))
 }
 
-pub(crate) fn default_client_output_dir_for_profile(profile: &str) -> Result<PathBuf, String> {
-    client_profile_dir(profile)
-}
-
 pub(crate) fn client_profile_agent_config(profile: &str) -> Result<PathBuf, String> {
     Ok(client_profile_dir(profile)?.join("agent.toml"))
 }

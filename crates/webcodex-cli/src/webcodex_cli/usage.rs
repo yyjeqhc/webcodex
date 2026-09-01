@@ -1,19 +1,19 @@
 pub(crate) fn usage() -> &'static str {
     "Usage: webcodex [COMMAND]\n\n\
 Unified command-line interface for WebCodex.\n\n\
-Full daily setup:\n\
-  server init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Configure/run the Server; service lifecycle is Linux-only\n\
-  pairing create                Create a one-time login code\n\
-  login                         Log the project machine in with that code\n\
-  project register              Add an existing project\n\
-  runner init|install|run|start|stop|restart|status|logs|uninstall\n\
-                                Run project work; service lifecycle is Linux-only\n\n\
 Quick trial:\n\
   share                         Temporarily share one project; ends when the command exits\n\
   (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\n\
-Project commands:\n\
-  connect                       Connect the current project to an existing Server\n\
+Daily self-hosted setup:\n\
+  server                        Configure and operate the Server\n\
+  pairing create                Create a one-time login code\n\
+  login                         Log the project machine in with that code\n\
+  project register              Add an existing project\n\
+  runner                        Configure and operate the Runner\n\
+  See `webcodex server --help` and `webcodex runner --help` for full lifecycle commands.\n\n\
+Existing Server:\n\
+  connect                       Connect the current project to an existing Server\n\n\
+Project / diagnostics:\n\
   status                        Show concise project coding readiness\n\
   doctor                        Diagnose project readiness\n\
   setup                         Configure the current Git project without starting it\n\
@@ -21,16 +21,13 @@ Project commands:\n\
   disconnect                    Disconnect a local project from its hosted Server\n\
   task                          Review tasks and make host-local decisions\n\n\
 Account:\n\
-  logout                        Remove this device's credentials\n\
-  auth status                   Show login status\n\n\
-Operator / advanced:\n\
-  ops status|agents|runner|projects|smoke-preflight\n\
-                                Read-only operator workflow checks\n\
-  client enroll                 Advanced compatibility enrollment\n\
-  users create|list             Manage users\n\
-  tokens create|create-local|generate|register-hash|list|revoke\n\
-  agent-tokens create|create-local|register-hash|list|revoke\n\
-  setup single-user             Existing single-user bootstrap flow\n\n\
+  auth status                   Show login status\n\
+  logout                        Remove this device's credentials\n\n\
+Advanced / operator:\n\
+  ops                           Read-only operator workflow checks\n\
+  users                         Manage users\n\
+  tokens                        Manage personal API credentials\n\
+  agent-tokens                  Manage Runner transport credentials\n\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
   -V, --version                 Print version and exit\n"
@@ -126,44 +123,10 @@ pub(crate) fn pairing_create_usage() -> &'static str {
        On the client, redeem the code with: webcodex login <server-url> --code <code>\n\
        If --client-id was specified, append the matching\n\
        --device <client-id> to that login command.\n\
-       (advanced clients may use: webcodex client enroll)\n\n\
      Copy only the short-lived wc_pair_* code to the client. Do not copy\n\
      WEBCODEX_TOKEN, wc_pat_*, or wc_agent_* values from server to client.\n\
      This command does not create wc_pat_* or wc_agent_* token files on the\n\
      server.\n"
-}
-
-pub(crate) fn client_usage() -> &'static str {
-    "Usage: webcodex client <COMMAND>\n\n\
-     Commands:\n\
-       enroll       Enroll this client using a temporary pairing code\n"
-}
-
-pub(crate) fn client_enroll_usage() -> &'static str {
-    "Usage: webcodex client enroll --server-url URL --pairing-code CODE --client-id CLIENT_ID [OPTIONS]\n\n\
-     Advanced / compatibility entry. Ordinary users should use\n\
-     `webcodex login <server-url> --code <code>`, which derives the client id\n\
-     and writes the same token files in one step.\n\n\
-     Options:\n\
-       --server-url URL              WebCodex server URL\n\
-       --proxy http://HOST:PORT     Explicit proxy override for this CLI request\n\
-       --no-system-proxy            Ignore proxy environment and connect directly\n\
-       --pairing-code CODE           Temporary one-time pairing code\n\
-       --client-id CLIENT_ID         Client id matching the pairing record\n\
-       --display-name NAME           Optional Runner display name\n\
-       --transport websocket|polling|quic|auto Runner transport [default: websocket]\n\
-       --profile NAME                Client config profile [default: client-id]\n\
-       --output-dir DIR              Output dir [default: root /etc/webcodex/clients/<profile>; user ~/.config/webcodex/clients/<profile>]\n\
-       --agent-config PATH           Runner config path [default: <output-dir>/agent.toml]\n\
-       --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
-       --allowed-root PATH           Repeatable allowed project root\n\
-       --allow-cwd-anywhere BOOL     Allow cwd outside allowed roots [default: false]\n\
-       --overwrite                   Replace existing token/config files\n\
-       --json                        Print machine-readable output without full tokens\n\
-       -h, --help                    Print help and exit\n\n\
-     Enroll receives wc_pat_* and wc_agent_* tokens over HTTPS and writes them\n\
-     locally with 0600 permissions. Explicit --output-dir overrides the\n\
-     profile-derived default. It never sends an Authorization header.\n"
 }
 
 pub(crate) fn ops_usage() -> &'static str {
@@ -177,7 +140,6 @@ pub(crate) fn ops_usage() -> &'static str {
        smoke-preflight         Check a project before deploy smoke validation\n\n\
      Common flags:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
@@ -194,7 +156,6 @@ pub(crate) fn ops_status_usage() -> &'static str {
      Summarize runtime, tools, jobs, agents, and project health.\n\n\
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
@@ -210,7 +171,6 @@ pub(crate) fn ops_agents_usage() -> &'static str {
      Show compact read-only agent fleet status.\n\n\
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
@@ -228,7 +188,6 @@ pub(crate) fn ops_runner_usage() -> &'static str {
        --client-id CLIENT_ID   Exact Runner client_id (required)\n\
        --request-timeout-ms MS Bound one Server observation [default: 5000; max: 30000]\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
@@ -245,7 +204,6 @@ pub(crate) fn ops_projects_usage() -> &'static str {
      Show compact read-only project inventory and smoke suitability.\n\n\
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
@@ -262,7 +220,6 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
      Options:\n\
        --project PROJECT_ID    Runtime project id to check\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
-       --url URL               Alias for --server-url\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\

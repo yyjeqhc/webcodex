@@ -1,10 +1,8 @@
 //! `webcodex` — standalone management/setup binary for WebCodex.
 //!
-//! Provides users / tokens / agent-tokens management (reusing the
-//! shared `admin_cli` module), low-level `runner init` (reusing the shared
-//! `runner_config` module), and `setup single-user`, which creates a user,
-//! a personal API token, and an agent token, then writes the plaintext tokens
-//! to 0600 files.
+//! Provides canonical users / tokens / agent-tokens management (reusing the
+//! shared `admin_cli` module) and low-level `runner init` (reusing the shared
+//! `runner_config` module).
 //!
 //! This binary intentionally does NOT start a server and does NOT print real
 //! tokens, Authorization headers, or full agent.toml contents with secrets
@@ -35,28 +33,27 @@ use runner_config::{
 };
 use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
-    agent_config_for_scope, base_dir_or_default, client_enroll_usage, client_profile_agent_config,
+    agent_config_for_scope, base_dir_or_default, client_profile_agent_config,
     client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
     client_profile_projects_dir, client_profile_state_dir, client_profile_user_token_file,
-    client_profile_user_token_file_for_scope, client_usage, connect_usage, current_user_home,
-    default_client_output_dir_for_profile, default_device_name, default_server_paths,
-    disconnect_usage, discover_internal_binary, is_effective_root, login_usage, logout_usage,
-    ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, project_register_usage,
-    read_env_file_value, render_token_generate, run_agent_token_create_local, run_client_enroll,
-    run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary, run_login, run_logout,
-    run_ops_command, run_pairing_create, run_project_register, run_runner_install_service,
-    run_runner_service, run_runner_status, run_server_init, run_server_install_service,
-    run_server_service, run_server_status, run_setup_single_user, run_status,
+    client_profile_user_token_file_for_scope, connect_usage, current_user_home,
+    default_device_name, default_server_paths, disconnect_usage, discover_internal_binary,
+    is_effective_root, login_usage, logout_usage, ops_agents_usage, ops_projects_usage,
+    ops_runner_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage, pairing_create_usage,
+    pairing_usage, project_register_usage, read_env_file_value, render_token_generate,
+    run_agent_token_create_local, run_connect, run_disconnect, run_hosted_log_writer,
+    run_internal_binary, run_login, run_logout, run_ops_command, run_pairing_create,
+    run_project_register, run_runner_install_service, run_runner_service, run_runner_status,
+    run_server_init, run_server_install_service, run_server_service, run_server_status, run_status,
     run_token_create_local, runner_init_usage, runner_install_service_usage,
     runner_service_file_for_scope, runner_status_usage, runner_usage, server_init_usage,
     server_install_service_usage, server_status_usage, server_usage, service_unit_name,
     status_usage, system_user_home, system_user_is_root, usage, validate_client_profile,
-    validate_service_file_scope, write_connect_result, write_secret_file, write_text_file,
-    ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand,
-    OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions, ProjectRegisterOptions,
-    ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT,
-    SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    validate_service_file_scope, write_connect_result, ConnectAuth, ConnectOptions,
+    DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions,
+    OpsSmokePreflightOptions, ProjectRegisterOptions, ServerStatusOptions, ServiceControl,
+    StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
+    SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -115,9 +112,7 @@ enum CliAction {
     TokenCreateLocal(TokenCreateLocalOptions),
     AgentTokenCreateLocal(AgentTokenCreateLocalOptions),
     RunnerInit(RunnerInitOptions),
-    SetupSingleUser(SetupSingleUserOptions),
     PairingCreate(PairingCreateOptions),
-    ClientEnroll(ClientEnrollOptions),
     Login(LoginOptions),
     Logout(LogoutOptions),
     Status(StatusOptions),
@@ -164,23 +159,6 @@ struct AgentTokenCreateLocalOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct SetupSingleUserOptions {
-    server_url: String,
-    server_http: ServerHttpOptions,
-    token: Option<String>,
-    token_file: Option<PathBuf>,
-    username: String,
-    client_id: String,
-    display_name: Option<String>,
-    role: String,
-    gpt_token_name: String,
-    agent_token_name: String,
-    output_dir: PathBuf,
-    force_create_tokens: bool,
-    json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct PairingCreateOptions {
     server_url: String,
     server_http: ServerHttpOptions,
@@ -193,23 +171,6 @@ struct PairingCreateOptions {
     ttl_secs: i64,
     user_token_name: Option<String>,
     agent_token_name: Option<String>,
-    json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ClientEnrollOptions {
-    server_url: String,
-    server_http: ServerHttpOptions,
-    pairing_code: String,
-    client_id: String,
-    display_name: Option<String>,
-    transport: String,
-    output_dir: PathBuf,
-    agent_config: PathBuf,
-    projects_dir: PathBuf,
-    allowed_roots: Vec<PathBuf>,
-    allow_cwd_anywhere: bool,
-    overwrite: bool,
     json: bool,
 }
 
@@ -354,9 +315,11 @@ where
             stderr: String::new(),
         },
         "status" | "doctor" | "run" | "share" | "task" => CliAction::Project(args),
-        "setup" if args.get(1).map(String::as_str) != Some("single-user") => {
-            CliAction::Project(args)
-        }
+        "setup" if args.get(1).map(String::as_str) == Some("single-user") => cli_parse_error(
+            "`webcodex setup single-user` was removed; use `webcodex pairing create` followed by `webcodex login`"
+                .to_string(),
+        ),
+        "setup" => CliAction::Project(args),
         "connect" => parse_connect(&args[1..]),
         "disconnect" => parse_disconnect(&args[1..]),
         "project" => parse_project_subcommand(&args[1..]),
@@ -369,17 +332,23 @@ where
         }
         "server" => parse_server_subcommand(&args[1..]),
         "pairing" => parse_pairing_subcommand(&args[1..]),
-        "client" => parse_client_subcommand(&args[1..]),
+        "client" if args.get(1).map(String::as_str) == Some("enroll") => cli_parse_error(
+            "`webcodex client enroll` was removed; use `webcodex login <server-url> --code <code>`"
+                .to_string(),
+        ),
         "login" => parse_login(&args[1..]),
         "logout" => parse_logout(&args[1..]),
         "auth" => parse_auth_subcommand(&args[1..]),
         "ops" => parse_ops_subcommand(&args[1..]),
         "runner" => parse_runner_subcommand(&args[1..]),
-        "agent-token" | "agent-tokens" => {
-            parse_agent_token_subcommand(args[0].as_str(), &args[1..])
-        }
-        "setup" => parse_setup_subcommand(&args[1..]),
-        "token" | "tokens" => parse_token_subcommand(args[0].as_str(), &args[1..]),
+        "agent-token" => cli_parse_error(
+            "`webcodex agent-token` was removed; use `webcodex agent-tokens ...`".to_string(),
+        ),
+        "agent-tokens" => parse_agent_token_subcommand(&args[1..]),
+        "token" => cli_parse_error(
+            "`webcodex token` was removed; use `webcodex tokens ...`".to_string(),
+        ),
+        "tokens" => parse_token_subcommand(&args[1..]),
         group if admin_cli::is_admin_group(group) => {
             // users / tokens / agent-tokens management: reuse admin_cli parser.
             match parse_admin_cli(&args) {
@@ -461,7 +430,7 @@ fn parse_connect(args: &[String]) -> CliAction {
             "--oauth-computer-permissions" => oauth_computer_permissions = true,
             "--oauth-local-mcp" => oauth_local_mcp = true,
             "--oauth-coding-agent" => oauth_coding_agent = true,
-            "--user" | "--username" => match take(&mut index) {
+            "--user" => match take(&mut index) {
                 Some(value) => username = Some(value),
                 None => return cli_parse_error(format!("{arg} requires a value")),
             },
@@ -876,7 +845,7 @@ fn parse_logout(args: &[String]) -> CliAction {
     while index < args.len() {
         let arg = args[index].clone();
         match arg.as_str() {
-            "--user" | "--username" => {
+            "--user" => {
                 index += 1;
                 match args.get(index) {
                     Some(value) => username = Some(value.clone()),
@@ -965,7 +934,7 @@ fn cli_parse_error(message: String) -> CliAction {
     }
 }
 
-fn parse_token_subcommand(group: &str, args: &[String]) -> CliAction {
+fn parse_token_subcommand(args: &[String]) -> CliAction {
     if args.is_empty() {
         return CliAction::Exit {
             code: 2,
@@ -982,13 +951,12 @@ fn parse_token_subcommand(group: &str, args: &[String]) -> CliAction {
             Ok(opts) => CliAction::TokenCreateLocal(opts),
             Err(e) => local_token_parse_error(e),
         },
-        _ => forward_to_admin_cli(group, args),
+        _ => forward_to_admin_cli("tokens", args),
     }
 }
 
-/// `generate` and `create-local` are handled locally; every other action is an
-/// admin API call. Forwarding preserves the group word the caller typed so the
-/// singular and plural spellings behave identically.
+/// `generate` and `create-local` are handled locally; every other action is a
+/// canonical plural admin API call.
 fn forward_to_admin_cli(group: &str, args: &[String]) -> CliAction {
     let mut forwarded = vec![group.to_string()];
     forwarded.extend_from_slice(args);
@@ -1017,9 +985,9 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
         match flag.as_str() {
             "--kind" => kind = p.value(&flag)?,
             "-h" | "--help" => {
-                return Err("Usage: webcodex token generate --kind api|agent".to_string())
+                return Err("Usage: webcodex tokens generate --kind api|agent".to_string())
             }
-            _ => return Err(format!("unknown token generate flag: {}", flag)),
+            _ => return Err(format!("unknown tokens generate flag: {}", flag)),
         }
     }
     if kind != "api" && kind != "agent" {
@@ -1028,12 +996,12 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
     Ok(TokenGenerateOptions { kind })
 }
 
-fn parse_agent_token_subcommand(group: &str, args: &[String]) -> CliAction {
+fn parse_agent_token_subcommand(args: &[String]) -> CliAction {
     if args.is_empty() {
         return CliAction::Exit {
             code: 2,
             stdout: String::new(),
-            stderr: "missing agent-token subcommand\n".to_string(),
+            stderr: "missing agent-tokens subcommand\n".to_string(),
         };
     }
     match args[0].as_str() {
@@ -1041,7 +1009,7 @@ fn parse_agent_token_subcommand(group: &str, args: &[String]) -> CliAction {
             Ok(opts) => CliAction::AgentTokenCreateLocal(opts),
             Err(e) => local_token_parse_error(e),
         },
-        _ => forward_to_admin_cli(group, args),
+        _ => forward_to_admin_cli("agent-tokens", args),
     }
 }
 
@@ -1050,15 +1018,15 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
     let mut p = SimpleFlagParser::new(args);
     while let Some(flag) = p.next() {
         match flag.as_str() {
-            "--server" | "--server-url" => opts.admin.server_url = p.value(&flag)?,
+            "--server-url" => opts.admin.server_url = p.value(&flag)?,
             "--proxy" => opts.admin.server_http.proxy = Some(p.value(&flag)?),
             "--no-system-proxy" => opts.admin.server_http.no_system_proxy = true,
-            "--user" | "--username" => opts.username = p.value(&flag)?,
+            "--username" => opts.username = p.value(&flag)?,
             "--client-id" => opts.client_id = p.value(&flag)?,
             "--credential" => opts.admin.credential = Some(p.value(&flag)?),
             "--credential-env" => opts.admin.credential_env = Some(p.value(&flag)?),
-            "--token" | "--admin-token" => opts.admin.token = Some(p.value(&flag)?),
-            "--token-env" | "--admin-token-env" => opts.admin.token_env = Some(p.value(&flag)?),
+            "--token" => opts.admin.token = Some(p.value(&flag)?),
+            "--token-env" => opts.admin.token_env = Some(p.value(&flag)?),
             "--token-file" => opts.admin.token_file = Some(PathBuf::from(p.value(&flag)?)),
             "--name" => opts.name = Some(p.value(&flag)?),
             "--scope" => opts.scopes.push(p.value(&flag)?),
@@ -1071,16 +1039,16 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
                         .map(str::to_string),
                 );
             }
-            "-h" | "--help" => return Err("Usage: webcodex agent-token create-local --server URL --user USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
-            _ => return Err(format!("unknown agent-token create-local flag: {}", flag)),
+            "-h" | "--help" => return Err("Usage: webcodex agent-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
+            _ => return Err(format!("unknown agent-tokens create-local flag: {}", flag)),
         }
     }
     opts.admin.server_http.validate()?;
     if opts.admin.server_url.trim().is_empty() {
-        return Err("--server is required".to_string());
+        return Err("--server-url is required".to_string());
     }
     if opts.username.trim().is_empty() {
-        return Err("--user is required".to_string());
+        return Err("--username is required".to_string());
     }
     if opts.client_id.trim().is_empty() {
         return Err("--client-id is required".to_string());
@@ -1096,10 +1064,10 @@ fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, 
     let mut p = SimpleFlagParser::new(args);
     while let Some(flag) = p.next() {
         match flag.as_str() {
-            "--server" | "--server-url" => opts.server_url = p.value(&flag)?,
+            "--server-url" => opts.server_url = p.value(&flag)?,
             "--proxy" => opts.server_http.proxy = Some(p.value(&flag)?),
             "--no-system-proxy" => opts.server_http.no_system_proxy = true,
-            "--user" | "--username" => opts.username = p.value(&flag)?,
+            "--username" => opts.username = p.value(&flag)?,
             "--credential" => opts.credential = Some(p.value(&flag)?),
             "--credential-env" => opts.credential_env = Some(p.value(&flag)?),
             "--name" => opts.name = Some(p.value(&flag)?),
@@ -1114,17 +1082,17 @@ fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, 
                 );
             }
             "-h" | "--help" => {
-                return Err("Usage: webcodex token create-local --server URL --user USER --credential CRED [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string())
+                return Err("Usage: webcodex tokens create-local --server-url URL --username USER --credential CRED [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string())
             }
-            _ => return Err(format!("unknown token create-local flag: {}", flag)),
+            _ => return Err(format!("unknown tokens create-local flag: {}", flag)),
         }
     }
     opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
-        return Err("--server is required".to_string());
+        return Err("--server-url is required".to_string());
     }
     if opts.username.trim().is_empty() {
-        return Err("--user is required".to_string());
+        return Err("--username is required".to_string());
     }
     if opts.scopes.is_empty() {
         opts.scopes = SETUP_GPT_SCOPES.iter().map(|s| s.to_string()).collect();
@@ -1272,45 +1240,6 @@ fn parse_pairing_subcommand(args: &[String]) -> CliAction {
     }
 }
 
-fn parse_client_subcommand(args: &[String]) -> CliAction {
-    if args.is_empty() {
-        return CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: format!("{}\n", client_usage()),
-        };
-    }
-    match args[0].as_str() {
-        "--help" | "-h" => CliAction::Exit {
-            code: 0,
-            stdout: client_usage().to_string(),
-            stderr: String::new(),
-        },
-        "enroll" => {
-            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
-                return CliAction::Exit {
-                    code: 0,
-                    stdout: client_enroll_usage().to_string(),
-                    stderr: String::new(),
-                };
-            }
-            match parse_client_enroll(&args[1..]) {
-                Ok(opts) => CliAction::ClientEnroll(opts),
-                Err(e) => CliAction::Exit {
-                    code: 2,
-                    stdout: String::new(),
-                    stderr: format!("{}\n", e),
-                },
-            }
-        }
-        other => CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: format!("unknown client subcommand: {}\n", other),
-        },
-    }
-}
-
 fn parse_ops_subcommand(args: &[String]) -> CliAction {
     if args.is_empty() {
         return CliAction::Exit {
@@ -1435,7 +1364,7 @@ fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--server-url" | "--url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
             "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
             "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
@@ -1477,7 +1406,7 @@ fn parse_ops_runner(args: &[String]) -> Result<OpsRunnerOptions, String> {
                     .parse::<u64>()
                     .map_err(|_| "--request-timeout-ms must be an integer".to_string())?;
             }
-            "--server-url" | "--url" => common.server_url = next_value(&mut iter, arg)?,
+            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
             "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
             "--no-system-proxy" => common.server_http.no_system_proxy = true,
             "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
@@ -1513,7 +1442,7 @@ fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--project" => project = next_value(&mut iter, arg)?,
-            "--server-url" | "--url" => common.server_url = next_value(&mut iter, arg)?,
+            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
             "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
             "--no-system-proxy" => common.server_http.no_system_proxy = true,
             "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
@@ -2287,103 +2216,6 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
     Ok(opts)
 }
 
-fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
-    let mut server_url = String::new();
-    let mut server_http = ServerHttpOptions::default();
-    let mut pairing_code = String::new();
-    let mut client_id = String::new();
-    let mut display_name = None;
-    let mut transport = TRANSPORT_WEBSOCKET.to_string();
-    let mut profile: Option<String> = None;
-    let mut output_dir: Option<PathBuf> = None;
-    let mut agent_config: Option<PathBuf> = None;
-    let mut projects_dir: Option<PathBuf> = None;
-    let mut allowed_roots = Vec::new();
-    let mut allow_cwd_anywhere = false;
-    let mut overwrite = false;
-    let mut json = false;
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--server-url" => server_url = next_value(&mut iter, arg)?,
-            "--proxy" => server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => server_http.no_system_proxy = true,
-            "--pairing-code" => pairing_code = next_value(&mut iter, arg)?,
-            "--client-id" => client_id = next_value(&mut iter, arg)?,
-            "--display-name" => display_name = Some(next_value(&mut iter, arg)?),
-            "--transport" => transport = next_value(&mut iter, arg)?,
-            "--profile" => profile = Some(next_value(&mut iter, arg)?),
-            "--output-dir" => output_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--agent-config" => agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--projects-dir" => projects_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--allowed-root" => allowed_roots.push(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--allow-cwd-anywhere" => {
-                allow_cwd_anywhere = runner_config::parse_bool(&next_value(&mut iter, arg)?)?;
-            }
-            "--overwrite" => overwrite = true,
-            "--json" => json = true,
-            _ => return Err(format!("unknown client enroll flag: {}", arg)),
-        }
-    }
-    server_http.validate()?;
-    if server_url.trim().is_empty() {
-        return Err("--server-url is required".to_string());
-    }
-    if pairing_code.trim().is_empty() {
-        return Err("--pairing-code is required".to_string());
-    }
-    if client_id.trim().is_empty() {
-        return Err("--client-id is required".to_string());
-    }
-    if !matches!(
-        transport.as_str(),
-        runner_config::TRANSPORT_WEBSOCKET
-            | runner_config::TRANSPORT_POLLING
-            | runner_config::TRANSPORT_QUIC
-            | runner_config::TRANSPORT_AUTO
-    ) {
-        return Err("--transport must be websocket, polling, quic, or auto".to_string());
-    }
-    let output_dir = if let Some(output_dir) = output_dir {
-        if let Some(profile) = profile.as_deref() {
-            validate_client_profile(profile)?;
-        }
-        output_dir
-    } else {
-        let profile = validate_client_profile(profile.as_deref().unwrap_or(&client_id))?;
-        default_client_output_dir_for_profile(&profile)?
-    };
-    if output_dir.as_os_str().is_empty() {
-        return Err("--output-dir cannot be empty".to_string());
-    }
-    let agent_config = agent_config.unwrap_or_else(|| output_dir.join("agent.toml"));
-    let projects_dir = projects_dir.unwrap_or_else(|| output_dir.join("projects.d"));
-    if agent_config.as_os_str().is_empty() {
-        return Err("--agent-config cannot be empty".to_string());
-    }
-    if projects_dir.as_os_str().is_empty() {
-        return Err("--projects-dir cannot be empty".to_string());
-    }
-    if allowed_roots.iter().any(|path| path.as_os_str().is_empty()) {
-        return Err("--allowed-root cannot be empty".to_string());
-    }
-    Ok(ClientEnrollOptions {
-        server_url,
-        server_http,
-        pairing_code,
-        client_id,
-        display_name,
-        transport,
-        output_dir,
-        agent_config,
-        projects_dir,
-        allowed_roots,
-        allow_cwd_anywhere,
-        overwrite,
-        json,
-    })
-}
-
 /// Small flag parser for `webcodex runner init`. Produces an
 /// `RunnerInitOptions` consumed by the shared `runner_config::run_runner_init`.
 fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
@@ -2464,95 +2296,6 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
         }
     }
     runner_config::validate_runner_init_options(&opts)?;
-    Ok(opts)
-}
-
-fn parse_setup_subcommand(args: &[String]) -> CliAction {
-    if args.is_empty() {
-        return CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: "expected `setup single-user`\n".to_string(),
-        };
-    }
-    match args[0].as_str() {
-        "single-user" => match parse_setup_single_user(&args[1..]) {
-            Ok(opts) => CliAction::SetupSingleUser(opts),
-            Err(e) => CliAction::Exit {
-                code: 2,
-                stdout: String::new(),
-                stderr: format!("{}\n", e),
-            },
-        },
-        "--help" | "-h" => CliAction::Exit {
-            code: 0,
-            stdout: usage().to_string(),
-            stderr: String::new(),
-        },
-        other => CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: format!("unknown setup subcommand: {}\n", other),
-        },
-    }
-}
-
-fn parse_setup_single_user(args: &[String]) -> Result<SetupSingleUserOptions, String> {
-    let mut opts = SetupSingleUserOptions {
-        server_url: String::new(),
-        server_http: ServerHttpOptions::default(),
-        token: None,
-        token_file: None,
-        username: String::new(),
-        client_id: String::new(),
-        display_name: None,
-        role: "admin".to_string(),
-        gpt_token_name: "chatgpt-action".to_string(),
-        agent_token_name: String::new(),
-        output_dir: PathBuf::new(),
-        force_create_tokens: false,
-        json: false,
-    };
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
-            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
-            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
-            "--token" => opts.token = Some(next_value(&mut iter, arg)?),
-            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--username" => opts.username = next_value(&mut iter, arg)?,
-            "--client-id" => opts.client_id = next_value(&mut iter, arg)?,
-            "--display-name" => opts.display_name = Some(next_value(&mut iter, arg)?),
-            "--role" => opts.role = next_value(&mut iter, arg)?,
-            "--gpt-token-name" => opts.gpt_token_name = next_value(&mut iter, arg)?,
-            "--agent-token-name" => opts.agent_token_name = next_value(&mut iter, arg)?,
-            "--output-dir" => opts.output_dir = PathBuf::from(next_value(&mut iter, arg)?),
-            "--force-create-tokens" => opts.force_create_tokens = true,
-            "--json" => opts.json = true,
-            "--help" | "-h" => return Err(usage().to_string()),
-            _ => return Err(format!("unknown setup single-user flag: {}", arg)),
-        }
-    }
-    opts.server_http.validate()?;
-    if opts.server_url.trim().is_empty() {
-        return Err("--server-url is required".to_string());
-    }
-    if opts.token.is_some() && opts.token_file.is_some() {
-        return Err("use only one of --token or --token-file".to_string());
-    }
-    if opts.username.trim().is_empty() {
-        return Err("--username is required".to_string());
-    }
-    if opts.client_id.trim().is_empty() {
-        return Err("--client-id is required".to_string());
-    }
-    if opts.output_dir.as_os_str().is_empty() {
-        return Err("--output-dir is required".to_string());
-    }
-    if opts.agent_token_name.is_empty() {
-        opts.agent_token_name = format!("{} agent", opts.client_id);
-    }
     Ok(opts)
 }
 
@@ -2712,16 +2455,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::SetupSingleUser(opts) => match run_setup_single_user(opts).await {
-            Ok(stdout) => {
-                println!("{}", stdout);
-                std::process::exit(0);
-            }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
         CliAction::PairingCreate(opts) => match run_pairing_create(opts).await {
             Ok(stdout) => {
                 print!("{}", stdout);
@@ -2758,19 +2491,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Status(opts) => match run_status(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
-                std::process::exit(0);
-            }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
-        CliAction::ClientEnroll(opts) => match run_client_enroll(opts).await {
-            Ok(stdout) => {
-                print!("{}", stdout);
-                if !stdout.ends_with('\n') {
-                    println!();
-                }
                 std::process::exit(0);
             }
             Err(stderr) => {

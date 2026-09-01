@@ -11,7 +11,6 @@ pub(crate) mod project;
 pub(crate) mod runner_service;
 pub(crate) mod server;
 pub(crate) mod service;
-pub(crate) mod setup;
 pub(crate) mod system;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -62,9 +61,9 @@ pub(crate) use env::{
 };
 #[cfg(test)]
 pub(crate) use http::format_error_body;
-pub(crate) use http::{
-    fetch_runtime_status, http_post_json_status, post_json_authed, post_json_unauthed, ApiCall,
-};
+#[cfg(test)]
+pub(crate) use http::post_json_unauthed;
+pub(crate) use http::{fetch_runtime_status, http_post_json_status, post_json_authed, ApiCall};
 pub(crate) use login::{
     base_dir_or_default, default_device_name, run_login, run_logout, run_status, LoginOptions,
     LogoutOptions, StatusOptions,
@@ -78,14 +77,13 @@ pub(crate) use output::{
     compare_build_commits, local_cli_build_metadata, render_build_metadata_block,
     runtime_build_metadata, server_status_revision_check,
 };
-pub(crate) use pairing::{run_client_enroll, run_pairing_create};
+pub(crate) use pairing::run_pairing_create;
 pub(crate) use profiles::{
     agent_config_for_scope, client_profile_agent_config, client_profile_agent_token_file,
     client_profile_agent_token_file_for_scope, client_profile_projects_dir,
     client_profile_state_dir, client_profile_user_token_file,
-    client_profile_user_token_file_for_scope, current_user_home,
-    default_client_output_dir_for_profile, runner_service_file_for_scope, validate_client_profile,
-    validate_service_file_scope,
+    client_profile_user_token_file_for_scope, current_user_home, runner_service_file_for_scope,
+    validate_client_profile, validate_service_file_scope,
 };
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
@@ -111,26 +109,24 @@ pub(crate) use service::{
     validate_systemd_identity, ServiceControl, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT,
     SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT, SERVER_SOCKET_UNIT,
 };
-pub(crate) use setup::run_setup_single_user;
 pub(crate) use system::{
     discover_internal_binary, read_optional_token, read_optional_user_api_token,
     system_group_exists, system_user_exists, system_user_home, system_user_is_root,
-    validate_user_api_token, write_secret_file, write_text_file,
+    validate_user_api_token,
 };
 #[cfg(test)]
 pub(crate) use token_commands::resolve_account_credential;
 pub(crate) use token_commands::{run_agent_token_create_local, run_token_create_local};
 pub(crate) use tokens::{
     generate_bootstrap_token, generate_local_agent_token, generate_local_api_token,
-    hash_local_token, local_token_prefix, render_token_generate, resolve_token, token_prefix,
+    hash_local_token, local_token_prefix, render_token_generate, token_prefix,
 };
 pub(crate) use usage::{
-    client_enroll_usage, client_usage, connect_usage, disconnect_usage, login_usage, logout_usage,
-    ops_agents_usage, ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, project_register_usage,
-    runner_init_usage, runner_install_service_usage, runner_status_usage, runner_usage,
-    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
-    status_usage, usage,
+    connect_usage, disconnect_usage, login_usage, logout_usage, ops_agents_usage,
+    ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    pairing_create_usage, pairing_usage, project_register_usage, runner_init_usage,
+    runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
+    server_install_service_usage, server_status_usage, server_usage, status_usage, usage,
 };
 
 #[cfg(test)]

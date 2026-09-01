@@ -246,7 +246,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` is the primary client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and an `agent.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-agent-config> /path/to/repo` before project-bound work. `webcodex client enroll` remains the advanced alternative for an explicit client id or custom output directory.
+`webcodex login` is the canonical client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and an `agent.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-agent-config> /path/to/repo` before project-bound work. Use the documented `login --device` and `--dir` options when an explicit device identity or alternate local base directory is required; there is no separate compatibility enrollment command.
 
 The pairing code is created server/admin-side:
 

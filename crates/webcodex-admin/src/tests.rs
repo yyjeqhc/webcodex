@@ -60,11 +60,11 @@ fn admin_usage_keeps_rest_registration_commands_but_not_create_local() {
     let stdout = usage();
     assert!(!stdout.contains("create-local"));
     assert!(stdout.contains("webcodex tokens create"));
-    assert!(stdout.contains("webcodex token register-hash"));
     assert!(stdout.contains("webcodex tokens register-hash"));
     assert!(stdout.contains("webcodex agent-tokens create"));
-    assert!(stdout.contains("webcodex agent-token register-hash"));
     assert!(stdout.contains("webcodex agent-tokens register-hash"));
+    assert!(!stdout.contains("webcodex token register-hash"));
+    assert!(!stdout.contains("webcodex agent-token register-hash"));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn agent_tokens_create_supports_explicit_scopes() {
 #[test]
 fn agent_tokens_register_hash_builds_hash_registration_request() {
     let req = request(&[
-        "agent-token",
+        "agent-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -202,7 +202,7 @@ fn agent_tokens_register_hash_builds_hash_registration_request() {
 }
 
 #[test]
-fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_admin_token() {
+fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_explicit_token() {
     let mut env = EnvGuard::new();
     env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
@@ -210,7 +210,7 @@ fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_admin_token() {
         "register-hash",
         "--server-url",
         "https://example.test",
-        "--admin-token",
+        "--token",
         "fake-admin",
         "--username",
         "alice",
@@ -345,7 +345,7 @@ fn env_token_fallback_is_used() {
 }
 
 #[test]
-fn explicit_admin_token_wins_over_default_account_credential_env() {
+fn explicit_token_wins_over_default_account_credential_env() {
     let mut env = EnvGuard::new();
     env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "fake-account-credential");
     let cmd = parse_admin_cli(&args(&[
@@ -353,7 +353,7 @@ fn explicit_admin_token_wins_over_default_account_credential_env() {
         "register-hash",
         "--server-url",
         "https://example.test",
-        "--admin-token",
+        "--token",
         "fake-admin",
         "--username",
         "alice",
@@ -366,6 +366,89 @@ fn explicit_admin_token_wins_over_default_account_credential_env() {
     let req = build_admin_request(&cmd).unwrap();
     assert_eq!(req.token, "fake-admin");
     env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
+}
+
+#[test]
+fn removed_admin_namespace_and_flag_aliases_are_rejected() {
+    let cases = [
+        args(&[
+            "token",
+            "list",
+            "--server-url",
+            "https://example.test",
+            "--username",
+            "alice",
+        ]),
+        args(&[
+            "agent-token",
+            "list",
+            "--server-url",
+            "https://example.test",
+            "--username",
+            "alice",
+        ]),
+        args(&[
+            "tokens",
+            "list",
+            "--server",
+            "https://example.test",
+            "--username",
+            "alice",
+        ]),
+        args(&[
+            "tokens",
+            "list",
+            "--server-url",
+            "https://example.test",
+            "--admin-token",
+            "fake-admin",
+            "--username",
+            "alice",
+        ]),
+        args(&[
+            "tokens",
+            "list",
+            "--server-url",
+            "https://example.test",
+            "--admin-token-env",
+            "ADMIN_TOKEN",
+            "--username",
+            "alice",
+        ]),
+        args(&[
+            "tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--user",
+            "alice",
+        ]),
+        args(&[
+            "tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--username",
+            "alice",
+            "--token-hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ]),
+        args(&[
+            "tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--username",
+            "alice",
+            "--token-prefix",
+            "wc_pat_aaaaaaa",
+        ]),
+    ];
+
+    for case in cases {
+        let error = parse_admin_cli(&case).expect_err("removed alias must fail closed");
+        assert!(error.contains("unknown"), "{error}");
+    }
 }
 
 #[test]

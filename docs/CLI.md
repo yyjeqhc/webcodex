@@ -71,7 +71,6 @@ evidence. The retired `start_coding_task` wire/API name is no longer callable; u
 | `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | Log this device into a Server with a one-time code | Normal managed enrollment entry. `--project` selects the actual project, `--allowed-root` names a parent from which more projects may be added later, and `--print-mcp-config` explicitly prints sensitive ChatGPT MCP connection values. |
 | `webcodex project register --config PATH <PROJECT>` | Add another project to an existing Runner | Persists that Runner's project configuration without requiring the Server to be online; follow the command output if an already-running Runner needs a reload. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
-| `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex logout <server-url> [--user USER|--all]` | Remove this device's credentials for a Server | With one saved user, the user is selected automatically. With multiple saved users, choose one with `--user USER` or explicitly choose all with `--all`; deletion still uses the existing confirmation/`--yes` flow. |
 
 ### Runner lifecycle
@@ -163,16 +162,16 @@ locally and register only their hashes with the Server.
 | `webcodex auth status` | Show which servers this device is logged in to | Read-only; supports `--dir` and `--json`. |
 | `webcodex users create` | Create a user; `--issue-credential` returns a one-time account credential | Server/admin side; uses `--server-url`. |
 | `webcodex users list` | List users | |
-| `webcodex token create-local` | Locally generate a `wc_pat_*` personal API token and register its hash | Uses `--server` and an account credential. |
+| `webcodex tokens create-local` | Locally generate a `wc_pat_*` personal API token and register its hash | Uses `--server-url`, `--username`, and an account credential. |
 | `webcodex tokens create` | Admin: create a PAT server-side | Uses `--server-url`. |
-| `webcodex token generate` | Offline token material generation | Does **not** register with any Server. |
+| `webcodex tokens generate` | Offline token material generation | Does **not** register with any Server. |
 | `webcodex tokens list` / `revoke` / `register-hash` | List or revoke PATs; register an externally computed hash | Admin side; uses `--server-url`. |
-| `webcodex agent-token create-local` | Locally generate a `wc_agent_*` Runner token and register its hash | Binds to `--client-id`. |
+| `webcodex agent-tokens create-local` | Locally generate a `wc_agent_*` Runner token and register its hash | Uses `--server-url` and binds to `--client-id`. |
 | `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin variants | |
 
-Note the flag difference: `users create` and the admin `tokens`/`agent-tokens`
-commands use `--server-url`; the local `token create-local` and
-`agent-token create-local` commands use `--server`.
+All Server-targeting credential commands use the canonical `--server-url` spelling.
+Local `tokens create-local` / `agent-tokens create-local` use `--username` plus an
+account credential; admin token management uses the same plural namespaces.
 
 ### Advanced and compatibility commands
 
@@ -181,12 +180,10 @@ normal entry points.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex client enroll` | Advanced enrollment with explicit `--client-id` | Its help says: advanced; prefer `webcodex login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
-| `webcodex token generate` | Offline token material generation | Registers nothing; pair the output with `tokens register-hash` if the hash must be registered server-side. |
+| `webcodex tokens generate` | Offline token material generation | Registers nothing; pair the output with `tokens register-hash` if the hash must be registered server-side. |
 | `webcodex tokens register-hash` | Admin: register an externally computed PAT hash | Uses `--server-url`; for offline-generated material. |
 | `webcodex agent-tokens register-hash` | Admin: register an externally computed Runner-token hash | Uses `--server-url`; for offline-generated material. |
-| `webcodex setup single-user` | Legacy single-user bootstrap flow | Not the normal path. |
 
 ## Terminology
 
@@ -245,8 +242,8 @@ quick answer.
 | Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
 | Project Credential | (private file) | `webcodex setup` | the one project's Connector + Runner | other projects, admin |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT Actions, MCP, Runner |
-| Personal API token (PAT) | `wc_pat_...` | `webcodex token create-local` | GPT Actions, MCP, REST API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex agent-token create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
+| Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, REST API | Runner connectivity |
+| Runner token | `wc_agent_...` | `webcodex agent-tokens create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
 
 ### Hosted shared key (`wck_...`)
@@ -290,7 +287,7 @@ quick answer.
 
 ### `wc_pat_*` (personal API token)
 
-- A managed user token generated locally by `webcodex token create-local`;
+- A managed user token generated locally by `webcodex tokens create-local`;
   the Server stores only its hash.
 - `webcodex login` writes it to a file named `webcodex-user-token` under the
   login directory for that server/user.
@@ -302,12 +299,11 @@ quick answer.
 ### `wc_agent_*` (Runner token)
 
 - A Runner transport token generated locally by
-  `webcodex agent-token create-local` and bound to a `client_id`.
+  `webcodex agent-tokens create-local` and bound to a `client_id`.
 - `webcodex login` stores it **only** inline in the generated `agent.toml`
   under `~/.config/webcodex/<server-slug>/<user>/` — no separate
-  `webcodex-runner-token` file is created. The advanced `webcodex client
-  enroll` flow (and the legacy `webcodex setup single-user` flow) additionally writes a
-  `webcodex-runner-token` file next to `webcodex-user-token`.
+  `webcodex-runner-token` file is created. This is the canonical managed
+  enrollment layout.
 - It is accepted only by Runner transport endpoints; using it on MCP/REST
   returns 403. Never use it as an MCP/API token.
 

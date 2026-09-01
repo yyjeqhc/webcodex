@@ -65,7 +65,7 @@ values are managed credentials and never fall back to shared-key auth. Use a
 different random key for the hosted shared-key flow, or use `webcodex login`
 for managed identity.
 
-`webcodex token generate` is offline material generation only. It does not
+`webcodex tokens generate` is offline material generation only. It does not
 register the generated credential with a remote Server, so do not use its
 output as a hosted shared key.
 
@@ -164,7 +164,7 @@ Use the actual install path for your host.
 
 ### Client accidentally runs `pairing create` and `/etc/webcodex/webcodex.env` is missing
 
-`webcodex pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webcodex login <server-url> --code <wc_pair_...>` (advanced: `webcodex client enroll`) with the short-lived `wc_pair_*` code from the server owner.
+`webcodex pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webcodex login <server-url> --code <wc_pair_...>` with the short-lived `wc_pair_*` code from the server owner.
 
 Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete `agent.toml` files.
 
@@ -231,8 +231,7 @@ In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
 In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
 `webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
 only for Runner transport — after `webcodex login` it lives inline in
-`agent.toml`, with no separate `webcodex-runner-token` file (the advanced
-`webcodex client enroll` flow writes one). A 403 after putting a `wc_agent_*`
+`agent.toml`, with no separate `webcodex-runner-token` file. A 403 after putting a `wc_agent_*`
 value in `--token` or `--token-file` is the expected security boundary: select
 the generated `webcodex-user-token` instead. Recent CLI commands also diagnose
 this mismatch without printing the complete token. `WEBCODEX_TOKEN` is

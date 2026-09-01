@@ -14,8 +14,8 @@ surfaces.
 | Project Credential | (private file) | `webcodex setup` | exact access to one private project grant | other projects/admin/general quick start |
 | Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT/MCP/agent |
-| Personal API token (PAT) | `wc_pat_...` | `webcodex token create-local` | GPT Actions, MCP, runtime API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex agent-token create-local` | Runner transport only | GPT/MCP/runtime/project API |
+| Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, runtime API | Runner connectivity |
+| Runner token | `wc_agent_...` | `webcodex agent-tokens create-local` | Runner transport only | GPT/MCP/runtime/project API |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
 
 The quick answer for "which token do I need?" is in
@@ -102,14 +102,14 @@ fallback.
 `--issue-credential`. The user uses it locally with:
 
 ```bash
-webcodex token create-local
-webcodex agent-token create-local
+webcodex tokens create-local
+webcodex agent-tokens create-local
 ```
 
 Those commands generate plaintext tokens locally and register only token hashes
 with the server.
 
-`webcodex token generate --kind api|agent` is an offline primitive: it prints a
+`webcodex tokens generate --kind api|agent` is an offline primitive: it prints a
 token and hash but registers nothing. Its output cannot authenticate until the
 hash is registered through the managed credential flow. Do not use an
 offline-generated `wc_pat_*` or `wc_agent_*` as a hosted shared key.
@@ -159,9 +159,8 @@ account endpoints.
 
 `webcodex login` stores it **only** inline in the generated `agent.toml`
 (`~/.config/webcodex/<server-slug>/<user>/agent.toml`); it does not create a
-`webcodex-runner-token` file. The advanced `webcodex client enroll` flow (and
-the legacy `webcodex setup single-user` flow) additionally writes a `webcodex-runner-token` file
-next to `webcodex-user-token`. Selecting a `wc_agent_*` value for a
+`webcodex-runner-token` file. This is the canonical managed enrollment layout.
+Selecting a `wc_agent_*` value for a
 user/runtime CLI token is diagnosed locally where possible and remains a
 server-side 403.
 

@@ -1,7 +1,6 @@
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::admin_cli::AdminOptions;
 use crate::TokenGenerateOptions;
 
 pub(crate) fn generate_bootstrap_token() -> String {
@@ -55,36 +54,6 @@ For the hosted shared-key flow, use `webcodex connect`.\n",
         hash,
         local_token_prefix(&token)
     )
-}
-
-/// Resolve the bootstrap token for setup/admin commands. Order:
-/// `--token` > `--token-file` > `WEBCODEX_TOKEN`. Errors never echo the token.
-pub(crate) fn resolve_token(opts: &AdminOptions, env_key: &str) -> Result<String, String> {
-    if let Some(token) = &opts.token {
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            return Err("--token cannot be empty".to_string());
-        }
-        return Ok(token);
-    }
-    if let Some(path) = &opts.token_file {
-        let token = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
-            .trim()
-            .to_string();
-        if token.is_empty() {
-            return Err("--token-file cannot be empty".to_string());
-        }
-        return Ok(token);
-    }
-    let token = std::env::var(env_key)
-        .map_err(|_| format!("--token, --token-file, or {} is required", env_key))?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err(format!("{} cannot be empty", env_key));
-    }
-    Ok(token)
 }
 
 /// Return a short non-secret prefix of a token, e.g. `wc_abcd…`. Never

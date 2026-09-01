@@ -32,11 +32,11 @@ fn users_create_builds_admin_request_via_admin_cli() {
 #[test]
 fn user_create_issue_credential_sets_request_field() {
     let action = cli_action(args(&[
-        "user",
+        "users",
         "create",
-        "--server",
+        "--server-url",
         "https://example.test/",
-        "--admin-token",
+        "--token",
         "fake-admin",
         "--username",
         "alice",
@@ -55,7 +55,7 @@ fn user_create_issue_credential_sets_request_field() {
 
 #[test]
 fn token_generate_api_prints_token_hash_and_prefix() {
-    let action = cli_action(args(&["token", "generate", "--kind", "api"]));
+    let action = cli_action(args(&["tokens", "generate", "--kind", "api"]));
     match action {
         CliAction::TokenGenerate(opts) => {
             let out = render_token_generate(opts);
@@ -71,7 +71,7 @@ fn token_generate_api_prints_token_hash_and_prefix() {
 
 #[test]
 fn token_generate_agent_prints_token_hash_and_prefix() {
-    let action = cli_action(args(&["token", "generate", "--kind", "agent"]));
+    let action = cli_action(args(&["tokens", "generate", "--kind", "agent"]));
     match action {
         CliAction::TokenGenerate(opts) => {
             let out = render_token_generate(opts);
@@ -108,11 +108,11 @@ fn credential_resolution_priority_is_explicit_then_env_name_then_default_env() {
 #[test]
 fn token_register_hash_builds_hash_registration_request() {
     let action = cli_action(args(&[
-        "token",
+        "tokens",
         "register-hash",
-        "--server",
+        "--server-url",
         "https://example.test",
-        "--user",
+        "--username",
         "alice",
         "--credential",
         "wc_acct_fake",
@@ -142,11 +142,11 @@ fn token_register_hash_builds_hash_registration_request() {
 #[test]
 fn agent_token_register_hash_builds_hash_registration_request() {
     let action = cli_action(args(&[
-        "agent-token",
+        "agent-tokens",
         "register-hash",
-        "--server",
+        "--server-url",
         "https://example.test",
-        "--user",
+        "--username",
         "alice",
         "--credential",
         "wc_acct_fake",

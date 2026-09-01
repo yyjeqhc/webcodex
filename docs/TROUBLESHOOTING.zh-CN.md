@@ -59,7 +59,7 @@ Managed Agent Token 不受这些 shared-key 数量和保留期限限制；所有
 credentials，绝不会 fallback 成 shared key。Hosted shared-key 流程请使用另一个
 随机 key；需要 managed identity 时使用 `webcodex login`。
 
-`webcodex token generate` 只进行离线材料生成，不会向远程 Server 注册生成的
+`webcodex tokens generate` 只进行离线材料生成，不会向远程 Server 注册生成的
 credential，因此不要把其输出当成 hosted shared key。
 
 ### Hosted Runner 已退出或 PID state 过期
@@ -150,7 +150,7 @@ sudo ln -s /opt/webcodex/bin/webcodex /usr/local/bin/webcodex
 
 ### Client 误运行 `pairing create`，且 `/etc/webcodex/webcodex.env` 缺失
 
-`webcodex pairing create` 是 server/admin-side 命令，需要 server bootstrap env file。朋友或 client 机器应运行 `webcodex login <server-url> --code <wc_pair_...>`（高级替代：`webcodex client enroll`），并使用 server owner 发来的短期 `wc_pair_*` code。
+`webcodex pairing create` 是 server/admin-side 命令，需要 server bootstrap env file。朋友或 client 机器应运行 `webcodex login <server-url> --code <wc_pair_...>`，并使用 server owner 发来的短期 `wc_pair_*` code。
 
 机器之间只复制 `wc_pair_*` code。不要复制 `WEBCODEX_TOKEN`、user API tokens、agent tokens、env files 或完整 `agent.toml` files。
 
@@ -216,8 +216,7 @@ Hosted quick-start 中，MCP 与 Runner 使用同一个非 `wc_` shared key。Ma
 mode 中，GPT Actions、MCP 和普通 REST/project API 使用
 `webcodex-user-token`（`wc_pat_*`）；Runner 令牌（`wc_agent_*`）只给
 Runner transport 使用——`webcodex login` 之后它内联在 `agent.toml` 中，
-没有单独的 `webcodex-runner-token` 文件（高级的 `webcodex client enroll`
-流程会写入一个）。把 `wc_agent_*` 放入
+没有单独的 `webcodex-runner-token` 文件。把 `wc_agent_*` 放入
 `--token` 或 `--token-file` 后得到 403，正是预期安全边界；应改用生成的
 `webcodex-user-token`。新版 CLI 也会在不打印完整 token 的前提下诊断这个错误。
 `WEBCODEX_TOKEN` 面向 bootstrap/admin，

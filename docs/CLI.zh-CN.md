@@ -67,7 +67,6 @@ continuation 都使用 `work_on_project`。
 | `webcodex login <server-url> --code <wc_pair_...> [--project PATH]` | 用一次性登录码把本机接入 Server | 普通 managed 接入入口；`--project` 选择实际项目，`--allowed-root` 指定以后允许添加项目的父目录；`--print-mcp-config` 可显式打印敏感的 ChatGPT MCP 连接信息。 |
 | `webcodex project register --config PATH <PROJECT>` | 给现有 Runner 再添加一个项目 | 写入该 Runner 的项目配置；不要求 Server 在线即可持久化，运行中的 Runner 是否需 reload 以命令输出为准。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
-| `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex logout <server-url> [--user USER|--all]` | 移除本机对某 Server 的凭据 | 只有一个 saved user 时自动选择；多个 saved user 时必须用 `--user USER` 选择一个，或显式用 `--all` 选择全部；真正删除仍遵守现有 confirmation/`--yes` 流程。 |
 
 ### Runner 生命周期
@@ -156,16 +155,16 @@ Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连�
 | `webcodex auth status` | 显示本机已登录哪些 Server | 只读；支持 `--dir` 与 `--json`。 |
 | `webcodex users create` | 创建用户；`--issue-credential` 返回一次性 account credential | Server/admin 侧；使用 `--server-url`。 |
 | `webcodex users list` | 列出用户 | |
-| `webcodex token create-local` | 本地生成 `wc_pat_*` 个人 API 令牌并注册其 hash | 使用 `--server` 与 account credential。 |
+| `webcodex tokens create-local` | 本地生成 `wc_pat_*` 个人 API 令牌并注册其 hash | 使用 `--server-url`、`--username` 与 account credential。 |
 | `webcodex tokens create` | Admin：在服务端创建 PAT | 使用 `--server-url`。 |
-| `webcodex token generate` | 离线生成令牌素材 | **不会**在 Server 注册。 |
+| `webcodex tokens generate` | 离线生成令牌素材 | **不会**在 Server 注册。 |
 | `webcodex tokens list` / `revoke` / `register-hash` | 列出或撤销 PAT；注册外部计算的 hash | Admin 侧；使用 `--server-url`。 |
-| `webcodex agent-token create-local` | 本地生成 `wc_agent_*` Runner 令牌并注册其 hash | 绑定 `--client-id`。 |
+| `webcodex agent-tokens create-local` | 本地生成 `wc_agent_*` Runner 令牌并注册其 hash | 使用 `--server-url` 并绑定 `--client-id`。 |
 | `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin 变体 | |
 
-注意 flag 差异：`users create` 以及 admin 的 `tokens`/`agent-tokens` 命令使用
-`--server-url`；本地的 `token create-local` 与 `agent-token create-local`
-使用 `--server`。
+所有面向 Server 的 credential 命令统一使用 canonical `--server-url`。
+本地 `tokens create-local` / `agent-tokens create-local` 使用 `--username` 与 account
+credential；admin token management 也使用相同的 plural namespace。
 
 ### 高级与兼容命令
 
@@ -173,12 +172,10 @@ Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连�
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex client enroll` | 显式指定 `--client-id` 的高级接入 | 其 help 说明：高级用法；优先用 `webcodex login`，它会派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
-| `webcodex token generate` | 离线生成令牌素材 | 不注册任何东西；若需要服务端注册 hash，把输出配 `tokens register-hash` 使用。 |
+| `webcodex tokens generate` | 离线生成令牌素材 | 不注册任何东西；若需要服务端注册 hash，把输出配 `tokens register-hash` 使用。 |
 | `webcodex tokens register-hash` | Admin：注册外部计算的 PAT hash | 使用 `--server-url`；用于离线生成的素材。 |
 | `webcodex agent-tokens register-hash` | Admin：注册外部计算的 Runner 令牌 hash | 使用 `--server-url`；用于离线生成的素材。 |
-| `webcodex setup single-user` | 遗留的单用户 bootstrap 流程 | 不是常规路径。 |
 
 ## 术语
 
@@ -226,8 +223,8 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
 | Project Credential | （私有文件） | `webcodex setup` | 单个项目的 Connector + Runner | 其他项目、admin |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT Actions、MCP、Runner |
-| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex token create-local` | GPT Actions、MCP、REST API | Runner 连接 |
-| Runner 令牌 | `wc_agent_...` | `webcodex agent-token create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
+| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions、MCP、REST API | Runner 连接 |
+| Runner 令牌 | `wc_agent_...` | `webcodex agent-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
 
 ### Hosted 共享 key（`wck_...`）
@@ -263,7 +260,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 ### `wc_pat_*`（个人 API 令牌）
 
-- 由 `webcodex token create-local` 本地生成的 managed user token；Server 只存
+- 由 `webcodex tokens create-local` 本地生成的 managed user token；Server 只存
   hash。
 - `webcodex login` 会把它写入该 server/user 登录目录下名为 `webcodex-user-token`
   的文件。
@@ -273,13 +270,11 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 ### `wc_agent_*`（Runner 令牌）
 
-- 由 `webcodex agent-token create-local` 本地生成并绑定 `client_id` 的 Runner
+- 由 `webcodex agent-tokens create-local` 本地生成并绑定 `client_id` 的 Runner
   传输令牌。
 - `webcodex login` 只会把它**内联**写进生成的 `agent.toml`（位于
   `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的
-  `webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
-  `webcodex setup single-user` 流程）会额外在 `webcodex-user-token` 旁边写入一个
-  `webcodex-runner-token` 文件。
+  `webcodex-runner-token` 文件。这是 canonical managed enrollment 布局。
 - 只被 Runner 传输 endpoint 接受；用在 MCP/REST 上会返回 403。不要当作
   MCP/API 令牌。
 

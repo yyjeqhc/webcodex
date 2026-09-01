@@ -58,6 +58,13 @@ WebCodex 不保证与 v0.3.9 及更早 Server/Runner 二进制的滚动兼容。
 修改可以有意移除旧 wire 或认证兼容面，因此跨越这些修改时应同步升级 first-party
 Server 与 Runner。只有当前合同明确保留的兼容面才属于受支持范围。
 
+从 `v0.3.9` 及更早版本跨到 `v0.4` 时，应同步升级 first-party Server 与 Runner。
+在 `v0.4.x` 内，generation 2 是 compatibility floor：first-party Server/Runner
+应保持滚动互操作，新功能优先通过 additive capability 演进。缺少增量 capability
+时，仅该功能不可用/fail closed；不应因此把一个原本有效的 `v0.4` Runner 整体判为
+不兼容。patch release 也不应任意扩大 generation-2 baseline-required capability set。
+这一承诺不向 pre-0.4 二进制提供滚动兼容保证。
+
 当前 first-party Runner 注册只接受 protocol generation 2：
 `capabilities.agent_protocol_generation` 必须精确为 `2`。缺失、generation `1` 或未知
 值都会在创建 Runner record 前 fail closed。generation 2 的 22 个 baseline capability

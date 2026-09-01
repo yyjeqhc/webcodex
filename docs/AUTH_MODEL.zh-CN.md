@@ -13,8 +13,8 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | Project Credential | （私有文件） | `webcodex setup` | 精确访问单个私有项目授权 | 其他项目/admin/通用 quick start |
 | 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT/MCP/agent |
-| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex token create-local` | GPT Actions、MCP、runtime API | Runner 连接 |
-| Runner 令牌 | `wc_agent_...` | `webcodex agent-token create-local` | 仅 Runner 传输 | GPT/MCP/runtime/project API |
+| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions、MCP、runtime API | Runner 连接 |
+| Runner 令牌 | `wc_agent_...` | `webcodex agent-tokens create-local` | 仅 Runner 传输 | GPT/MCP/runtime/project API |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
 
 "我需要哪个令牌？"的快速答案见 [CLI.md](CLI.zh-CN.md#凭据我到底需要哪个令牌)。
@@ -80,13 +80,13 @@ fallback。managed `wc_*` 值与空/空白 Bearer 值永远不会回退到 share
 本地执行：
 
 ```bash
-webcodex token create-local
-webcodex agent-token create-local
+webcodex tokens create-local
+webcodex agent-tokens create-local
 ```
 
 这两个命令本地生成明文令牌，并只向 server 注册令牌 hash。
 
-`webcodex token generate --kind api|agent` 是离线原语：打印令牌与 hash，但不会
+`webcodex tokens generate --kind api|agent` 是离线原语：打印令牌与 hash，但不会
 注册任何东西。其输出在通过 managed credential flow 注册 hash 前无法认证。不要把
 离线生成的 `wc_pat_*` 或 `wc_agent_*` 当作 hosted 共享 key。
 
@@ -131,9 +131,7 @@ tool、MCP 或 account endpoint。
 
 `webcodex login` 只会把它**内联**写进生成的 `agent.toml`
 （`~/.config/webcodex/<server-slug>/<user>/agent.toml`），不会创建
-`webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
-`webcodex setup single-user` 流程）会额外在 `webcodex-user-token` 旁边写入一个
-`webcodex-runner-token` 文件。本地能诊断时会把 `wc_agent_*` 用于
+`webcodex-runner-token` 文件。这是 canonical managed enrollment 布局。本地能诊断时会把 `wc_agent_*` 用于
 user/runtime CLI 令牌标记为错误，且服务端仍返回 403。
 
 ## `wc_pair_xxx`（pairing code）

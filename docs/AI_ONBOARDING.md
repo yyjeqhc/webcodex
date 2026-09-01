@@ -129,7 +129,7 @@ When a credential must be entered into ChatGPT/Claude, identify the source preci
 
 Never substitute a `wc_agent_*` Runner token for an MCP token, never use a
 bootstrap `WEBCODEX_TOKEN` as an MCP credential, and never assume offline
-`webcodex token generate` material is registered on a remote Server.
+`webcodex tokens generate` material is registered on a remote Server.
 
 ## Troubleshooting
 

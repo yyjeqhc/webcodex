@@ -367,3 +367,62 @@ The standing direction for model-facing execution is defined in
 Do not broaden an execution task into fleet upgrade management, Windows SCM
 productization, a generic process/service API, PTY support, or polished MCP App UI
 unless the user task explicitly requires that scope.
+
+---
+
+## 11. 0.4 compatibility floor
+
+`v0.4.0` is the new compatibility floor. The `0.3.x -> 0.4.0` boundary is an
+intentional pre-release cleanup boundary: release upgrade notes may require a
+coordinated change for the Runner generation cleanup, retired CLI aliases,
+pre-0.4 persisted-state cleanup, Tool/runtime surface cleanup, and authority or
+configuration cleanup. That pre-0.4 freedom does not continue through the
+`0.4.x` patch series.
+
+Once `v0.4.0` is published, its users are concrete external consumers. The
+standing rule for `0.4.x` is compatibility-first:
+
+1. **CLI.** Canonical commands and flags published in `v0.4.0` are not deleted
+   or renamed in a `0.4.x` patch release. Additive options are allowed, and
+   human-oriented prose may improve. Documented machine-readable JSON or schema
+   shapes require an additive or explicit migration/version strategy rather
+   than an unannounced breaking reinterpretation.
+2. **Runner configuration.** A canonical `agent.toml` accepted by `v0.4.0`
+   remains parseable throughout `0.4.x`. New fields should be optional or have
+   safe defaults. Patch releases do not force a filename or field rename merely
+   to make Runner terminology more uniform.
+3. **Server/Runner protocol.** Protocol generation 2 is the `0.4` baseline.
+   `0.4.x` does not introduce another required generation or arbitrarily expand
+   the generation-2 baseline-required capability set. New features should use
+   additive capabilities; when an otherwise-valid `0.4` Runner lacks such a
+   capability, that feature is unavailable/fails closed instead of invalidating
+   the entire Runner registration. First-party Server and Runner releases in
+   `0.4.x` should preserve rolling interoperability as far as security and
+   correctness allow.
+4. **Persisted state.** The durable DB, Workflow Session state, and other
+   relevant state accepted by `v0.4.0` form the migration floor for later
+   `0.4.x` releases. Shape evolution needs an explicit migration, default, or
+   version strategy. Migrations must be deterministic, idempotent, and
+   fail-closed; ambiguous old state must not be silently reinterpreted. This
+   decision does not require a generic migration framework before a concrete
+   state evolution needs one.
+5. **Model, HTTP, and MCP contracts.** Canonical model-visible tool names,
+   documented REST routes, MCP capability names, and documented serialized
+   field names released in `v0.4.0` evolve additively or migration-first during
+   `0.4.x`. A true removal or rename should normally wait for `v0.5.0`.
+
+The product concept and public lifecycle namespace are **Runner**, but several
+older `agent_*` names are already compatibility vocabulary and are deliberately
+frozen rather than cosmetically duplicated. In particular, `agent.toml`,
+`WEBCODEX_AGENT_CONFIG`, `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`,
+`agent_instance_id`, runtime project ids of the form
+`agent:<client_id>:<project_id>`, and established DB/wire `agent_*` fields keep
+their existing names. Do not introduce a `runner.toml || agent.toml` fallback or
+new `WEBCODEX_RUNNER_*` aliases solely for naming consistency; that would create
+a second representation instead of preserving one compatibility contract.
+
+Compatibility never requires retaining a known authentication bypass, unsafe
+authority, ambiguous or stale identity, or weakened fail-closed validation. A
+security- or correctness-required break is allowed only when it is explicit,
+narrowly scoped, documented, and accompanied by the required upgrade action in
+release notes.

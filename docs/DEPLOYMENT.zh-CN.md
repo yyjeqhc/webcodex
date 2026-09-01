@@ -218,7 +218,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` 是主要客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `agent.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo`。需要显式 client id 或自定义输出目录时，`webcodex client enroll` 仍是高级替代方案。
+`webcodex login` 是 canonical 客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `agent.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo`。需要显式设备 identity 或不同的本地 base directory 时，使用 `login` 已文档化的 `--device` 与 `--dir`；不再有单独的 compatibility enrollment 命令。
 
 pairing code 由 server/admin 侧创建：
 

@@ -574,40 +574,6 @@ pub(crate) fn system_user_is_root(user: &str) -> bool {
     user == "root" || user.parse::<u32>().is_ok_and(|uid| uid == 0)
 }
 
-/// Write `content` to `path` with 0600 permissions on Unix, creating parent
-/// directories as needed. Used for one-time plaintext token files.
-pub(crate) fn write_secret_file(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        use std::io::Write;
-        file.write_all(content.as_bytes())
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, content)
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-    }
-    Ok(())
-}
-
 pub(crate) fn read_optional_token(
     path: &Option<PathBuf>,
     label: &str,

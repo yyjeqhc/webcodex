@@ -45,12 +45,8 @@ pub(crate) use super::tool_catalog::{
 };
 #[cfg(test)]
 pub use super::tool_policy::is_known_tool_name;
-#[cfg(test)]
 pub(crate) use super::tool_policy::{
-    is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
-    runtime_tool_context_continuity_policy, runtime_tool_requires_explicit_business_session,
-};
-pub(crate) use super::tool_policy::{
+    adaptive_runtime_direct_tool_definitions, is_adaptive_runtime_direct_tool,
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
     model_visible_tool_names_csv, runtime_tool_accepts_context_ack,
     runtime_tool_advances_context_checkpoint, runtime_tool_agent_capability,
@@ -60,6 +56,11 @@ pub(crate) use super::tool_policy::{
     runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
     runtime_tool_requires_permission, runtime_tool_session_risk_class,
+};
+#[cfg(test)]
+pub(crate) use super::tool_policy::{
+    is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
+    runtime_tool_context_continuity_policy, runtime_tool_requires_explicit_business_session,
 };
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
@@ -265,10 +266,25 @@ pub(crate) struct ToolModelSpecDeclaration {
     pub(crate) input_schema: ToolInputSchemaFactory,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolModelSurfaceDeclaration {
+    /// Stable ordering for tools exposed directly by the adaptive runtime
+    /// surface. `None` is the default and means a model-visible runtime tool
+    /// belongs to the adaptive long tail behind `call_runtime_tool`.
+    pub(crate) adaptive_runtime_direct_rank: Option<u16>,
+}
+
+impl ToolModelSurfaceDeclaration {
+    const DEFAULT: Self = Self {
+        adaptive_runtime_direct_rank: None,
+    };
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToolDefinition {
     pub(crate) name: &'static str,
     pub(crate) model_spec: Option<ToolModelSpecDeclaration>,
+    pub(crate) model_surface: ToolModelSurfaceDeclaration,
     pub(crate) visibility: ToolVisibility,
     pub(crate) category: &'static str,
     pub(crate) metadata: ToolMetadata,
@@ -412,6 +428,7 @@ const fn def(
     ToolDefinition {
         name,
         model_spec: None,
+        model_surface: ToolModelSurfaceDeclaration::DEFAULT,
         visibility,
         category,
         metadata: make_tool_metadata(
@@ -439,6 +456,15 @@ const fn model_spec(
             description,
             input_schema,
         }),
+        ..definition
+    }
+}
+
+const fn adaptive_runtime_direct(definition: ToolDefinition, rank: u16) -> ToolDefinition {
+    ToolDefinition {
+        model_surface: ToolModelSurfaceDeclaration {
+            adaptive_runtime_direct_rank: Some(rank),
+        },
         ..definition
     }
 }

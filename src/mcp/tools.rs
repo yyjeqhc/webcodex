@@ -7,8 +7,8 @@ use super::tasks;
 use super::{require_mcp_scope, scope_forbidden, McpOutcome};
 use crate::auth::AuthContext;
 use crate::connector_runtime::{ConnectorRuntime, ConnectorTransport};
+use crate::model_surface::ModelSurface;
 pub(super) use crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
-use crate::model_surface::{ModelSurface, ADAPTIVE_RUNTIME_CORE_TOOL_NAMES};
 use crate::tool_request_trace::ToolRequestLifecycle;
 use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
@@ -18,7 +18,7 @@ use crate::tool_runtime::model_ergonomics_telemetry::{
     ModelErgonomicsRecord, ModelErgonomicsTimer,
 };
 use crate::tool_runtime::tool_definition::{
-    runtime_tool_accepts_context_ack, LOCAL_CODING_TOOL_NAMES,
+    is_adaptive_runtime_direct_tool, runtime_tool_accepts_context_ack, LOCAL_CODING_TOOL_NAMES,
 };
 #[cfg(test)]
 use crate::tool_runtime::ToolResult;
@@ -118,9 +118,7 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
 }
 
 fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -> bool {
-    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
-        || ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&target)
-    {
+    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME || is_adaptive_runtime_direct_tool(target) {
         return false;
     }
     if target == crate::mcp_gateway::MCP_TOOL_NAME {
@@ -263,7 +261,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
             filter_specs_for_oauth(crate::model_surface::local_coding_tool_specs(), auth)
         }
         ModelSurface::AdaptiveRuntime => filter_specs_for_oauth(
-            crate::model_surface::adaptive_runtime_core_tool_specs(),
+            crate::model_surface::adaptive_runtime_direct_tool_specs(),
             auth,
         ),
         ModelSurface::FullOperatorRuntime => {
@@ -1088,8 +1086,7 @@ pub(super) async fn handle_call(
     let surface_denied = match runtime.model_surface() {
         ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
         ModelSurface::AdaptiveRuntime => {
-            !via_adaptive_runtime_gateway
-                && !ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&params.name.as_str())
+            !via_adaptive_runtime_gateway && !is_adaptive_runtime_direct_tool(&params.name)
         }
         ModelSurface::FullOperatorRuntime | ModelSurface::CanonicalConnector => false,
     };

@@ -1,7 +1,7 @@
 use super::AgentCapability::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    context_recovery_only, def, extra_accepted_flattened_args, model_spec,
+    adaptive_runtime_direct, context_recovery_only, def, extra_accepted_flattened_args, model_spec,
     requires_explicit_business_session, ToolDefinition, TOOL_CATEGORY_SESSION,
     TOOL_CATEGORY_VALIDATION,
 };
@@ -59,50 +59,56 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         &["session_id"],
     ),
-    context_recovery_only(model_spec(
-        def(
-            "work_on_project",
-            ModelVisible,
-            "workflow",
-            Some(GitOrShell),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::WorkflowManage,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(RUNTIME_READ),
-            true,
-            NoPath,
-            false,
-            false,
-        ),
-        "Canonical model entry for ordinary coding/review via an existing project or Runner path; Git not required. Supports exact Session continuation and returns compact workflow plus project instructions.",
-        work_on_project_input_schema,
-    )),
-    requires_explicit_business_session(model_spec(
-        def(
-            "finish_coding_task",
-            ModelVisible,
-            "workflow",
-            Some(GitOrShell),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            true,
-            NoPath,
-            false,
-            false,
-        ),
-        "Return an optional deterministic evidence snapshot for model review, including workspace, validation, jobs, and recorded tool events. The result is advisory: it does not decide task completion, replace direct diff or test review, or generate the user-facing final report.",
-        finish_coding_task_input_schema,
-    )),
+    adaptive_runtime_direct(
+        context_recovery_only(model_spec(
+            def(
+                "work_on_project",
+                ModelVisible,
+                "workflow",
+                Some(GitOrShell),
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: super::ToolRisk::WorkflowManage,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(RUNTIME_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Canonical model entry for ordinary coding/review via an existing project or Runner path; Git not required. Supports exact Session continuation and returns compact workflow plus project instructions.",
+            work_on_project_input_schema,
+        )),
+        10,
+    ),
+    adaptive_runtime_direct(
+        requires_explicit_business_session(model_spec(
+            def(
+                "finish_coding_task",
+                ModelVisible,
+                "workflow",
+                Some(GitOrShell),
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Return an optional deterministic evidence snapshot for model review, including workspace, validation, jobs, and recorded tool events. The result is advisory: it does not decide task completion, replace direct diff or test review, or generate the user-facing final report.",
+            finish_coding_task_input_schema,
+        )),
+        150,
+    ),
     requires_explicit_business_session(model_spec(
         def(
             "session_summary",

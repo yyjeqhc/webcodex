@@ -14,7 +14,10 @@
 //!   falls through to another surface.
 
 use crate::connector_runtime::ConnectorContext;
-use crate::tool_runtime::tool_definition::{is_model_visible_tool_name, LOCAL_CODING_TOOL_NAMES};
+use crate::tool_runtime::tool_definition::{
+    adaptive_runtime_direct_tool_definitions, is_adaptive_runtime_direct_tool,
+    is_model_visible_tool_name, LOCAL_CODING_TOOL_NAMES,
+};
 use crate::tool_runtime::{registered_tool_specs, ToolSpec};
 
 pub(crate) const MODEL_SURFACE_LOCAL_CODING: &str = "local_coding";
@@ -31,27 +34,6 @@ pub(crate) const ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME: &str = "call_runtime_tool";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_DIRECT: &str = "direct";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_GATEWAY: &str = "gateway";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_UNAVAILABLE: &str = "unavailable";
-
-/// Small typed surface for hosts that can discover a long-tail runtime gateway lazily.
-/// Keep high-frequency coding operations direct; advanced domains remain reachable
-/// through the adaptive MCP gateway without expanding their schemas into tools/list.
-pub(crate) const ADAPTIVE_RUNTIME_CORE_TOOL_NAMES: &[&str] = &[
-    "work_on_project",
-    "runtime_status",
-    "tool_manifest",
-    "search_project_texts",
-    "read_files",
-    "apply_text_edits",
-    "run_process",
-    "observe_jobs",
-    "cargo_check",
-    "cargo_test",
-    "go_test",
-    "git_review_summary",
-    "show_changes",
-    "workspace_hygiene_check",
-    "finish_coding_task",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelSurface {
@@ -96,7 +78,7 @@ impl ModelSurface {
                 }
             }
             Self::AdaptiveRuntime => {
-                if ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&tool_name) {
+                if is_adaptive_runtime_direct_tool(tool_name) {
                     (TOOL_SURFACE_AVAILABILITY_DIRECT, None)
                 } else {
                     (
@@ -160,19 +142,23 @@ pub(crate) fn local_coding_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-/// Registered direct ToolSpecs for the adaptive runtime surface. Long-tail
-/// runtime tools are not listed here; the MCP adapter exposes one bounded
-/// gateway for those names while preserving normal ToolRuntime authorization.
-pub(crate) fn adaptive_runtime_core_tool_specs() -> Vec<ToolSpec> {
+/// Registered direct ToolSpecs for the adaptive runtime surface, ordered by
+/// the rank statically declared on canonical ToolDefinitions. Ordinary
+/// model-visible runtime tools default to the long-tail gateway unless their
+/// ToolDefinition explicitly promotes them to direct.
+pub(crate) fn adaptive_runtime_direct_tool_specs() -> Vec<ToolSpec> {
     let mut by_name: std::collections::HashMap<String, ToolSpec> = registered_tool_specs()
         .into_iter()
         .map(|spec| (spec.name.clone(), spec))
         .collect();
-    ADAPTIVE_RUNTIME_CORE_TOOL_NAMES
-        .iter()
-        .map(|name| {
-            by_name.remove(*name).unwrap_or_else(|| {
-                panic!("{name} adaptive_runtime core tool is missing a registered ToolSpec")
+    adaptive_runtime_direct_tool_definitions()
+        .into_iter()
+        .map(|definition| {
+            by_name.remove(definition.name).unwrap_or_else(|| {
+                panic!(
+                    "{} adaptive_runtime direct tool is missing a registered ToolSpec",
+                    definition.name
+                )
             })
         })
         .collect()
@@ -212,20 +198,29 @@ mod tests {
         }
     }
 
+    const EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES: &[&str] = &[
+        "work_on_project",
+        "runtime_status",
+        "tool_manifest",
+        "search_project_texts",
+        "read_files",
+        "apply_text_edits",
+        "run_process",
+        "observe_jobs",
+        "cargo_check",
+        "cargo_test",
+        "go_test",
+        "git_review_summary",
+        "show_changes",
+        "workspace_hygiene_check",
+        "finish_coding_task",
+    ];
+
     #[test]
-    fn adaptive_runtime_core_is_small_unique_and_fully_registered() {
-        assert_eq!(
-            ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len(),
-            15,
-            "adaptive core size is an intentional model-admission budget"
-        );
-        let mut seen = std::collections::HashSet::new();
-        for name in ADAPTIVE_RUNTIME_CORE_TOOL_NAMES {
-            assert!(seen.insert(*name), "{name} is duplicated in adaptive core");
-        }
-        let specs = adaptive_runtime_core_tool_specs();
+    fn adaptive_runtime_direct_set_is_definition_derived_and_preserves_current_order() {
+        let specs = adaptive_runtime_direct_tool_specs();
         let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
-        assert_eq!(names, ADAPTIVE_RUNTIME_CORE_TOOL_NAMES);
+        assert_eq!(names, EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES);
         for spec in &specs {
             assert!(
                 crate::tool_runtime::tool_definition::is_model_visible_tool_name(&spec.name),
@@ -233,6 +228,19 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    #[test]
+    fn ordinary_model_visible_tool_defaults_to_adaptive_gateway() {
+        assert!(is_model_visible_tool_name("run_script"));
+        assert!(!is_adaptive_runtime_direct_tool("run_script"));
+        assert_eq!(
+            ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route("run_script"),
+            (
+                TOOL_SURFACE_AVAILABILITY_GATEWAY,
+                Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+            )
+        );
     }
 
     #[test]
@@ -272,7 +280,7 @@ mod tests {
                 "{name} must not expand local_coding"
             );
             assert!(
-                !ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.contains(&name),
+                !is_adaptive_runtime_direct_tool(name),
                 "{name} must stay behind adaptive_runtime discovery"
             );
             assert!(

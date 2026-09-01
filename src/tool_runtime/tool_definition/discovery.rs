@@ -1,7 +1,7 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
-    context_recovery_only, def, model_spec, ToolDefinition, TOOL_CATEGORY_PROJECT,
-    TOOL_CATEGORY_RUNTIME,
+    adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
+    TOOL_CATEGORY_PROJECT, TOOL_CATEGORY_RUNTIME,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -125,48 +125,54 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "List caller-visible Runners; use exact client_id/client_ids if known, summary_only + include_projects=false for health. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
         list_agents_input_schema,
     )),
-    context_recovery_only(model_spec(
-        def(
-            "runtime_status",
-            ModelVisible,
-            TOOL_CATEGORY_RUNTIME,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-        ),
-        "Read runtime status; pass exact client_id for one Runner deployment/source alignment, omit for fleet-wide. Reports shared Job concurrency; global mode includes bounded host_context advisory metadata, never authority.",
-        runtime_status_input_schema,
-    )),
-    context_recovery_only(model_spec(
-        def(
-            "tool_manifest",
-            ModelVisible,
-            TOOL_CATEGORY_RUNTIME,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-        ),
-        "Return compact runtime discovery. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
-        tool_manifest_input_schema,
-    )),
+    adaptive_runtime_direct(
+        context_recovery_only(model_spec(
+            def(
+                "runtime_status",
+                ModelVisible,
+                TOOL_CATEGORY_RUNTIME,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Read runtime status; pass exact client_id for one Runner deployment/source alignment, omit for fleet-wide. Reports shared Job concurrency; global mode includes bounded host_context advisory metadata, never authority.",
+            runtime_status_input_schema,
+        )),
+        20,
+    ),
+    adaptive_runtime_direct(
+        context_recovery_only(model_spec(
+            def(
+                "tool_manifest",
+                ModelVisible,
+                TOOL_CATEGORY_RUNTIME,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Return compact runtime discovery. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
+            tool_manifest_input_schema,
+        )),
+        30,
+    ),
 ];

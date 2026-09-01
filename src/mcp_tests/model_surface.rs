@@ -250,14 +250,26 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
+    let direct_names = crate::model_surface::adaptive_runtime_direct_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
     assert_eq!(
         names.len(),
-        crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len() + 1,
-        "adaptive surface should expose only the typed core plus one gateway"
+        direct_names.len() + 1,
+        "adaptive surface should expose only the definition-derived direct set plus one gateway"
     );
     assert_eq!(
-        &names[..crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES.len()],
-        crate::model_surface::ADAPTIVE_RUNTIME_CORE_TOOL_NAMES
+        &names[..direct_names.len()],
+        direct_names.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    let serialized_tools_bytes = serde_json::to_vec(tools).unwrap().len();
+    // Measured migration baseline: 417,613 bytes. Keep ~12.8% schema-growth
+    // headroom without turning the current tool count into an architectural lock.
+    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 460 * 1024;
+    assert!(
+        serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES,
+        "adaptive tools/list schema cost {serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES} bytes"
     );
     assert_eq!(
         names.last().copied(),
@@ -308,6 +320,24 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
 #[tokio::test]
 async fn adaptive_runtime_requires_gateway_for_long_tail_and_preserves_dispatch() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7201)),
+            mcp_2026_params(json!({
+                "name": "runtime_status",
+                "arguments": {"summary_only": true}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = direct else {
+        panic!("adaptive direct runtime_status must dispatch directly");
+    };
+    assert_eq!(value["result"]["structuredContent"]["success"], true);
+
     let direct = handle_mcp_request(
         &runtime,
         rpc(
@@ -433,6 +463,7 @@ async fn adaptive_runtime_gateway_rejects_recursive_and_unknown_targets() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     for target in [
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+        "runtime_status",
         "read_files",
         "work_on_project",
         "start_coding_task",
@@ -506,6 +537,32 @@ async fn adaptive_runtime_tool_manifest_describes_one_long_tail_contract_without
     assert_eq!(output["contract"]["input_schema"]["type"], "object");
     assert!(output["contract"]["input_schema"]["properties"]["script"].is_object());
     assert!(output["contract"].get("output_schema").is_none());
+
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7241)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {
+                    "tool_name": "runtime_status",
+                    "include_recommended_flows": false,
+                    "include_risk_summary": false
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = direct else {
+        panic!("adaptive tool_manifest direct contract must succeed");
+    };
+    let direct_output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(direct_output["contract"]["availability"], "direct");
+    assert!(direct_output["contract"]["gateway_tool"].is_null());
+    assert_eq!(direct_output["tools"][0]["availability"], "direct");
+    assert!(direct_output["tools"][0]["gateway_tool"].is_null());
 
     let listed = handle_mcp_request(
         &runtime,

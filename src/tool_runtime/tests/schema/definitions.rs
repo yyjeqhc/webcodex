@@ -71,6 +71,46 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 }
 
 #[test]
+fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
+    use crate::tool_runtime::tool_definition::{
+        adaptive_runtime_direct_tool_definitions, tool_definitions,
+    };
+
+    let mut seen_ranks = std::collections::BTreeMap::new();
+    for definition in tool_definitions() {
+        let Some(rank) = definition.adaptive_runtime_direct_rank() else {
+            continue;
+        };
+        assert!(
+            definition.visibility.is_model_visible(),
+            "{} cannot declare adaptive direct rank {rank} while model-hidden",
+            definition.name
+        );
+        assert!(
+            seen_ranks.insert(rank, definition.name).is_none(),
+            "adaptive direct rank {rank} is duplicated"
+        );
+    }
+
+    let derived = adaptive_runtime_direct_tool_definitions();
+    assert!(
+        !derived.is_empty(),
+        "adaptive direct declarations must not be empty"
+    );
+    for pair in derived.windows(2) {
+        assert!(
+            pair[0].adaptive_runtime_direct_rank() < pair[1].adaptive_runtime_direct_rank(),
+            "adaptive direct definitions must be strictly ordered by unique rank"
+        );
+    }
+    assert_eq!(
+        derived.len(),
+        seen_ranks.len(),
+        "every adaptive direct declaration must be present in the derived set"
+    );
+}
+
+#[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::tool_definitions;

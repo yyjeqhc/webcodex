@@ -3,8 +3,8 @@ use super::AgentCapability::{
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, model_spec, permission_risk, require_all_scopes, requires_explicit_business_session,
-    ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
+    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
+    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
 };
 use crate::auth::scopes::SCOPE_JOB_DETACH;
 use crate::tool_runtime::metadata::{
@@ -21,27 +21,30 @@ use crate::tool_runtime::registry::input_schemas::{
 };
 
 pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
-    model_spec(
-        def(
-            "run_process",
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            Some(StructuredProcess),
-            TOOL_PROVIDER_AGENT,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Execute,
-                risk: JobRun,
-                approval: super::ToolApprovalPolicy::Standard,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(JOB_RUN),
-            true,
-            NoPath,
-            true,
-            true,
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "run_process",
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                Some(StructuredProcess),
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(JOB_RUN),
+                true,
+                NoPath,
+                true,
+                true,
+            ),
+            "Run one native executable with literal argv and no shell parsing. Long work continues as the same execution; choose a shell command tool only when shell syntax or a Windows batch file is required.",
+            run_process_input_schema,
         ),
-        "Run one native executable with literal argv and no shell parsing. Long work continues as the same execution; choose a shell command tool only when shell syntax or a Windows batch file is required.",
-        run_process_input_schema,
+        70,
     ),
     require_all_scopes(
         model_spec(
@@ -297,27 +300,30 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         "Read bounded stdout/stderr for one Job. Return its opaque token to receive only new output; reset means a bounded recovery tail. wait_secs performs one bounded wait. Never starts or retries execution.",
         job_log_input_schema,
     ),
-    model_spec(
-        def(
-            "observe_jobs",
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            None,
-            TOOL_PROVIDER_NATIVE,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "observe_jobs",
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                None,
+                TOOL_PROVIDER_NATIVE,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Observe 1 to 8 Jobs with bounded baseline/delta logs and isolated errors. Return each opaque token unchanged for compact follow-ups. Optionally wait once for any change; never launches, retries, stops, or subscribes.",
+            observe_jobs_input_schema,
         ),
-        "Observe 1 to 8 Jobs with bounded baseline/delta logs and isolated errors. Return each opaque token unchanged for compact follow-ups. Optionally wait once for any change; never launches, retries, stops, or subscribes.",
-        observe_jobs_input_schema,
+        80,
     ),
 ];
 

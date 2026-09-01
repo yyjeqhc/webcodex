@@ -59,6 +59,10 @@ impl ToolDefinition {
         self.policy.captures_validation_output
     }
 
+    pub(crate) fn adaptive_runtime_direct_rank(self) -> Option<u16> {
+        self.model_surface.adaptive_runtime_direct_rank
+    }
+
     pub(crate) fn context_continuity_policy(self) -> ToolContextContinuityPolicy {
         self.policy.context_continuity
     }
@@ -314,6 +318,31 @@ pub(crate) fn model_hidden_tool_names() -> impl Iterator<Item = &'static str> {
 
 pub(crate) fn model_visible_tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
     tool_definitions().filter(|definition| definition.visibility.is_model_visible())
+}
+
+pub(crate) fn runtime_tool_adaptive_direct_rank(name: &str) -> Option<u16> {
+    lookup_tool_definition(name)
+        .filter(|definition| definition.visibility.is_model_visible())
+        .and_then(|definition| definition.adaptive_runtime_direct_rank())
+}
+
+pub(crate) fn is_adaptive_runtime_direct_tool(name: &str) -> bool {
+    runtime_tool_adaptive_direct_rank(name).is_some()
+}
+
+pub(crate) fn adaptive_runtime_direct_tool_definitions() -> Vec<&'static ToolDefinition> {
+    let mut definitions = model_visible_tool_definitions()
+        .filter(|definition| definition.adaptive_runtime_direct_rank().is_some())
+        .collect::<Vec<_>>();
+    definitions.sort_by_key(|definition| {
+        (
+            definition
+                .adaptive_runtime_direct_rank()
+                .expect("adaptive direct definition rank"),
+            definition.name,
+        )
+    });
+    definitions
 }
 
 pub(crate) fn model_visible_tool_names_csv() -> String {

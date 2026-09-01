@@ -1,7 +1,8 @@
 use super::AgentCapability::{GitOrShell, Shell, StructuredProcess};
 use super::ToolVisibility::ModelVisible;
 use super::{
-    context_recovery_only, def, git_like, model_spec, ToolDefinition, TOOL_CATEGORY_CLEANUP,
+    adaptive_runtime_direct, context_recovery_only, def, git_like, model_spec, ToolDefinition,
+    TOOL_CATEGORY_CLEANUP,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, PathList},
@@ -13,28 +14,31 @@ use crate::tool_runtime::registry::input_schemas::{
     git_restore_paths_input_schema, workspace_hygiene_check_input_schema,
 };
 
-pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_recovery_only(model_spec(
-    def(
-        "workspace_hygiene_check",
-        ModelVisible,
-        TOOL_CATEGORY_CLEANUP,
-        Some(GitOrShell),
-        TOOL_PROVIDER_AGENT,
-        super::ToolSemanticContract {
-            effect: super::ToolEffect::Observe,
-            risk: Read,
-            approval: super::ToolApprovalPolicy::None,
-            idempotency: super::ToolIdempotency::PureRead,
-        },
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
-    workspace_hygiene_check_input_schema,
-))];
+pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
+    context_recovery_only(model_spec(
+        def(
+            "workspace_hygiene_check",
+            ModelVisible,
+            TOOL_CATEGORY_CLEANUP,
+            Some(GitOrShell),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
+        workspace_hygiene_check_input_schema,
+    )),
+    140,
+)];
 
 pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(

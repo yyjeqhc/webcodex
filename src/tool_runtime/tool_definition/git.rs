@@ -1,8 +1,8 @@
 use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    change_summary_like, context_recovery_only, def, git_like, model_spec, ToolDefinition,
-    TOOL_CATEGORY_GIT,
+    adaptive_runtime_direct, change_summary_like, context_recovery_only, def, git_like, model_spec,
+    ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_AGENT,
@@ -36,50 +36,56 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         "Read-only git diff summary for a project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree.",
         git_diff_summary_input_schema,
     )))),
-    context_recovery_only(change_summary_like(git_like(model_spec(
-        def(
-            "git_review_summary",
-            ModelVisible,
-            TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-        ),
-        "Deterministic bounded committed-range review map. Use before targeted git_diff_hunks/read_file during branch or PR review. Does not judge correctness and never mutates the repository.",
-        git_review_summary_input_schema,
-    )))),
-    context_recovery_only(change_summary_like(git_like(model_spec(
-        def(
-            "show_changes",
-            ModelVisible,
-            TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-        ),
-        "Default inspect/review tool before final response. Read-only worktree overview with status, warnings, next actions, and bounded hunks. If hunks truncate, diff_review_handoff points to git_diff_hunks for focused/paged review.",
-        show_changes_input_schema,
-    )))),
+    adaptive_runtime_direct(
+        context_recovery_only(change_summary_like(git_like(model_spec(
+            def(
+                "git_review_summary",
+                ModelVisible,
+                TOOL_CATEGORY_GIT,
+                Some(GitOrShell),
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Deterministic bounded committed-range review map. Use before targeted git_diff_hunks/read_file during branch or PR review. Does not judge correctness and never mutates the repository.",
+            git_review_summary_input_schema,
+        )))),
+        120,
+    ),
+    adaptive_runtime_direct(
+        context_recovery_only(change_summary_like(git_like(model_spec(
+            def(
+                "show_changes",
+                ModelVisible,
+                TOOL_CATEGORY_GIT,
+                Some(GitOrShell),
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Default inspect/review tool before final response. Read-only worktree overview with status, warnings, next actions, and bounded hunks. If hunks truncate, diff_review_handoff points to git_diff_hunks for focused/paged review.",
+            show_changes_input_schema,
+        )))),
+        130,
+    ),
 ];
 
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[

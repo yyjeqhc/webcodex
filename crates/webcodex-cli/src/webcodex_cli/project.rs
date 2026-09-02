@@ -177,6 +177,8 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     if opts.json {
         return serde_json::to_string_pretty(&serde_json::json!({
             "runner_config": opts.config.to_string_lossy(),
+            // Machine-readable compatibility alias retained for pre-0.4 consumers.
+            "agent_config": opts.config.to_string_lossy(),
             "projects_dir": projects_dir.to_string_lossy(),
             "project": {
                 "id": registration.id,
@@ -269,6 +271,7 @@ mod tests {
         assert_eq!(first["project"]["id"], "demo");
         assert_eq!(first["project"]["already_registered"], false);
         assert_eq!(first["runner_reload_required"], true);
+        assert_eq!(first["runner_config"], first["agent_config"]);
         assert!(registry.join("demo.toml").is_file());
         assert!(!first.to_string().contains("secret-not-printed"));
 

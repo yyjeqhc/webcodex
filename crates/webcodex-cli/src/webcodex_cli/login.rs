@@ -579,7 +579,7 @@ pub(crate) fn stage_connection(
     write_descriptor(&paths, server_url, &identity.username, device, now)
 }
 
-const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the agent config, working directory, projects directory, and allowed roots";
+const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the Runner config, working directory, projects directory, and allowed roots";
 const ROOT_FOREGROUND_REASON: &str = "login ran as root; no foreground Runner argv is emitted because it would execute project commands as root";
 const WINDOWS_RUNNER_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
 const NON_LINUX_RUNNER_INSTALL_REASON: &str = "managed Runner service installation is supported only on Linux; start the foreground Runner shown above instead";
@@ -687,6 +687,8 @@ pub(crate) fn render_login_result(
             "dir": paths.dir.to_string_lossy(),
             "user_token_file": paths.user_token.to_string_lossy(),
             "runner_config": paths.runner_config.to_string_lossy(),
+            // Machine-readable compatibility alias retained for pre-0.4 consumers.
+            "agent_config": paths.runner_config.to_string_lossy(),
             "projects_registry": paths.projects_dir.to_string_lossy(),
             "allowed_roots": allowed_roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             "project_registration": {
@@ -697,6 +699,8 @@ pub(crate) fn render_login_result(
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "runner_config_token": "Runner transport only",
+                // Machine-readable compatibility alias retained for pre-0.4 consumers.
+                "agent_config_token": "Runner transport only",
             },
             "foreground_available": foreground_argv.is_some(),
             "foreground_argv": &foreground_argv,
@@ -2664,6 +2668,11 @@ mod tests {
             Some("https://api.example.com/mcp")
         );
         assert!(json_value.get("credential_usage").is_some(), "{json}");
+        assert_eq!(json_value["runner_config"], json_value["agent_config"]);
+        assert_eq!(
+            json_value["credential_usage"]["runner_config_token"],
+            json_value["credential_usage"]["agent_config_token"]
+        );
         assert_eq!(json_value["project_registration"]["registered"], false);
         assert_eq!(json_value["project_registration"]["count"], 0);
         assert_eq!(json_value["registered_projects"], serde_json::json!([]));

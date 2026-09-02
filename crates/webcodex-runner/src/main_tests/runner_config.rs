@@ -334,6 +334,20 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
     let error = parse_runner_args(std::iter::empty::<&str>()).unwrap_err();
     assert!(error.contains("cannot both be set"));
+
+    assert_eq!(
+        parse_runner_args(["--config", "/tmp/explicit.toml"]).unwrap(),
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/explicit.toml"),
+            once: false,
+        },
+        "an explicit --config path must not be blocked by conflicting default-path env aliases"
+    );
+    let error = parse_runner_args(["--profile", "special"]).unwrap_err();
+    assert!(
+        error.contains("cannot both be set"),
+        "dual env aliases must remain fail-closed unless --config supplies an exact path"
+    );
 }
 
 #[test]

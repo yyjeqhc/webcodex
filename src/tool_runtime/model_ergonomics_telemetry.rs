@@ -242,7 +242,9 @@ fn edit_facts(tool_name: &str, success: bool, output: &Value) -> EditFacts {
         conflict_kind: None,
     };
     match edit_tool_surface(tool_name) {
-        Some(EditToolSurface::Canonical) if tool_name == "apply_text_edits" => {
+        Some(EditToolSurface::Canonical)
+            if matches!(tool_name, "apply_text_edits" | "apply_patch") =>
+        {
             facts.conflict_kind = edit_conflict_kind(output);
             facts.outcome = if success {
                 match (
@@ -543,7 +545,7 @@ mod tests {
 
     #[test]
     fn canonical_edit_pre_result_hard_timeout_is_uncertain_not_rejected() {
-        for tool in ["apply_text_edits", "apply_unified_diff"] {
+        for tool in ["apply_text_edits", "apply_patch", "apply_unified_diff"] {
             let record = completion(tool, 0).record_for_pre_result_failure("dispatch_hard_timeout");
             assert!(!record.success);
             assert_eq!(record.error_kind.as_deref(), Some("dispatch_hard_timeout"));

@@ -63,8 +63,8 @@ pub(crate) use super::tool_policy::{
     runtime_tool_context_continuity_policy, runtime_tool_requires_explicit_business_session,
 };
 use crate::shell_protocol::{
-    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
@@ -105,6 +105,9 @@ pub(crate) enum AgentCapability {
     FileRead,
     /// Native file mutation requests handled by the agent.
     FileWrite,
+    /// Runner-authoritative Codex Patch parsing plus transactional file mutation.
+    /// This additive request kind is never inferred from generic file-write support.
+    ApplyPatch,
     /// `git_status` / `git_diff` (agent path runs git via shell; accept either
     /// an explicit `git` capability or `shell`).
     GitOrShell,
@@ -161,6 +164,7 @@ impl AgentCapability {
             Self::StructuredScript => SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
             Self::FileRead => SHELL_CLIENT_CAPABILITY_FILE_READ,
             Self::FileWrite => SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+            Self::ApplyPatch => SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
             Self::GitOrShell => "shell or git",
             Self::AsyncJobs => "async shell jobs",
             Self::PersistentShell => SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
@@ -198,6 +202,7 @@ impl AgentCapability {
             Self::StructuredScript => &[SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD],
             Self::FileRead => &[SHELL_CLIENT_CAPABILITY_FILE_READ],
             Self::FileWrite => &[SHELL_CLIENT_CAPABILITY_FILE_WRITE],
+            Self::ApplyPatch => &[SHELL_CLIENT_CAPABILITY_APPLY_PATCH],
             Self::GitOrShell => &[SHELL_CLIENT_CAPABILITY_SHELL, SHELL_CLIENT_CAPABILITY_GIT],
             Self::AsyncJobs => &[
                 SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,

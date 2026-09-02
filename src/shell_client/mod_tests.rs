@@ -222,6 +222,9 @@ mod structured_file_delete;
 #[path = "mod_tests/apply_text_edit_occurrence.rs"]
 mod apply_text_edit_occurrence;
 
+#[path = "mod_tests/apply_patch.rs"]
+mod apply_patch;
+
 #[path = "mod_tests/apply_text_edit_line_scope.rs"]
 mod apply_text_edit_line_scope;
 

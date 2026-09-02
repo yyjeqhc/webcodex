@@ -637,6 +637,7 @@ fn tool_specs_covers_expected_tool_set() {
         "workspace_checkpoint_show",
         "workspace_checkpoint_restore",
         "workspace_checkpoint_delete",
+        "apply_patch",
         "apply_unified_diff",
         "delete_project_files",
         "git_restore_paths",

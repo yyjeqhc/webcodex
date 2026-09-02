@@ -58,6 +58,10 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
             .contains(&"apply_text_edit_line_scope"),
         "line scope is additive and must not become a generation-2 registration baseline"
     );
+    assert!(
+        !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.contains(&"apply_patch"),
+        "apply_patch is additive and must not become a generation-2 registration baseline"
+    );
     for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         assert_eq!(
             capabilities
@@ -110,6 +114,7 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
     assert!(caps.structured_file_delete);
     assert!(caps.apply_text_edit_occurrence);
     assert!(caps.apply_text_edit_line_scope);
+    assert!(caps.apply_patch);
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);
     assert_eq!(

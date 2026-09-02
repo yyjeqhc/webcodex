@@ -245,6 +245,7 @@ mod tests {
         "search_project_texts",
         "read_files",
         "apply_text_edits",
+        "apply_patch",
         "run_process",
         "observe_jobs",
         "cargo_check",

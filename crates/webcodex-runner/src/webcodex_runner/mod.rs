@@ -53,8 +53,9 @@ pub(crate) use files::{
 pub(crate) use lsp::LspSupervisor;
 pub(crate) use output::{err_cmd, ok_cmd, CommandResult, ShellCommandResult};
 pub(crate) use patches::{
-    handle_apply_text_edits_file_request, handle_write_project_file_request,
-    is_structured_edit_request_kind, validate_structured_edit_runner_path,
+    handle_apply_patch_file_request, handle_apply_text_edits_file_request,
+    handle_write_project_file_request, is_structured_edit_request_kind,
+    validate_structured_edit_runner_path,
 };
 pub(crate) use persistent_shell::PersistentShellManager;
 #[cfg(test)]

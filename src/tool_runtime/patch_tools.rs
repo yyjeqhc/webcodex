@@ -1,10 +1,16 @@
-//! Runtime dispatch adapter for the canonical unified-diff mutation tool.
+//! Runtime dispatch adapter for model-generated Codex patches and raw unified diffs.
 
 use super::{ToolCall, ToolResult, ToolRuntime};
 
 impl ToolRuntime {
     pub(crate) async fn dispatch_patch_tool(&self, call: ToolCall) -> ToolResult {
         match call {
+            ToolCall::ApplyPatch {
+                project,
+                patch,
+                dry_run,
+                session_id: _,
+            } => self.apply_patch(project, patch, dry_run).await,
             ToolCall::ApplyUnifiedDiff {
                 project,
                 diff,

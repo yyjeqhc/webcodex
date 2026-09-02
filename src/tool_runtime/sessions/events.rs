@@ -610,6 +610,7 @@ pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<
 pub(crate) fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
     let key = match tool_name {
         "apply_unified_diff" => "affected_files",
+        "apply_patch" => "changed_paths",
         "workspace_checkpoint_restore" => "changed_paths",
         _ => return Vec::new(),
     };

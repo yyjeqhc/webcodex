@@ -424,6 +424,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("apply_patch", PERMISSION_RISK_PATCH),
         ("apply_unified_diff", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
     ] {
@@ -518,6 +519,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
             "close_session_shell",
             ToolRisk::JobRun,
             AgentCapability::PersistentShell,
+        ),
+        (
+            "apply_patch",
+            ToolRisk::ProjectWrite,
+            AgentCapability::ApplyPatch,
         ),
         (
             "apply_unified_diff",

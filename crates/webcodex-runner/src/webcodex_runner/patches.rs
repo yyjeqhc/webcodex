@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub(crate) fn is_structured_edit_request_kind(kind: &str) -> bool {
-    matches!(kind, "file_write_project_file" | "file_apply_text_edits")
+    matches!(
+        kind,
+        "file_write_project_file" | "file_apply_text_edits" | "file_apply_patch"
+    )
 }
 
 pub(crate) fn validate_structured_edit_runner_path(path: &str) -> Result<(), String> {
@@ -328,6 +331,7 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
+use crate::apply_patch_shared::{derive_codex_patch_update, parse_codex_patch, CodexPatchHunk};
 
 #[derive(Debug, Deserialize)]
 struct ApplyTextEditsPayload {
@@ -336,6 +340,14 @@ struct ApplyTextEditsPayload {
     dry_run: Option<bool>,
     #[serde(default)]
     recovery_metadata_version: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyPatchPayload {
+    patch: String,
+    #[serde(default)]
+    dry_run: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -918,7 +930,17 @@ fn rollback_change(plan: &PlannedFileChange) -> Result<(), String> {
                 .resolved_to
                 .as_deref()
                 .ok_or_else(|| "rename rollback missing destination".to_string())?;
-            if destination.exists() && !plan.resolved.exists() {
+            if plan.replacement.is_some() {
+                write_new_file_atomic(
+                    &plan.resolved,
+                    plan.original.as_deref().unwrap_or_default(),
+                )?;
+                if let Some(permissions) = plan.permissions.clone() {
+                    std::fs::set_permissions(&plan.resolved, permissions)
+                        .map_err(|error| error.to_string())?;
+                }
+                std::fs::remove_file(destination).map_err(|error| error.to_string())?;
+            } else if destination.exists() && !plan.resolved.exists() {
                 std::fs::hard_link(destination, &plan.resolved)
                     .map_err(|error| error.to_string())?;
                 std::fs::remove_file(destination).map_err(|error| error.to_string())?;
@@ -975,7 +997,32 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
                 .as_deref()
                 .ok_or_else(|| "rename destination missing".to_string())?;
             let created_dirs = create_parent_dirs(destination)?;
-            if let Err(error) = std::fs::hard_link(&plan.resolved, destination) {
+            if let Some(replacement) = plan.replacement.as_deref() {
+                if let Err(error) = write_new_file_atomic(destination, replacement) {
+                    let rollback_complete = cleanup_created_dirs(&created_dirs);
+                    return Err(ApplyChangeFailure::new(error, rollback_complete));
+                }
+                if let Some(permissions) = plan.permissions.clone() {
+                    if let Err(error) = std::fs::set_permissions(destination, permissions) {
+                        let destination_cleanup = std::fs::remove_file(destination);
+                        let directories_cleaned = cleanup_created_dirs(&created_dirs);
+                        return Err(ApplyChangeFailure::new(
+                            error.to_string(),
+                            destination_cleanup.is_ok() && directories_cleaned,
+                        ));
+                    }
+                }
+                if let Err(error) = require_planned_source_unchanged(plan) {
+                    let destination_cleanup = std::fs::remove_file(destination);
+                    let directories_cleaned = cleanup_created_dirs(&created_dirs);
+                    return Err(ApplyChangeFailure::new(
+                        error.message,
+                        error.rollback_complete
+                            && destination_cleanup.is_ok()
+                            && directories_cleaned,
+                    ));
+                }
+            } else if let Err(error) = std::fs::hard_link(&plan.resolved, destination) {
                 let rollback_complete = cleanup_created_dirs(&created_dirs);
                 return Err(ApplyChangeFailure::new(
                     error.to_string(),
@@ -997,6 +1044,424 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
             Ok(created_dirs)
         }
     }
+}
+
+fn execute_planned_file_changes(
+    plans: Vec<PlannedFileChange>,
+    dry_run: bool,
+    start: Instant,
+) -> CommandResult {
+    let mut changed_paths = Vec::new();
+    for plan in &plans {
+        if !plan.would_change {
+            continue;
+        }
+        changed_paths.push(plan.path.clone());
+        if let Some(to_path) = &plan.to_path {
+            changed_paths.push(to_path.clone());
+        }
+    }
+    let would_change = plans.iter().any(|plan| plan.would_change);
+    if !dry_run {
+        let mut applied = Vec::new();
+        for (plan_index, plan) in plans.iter().enumerate() {
+            if !plan.would_change {
+                continue;
+            }
+            match apply_change(plan) {
+                Ok(created_dirs) => applied.push(AppliedFileChange {
+                    plan_index,
+                    created_dirs,
+                }),
+                Err(error) => {
+                    let mut rollback_complete = error.rollback_complete;
+                    for applied_change in applied.iter().rev() {
+                        if rollback_change(&plans[applied_change.plan_index]).is_err() {
+                            rollback_complete = false;
+                        }
+                        if !cleanup_created_dirs(&applied_change.created_dirs) {
+                            rollback_complete = false;
+                        }
+                    }
+                    return line_edit_stdout(
+                        serde_json::json!({
+                            "changed": !rollback_complete,
+                            "state_changed": !rollback_complete,
+                            "execution_state": if rollback_complete { "completed" } else { "outcome_unknown" },
+                            "error_kind": "transaction_failed",
+                            "change_index": plan.index,
+                            "kind": plan.kind.as_str(),
+                            "path": plan.path,
+                            "rollback_complete": rollback_complete,
+                            "recovery_action": if rollback_complete { "retry_after_refresh" } else { "reconcile_worktree" },
+                            "error": if rollback_complete {
+                                format!("Transactional file batch failed and was rolled back: {}", error.message)
+                            } else {
+                                format!("Transactional file batch failed and rollback was incomplete: {}", error.message)
+                            },
+                        }),
+                        start,
+                    );
+                }
+            }
+        }
+    }
+
+    let files = plans
+        .iter()
+        .map(|plan| {
+            serde_json::json!({
+                "index": plan.index,
+                "kind": plan.kind.as_str(),
+                "path": plan.path,
+                "to_path": plan.to_path,
+                "old_sha256": plan.old_sha256,
+                "new_sha256": plan.new_sha256,
+                "changed": !dry_run && plan.would_change,
+                "would_change": plan.would_change,
+                "edits": plan.edit_summaries,
+            })
+        })
+        .collect::<Vec<_>>();
+    line_edit_stdout(
+        serde_json::json!({
+            "dry_run": dry_run,
+            "applied_count": plans.len(),
+            "changed": !dry_run && would_change,
+            "state_changed": !dry_run && would_change,
+            "execution_state": "completed",
+            "would_change": would_change,
+            "files": files,
+            "changed_paths": changed_paths,
+        }),
+        start,
+    )
+}
+
+fn resolve_unique_patch_path(
+    policy: &RunnerPolicy,
+    request: &ShellAgentShellRequest,
+    touched: &mut HashSet<PathBuf>,
+    index: usize,
+    kind: &str,
+    path: &str,
+    start: Instant,
+) -> Result<PathBuf, CommandResult> {
+    if let Err(error) = validate_structured_edit_runner_path(path) {
+        return Err(batch_error(
+            Some(index),
+            Some(kind),
+            None,
+            "invalid_path",
+            error,
+            start,
+        ));
+    }
+    let resolved =
+        resolve_requested_path(policy, request.cwd.as_deref(), path).map_err(|error| {
+            batch_error(
+                Some(index),
+                Some(kind),
+                None,
+                "path_policy_rejected",
+                error,
+                start,
+            )
+        })?;
+    let identity = canonical_batch_identity(&resolved).map_err(|error| {
+        batch_error(
+            Some(index),
+            Some(kind),
+            None,
+            "path_policy_rejected",
+            error,
+            start,
+        )
+    })?;
+    if !touched.insert(identity) {
+        return Err(batch_error(
+            Some(index),
+            Some(kind),
+            None,
+            "path_overlap",
+            "source/destination paths may appear only once after path resolution",
+            start,
+        ));
+    }
+    Ok(resolved)
+}
+
+fn apply_patch_conflict(
+    index: usize,
+    path: &str,
+    error_kind: &str,
+    message: impl Into<String>,
+    start: Instant,
+) -> CommandResult {
+    line_edit_stdout(
+        serde_json::json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": error_kind,
+            "change_index": index,
+            "path": path,
+            "recovery_action": "reread_or_regenerate_patch",
+            "retry_guidance": "reread the current file, regenerate the Codex patch against that content, and retry the whole batch",
+            "error": format!("Rejected Codex patch before write: {}. No files were modified.", message.into()),
+        }),
+        start,
+    )
+}
+
+pub(crate) fn handle_apply_patch_file_request(
+    policy: &RunnerPolicy,
+    request: &ShellAgentShellRequest,
+    start: Instant,
+) -> CommandResult {
+    let payload: ApplyPatchPayload =
+        match serde_json::from_str(request.content.as_deref().unwrap_or_default()) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return batch_error(
+                    None,
+                    None,
+                    None,
+                    "invalid_payload",
+                    format!("invalid JSON payload: {error}"),
+                    start,
+                )
+            }
+        };
+    let patch = match parse_codex_patch(&payload.patch) {
+        Ok(patch) => patch,
+        Err(error) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "state_changed": false,
+                    "execution_state": "not_started",
+                    "error_kind": error.kind,
+                    "patch_line": error.line,
+                    "recovery_action": "regenerate_patch",
+                    "expected_format": "codex_patch",
+                    "error": format!("Rejected Codex patch before write: {error}. No files were modified."),
+                }),
+                start,
+            )
+        }
+    };
+    let dry_run = payload.dry_run.unwrap_or(false);
+    let mut touched = HashSet::new();
+    let mut plans = Vec::with_capacity(patch.hunks.len());
+
+    for (index, hunk) in patch.hunks.iter().enumerate() {
+        let kind = hunk.kind();
+        let path = hunk.path();
+        let resolved = match resolve_unique_patch_path(
+            policy,
+            request,
+            &mut touched,
+            index,
+            kind,
+            path,
+            start,
+        ) {
+            Ok(resolved) => resolved,
+            Err(result) => return result,
+        };
+
+        let planned = match hunk {
+            CodexPatchHunk::AddFile { contents, .. } => {
+                if contents.contains('\0') || contents.len() > APPLY_TEXT_EDITS_MAX_FILE_BYTES {
+                    return batch_error(
+                        Some(index),
+                        Some(kind),
+                        None,
+                        "invalid_content",
+                        "new file content contains NUL or exceeds the file-size limit",
+                        start,
+                    );
+                }
+                if let Err(error) = require_batch_path_absent(&resolved) {
+                    return batch_error(
+                        Some(index),
+                        Some(kind),
+                        Some(path),
+                        "path_exists",
+                        error,
+                        start,
+                    );
+                }
+                PlannedFileChange {
+                    index,
+                    kind: ApplyFileChangeKind::Create,
+                    path: path.to_string(),
+                    to_path: None,
+                    resolved,
+                    resolved_to: None,
+                    original: None,
+                    replacement: Some(contents.clone()),
+                    permissions: None,
+                    old_sha256: None,
+                    new_sha256: Some(sha256_hex_bytes(contents.as_bytes())),
+                    edit_summaries: Vec::new(),
+                    would_change: true,
+                }
+            }
+            CodexPatchHunk::DeleteFile { .. } => {
+                let (original, permissions, old_sha256) = match read_batch_file(&resolved) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        return batch_error(
+                            Some(index),
+                            Some(kind),
+                            Some(path),
+                            "read_failed",
+                            error,
+                            start,
+                        )
+                    }
+                };
+                PlannedFileChange {
+                    index,
+                    kind: ApplyFileChangeKind::Delete,
+                    path: path.to_string(),
+                    to_path: None,
+                    resolved,
+                    resolved_to: None,
+                    original: Some(original),
+                    replacement: None,
+                    permissions: Some(permissions),
+                    old_sha256: Some(old_sha256),
+                    new_sha256: None,
+                    edit_summaries: Vec::new(),
+                    would_change: true,
+                }
+            }
+            CodexPatchHunk::UpdateFile {
+                move_path, chunks, ..
+            } => {
+                let (original, permissions, old_sha256) = match read_batch_file(&resolved) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        return batch_error(
+                            Some(index),
+                            Some(kind),
+                            Some(path),
+                            "read_failed",
+                            error,
+                            start,
+                        )
+                    }
+                };
+                let replacement = if chunks.is_empty() {
+                    original.clone()
+                } else {
+                    match derive_codex_patch_update(&original, path, chunks) {
+                        Ok(content) => content,
+                        Err(error) => {
+                            return apply_patch_conflict(
+                                index,
+                                path,
+                                error.kind,
+                                error.message,
+                                start,
+                            )
+                        }
+                    }
+                };
+                if replacement.contains('\0') || replacement.len() > APPLY_TEXT_EDITS_MAX_FILE_BYTES
+                {
+                    return batch_error(
+                        Some(index),
+                        Some(kind),
+                        Some(path),
+                        "invalid_content",
+                        "updated file content contains NUL or exceeds the file-size limit",
+                        start,
+                    );
+                }
+                let edit_summaries = chunks
+                    .iter()
+                    .enumerate()
+                    .map(|(chunk_index, chunk)| {
+                        serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "change_context_present": chunk.change_context.is_some(),
+                            "old_line_count": chunk.old_lines.len(),
+                            "new_line_count": chunk.new_lines.len(),
+                            "end_of_file": chunk.is_end_of_file,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let destination_path = move_path
+                    .as_deref()
+                    .filter(|destination| *destination != path);
+                if let Some(destination_path) = destination_path {
+                    let destination = match resolve_unique_patch_path(
+                        policy,
+                        request,
+                        &mut touched,
+                        index,
+                        kind,
+                        destination_path,
+                        start,
+                    ) {
+                        Ok(destination) => destination,
+                        Err(result) => return result,
+                    };
+                    if let Err(error) = require_batch_path_absent(&destination) {
+                        return batch_error(
+                            Some(index),
+                            Some(kind),
+                            Some(destination_path),
+                            "path_exists",
+                            error,
+                            start,
+                        );
+                    }
+                    let content_changed = replacement != original;
+                    PlannedFileChange {
+                        index,
+                        kind: ApplyFileChangeKind::Rename,
+                        path: path.to_string(),
+                        to_path: Some(destination_path.to_string()),
+                        resolved,
+                        resolved_to: Some(destination),
+                        original: Some(original),
+                        replacement: content_changed.then_some(replacement.clone()),
+                        permissions: Some(permissions),
+                        old_sha256: Some(old_sha256),
+                        new_sha256: Some(sha256_hex_bytes(replacement.as_bytes())),
+                        edit_summaries,
+                        would_change: true,
+                    }
+                } else {
+                    let new_sha256 = sha256_hex_bytes(replacement.as_bytes());
+                    let would_change = replacement != original;
+                    PlannedFileChange {
+                        index,
+                        kind: ApplyFileChangeKind::Edit,
+                        path: path.to_string(),
+                        to_path: None,
+                        resolved,
+                        resolved_to: None,
+                        original: Some(original),
+                        replacement: Some(replacement),
+                        permissions: Some(permissions),
+                        old_sha256: Some(old_sha256),
+                        new_sha256: Some(new_sha256),
+                        edit_summaries,
+                        would_change,
+                    }
+                }
+            }
+        };
+        plans.push(planned);
+    }
+
+    execute_planned_file_changes(plans, dry_run, start)
 }
 
 pub(crate) fn handle_apply_text_edits_file_request(
@@ -1387,89 +1852,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
         plans.push(planned);
     }
 
-    let mut changed_paths = Vec::new();
-    for plan in &plans {
-        if !plan.would_change {
-            continue;
-        }
-        changed_paths.push(plan.path.clone());
-        if let Some(to_path) = &plan.to_path {
-            changed_paths.push(to_path.clone());
-        }
-    }
-    let would_change = plans.iter().any(|plan| plan.would_change);
-    if !dry_run {
-        let mut applied = Vec::new();
-        for (plan_index, plan) in plans.iter().enumerate() {
-            if !plan.would_change {
-                continue;
-            }
-            match apply_change(plan) {
-                Ok(created_dirs) => applied.push(AppliedFileChange {
-                    plan_index,
-                    created_dirs,
-                }),
-                Err(error) => {
-                    let mut rollback_complete = error.rollback_complete;
-                    for applied_change in applied.iter().rev() {
-                        if let Err(rollback_error) =
-                            rollback_change(&plans[applied_change.plan_index])
-                        {
-                            let _ = rollback_error;
-                            rollback_complete = false;
-                        }
-                        if !cleanup_created_dirs(&applied_change.created_dirs) {
-                            rollback_complete = false;
-                        }
-                    }
-                    return line_edit_stdout(
-                        serde_json::json!({
-                            "changed": !rollback_complete,
-                            "error_kind": "transaction_failed",
-                            "change_index": plan.index,
-                            "kind": plan.kind.as_str(),
-                            "path": plan.path,
-                            "rollback_complete": rollback_complete,
-                            "error": if rollback_complete {
-                                format!("Transactional file batch failed and was rolled back: {}", error.message)
-                            } else {
-                                format!("Transactional file batch failed and rollback was incomplete: {}", error.message)
-                            },
-                        }),
-                        start,
-                    );
-                }
-            }
-        }
-    }
-
-    let files = plans
-        .iter()
-        .map(|plan| {
-            serde_json::json!({
-                "index": plan.index,
-                "kind": plan.kind.as_str(),
-                "path": plan.path,
-                "to_path": plan.to_path,
-                "old_sha256": plan.old_sha256,
-                "new_sha256": plan.new_sha256,
-                "changed": !dry_run && plan.would_change,
-                "would_change": plan.would_change,
-                "edits": plan.edit_summaries,
-            })
-        })
-        .collect::<Vec<_>>();
-    line_edit_stdout(
-        serde_json::json!({
-            "dry_run": dry_run,
-            "applied_count": plans.len(),
-            "changed": !dry_run && would_change,
-            "would_change": would_change,
-            "files": files,
-            "changed_paths": changed_paths,
-        }),
-        start,
-    )
+    execute_planned_file_changes(plans, dry_run, start)
 }
 
 #[cfg(test)]

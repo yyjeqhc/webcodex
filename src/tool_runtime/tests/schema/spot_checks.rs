@@ -694,6 +694,11 @@ fn tool_specs_schema_spot_checks() {
     // Required fields are checked via exact equality to catch unexpected additions.
     let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
         (
+            "apply_patch",
+            vec!["project", "patch"],
+            vec!["dry_run", "session_id"],
+        ),
+        (
             "apply_unified_diff",
             vec!["project", "diff"],
             vec!["deny_sensitive_paths", "session_id"],

@@ -235,6 +235,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "delete_project_files"
         | "write_project_file"
         | "apply_text_edits"
+        | "apply_patch"
         | "save_project_artifact"
         | "read_project_artifact_metadata"
         | "read_project_artifact"
@@ -249,12 +250,12 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "skill_read_file" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore, skill_list_packages, skill_read_file"
+                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, apply_patch, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore, skill_list_packages, skill_read_file"
                     .to_string(),
             )
         }
     }
-    let structured_edit_payload = body.op == "write_project_file";
+    let structured_edit_payload = matches!(body.op.as_str(), "write_project_file" | "apply_patch");
     let structured_delete_payload = body.op == "delete_project_files";
     let artifact_payload = matches!(
         body.op.as_str(),
@@ -411,7 +412,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
                 return Err("skill_list_packages only accepts path/cwd/content".to_string());
             }
         }
-        "write_project_file" => {
+        "write_project_file" | "apply_patch" => {
             if body.content.is_none() {
                 return Err(format!("content is required for op={}", body.op));
             }

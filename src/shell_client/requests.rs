@@ -22,7 +22,7 @@ use crate::shell_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
     ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
-    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH, SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_FILE_READ,
@@ -552,6 +552,73 @@ impl ShellClientRegistry {
         {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE}",
+                body.client_id
+            ));
+        }
+        enqueue_pending_request_locked(
+            &mut inner,
+            &body.client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_client_locked(&inner, &body.client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue one Codex-compatible patch request only when the exact accepted
+    /// Runner advertises the additive apply_patch capability. Capability admission
+    /// and queue insertion share one registry lock so rolling upgrades fail closed.
+    pub(crate) async fn enqueue_apply_patch(
+        &self,
+        body: ShellFileOpRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_file_request(&body)?;
+        if body.op != "apply_patch" {
+            return Err(format!(
+                "apply_patch enqueue only accepts op=apply_patch (got {})",
+                body.op
+            ));
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "file_apply_patch".to_string(),
+            job_id: None,
+            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: Some(body.path.trim().to_string()),
+            content: body.content.clone(),
+            max_bytes: body.max_bytes,
+            expected_sha256: body.expected_sha256.clone(),
+            expected_prefix: body.expected_prefix.clone(),
+            start_line: body.start_line,
+            end_line: body.end_line,
+            create_dirs: body.create_dirs,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            job_context: None,
+            mcp_gateway: None,
+            coding_agent: None,
+            persistent_shell: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&body.client_id) else {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        };
+        if !client.runner_features.supports(RunnerFeature::ApplyPatch) {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_APPLY_PATCH}",
                 body.client_id
             ));
         }

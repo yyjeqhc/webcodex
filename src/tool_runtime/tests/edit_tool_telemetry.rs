@@ -237,7 +237,6 @@ fn edit_surface_table_matches_canonicalization_contract() {
         "replace_line_range",
         "insert_at_line",
         "delete_line_range",
-        "apply_patch",
         "apply_patch_checked",
         "validate_patch",
     ] {

@@ -39,6 +39,7 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
         "get_session_assignment",
         "complete_session_message",
         "apply_text_edits",
+        "apply_patch",
         "go_test",
         "finish_coding_task",
     ] {
@@ -129,6 +130,42 @@ async fn apply_text_edits_discriminated_schema_reaches_full_and_local_coding_mcp
             .iter()
             .find(|tool| tool["name"] == "apply_text_edits")
             .unwrap_or_else(|| panic!("missing apply_text_edits on {surface:?}"))["inputSchema"];
+        assert_eq!(schema, &expected, "schema drift on {surface:?}");
+    }
+}
+
+#[tokio::test]
+async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
+    let expected = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "apply_patch")
+        .expect("apply_patch ToolSpec")
+        .input_schema;
+    assert!(expected["properties"].get("patch").is_some());
+    assert_eq!(expected["properties"]["dry_run"]["default"], false);
+
+    for surface in [
+        ModelSurface::FullOperatorRuntime,
+        ModelSurface::LocalCoding,
+        ModelSurface::AdaptiveRuntime,
+    ] {
+        let runtime = test_runtime_with_surface(surface);
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(602)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(value) => value,
+            other => panic!("expected tools/list success for {surface:?}, got {other:?}"),
+        };
+        let schema = &value["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "apply_patch")
+            .unwrap_or_else(|| panic!("missing apply_patch on {surface:?}"))["inputSchema"];
         assert_eq!(schema, &expected, "schema drift on {surface:?}");
     }
 }

@@ -301,6 +301,7 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
 
 fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'static str]> {
     match tool {
+        "apply_patch" => Some(&["edit", "patch"]),
         "apply_unified_diff" => Some(&["edit", "patch"]),
         "cargo_check" => Some(&["shell", "validation"]),
         "cargo_fmt" => Some(&["shell", "validation"]),
@@ -968,10 +969,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         edit_prefix,
         vec![
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
-            "read_project_artifact_metadata",
         ],
         "canonical edit tools should lead the edit category"
     );
@@ -987,8 +988,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "run_shell with rg or git grep remains the diagnostic escape hatch",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
-        "edit: prefer apply_text_edits for transactional guarded file changes",
-        "apply_unified_diff for complex raw unified diffs",
+        "edit: prefer apply_text_edits for small guarded edits",
+        "apply_patch for model-generated complex changes",
+        "apply_unified_diff for external raw unified diffs",
         "write_project_file only for intentional full rewrites",
         "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
@@ -1016,6 +1018,7 @@ fn tool_categories_include_edit_group() {
     // legacy line/pattern/anchor tools are not known tools at all, so they must
     // NOT appear here.
     assert!(edit.iter().any(|v| v == "apply_text_edits"));
+    assert!(edit.iter().any(|v| v == "apply_patch"));
     assert!(edit.iter().any(|v| v == "write_project_file"));
     assert!(edit.iter().any(|v| v == "apply_unified_diff"));
     assert!(!edit.iter().any(|v| v == "replace_in_file"));
@@ -1556,6 +1559,10 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         "coding intent tools should expose canonical precise edits: {coding_names:?}"
     );
     assert!(
+        coding_names.contains(&"apply_patch"),
+        "coding intent tools should expose model-generated Codex patch mutation: {coding_names:?}"
+    );
+    assert!(
         coding_names.contains(&"apply_unified_diff"),
         "coding intent tools should expose canonical unified-diff mutation: {coding_names:?}"
     );
@@ -1598,6 +1605,14 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
     let no_patch_tools = serde_json::to_string(&no_patch["tools"]).unwrap();
     let no_patch_flows = serde_json::to_string(&no_patch["recommended_flows"]).unwrap();
     assert!(
+        !no_patch_tools.contains("apply_patch"),
+        "without patch category, tools must not include apply_patch"
+    );
+    assert!(
+        !no_patch_flows.contains("apply_patch"),
+        "without patch category, recommended_flows must not include apply_patch"
+    );
+    assert!(
         !no_patch_tools.contains("apply_unified_diff"),
         "without patch category, tools must not include apply_unified_diff"
     );
@@ -1630,6 +1645,10 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
+        with_patch_tools.contains(&"apply_patch"),
+        "with patch category, tools should include apply_patch: {with_patch_tools:?}"
+    );
+    assert!(
         with_patch_tools.contains(&"apply_unified_diff"),
         "with patch category, tools should include apply_unified_diff: {with_patch_tools:?}"
     );
@@ -1639,6 +1658,14 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .iter()
         .find(|flow| flow["name"] == "edit")
         .expect("edit flow");
+    assert!(
+        edit_flow["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool == "apply_patch"),
+        "with patch category, edit flow may include apply_patch: {edit_flow}"
+    );
     assert!(
         edit_flow["tools"]
             .as_array()

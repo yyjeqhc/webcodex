@@ -204,7 +204,6 @@ fn removed_legacy_edit_tools_are_not_known_tools() {
         "replace_line_range",
         "insert_at_line",
         "delete_line_range",
-        "apply_patch",
         "apply_patch_checked",
         "validate_patch",
     ] {
@@ -231,6 +230,7 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
 
     for required in [
         "apply_text_edits",
+        "apply_patch",
         "apply_unified_diff",
         "write_project_file",
     ] {
@@ -255,6 +255,13 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         assert!(
             text_edits.get(field).is_some(),
             "apply_text_edits must keep field {field}"
+        );
+    }
+    let codex_patch = &spec_named(&specs, "apply_patch").input_schema["properties"];
+    for field in ["project", "patch", "dry_run"] {
+        assert!(
+            codex_patch.get(field).is_some(),
+            "apply_patch must keep field {field}"
         );
     }
     let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];

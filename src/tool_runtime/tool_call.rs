@@ -724,6 +724,16 @@ pub enum ToolCall {
         shell_id: String,
     },
 
+    /// Apply one bounded Codex *** Begin Patch payload transactionally through the owning Runner.
+    ApplyPatch {
+        project: String,
+        patch: String,
+        #[serde(default)]
+        dry_run: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Apply one bounded raw standard unified diff after an internal safety/applicability preflight.
     ApplyUnifiedDiff {
         project: String,
@@ -2520,6 +2530,7 @@ impl ToolCall {
             Self::SessionShellExec { .. } => "session_shell_exec",
             Self::SessionShellStatus { .. } => "session_shell_status",
             Self::CloseSessionShell { .. } => "close_session_shell",
+            Self::ApplyPatch { .. } => "apply_patch",
             Self::ApplyUnifiedDiff { .. } => "apply_unified_diff",
             Self::DeleteProjectFiles { .. } => "delete_project_files",
             Self::GitRestorePaths { .. } => "git_restore_paths",
@@ -2640,6 +2651,7 @@ impl ToolCall {
             | Self::RunDetachedProcess { session_id, .. }
             | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
+            | Self::ApplyPatch { session_id, .. }
             | Self::ApplyUnifiedDiff { session_id, .. }
             | Self::DeleteProjectFiles { session_id, .. }
             | Self::GitRestorePaths { session_id, .. }
@@ -2772,6 +2784,7 @@ impl ToolCall {
             | Self::SessionShellExec { project, .. }
             | Self::SessionShellStatus { project, .. }
             | Self::CloseSessionShell { project, .. }
+            | Self::ApplyPatch { project, .. }
             | Self::ApplyUnifiedDiff { project, .. }
             | Self::DeleteProjectFiles { project, .. }
             | Self::GitRestorePaths { project, .. }

@@ -125,6 +125,8 @@ fn quic_client_config() -> QuicClientConfig {
     }
 }
 
+#[path = "main_tests/apply_patch.rs"]
+mod apply_patch;
 #[path = "main_tests/apply_text_edits.rs"]
 mod apply_text_edits;
 #[path = "main_tests/artifact_read.rs"]

@@ -159,6 +159,10 @@ pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text
 /// false and is never inferred from occurrence, protocol generation, file_write,
 /// version, transport, OS, or build identity.
 pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
+/// Authoritative Runner-side Codex Patch parsing plus bounded transactional apply.
+/// Missing on older Runners is false and is never inferred from file_write or
+/// protocol generation, so a new Server cannot send this request kind to an old Runner.
+pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
 pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
@@ -351,6 +355,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
@@ -456,6 +461,10 @@ pub struct ShellClientCapabilities {
     /// Runners is false and is never inferred from occurrence or generation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_text_edit_line_scope: bool,
+    /// Authoritative Codex-compatible patch parsing and transactional application.
+    /// Missing on older Runners is false and never follows from generic file_write.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_patch: bool,
     #[serde(default)]
     pub git: bool,
     #[serde(default)]
@@ -656,6 +665,7 @@ impl Default for ShellClientCapabilities {
             structured_file_delete: false,
             apply_text_edit_occurrence: false,
             apply_text_edit_line_scope: false,
+            apply_patch: false,
             git: false,
             jobs: false,
             async_jobs: false,
@@ -3174,6 +3184,7 @@ mod envelope_tests {
                 structured_file_delete: false,
                 apply_text_edit_occurrence: false,
                 apply_text_edit_line_scope: false,
+                apply_patch: false,
                 git: false,
                 jobs: true,
                 async_jobs: true,

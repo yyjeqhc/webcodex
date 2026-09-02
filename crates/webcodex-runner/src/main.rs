@@ -17,8 +17,8 @@ mod job_manager_tests;
 mod webcodex_runner;
 
 use webcodex_core::{
-    apply_edits_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway, shell_protocol,
-    validation_bridge,
+    apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway,
+    shell_protocol, validation_bridge,
 };
 use webcodex_runner_config as runner_config;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
@@ -66,11 +66,11 @@ use webcodex_runner::{
 use webcodex_runner::{
     client_profile_runner_config, configured_prepared_shell_job_command,
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
-    default_config_path, dispatch_request, err_cmd, handle_apply_text_edits_file_request,
-    handle_artifact_file_request, handle_basic_file_request, handle_checkpoint_file_request,
-    handle_write_project_file_request, hostname, is_artifact_request_kind,
-    is_basic_file_request_kind, is_checkpoint_request_kind, is_project_op,
-    is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
+    default_config_path, dispatch_request, err_cmd, handle_apply_patch_file_request,
+    handle_apply_text_edits_file_request, handle_artifact_file_request, handle_basic_file_request,
+    handle_checkpoint_file_request, handle_write_project_file_request, hostname,
+    is_artifact_request_kind, is_basic_file_request_kind, is_checkpoint_request_kind,
+    is_project_op, is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
     prepare_detached_process_launch, projects_dir, resolve_prepared_shell_profile,
     resolve_requested_path, run_runner, validate_client_profile,
     validate_structured_edit_runner_path, CommandResult, HotRunnerConfig, HttpSendConfig,
@@ -1871,6 +1871,9 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // Line scopes are an additive rolling-upgrade fence: advertise only because
     // this binary resolves full-match containment before any mutation.
     capabilities.apply_text_edit_line_scope = true;
+    // Codex Patch is an additive request kind with Runner-authoritative parsing and
+    // transaction semantics. Older Runners omit it and must fail closed.
+    capabilities.apply_patch = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
     // SSH support intentionally depends on the local OpenSSH executable.
@@ -2272,6 +2275,7 @@ fn handle_file_request(policy: &RunnerPolicy, request: &ShellAgentShellRequest) 
     match request.kind.as_str() {
         "file_write_project_file" => handle_write_project_file_request(request, &resolved, start),
         "file_apply_text_edits" => handle_apply_text_edits_file_request(policy, request, start),
+        "file_apply_patch" => handle_apply_patch_file_request(policy, request, start),
         "file_save_project_artifact"
         | "file_read_project_artifact_metadata"
         | "file_read_project_artifact"

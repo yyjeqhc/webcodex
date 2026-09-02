@@ -108,7 +108,7 @@ pub(super) use memory::{
     memory_delete_input_schema, memory_read_input_schema, memory_scope_list_input_schema,
     memory_scope_purge_input_schema, memory_search_input_schema, memory_set_input_schema,
 };
-pub(crate) use patches::apply_unified_diff_input_schema;
+pub(crate) use patches::{apply_patch_input_schema, apply_unified_diff_input_schema};
 pub(crate) use projects::{
     create_project_input_schema, register_project_input_schema, unregister_project_input_schema,
 };

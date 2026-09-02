@@ -162,12 +162,13 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_PATCH,
-        tools: &["apply_unified_diff"],
+        tools: &["apply_patch", "apply_unified_diff"],
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
@@ -308,11 +309,12 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: prefer apply_text_edits for transactional guarded file changes; apply_unified_diff for complex raw unified diffs; write_project_file only for intentional full rewrites.",
+            "Edit: prefer apply_text_edits for small guarded edits; apply_patch for model-generated complex changes; apply_unified_diff for external raw unified diffs; write_project_file only for intentional full rewrites.",
         manifest_purpose:
-            "Prefer guarded transactional changes and preflighted complex unified diffs for source changes; whole-file write only for an intentional full rewrite.",
+            "Prefer guarded exact edits or Codex-compatible transactional patches for model changes; reserve raw unified diff for external patch input and whole-file write for intentional rewrites.",
         tools: &[
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
         ],
@@ -425,6 +427,7 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "call_hierarchy",
     // guarded edits
     "apply_text_edits",
+    "apply_patch",
     "apply_unified_diff",
     // structured process, shell escape hatch, and jobs
     "run_process",

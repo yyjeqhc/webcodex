@@ -550,6 +550,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 structured_file_delete: true,
                 apply_text_edit_occurrence: true,
                 apply_text_edit_line_scope: true,
+                apply_patch: true,
                 git: true,
                 jobs: true,
                 async_jobs: true,

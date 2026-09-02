@@ -110,10 +110,12 @@ pub(crate) fn public_url() -> String {
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
 /// Edit tools reachable through `callRuntimeTool` are `apply_text_edits`
-/// (guarded transactional file changes), `apply_unified_diff` (complex raw
-/// unified diff with internal preflight), and `write_project_file`
+/// (small guarded transactional changes), `apply_patch` (model-generated Codex
+/// Patch DSL with Runner-side transactional preflight), `apply_unified_diff`
+/// (external raw unified diff with internal preflight), and `write_project_file`
 /// (intentional full rewrite). The legacy line/pattern and patch-triplet edit
-/// tools were removed entirely.
+/// tools were removed entirely; the current `apply_patch` name is the Codex-DSL
+/// transactional tool, not the removed legacy patch facade.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",

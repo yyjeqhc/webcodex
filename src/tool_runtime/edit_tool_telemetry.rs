@@ -1,7 +1,7 @@
 //! Edit tool usage telemetry (phase 1).
 //!
 //! Emits always-on structured logs for edit-surface tool calls so operators can
-//! measure how often the canonical edit tools (`apply_text_edits`,
+//! measure how often the canonical edit tools (`apply_text_edits`, `apply_patch`,
 //! `apply_unified_diff`) are used relative to the intentional whole-file
 //! rewrite path (`write_project_file`).
 //!
@@ -43,7 +43,9 @@ impl EditToolSurface {
 /// tracked by this phase-1 telemetry.
 pub(crate) fn edit_tool_surface(tool_name: &str) -> Option<EditToolSurface> {
     match tool_name {
-        "apply_text_edits" | "apply_unified_diff" => Some(EditToolSurface::Canonical),
+        "apply_text_edits" | "apply_patch" | "apply_unified_diff" => {
+            Some(EditToolSurface::Canonical)
+        }
         "write_project_file" => Some(EditToolSurface::Advanced),
         _ => None,
     }
@@ -251,6 +253,10 @@ mod tests {
             Some(EditToolSurface::Canonical)
         );
         assert_eq!(
+            edit_tool_surface("apply_patch"),
+            Some(EditToolSurface::Canonical)
+        );
+        assert_eq!(
             edit_tool_surface("apply_unified_diff"),
             Some(EditToolSurface::Canonical)
         );
@@ -267,7 +273,6 @@ mod tests {
             "replace_line_range",
             "insert_at_line",
             "delete_line_range",
-            "apply_patch",
             "apply_patch_checked",
             "validate_patch",
         ] {

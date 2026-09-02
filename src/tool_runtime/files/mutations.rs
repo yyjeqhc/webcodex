@@ -201,6 +201,26 @@ fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> T
     )
 }
 
+fn apply_patch_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_patch."
+        ),
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+            "recovery_action": "upgrade_or_reconnect_runner",
+            "retry_guidance": "reconnect or upgrade the Runner so it explicitly advertises apply_patch"
+        }),
+    )
+    .with_recovery(crate::tool_runtime::RecoveryKind::RetrySame, None)
+}
+
 /// Maximum decoded size for whole-payload/model-facing artifact operations.
 /// These paths aggregate content or return it as base64/JSON, so they remain at
 /// 10 MiB even though data-plane upload/export paths admit larger files.
@@ -446,7 +466,8 @@ fn validate_apply_file_change(
     Ok(())
 }
 
-fn apply_text_edits_agent_stdout_result(
+fn transactional_edit_agent_stdout_result(
+    tool_name: &str,
     stdout: &str,
     expected_change_count: usize,
     expected_dry_run: bool,
@@ -456,7 +477,7 @@ fn apply_text_edits_agent_stdout_result(
         Ok(value) if value.is_object() => value,
         _ => {
             return structured_edit_outcome_unknown_result(
-                "apply_text_edits",
+                tool_name,
                 "the Runner returned malformed or non-object JSON after dispatch",
                 json!({}),
             )
@@ -474,7 +495,7 @@ fn apply_text_edits_agent_stdout_result(
                 || changed == Some(false)
                 || state_changed == Some(false));
         if !no_effect_proven {
-            return structured_edit_outcome_unknown_result("apply_text_edits", error, obj);
+            return structured_edit_outcome_unknown_result(tool_name, error, obj);
         }
         obj["changed"] = json!(false);
         obj["state_changed"] = json!(false);
@@ -506,7 +527,7 @@ fn apply_text_edits_agent_stdout_result(
         && (expected_dry_run || changed == would_change);
     if !valid {
         return structured_edit_outcome_unknown_result(
-            "apply_text_edits",
+            tool_name,
             "the Runner success payload omitted or contradicted authoritative edit-effect fields",
             obj,
         );
@@ -514,6 +535,19 @@ fn apply_text_edits_agent_stdout_result(
     obj["state_changed"] = json!(changed.expect("validated changed field"));
     obj["execution_state"] = json!("completed");
     ToolResult::ok(obj)
+}
+
+fn apply_text_edits_agent_stdout_result(
+    stdout: &str,
+    expected_change_count: usize,
+    expected_dry_run: bool,
+) -> ToolResult {
+    transactional_edit_agent_stdout_result(
+        "apply_text_edits",
+        stdout,
+        expected_change_count,
+        expected_dry_run,
+    )
 }
 
 fn write_project_file_agent_stdout_result(stdout: &str) -> ToolResult {
@@ -1277,6 +1311,173 @@ impl ToolRuntime {
             Err(result) => return result,
         };
         write_project_file_agent_stdout_result(&response.stdout.unwrap_or_default())
+    }
+
+    pub(crate) async fn apply_patch(
+        &self,
+        project: String,
+        patch: String,
+        dry_run: Option<bool>,
+    ) -> ToolResult {
+        let parsed = match crate::apply_patch_shared::parse_codex_patch(&patch) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return write_project_file_preflight_rejection(
+                    error.to_string(),
+                    error.kind,
+                    "regenerate a valid Codex *** Begin Patch payload and retry",
+                )
+            }
+        };
+        let mut touched_paths = HashSet::new();
+        for (change_index, hunk) in parsed.hunks.iter().enumerate() {
+            let kind = hunk.kind();
+            let path = hunk.path();
+            if let Err(error) = validate_edit_file_path(path) {
+                return apply_text_edits_path_policy_rejection(change_index, kind, path, error);
+            }
+            if !touched_paths.insert(path) {
+                return apply_text_edits_preflight_rejection(
+                    format!("change {change_index} reuses path '{path}'; each source/destination path may appear only once"),
+                    "path_overlap",
+                    Some(change_index),
+                    None,
+                    Some(kind),
+                    Some(path),
+                    "correct the duplicate source/destination path and retry the whole patch",
+                );
+            }
+            if let Some(to_path) = hunk.move_path().filter(|to_path| *to_path != path) {
+                if let Err(error) = validate_edit_file_path(to_path) {
+                    return apply_text_edits_path_policy_rejection(
+                        change_index,
+                        kind,
+                        to_path,
+                        error,
+                    );
+                }
+                if !touched_paths.insert(to_path) {
+                    return apply_text_edits_preflight_rejection(
+                        format!("change {change_index} reuses destination path '{to_path}'; each source/destination path may appear only once"),
+                        "path_overlap",
+                        Some(change_index),
+                        None,
+                        Some(kind),
+                        Some(to_path),
+                        "correct the duplicate source/destination path and retry the whole patch",
+                    );
+                }
+            }
+        }
+
+        let expected_change_count = parsed.hunks.len();
+        let expected_dry_run = dry_run.unwrap_or(false);
+        let payload = json!({
+            "patch": patch,
+            "dry_run": expected_dry_run,
+        });
+        let serialized = match serde_json::to_string(&payload) {
+            Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,
+            Ok(_) => {
+                return apply_text_edits_preflight_rejection(
+                    format!(
+                        "serialized patch payload exceeds {MAX_APPLY_FILE_CHANGES_BYTES} bytes"
+                    ),
+                    "payload_too_large",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "reduce the patch payload size and retry",
+                )
+            }
+            Err(error) => {
+                return apply_text_edits_preflight_rejection(
+                    format!("failed to serialize patch payload: {error}"),
+                    "serialization_failed",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "regenerate the patch and retry",
+                )
+            }
+        };
+
+        let proj = match self.resolve_project(&project).await {
+            Ok(project) => project,
+            Err(error) => return ToolResult::err(error),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "apply_patch requires an agent-registered project; server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => return ToolResult::err(error),
+        };
+        let routing_path = parsed
+            .hunks
+            .first()
+            .map(|hunk| hunk.path().to_string())
+            .expect("non-empty Codex patch validated above");
+        let wait_timeout = 60_u64;
+        let request = ShellFileOpRequest {
+            op: "apply_patch".to_string(),
+            client_id,
+            path: routing_path,
+            cwd: Some(proj.path.clone()),
+            content: Some(serialized),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            wait_timeout_secs: wait_timeout,
+        };
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_apply_patch(request, "tool_runtime".to_string())
+            .await
+        {
+            Ok(request) => request,
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error
+                        .contains(crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH) =>
+            {
+                return apply_patch_capability_rejection(error)
+            }
+            Err(_) => {
+                return structured_edit_not_started_result(
+                    "apply_patch",
+                    "the Runner queue rejected the request before dispatch",
+                )
+            }
+        };
+        let response = match await_structured_edit_response(
+            self,
+            &request_id,
+            rx,
+            wait_timeout,
+            "apply_patch",
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(result) => return result,
+        };
+        transactional_edit_agent_stdout_result(
+            "apply_patch",
+            &response.stdout.unwrap_or_default(),
+            expected_change_count,
+            expected_dry_run,
+        )
     }
 
     pub(crate) async fn apply_text_edits(

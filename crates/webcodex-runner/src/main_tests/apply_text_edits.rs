@@ -593,6 +593,10 @@ fn file_apply_text_edits_structured_not_found_disables_selector() {
     assert_eq!(recovery["direct_retry_safe"], false);
     assert_eq!(recovery["reread_required"], true);
     assert_eq!(recovery["recovery_action"], "reread_or_refine_match");
+    assert!(out["retry_guidance"]
+        .as_str()
+        .unwrap()
+        .contains("prefer apply_patch"));
     assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 0);
     assert!(!serde_json::to_string(recovery)
         .unwrap()

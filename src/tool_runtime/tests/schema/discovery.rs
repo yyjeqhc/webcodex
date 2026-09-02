@@ -527,6 +527,19 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
 }
 
 #[test]
+fn edit_recommended_flow_prefers_apply_patch_before_exact_edits() {
+    use crate::tool_runtime::tool_definition::TOOL_RECOMMENDED_FLOWS;
+
+    let flow = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "edit")
+        .expect("edit recommended flow");
+    assert_eq!(flow.tools.first().copied(), Some("apply_patch"));
+    assert_eq!(flow.tools.get(1).copied(), Some("apply_text_edits"));
+    assert!(flow.summary.starts_with("Edit: prefer apply_patch"));
+}
+
+#[test]
 fn tool_manifest_categories_cover_every_model_visible_definition() {
     use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
 
@@ -968,8 +981,8 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert_eq!(
         edit_prefix,
         vec![
-            "apply_text_edits",
             "apply_patch",
+            "apply_text_edits",
             "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
@@ -988,10 +1001,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "run_shell with rg or git grep remains the diagnostic escape hatch",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
-        "edit: prefer apply_text_edits for small guarded edits",
-        "apply_patch for model-generated complex changes",
-        "apply_unified_diff for external raw unified diffs",
-        "write_project_file only for intentional full rewrites",
+        "edit: prefer apply_patch for model-generated contextual",
+        "use apply_text_edits for small exact guarded edits",
+        "apply_unified_diff only for external raw diffs",
+        "write_project_file only for intentional whole-file rewrites",
         "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",

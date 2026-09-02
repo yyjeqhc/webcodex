@@ -695,7 +695,7 @@ fn edit_conflict_retry_guidance(recovery: Option<&serde_json::Value>) -> &'stati
             "use the intended global occurrence with a line_scope that fully contains it, or correct either fence; reuse the same expected_sha256 unless the file changed."
         }
         Some("reread_or_refine_match") => {
-            "reread this file or refine the exact match; if you reread, retry with the newly observed expected_sha256."
+            "for model-generated contextual changes, prefer apply_patch; otherwise reread this file or refine the exact match, then retry apply_text_edits with the newly observed expected_sha256."
         }
         Some("refine_edit_batch") => {
             "refine the edit batch so exact edit ranges no longer overlap; reuse the same expected_sha256 unless you reread or observe a changed file."

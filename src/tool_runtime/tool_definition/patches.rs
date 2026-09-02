@@ -29,7 +29,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Apply model-generated Codex *** Begin Patch DSL transactionally. Supports add/update/delete/move with bounded context matching, Runner-side source SHA rechecks, rollback, dry_run, and structured recovery. Prefer apply_text_edits for small precise edits; use apply_unified_diff for external Git diffs.",
+            "Primary model-generated edit path for contextual, multi-hunk, or multi-file changes using Codex *** Begin Patch. Transactional with bounded matching, source-SHA rechecks, rollback, dry_run, and structured recovery. Use apply_text_edits only for exact guarded edits; apply_unified_diff for external Git diffs.",
             apply_patch_input_schema,
         ),
         65,
@@ -53,7 +53,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     ),
-    "Canonical complex/multi-file raw unified-diff mutation. Prefer apply_text_edits for ordinary guarded local edits. This tool performs its own bounded preflight, applies only after it passes, and never needs a separate validation call. Input must be a standard unified diff; shell heredocs and Codex *** Begin Patch wrappers are rejected with recovery metadata.",
+    "External raw unified-diff mutation path. Prefer apply_patch for model-generated changes and apply_text_edits for small exact guarded edits. Performs bounded preflight before applying and never needs a separate validation call. Input must be a standard unified diff; shell heredocs and Codex *** Begin Patch wrappers are rejected with recovery metadata.",
     apply_unified_diff_input_schema,
 ),
 ];

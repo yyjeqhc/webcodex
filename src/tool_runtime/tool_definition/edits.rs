@@ -30,7 +30,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Create new files or intentional whole-file rewrites. Existing-file overwrite requires the exact current expected_sha256. Prefer apply_text_edits for ordinary local edits; inspect current content and worktree changes before replacing a file.",
+        "Create new files or intentional whole-file rewrites. Existing-file overwrite requires the exact current expected_sha256. Prefer apply_patch for model-generated changes and apply_text_edits for small exact guarded edits; inspect current content and worktree changes before replacing a file.",
         write_project_file_input_schema,
     ),
     adaptive_runtime_direct(
@@ -53,7 +53,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Canonical transactional file-change tool, preferred for ordinary local edit/create/delete/rename on the current worktree, not HEAD. Whole batch uses per-file hashes and dry_run; prefer over whole-file. Exact edits are unique by default; optional 1-based inclusive line_scope fences full matches while occurrence remains global source order. SHA conflict requires reread.",
+            "Precision fallback for small exact guarded file changes on the current worktree. Transactional and SHA-guarded; exact matches are unique by default, occurrence remains global source order, and optional line_scope fences matches. Prefer apply_patch for contextual, multi-hunk, or multi-file model changes.",
             apply_text_edits_input_schema,
         ),
         60,

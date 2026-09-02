@@ -437,18 +437,17 @@ fn openapi_rejects_legacy_codex_paths_from_model_facing_spec() {
         !serialized.contains("CodexRunRequest"),
         "legacy CodexRunRequest schema must stay absent from OpenAPI"
     );
-    // callRuntimeTool should be marked advanced/generic.
+    // callRuntimeTool is generic, but it is the formal GPT Actions route for
+    // model-generated apply_patch edits because no dedicated apply_patch Action exists.
     let call_tool = &spec["paths"]["/api/tools/call"]["post"]["description"]
         .as_str()
         .unwrap();
     assert!(
-        call_tool.contains("Advanced"),
-        "callRuntimeTool description should mark it as advanced"
-    );
-    assert!(
-        call_tool.contains("generic escape hatch")
-            && call_tool.contains("Prefer dedicated actions"),
-        "callRuntimeTool description should prefer dedicated tools: {call_tool}"
+        call_tool.contains("Prefer dedicated actions")
+            && call_tool.contains("model-generated patch edits")
+            && call_tool.contains("tool=apply_patch")
+            && call_tool.contains("formal apply_patch route"),
+        "callRuntimeTool description should document the apply_patch exception: {call_tool}"
     );
     // getRuntimeJobStatus / getRuntimeJobLog should mention job_id polling.
     let status_desc = &spec["paths"]["/api/jobs/status"]["post"]["description"]
@@ -1508,7 +1507,7 @@ fn openapi_retained_edit_tools_remain_runtime_only() {
         [TOOL_CALL_TOOL_FIELD]["description"]
         .as_str()
         .unwrap();
-    for tool in ["write_project_file", "apply_text_edits"] {
+    for tool in ["write_project_file", "apply_text_edits", "apply_patch"] {
         assert!(
             tool_desc.contains(tool),
             "callRuntimeTool must document runtime tool {tool}"
@@ -1572,6 +1571,40 @@ fn openapi_call_runtime_tool_examples_cover_params_and_no_params_without_retired
             value["tool"].as_str() == Some("list_tools") && value.get("params").is_none()
         }),
         "callRuntimeTool examples should include an argument-less flattened variant"
+    );
+    assert!(
+        values.iter().any(|value| {
+            value["tool"].as_str() == Some("apply_patch")
+                && value["project"].as_str() == Some("webcodex")
+                && value["patch"]
+                    .as_str()
+                    .is_some_and(|patch| patch.contains("*** Begin Patch"))
+        }),
+        "callRuntimeTool examples should document the formal model-generated apply_patch route"
+    );
+}
+
+#[test]
+fn openapi_edit_routes_keep_apply_patch_primary_for_model_generated_changes() {
+    let spec = build_openapi_spec();
+    let unified = spec["paths"]["/api/projects/apply_unified_diff"]["post"]["description"]
+        .as_str()
+        .expect("applyUnifiedDiff description");
+    assert!(unified.contains("External/raw unified-diff mutation only"));
+    assert!(unified.contains("callRuntimeTool with tool=apply_patch"));
+    assert!(!unified.contains("Canonical complex or multi-file"));
+    assert!(!unified.contains("Prefer apply_text_edits"));
+
+    let call = spec["paths"]["/api/tools/call"]["post"]["description"]
+        .as_str()
+        .expect("callRuntimeTool description");
+    assert!(call.contains("model-generated patch edits"));
+    assert!(call.contains("tool=apply_patch"));
+    assert!(call.contains("formal apply_patch route"));
+
+    assert!(
+        spec["paths"].get("/api/projects/apply_patch").is_none(),
+        "apply_patch must remain runtime-only through callRuntimeTool"
     );
 }
 

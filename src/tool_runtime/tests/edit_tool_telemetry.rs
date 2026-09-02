@@ -251,7 +251,7 @@ fn edit_surface_table_matches_canonicalization_contract() {
 fn sample_edit_tool_args_are_not_required_by_telemetry_module() {
     // Sanity: telemetry classification is name-only; sample args (paths/content)
     // used elsewhere for schema fixtures must not be needed to classify tools.
-    // `apply_text_edits` is the canonical model-visible edit tool and can
+    // `apply_text_edits` is the small exact guarded-edit fallback and can
     // synthesize args from its spec; telemetry classification is name-only and
     // is asserted via `edit_tool_surface` above, so no sample-args construction
     // is required beyond the canonical tools.

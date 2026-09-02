@@ -65,7 +65,7 @@ pub(crate) use jobs::{
 pub(crate) use projects::ShellClientLookupError;
 pub(crate) use protocol::AcceptedRunnerProtocol;
 pub(crate) use reconciliation::recovery_timeout_sweep;
-pub(crate) use requests::EnqueueLspError;
+pub(crate) use requests::{ApplyPatchResponseContract, EnqueueLspError};
 use state::ShellClientRegistryInner;
 pub(crate) use state::{ShellClientSemanticView, ShellJobVisibility};
 use validation::sha256_hex;

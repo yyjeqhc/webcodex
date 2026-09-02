@@ -179,7 +179,7 @@ pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut R
 }
 
 /// `POST /api/projects/apply_unified_diff` — thin GPT Actions wrapper over the
-/// canonical unified-diff mutation. The runtime validates the bounded raw diff,
+/// external/raw unified-diff mutation. The runtime validates the bounded raw diff,
 /// performs one `git apply --check -`, and dispatches `git apply -` only after
 /// the preflight passes.
 #[handler]

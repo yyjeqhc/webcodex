@@ -107,7 +107,8 @@ pub(crate) fn public_url() -> String {
 /// 4. project mutation (`applyUnifiedDiff`, `runProjectShellCommand`,
 ///    `gitRestorePaths`, `discardUntrackedFiles`, `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
-/// 6. advanced/generic entry point (`callRuntimeTool`)
+/// 6. generic runtime entry point (`callRuntimeTool`), including the formal
+///    GPT Actions route for model-generated `apply_patch` edits
 ///
 /// Edit tools reachable through `callRuntimeTool` are `apply_text_edits`
 /// (small guarded transactional changes), `apply_patch` (model-generated Codex
@@ -502,7 +503,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "applyUnifiedDiff",
                     "Apply a unified diff to a project",
-                    "Canonical complex or multi-file unified-diff mutation with side effects; requires Bearer auth and agent shell capability. Accepts only bounded raw standard unified diff, performs its own safety/applicability preflight, and applies only after it passes. Prefer apply_text_edits for ordinary guarded local edits. Failed preflight never mutates; post-dispatch uncertainty requires workspace inspection before retry.",
+                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and agent shell capability. Use when input is already a standard unified diff; model-generated edits should use callRuntimeTool with tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
                     "ApplyUnifiedDiffRequest",
                     "ApplyUnifiedDiffToolResult",
                     json!({
@@ -633,11 +634,19 @@ pub(crate) fn build_openapi_spec() -> Value {
             "/api/tools/call": {
                 "post": operation_with_examples(
                     "callRuntimeTool",
-                    "Call runtime tool (advanced)",
-                    "Advanced generic escape hatch for model-visible runtime tools. Prefer dedicated actions or tool_manifest. GPT Actions use flattened fields; params is the canonical direct/non-Action envelope. recording_session_id records wrapper calls.",
+                    "Call runtime tool",
+                    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match, except model-generated patch edits: GPT Actions use this operation with tool=apply_patch as the formal apply_patch route. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
+                        "applyPatch": {
+                            "summary": "Apply a model-generated Codex patch",
+                            "value": {
+                                "tool": "apply_patch",
+                                "project": "webcodex",
+                                "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-# WebCodex\n+# WebCodex Runtime\n*** End Patch"
+                            }
+                        },
                         "workOnAbsolutePath": {
                             "summary": "Resolve or register a Runner path, then start coding",
                             "value": {

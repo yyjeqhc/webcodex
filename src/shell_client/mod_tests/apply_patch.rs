@@ -75,7 +75,7 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
     register_patch_instance(&registry, "patch-on", true, false)
         .await
         .unwrap();
-    let (request_id, _rx) = registry
+    let (request_id, _rx, response_contract) = registry
         .enqueue_apply_patch(
             patch_request("patch-on", false),
             false,
@@ -83,6 +83,7 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         )
         .await
         .expect("capable Runner should accept apply_patch");
+    assert_eq!(response_contract, ApplyPatchResponseContract::Legacy);
     let queued = registry
         .poll(ShellAgentPollRequest {
             client_id: "patch-on".to_string(),
@@ -98,6 +99,23 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .as_deref()
         .unwrap()
         .contains("*** Begin Patch"));
+
+    register_patch_instance(&registry, "metadata-on", true, true)
+        .await
+        .unwrap();
+    let (_, _, response_contract) = registry
+        .enqueue_apply_patch(
+            patch_request("metadata-on", false),
+            false,
+            "tester".to_string(),
+        )
+        .await
+        .expect("current Runner should accept ordinary apply_patch");
+    assert_eq!(
+        response_contract,
+        ApplyPatchResponseContract::MatchMetadata,
+        "response contract follows admitted Runner capability, not strict request mode"
+    );
 
     register_patch_instance(&registry, "strict-off", true, false)
         .await
@@ -124,10 +142,11 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
     register_patch_instance(&registry, "strict-on", true, true)
         .await
         .unwrap();
-    registry
+    let (_, _, response_contract) = registry
         .enqueue_apply_patch(patch_request("strict-on", true), true, "tester".to_string())
         .await
         .expect("strict-capable Runner should accept strict apply_patch");
+    assert_eq!(response_contract, ApplyPatchResponseContract::MatchMetadata);
     let queued = registry
         .poll(ShellAgentPollRequest {
             client_id: "strict-on".to_string(),

@@ -122,6 +122,16 @@ pub(super) fn next_request_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// apply_patch success-shape contract captured from the exact Runner admitted
+/// under the registry lock. `MatchMetadata` is fenced by the additive
+/// apply_patch_strict_matching capability; legacy apply_patch Runners use the
+/// pre-existing transactional success contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyPatchResponseContract {
+    Legacy,
+    MatchMetadata,
+}
+
 pub(super) fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: &str) {
     if let Some(entry) = inner.notifiers.get(client_id) {
         entry.notify.notify_one();
@@ -569,14 +579,22 @@ impl ShellClientRegistry {
     }
 
     /// Enqueue one Codex-compatible patch request only when the exact accepted
-    /// Runner advertises the additive apply_patch capability. Capability admission
-    /// and queue insertion share one registry lock so rolling upgrades fail closed.
+    /// Runner advertises the additive apply_patch capability. Capability admission,
+    /// response-contract snapshotting, and queue insertion share one registry lock
+    /// so result validation remains bound to the Runner that actually accepted it.
     pub(crate) async fn enqueue_apply_patch(
         &self,
         body: ShellFileOpRequest,
         strict_matching: bool,
         requested_by: String,
-    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+    ) -> Result<
+        (
+            String,
+            oneshot::Receiver<ShellRunResponse>,
+            ApplyPatchResponseContract,
+        ),
+        String,
+    > {
         validate_file_request(&body)?;
         if body.op != "apply_patch" {
             return Err(format!(
@@ -634,6 +652,14 @@ impl ShellClientRegistry {
                 body.client_id
             ));
         }
+        let response_contract = if client
+            .runner_features
+            .supports(RunnerFeature::ApplyPatchStrictMatching)
+        {
+            ApplyPatchResponseContract::MatchMetadata
+        } else {
+            ApplyPatchResponseContract::Legacy
+        };
         enqueue_pending_request_locked(
             &mut inner,
             &body.client_id,
@@ -643,7 +669,7 @@ impl ShellClientRegistry {
             None,
         )?;
         notify_client_locked(&inner, &body.client_id);
-        Ok((request_id, rx))
+        Ok((request_id, rx, response_contract))
     }
 
     /// Enqueue the create-only artifact write used by computer_save_snapshot.

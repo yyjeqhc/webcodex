@@ -3225,7 +3225,7 @@ mod envelope_tests {
                 computer_text_input: false,
                 job_state_reconciliation: false,
                 coding_agent_runs: false,
-                agent_protocol_generation: None,
+                agent_protocol_generation: Some(AGENT_PROTOCOL_GENERATION_V2),
             }),
             policy: None,
             job_concurrency_limit: Some(4),

@@ -286,6 +286,22 @@ pub(super) fn read_existing_runner_config(
 pub(crate) fn read_project_files(
     project_registry_dir: &Path,
 ) -> Result<Vec<(PathBuf, ProjectFile)>, String> {
+    match std::fs::symlink_metadata(project_registry_dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(format!(
+                "Runner project registry {} is not a real directory; refusing to follow it",
+                project_registry_dir.display()
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect Runner project registry {}: {error}",
+                project_registry_dir.display()
+            ))
+        }
+    }
     let entries = match std::fs::read_dir(project_registry_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -634,6 +650,10 @@ pub(super) fn render_runner_document(
         TomlValue::String(client_id.to_string()),
     );
     root.remove("owner");
+    // A hosted connect update is also a config-spelling migration. Keeping the
+    // legacy key while inserting the canonical one would create a Runner config
+    // that the load-time dual-field fence correctly rejects.
+    root.remove("projects_dir");
     root.insert(
         "project_registry_dir".to_string(),
         TomlValue::String(project_registry_dir.to_string_lossy().to_string()),
@@ -839,6 +859,27 @@ mod tests {
         assert!(error.contains("refusing to guess"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn project_reader_rejects_symlinked_registry_root() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        let registry = tmp.path().join("project-registry");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(
+            outside.join("demo.toml"),
+            "id = \"demo\"\npath = \"/tmp/demo\"\n",
+        )
+        .unwrap();
+        symlink(&outside, &registry).unwrap();
+
+        let error = read_project_files(&registry).unwrap_err();
+        assert!(error.contains("not a real directory"), "{error}");
+        assert!(outside.join("demo.toml").is_file());
+    }
+
     #[test]
     fn project_id_sanitization_is_runner_compatible() {
         assert_eq!(
@@ -878,6 +919,41 @@ mod tests {
         let error =
             resolve_project(&projects, &two.canonicalize().unwrap(), Some("demo")).unwrap_err();
         assert!(error.contains("different path"));
+    }
+
+    #[test]
+    fn runner_document_migrates_legacy_projects_dir_without_dual_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        let project = tmp.path().join("project");
+        let legacy_registry = tmp.path().join("projects.d");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&legacy_registry).unwrap();
+        std::fs::write(
+            &config,
+            format!(
+                "server_url = \"https://example.test\"\ntoken = \"shared\"\nclient_id = \"client\"\nprojects_dir = {:?}\ncustom_field = \"preserved\"\n",
+                legacy_registry.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let rendered = render_runner_document(
+            &config,
+            "https://example.test",
+            "shared",
+            "client",
+            &legacy_registry,
+            &project.canonicalize().unwrap(),
+        )
+        .unwrap();
+        let parsed: TomlValue = toml::from_str(&rendered).unwrap();
+        assert!(parsed.get("projects_dir").is_none());
+        assert_eq!(
+            parsed["project_registry_dir"].as_str(),
+            Some(legacy_registry.to_string_lossy().as_ref())
+        );
+        assert_eq!(parsed["custom_field"].as_str(), Some("preserved"));
     }
 
     #[cfg(unix)]

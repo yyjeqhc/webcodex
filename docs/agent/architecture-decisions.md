@@ -448,6 +448,15 @@ profile directory before environment defaults are considered.
 `WEBCODEX_AGENT_CONFIG` remains a legacy alias; setting both is an error only
 when environment defaults are actually consulted.
 
+The same pre-`v0.4.0` normalization applies to the Runner-owned project
+registry: `project_registry_dir` and `project-registry/` are canonical for new
+state, while a sole legacy `projects_dir` field or `projects.d/` directory may
+continue to identify existing state in place. New and legacy fields together,
+or both default directory names together, fail closed; WebCodex does not merge,
+copy, rename, or choose between two registries implicitly. The registry remains
+a directory of Runner-owned project registration records, not a second workspace
+or project-root abstraction.
+
 Other older `agent_*` names are compatibility vocabulary and remain frozen
 rather than being cosmetically duplicated. In particular,
 `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime project ids

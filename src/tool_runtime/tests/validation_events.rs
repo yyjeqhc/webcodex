@@ -2458,12 +2458,14 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     });
     let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("add lib", false);
     complete_patch_agent_request(
         &runtime,
         "validation-finish",
         &req.request_id,
         0,
-        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add lib\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        &show_changes_stdout,
         "",
     )
     .await;
@@ -2570,12 +2572,14 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
         }
     });
     let req = wait_for_patch_agent_request(&runtime, "validation-finish").await;
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("add lib", false);
     complete_patch_agent_request(
         &runtime,
         "validation-finish",
         &req.request_id,
         0,
-        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add lib\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        &show_changes_stdout,
         "",
     )
     .await;

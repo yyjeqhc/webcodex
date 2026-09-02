@@ -3112,10 +3112,8 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
         payload.script
     );
     assert!(payload.script.contains("git diff --unified=80"));
-    // Modern frame layout: status, status-result, head, head-meta, stat,
-    // stat-meta, diff, diff-meta (with diff_exit=0 so success is provable).
-    let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_exit=0\ndiff_hunks_returned=0\ndiff_hunks_truncated=0\ndiff_trunc_hunk_count=0\ndiff_trunc_hunk_lines=0\ndiff_trunc_bytes=0\ndiff_bytes=0\n";
-    complete_patch_agent_request(&runtime, "show-native", &req.request_id, 0, stdout, "").await;
+    let stdout = framed_clean_show_changes_test_stdout("head", true);
+    complete_patch_agent_request(&runtime, "show-native", &req.request_id, 0, &stdout, "").await;
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
@@ -3127,7 +3125,7 @@ fn show_changes_clean_worktree() {
     let output = parse_show_changes_output(
             "agent:oe:webcodex",
             "## main...origin/main",
-            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix: route anchor edit file ops through agent dispatch",
+            "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix: route anchor edit file ops through agent dispatch",
             "",
             None,
             20,
@@ -3153,7 +3151,7 @@ fn show_changes_without_session_id_treats_dirty_workspace_as_advisory() {
     let mut output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n M src/lib.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         " src/lib.rs | 2 +-",
         None,
         20,
@@ -3207,7 +3205,7 @@ fn show_changes_with_session_id_includes_session_summary() {
     let mut output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n M src/foo.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         " src/foo.rs | 2 +-",
         None,
         20,
@@ -3240,7 +3238,7 @@ fn show_changes_with_missing_session_id_returns_warning_not_panic() {
     let mut output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         "",
         None,
         20,
@@ -3278,7 +3276,7 @@ fn show_changes_session_changed_paths_are_deduped() {
     let mut output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n M src/foo.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         " src/foo.rs | 2 +-",
         None,
         20,
@@ -3326,8 +3324,8 @@ async fn show_changes_session_event_limit_is_bounded() {
             .await
     });
     let req = wait_for_patch_agent_request(&runtime, "show").await;
-    let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=7\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n";
-    complete_patch_agent_request(&runtime, "show", &req.request_id, 0, stdout, "").await;
+    let stdout = framed_clean_show_changes_test_stdout("head", false);
+    complete_patch_agent_request(&runtime, "show", &req.request_id, 0, &stdout, "").await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     let len = result.output["session"]["recent_events"]
@@ -3342,7 +3340,7 @@ fn show_changes_reports_modified_file() {
     let output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n M src/users_http.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         " src/users_http.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
         None,
         20,
@@ -3369,7 +3367,7 @@ fn show_changes_reports_untracked_file() {
     let output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n?? webcodex-anchor-edit-smoke-c99f7de.txt",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         "",
         None,
         20,
@@ -3397,7 +3395,7 @@ fn show_changes_reports_conflicted_file() {
     let output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\nUU conflicted.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         "",
         None,
         20,
@@ -3451,7 +3449,7 @@ index 1111111..2222222 100644
     let output = parse_show_changes_output(
         "agent:oe:webcodex",
         "## main\n M src/lib.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=fix",
         " src/lib.rs | 4 ++--",
         Some(diff),
         1,
@@ -3667,8 +3665,25 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
         }
     });
     let req = wait_for_patch_agent_request(&runtime, "telemetry-show").await;
-    let stdout = "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nREADME.md | 1 +\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=15\n";
-    complete_patch_agent_request(&runtime, "telemetry-show", &req.request_id, 0, stdout, "").await;
+    let stdout = format!(
+        "{}{}{}",
+        framed_block(
+            'S',
+            "## main\n M README.md\n",
+            "status_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n"
+        ),
+        framed_block(
+            'H',
+            "commit=abc123\nshort=abc123\nsummary=head\n",
+            "head_exit=0\nhead_truncated=0\nhead_bytes=39\n"
+        ),
+        framed_block(
+            'T',
+            "README.md | 1 +\n",
+            "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=15\n"
+        )
+    );
+    complete_patch_agent_request(&runtime, "telemetry-show", &req.request_id, 0, &stdout, "").await;
     let result = show_task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
@@ -3717,7 +3732,7 @@ async fn show_changes_accepts_unique_short_id() {
     });
     let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
-    let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=7\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=39\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n";
+    let stdout = framed_clean_show_changes_test_stdout("head", false);
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {
@@ -3725,7 +3740,7 @@ async fn show_changes_accepts_unique_short_id() {
             agent_instance_id: "inst-workstation".to_string(),
             request_id: req.request_id,
             exit_code: Some(0),
-            stdout: Some(stdout.to_string()),
+            stdout: Some(stdout),
             stderr: Some(String::new()),
             duration_ms: Some(1),
             error: None,
@@ -4884,11 +4899,7 @@ async fn run_show_changes_via_agent(
 }
 
 fn framed_block(kind: char, body: &str, metadata: &str) -> String {
-    format!(
-        "{body}{metadata}WCSF1:{kind}:{:010}:{:010}\n",
-        body.len(),
-        metadata.len()
-    )
+    crate::tool_runtime::git::framed_show_changes_test_block(kind, body, metadata)
 }
 
 #[test]
@@ -4954,6 +4965,26 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
         framed_block('T', "", "diff_stat_exit=0\n")
     );
     assert!(split_show_changes_stdout(&synthetic, false).framing_valid);
+
+    let legacy = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+    let legacy_frames = split_show_changes_stdout(legacy, false);
+    assert!(!legacy_frames.framing_valid);
+    assert!(legacy_frames.status.is_empty());
+    assert!(legacy_frames.head.is_empty());
+    let legacy_head = parse_show_changes_output(
+        "demo",
+        "## main",
+        "abc123\0abc123\0head",
+        "",
+        None,
+        20,
+        80,
+        Some(0),
+        "",
+    );
+    assert!(legacy_head["head"]["commit"].is_null());
+    assert!(legacy_head["head"]["short"].is_null());
+    assert!(legacy_head["head"]["summary"].is_null());
 }
 
 #[tokio::test]
@@ -5445,7 +5476,7 @@ fn show_changes_parses_upstream_observation_states() {
         parse_show_changes_output(
             "agent:oe:webcodex",
             status,
-            "b47e4fb000000000000000000000000000000000\0b47e4fb\0head",
+            "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=head",
             "",
             None,
             20,
@@ -5505,7 +5536,7 @@ fn show_changes_parses_unborn_and_detached_branch_headers() {
         let output = parse_show_changes_output(
             "agent:oe:webcodex",
             status,
-            "b47e4fb000000000000000000000000000000000\0b47e4fb\0head",
+            "commit=b47e4fb000000000000000000000000000000000\nshort=b47e4fb\nsummary=head",
             "",
             None,
             20,
@@ -6182,12 +6213,7 @@ async fn show_changes_runtime_rejects_unavailable_diff_stat_observation() {
         .expect("show_changes must carry a typed internal script");
     let (command_exit, stdout, stderr) = run_command_full_capture(&payload.script, repo.path(), 30);
     assert_eq!(command_exit, 0, "show_changes command failed: {stderr}");
-    let mut missing_stat_exit = stdout
-        .lines()
-        .filter(|line| !line.starts_with("diff_stat_exit="))
-        .collect::<Vec<_>>()
-        .join("\n");
-    missing_stat_exit.push('\n');
+    let missing_stat_exit = stdout.replacen("diff_stat_exit=0", "xiff_stat_exit=0", 1);
     complete_patch_agent_request(
         &runtime,
         "stat-missing",

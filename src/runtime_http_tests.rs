@@ -1690,14 +1690,31 @@ async fn api_show_changes_with_session_id() {
             );
             tokio::task::yield_now().await;
         };
-        let stdout = "## main\n?? README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=1\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=44\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n";
+        let stdout = format!(
+            "{}{}{}",
+            crate::tool_runtime::framed_show_changes_test_block(
+                'S',
+                "## main\n?? README.md\n",
+                "status_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=1\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n"
+            ),
+            crate::tool_runtime::framed_show_changes_test_block(
+                'H',
+                "commit=abc123\nshort=abc123\nsummary=test head\n",
+                "head_exit=0\nhead_truncated=0\nhead_bytes=44\n"
+            ),
+            crate::tool_runtime::framed_show_changes_test_block(
+                'T',
+                "",
+                "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n"
+            )
+        );
         registry
             .complete(ShellAgentResultRequest {
                 client_id: "importer".to_string(),
                 agent_instance_id: "inst-import".to_string(),
                 request_id: req.request_id,
                 exit_code: Some(0),
-                stdout: Some(stdout.to_string()),
+                stdout: Some(stdout),
                 stderr: Some(String::new()),
                 duration_ms: Some(1),
                 error: None,

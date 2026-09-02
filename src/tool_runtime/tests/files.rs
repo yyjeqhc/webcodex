@@ -147,12 +147,14 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     });
     let req = wait_for_patch_agent_request(&runtime, "telemetry-write").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("write", false);
     complete_patch_agent_request(
         &runtime,
         "telemetry-write",
         &req.request_id,
         0,
-        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0write\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        &show_changes_stdout,
         "",
     )
     .await;

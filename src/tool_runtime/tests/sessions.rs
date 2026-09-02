@@ -792,12 +792,14 @@ async fn finish_coding_task_does_not_auto_close_session() {
         }
     });
     let req = wait_for_patch_agent_request(&runtime, "coding-finish-no-close").await;
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("add readme", false);
     complete_patch_agent_request(
         &runtime,
         "coding-finish-no-close",
         &req.request_id,
         0,
-        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        &show_changes_stdout,
         "",
     )
     .await;

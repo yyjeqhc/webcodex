@@ -1323,13 +1323,30 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     });
     let req = wait_for_patch_agent_request(&runtime, "coding-finish").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
-    let show_changes_stdout = "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=45\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n README.md | 1 +\n 1 file changed, 1 insertion(+)\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=52\n";
+    let show_changes_stdout = format!(
+        "{}{}{}",
+        crate::tool_runtime::framed_show_changes_test_block(
+            'S',
+            "## main\n M README.md\n",
+            "status_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n"
+        ),
+        crate::tool_runtime::framed_show_changes_test_block(
+            'H',
+            "commit=abc123\nshort=abc123\nsummary=add readme\n",
+            "head_exit=0\nhead_truncated=0\nhead_bytes=45\n"
+        ),
+        crate::tool_runtime::framed_show_changes_test_block(
+            'T',
+            " README.md | 1 +\n 1 file changed, 1 insertion(+)\n",
+            "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=52\n"
+        )
+    );
     complete_patch_agent_request(
         &runtime,
         "coding-finish",
         &req.request_id,
         0,
-        show_changes_stdout,
+        &show_changes_stdout,
         "",
     )
     .await;
@@ -3456,12 +3473,14 @@ async fn finish_coding_task_jobs_projection(fixture: &FinishSummaryFixture) -> T
     });
     let request = wait_for_patch_agent_request(&fixture.runtime, fixture.client_id).await;
     assert_internal_posix_script_contains(&request, "git status --porcelain=v1 -b");
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("add readme", false);
     complete_patch_agent_request(
         &fixture.runtime,
         fixture.client_id,
         &request.request_id,
         0,
-        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        &show_changes_stdout,
         "",
     )
     .await;

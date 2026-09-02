@@ -2137,7 +2137,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
             "show_changes",
         )
         .await;
-        let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+        let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout("test head", false);
         runtime
             .shell_clients
             .complete(ShellAgentResultRequest {
@@ -2145,7 +2145,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
                 agent_instance_id: "inst".to_string(),
                 request_id: req.request_id,
                 exit_code: Some(0),
-                stdout: Some(stdout.to_string()),
+                stdout: Some(stdout),
                 stderr: Some(String::new()),
                 duration_ms: Some(1),
                 error: None,

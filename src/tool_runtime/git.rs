@@ -24,6 +24,7 @@ use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 /// combined `git_diff_summary` command output. Chosen to be extremely unlikely
 /// to appear in real git output.
 pub(crate) const DIFF_SUMMARY_SENTINEL: &str = "@@WEBCODEX_DIFF_SUMMARY_SEP@@";
+#[cfg(test)]
 pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBCODEX_SHOW_CHANGES_SEP@@";
 const SHOW_CHANGES_BLOCK_TRAILER_BYTES: usize = 30;
 const SHOW_CHANGES_BLOCK_MAGIC: &[u8; 6] = b"WCSF1:";
@@ -633,8 +634,8 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) head: String,
     pub(crate) stat: String,
     pub(crate) diff: String,
-    /// Authoritative status metadata parsed from the result frame. `None`
-    /// when a field is absent (e.g. a legacy/compat frame).
+    /// Authoritative status metadata parsed from the current bounded frame.
+    /// `None` means the frame was absent or invalid.
     pub(crate) files_total: Option<usize>,
     pub(crate) files_returned: Option<usize>,
     pub(crate) files_truncated: Option<bool>,
@@ -649,7 +650,7 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) counts_staged: Option<usize>,
     pub(crate) counts_unstaged: Option<usize>,
     /// Per-segment byte-budget truncation flags parsed from the status result
-    /// frame. `None` when absent (legacy/compat frame).
+    /// frame. `None` when the current frame is absent or invalid.
     pub(crate) status_trunc_count: Option<bool>,
     pub(crate) status_trunc_bytes: Option<bool>,
     pub(crate) status_trunc_path: Option<bool>,
@@ -737,6 +738,47 @@ fn strip_wire_lf(value: &str) -> Option<String> {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn framed_show_changes_test_block(kind: char, body: &str, metadata: &str) -> String {
+    format!(
+        "{body}{metadata}WCSF1:{kind}:{:010}:{:010}\n",
+        body.len(),
+        metadata.len()
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn framed_clean_show_changes_test_stdout(subject: &str, include_diff: bool) -> String {
+    let head = format!("commit=abc123\nshort=abc123\nsummary={subject}\n");
+    let head_bytes = head.strip_suffix('\n').unwrap_or(&head).len();
+    let mut stdout = format!(
+        "{}{}{}",
+        framed_show_changes_test_block(
+            'S',
+            "## main\n",
+            "status_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\nmodified=0\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=0\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=7\n"
+        ),
+        framed_show_changes_test_block(
+            'H',
+            &head,
+            &format!("head_exit=0\nhead_truncated=0\nhead_bytes={head_bytes}\n")
+        ),
+        framed_show_changes_test_block(
+            'T',
+            "",
+            "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n"
+        )
+    );
+    if include_diff {
+        stdout.push_str(&framed_show_changes_test_block(
+            'D',
+            "",
+            "diff_exit=0\ndiff_hunks_returned=0\ndiff_hunks_truncated=0\ndiff_trunc_hunk_count=0\ndiff_trunc_hunk_lines=0\ndiff_trunc_bytes=0\ndiff_bytes=0\n",
+        ));
+    }
+    stdout
+}
+
 fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<ShowChangesStdout> {
     let mut cursor = stdout.len();
     let (diff, diff_meta) = if include_diff {
@@ -804,144 +846,7 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
 }
 
 pub(crate) fn split_show_changes_stdout(stdout: &str, include_diff: bool) -> ShowChangesStdout {
-    if let Some(frames) = parse_framed_show_changes_stdout(stdout, include_diff) {
-        return frames;
-    }
-
-    // Legacy delimiter framing remains readable for graceful degradation only.
-    // It can never prove transport safety because Git data may contain the delimiter.
-    let frames: Vec<String> = stdout
-        .split(SHOW_CHANGES_SENTINEL)
-        .map(|part| part.trim_matches('\n').to_string())
-        .collect();
-    let status = frames.first().cloned().unwrap_or_default();
-    let second = frames.get(1).cloned().unwrap_or_default();
-    let mut head_exit = None;
-    let mut head_truncated = None;
-    let mut head_bytes = None;
-    let mut diff_stat_exit = None;
-    let mut diff_stat_truncated = None;
-    let mut diff_stat_bytes = None;
-    let mut diff_meta = String::new();
-    let head;
-    let stat;
-    let mut diff = String::new();
-
-    if second.starts_with("status_exit=") {
-        let status_result = second;
-        head = frames.get(2).cloned().unwrap_or_default();
-        if let Some(meta) = frames.get(3).filter(|meta| meta.starts_with("head_exit=")) {
-            head_exit = parse_status_result_field(meta, "head_exit").and_then(|v| v.parse().ok());
-            head_truncated = parse_optional_bool(meta, "head_truncated");
-            head_bytes = parse_optional_usize(meta, "head_bytes");
-        }
-        stat = frames.get(4).cloned().unwrap_or_default();
-        if let Some(meta) = frames
-            .get(5)
-            .filter(|meta| meta.starts_with("diff_stat_exit="))
-        {
-            diff_stat_exit =
-                parse_status_result_field(meta, "diff_stat_exit").and_then(|v| v.parse().ok());
-            diff_stat_truncated = parse_optional_bool(meta, "diff_stat_truncated");
-            diff_stat_bytes = parse_optional_usize(meta, "diff_stat_bytes");
-        }
-        if include_diff {
-            diff = frames.get(6).cloned().unwrap_or_default();
-            diff_meta = frames.get(7).cloned().unwrap_or_default();
-        }
-        return ShowChangesStdout {
-            framing_valid: false,
-            files_total: parse_optional_usize(&status_result, "files_total"),
-            files_returned: parse_optional_usize(&status_result, "files_returned"),
-            files_truncated: parse_optional_bool(&status_result, "files_truncated"),
-            files_limit: parse_optional_usize(&status_result, "files_limit"),
-            counts_modified: parse_optional_usize(&status_result, "modified"),
-            counts_added: parse_optional_usize(&status_result, "added"),
-            counts_deleted: parse_optional_usize(&status_result, "deleted"),
-            counts_renamed: parse_optional_usize(&status_result, "renamed"),
-            counts_copied: parse_optional_usize(&status_result, "copied"),
-            counts_untracked: parse_optional_usize(&status_result, "untracked"),
-            counts_conflicted: parse_optional_usize(&status_result, "conflicted"),
-            counts_staged: parse_optional_usize(&status_result, "staged"),
-            counts_unstaged: parse_optional_usize(&status_result, "unstaged"),
-            status_trunc_count: parse_optional_bool(&status_result, "status_trunc_count"),
-            status_trunc_bytes: parse_optional_bool(&status_result, "status_trunc_bytes"),
-            status_trunc_path: parse_optional_bool(&status_result, "status_trunc_path"),
-            status_bytes: parse_optional_usize(&status_result, "status_bytes"),
-            head_exit,
-            head_truncated,
-            head_bytes,
-            diff_stat_exit,
-            diff_stat_truncated,
-            diff_stat_bytes,
-            diff_hunks_returned: parse_optional_usize(&diff_meta, "diff_hunks_returned"),
-            diff_hunks_truncated: parse_optional_bool(&diff_meta, "diff_hunks_truncated"),
-            diff_trunc_hunk_count: parse_optional_bool(&diff_meta, "diff_trunc_hunk_count"),
-            diff_trunc_hunk_lines: parse_optional_bool(&diff_meta, "diff_trunc_hunk_lines"),
-            diff_trunc_bytes: parse_optional_bool(&diff_meta, "diff_trunc_bytes"),
-            diff_exit: parse_status_result_field(&diff_meta, "diff_exit")
-                .and_then(|v| v.parse().ok()),
-            diff_bytes: parse_optional_usize(&diff_meta, "diff_bytes"),
-            status,
-            status_result,
-            head,
-            stat,
-            diff,
-        };
-    }
-
-    let status_result = if status
-        .lines()
-        .any(|line| parse_status_header(line).is_some())
-    {
-        "status_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0".to_string()
-    } else {
-        String::new()
-    };
-    head = second;
-    stat = frames.get(2).cloned().unwrap_or_default();
-    if include_diff {
-        diff = frames.get(3).cloned().unwrap_or_default();
-        diff_meta = frames.get(4).cloned().unwrap_or_default();
-    }
-    ShowChangesStdout {
-        framing_valid: false,
-        files_total: parse_optional_usize(&status_result, "files_total"),
-        files_returned: parse_optional_usize(&status_result, "files_returned"),
-        files_truncated: parse_optional_bool(&status_result, "files_truncated"),
-        files_limit: parse_optional_usize(&status_result, "files_limit"),
-        counts_modified: parse_optional_usize(&status_result, "modified"),
-        counts_added: parse_optional_usize(&status_result, "added"),
-        counts_deleted: parse_optional_usize(&status_result, "deleted"),
-        counts_renamed: parse_optional_usize(&status_result, "renamed"),
-        counts_copied: parse_optional_usize(&status_result, "copied"),
-        counts_untracked: parse_optional_usize(&status_result, "untracked"),
-        counts_conflicted: parse_optional_usize(&status_result, "conflicted"),
-        counts_staged: parse_optional_usize(&status_result, "staged"),
-        counts_unstaged: parse_optional_usize(&status_result, "unstaged"),
-        status_trunc_count: None,
-        status_trunc_bytes: None,
-        status_trunc_path: None,
-        status_bytes: None,
-        head_exit,
-        head_truncated,
-        head_bytes,
-        diff_stat_exit,
-        diff_stat_truncated,
-        diff_stat_bytes,
-        diff_hunks_returned: parse_optional_usize(&diff_meta, "diff_hunks_returned"),
-        diff_hunks_truncated: parse_optional_bool(&diff_meta, "diff_hunks_truncated"),
-        diff_trunc_hunk_count: parse_optional_bool(&diff_meta, "diff_trunc_hunk_count"),
-        diff_trunc_hunk_lines: parse_optional_bool(&diff_meta, "diff_trunc_hunk_lines"),
-        diff_trunc_bytes: parse_optional_bool(&diff_meta, "diff_trunc_bytes"),
-        diff_exit: parse_status_result_field(&diff_meta, "diff_exit").and_then(|v| v.parse().ok()),
-        diff_bytes: parse_optional_usize(&diff_meta, "diff_bytes"),
-        status,
-        status_result,
-        head,
-        stat,
-        diff,
-    }
+    parse_framed_show_changes_stdout(stdout, include_diff).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1067,26 +972,11 @@ fn parse_show_changes_head(head: &str) -> serde_json::Value {
             "summary": summary,
         });
     }
-
-    // Compatibility with legacy/in-flight output produced before the
-    // newline-labelled HEAD frame replaced the NUL-separated record.
-    let mut parts = head.splitn(3, '\0');
-    let commit = parts.next().unwrap_or_default().trim();
-    let short = parts.next().unwrap_or_default().trim();
-    let summary = parts.next().unwrap_or_default().trim();
-    if commit.is_empty() {
-        json!({
-            "commit": null,
-            "short": null,
-            "summary": null,
-        })
-    } else {
-        json!({
-            "commit": commit,
-            "short": if short.is_empty() { commit.chars().take(7).collect::<String>() } else { short.to_string() },
-            "summary": summary,
-        })
-    }
+    json!({
+        "commit": null,
+        "short": null,
+        "summary": null,
+    })
 }
 
 fn frame_bytes_match(value: &str, reported: Option<usize>, budget: usize) -> bool {

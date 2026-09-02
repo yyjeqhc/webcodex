@@ -24,6 +24,8 @@ mod file_listing;
 mod file_tools;
 pub(crate) mod files;
 mod git;
+#[cfg(test)]
+pub(crate) use git::{framed_clean_show_changes_test_stdout, framed_show_changes_test_block};
 mod git_committed;
 mod git_review;
 mod git_tools;

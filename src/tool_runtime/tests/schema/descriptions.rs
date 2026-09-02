@@ -295,7 +295,12 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         );
     }
     let patch_spec = spec_named(&specs, "apply_patch");
-    let patch_files = &patch_spec.output_schema["properties"]["output"]["properties"]["files"];
+    let patch_output = &patch_spec.output_schema["properties"]["output"]["properties"];
+    assert!(
+        patch_output.get("match_diagnostic").is_some(),
+        "apply_patch failures must expose body-free match diagnostics"
+    );
+    let patch_files = &patch_output["files"];
     assert_eq!(patch_files["type"], "array");
     let file_properties = patch_files["items"]["properties"]
         .as_object()

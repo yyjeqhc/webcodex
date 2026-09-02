@@ -614,6 +614,99 @@ const APPLY_PATCH_SUCCESS_EDIT_FIELDS: [&str; 10] = [
     "strict_match",
 ];
 
+const APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS: [&str; 10] = [
+    "chunk_index",
+    "match_source",
+    "search_start_line",
+    "expected_line_count",
+    "available_line_count",
+    "closest_start_line",
+    "closest_exact_line_matches",
+    "closest_trim_end_line_matches",
+    "closest_trim_line_matches",
+    "first_exact_mismatch_offset",
+];
+
+fn valid_apply_patch_failure_match_diagnostic(value: &Value) -> bool {
+    let Some(diagnostic) = value.as_object() else {
+        return false;
+    };
+    if diagnostic.len() != APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS.len()
+        || !diagnostic
+            .keys()
+            .all(|key| APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS.contains(&key.as_str()))
+    {
+        return false;
+    }
+    let Some(expected_line_count) = diagnostic
+        .get("expected_line_count")
+        .and_then(Value::as_u64)
+        .filter(|count| *count >= 1)
+    else {
+        return false;
+    };
+    let Some(search_start_line) = diagnostic
+        .get("search_start_line")
+        .and_then(Value::as_u64)
+        .filter(|line| *line >= 1)
+    else {
+        return false;
+    };
+    if diagnostic
+        .get("chunk_index")
+        .and_then(Value::as_u64)
+        .is_none()
+        || !diagnostic
+            .get("match_source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| matches!(source, "old_lines" | "change_context"))
+        || diagnostic
+            .get("available_line_count")
+            .and_then(Value::as_u64)
+            .is_none()
+    {
+        return false;
+    }
+    for key in [
+        "closest_exact_line_matches",
+        "closest_trim_end_line_matches",
+        "closest_trim_line_matches",
+    ] {
+        if !diagnostic
+            .get(key)
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count <= expected_line_count)
+        {
+            return false;
+        }
+    }
+    let closest_start_valid = match diagnostic.get("closest_start_line") {
+        Some(Value::Null) => true,
+        Some(value) => value.as_u64().is_some_and(|line| line >= search_start_line),
+        None => false,
+    };
+    let mismatch_valid = match diagnostic.get("first_exact_mismatch_offset") {
+        Some(Value::Null) => true,
+        Some(value) => value
+            .as_u64()
+            .is_some_and(|offset| (1..=expected_line_count).contains(&offset)),
+        None => false,
+    };
+    closest_start_valid && mismatch_valid
+}
+
+fn sanitize_apply_patch_failure_match_diagnostic(output: &mut Value) {
+    let Some(output) = output.as_object_mut() else {
+        return;
+    };
+    if output
+        .get("match_diagnostic")
+        .is_some_and(|value| !valid_apply_patch_failure_match_diagnostic(value))
+    {
+        output.remove("match_diagnostic");
+    }
+}
+
 fn sanitize_apply_patch_success_metadata(output: &mut Value) {
     let Some(top_level) = output.as_object_mut() else {
         return;
@@ -839,6 +932,7 @@ fn apply_patch_agent_stdout_result(
         expected_dry_run,
     );
     if !result.success {
+        sanitize_apply_patch_failure_match_diagnostic(&mut result.output);
         return result;
     }
     sanitize_apply_patch_success_metadata(&mut result.output);
@@ -2033,6 +2127,42 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("never silently downgrade"));
+    }
+
+    #[test]
+    fn apply_patch_failure_match_diagnostic_is_validated_before_projection() {
+        let patch = one_update_patch();
+        let valid = json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "context_mismatch",
+            "error": "Rejected Codex patch before write: context mismatch. No files were modified.",
+            "match_diagnostic": {
+                "chunk_index": 0,
+                "match_source": "old_lines",
+                "search_start_line": 3,
+                "expected_line_count": 2,
+                "available_line_count": 8,
+                "closest_start_line": 5,
+                "closest_exact_line_matches": 1,
+                "closest_trim_end_line_matches": 1,
+                "closest_trim_line_matches": 1,
+                "first_exact_mismatch_offset": 2
+            }
+        });
+        let result = apply_patch_agent_stdout_result(&valid.to_string(), &patch, false, true);
+        assert!(!result.success);
+        assert_eq!(result.output["match_diagnostic"]["closest_start_line"], 5);
+
+        let mut invalid = valid;
+        invalid["match_diagnostic"]["unexpected_field"] = json!("must-not-survive");
+        let result = apply_patch_agent_stdout_result(&invalid.to_string(), &patch, false, true);
+        assert!(!result.success);
+        assert!(result.output.get("match_diagnostic").is_none());
+        assert!(!serde_json::to_string(&result.output)
+            .unwrap()
+            .contains("must-not-survive"));
     }
 
     #[test]

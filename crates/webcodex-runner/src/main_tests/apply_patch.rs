@@ -280,6 +280,15 @@ fn file_apply_patch_context_conflict_keeps_whole_batch_unchanged() {
     assert_eq!(out["error_kind"], "context_mismatch");
     assert_eq!(out["state_changed"], false);
     assert_eq!(out["execution_state"], "not_started");
+    assert_eq!(out["change_index"], 1);
+    assert_eq!(out["match_diagnostic"]["chunk_index"], 0);
+    assert_eq!(out["match_diagnostic"]["match_source"], "old_lines");
+    assert_eq!(out["match_diagnostic"]["search_start_line"], 1);
+    assert_eq!(out["match_diagnostic"]["expected_line_count"], 1);
+    assert_eq!(out["match_diagnostic"]["available_line_count"], 1);
+    assert_eq!(out["match_diagnostic"]["closest_start_line"], 1);
+    assert_eq!(out["match_diagnostic"]["closest_exact_line_matches"], 0);
+    assert_eq!(out["match_diagnostic"]["first_exact_mismatch_offset"], 1);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("first.txt")).unwrap(),
         "one\n"
@@ -287,6 +296,29 @@ fn file_apply_patch_context_conflict_keeps_whole_batch_unchanged() {
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("second.txt")).unwrap(),
         "actual\n"
+    );
+}
+
+#[test]
+fn file_apply_patch_context_conflict_does_not_echo_patch_or_source_body() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    std::fs::write(tmp.path().join("target.txt"), "SOURCE_PRIVATE_TOKEN\n").unwrap();
+    let patch = "*** Begin Patch\n*** Update File: target.txt\n@@ PATCH_PRIVATE_TOKEN\n-old\n+new\n*** End Patch";
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_patch_request(tmp.path(), patch, false),
+    ));
+    let serialized = serde_json::to_string(&out).unwrap();
+
+    assert_eq!(out["error_kind"], "context_mismatch");
+    assert_eq!(out["match_diagnostic"]["match_source"], "change_context");
+    assert!(!serialized.contains("PATCH_PRIVATE_TOKEN"));
+    assert!(!serialized.contains("SOURCE_PRIVATE_TOKEN"));
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
+        "SOURCE_PRIVATE_TOKEN\n"
     );
 }
 

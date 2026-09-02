@@ -50,6 +50,42 @@ fn apply_patch_edit_summary_schema() -> Value {
     })
 }
 
+fn apply_patch_match_diagnostic_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Body-free structural diagnostics for a deterministic apply_patch context mismatch. Contains only positions, counts, and match-source classification; never source or patch line text.",
+        "properties": {
+            "chunk_index": {"type": "integer", "minimum": 0},
+            "match_source": {"type": "string", "enum": ["old_lines", "change_context"]},
+            "search_start_line": {"type": "integer", "minimum": 1},
+            "expected_line_count": {"type": "integer", "minimum": 1},
+            "available_line_count": {"type": "integer", "minimum": 0},
+            "closest_start_line": {
+                "anyOf": [
+                    {"type": "integer", "minimum": 1},
+                    {"type": "null"}
+                ]
+            },
+            "closest_exact_line_matches": {"type": "integer", "minimum": 0},
+            "closest_trim_end_line_matches": {"type": "integer", "minimum": 0},
+            "closest_trim_line_matches": {"type": "integer", "minimum": 0},
+            "first_exact_mismatch_offset": {
+                "anyOf": [
+                    {"type": "integer", "minimum": 1},
+                    {"type": "null"}
+                ]
+            }
+        },
+        "required": [
+            "chunk_index", "match_source", "search_start_line", "expected_line_count",
+            "available_line_count", "closest_start_line", "closest_exact_line_matches",
+            "closest_trim_end_line_matches", "closest_trim_line_matches",
+            "first_exact_mismatch_offset"
+        ]
+    })
+}
+
 fn apply_patch_file_summary_schema() -> Value {
     json!({
         "type": "array",
@@ -244,6 +280,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("path", nullable_schema("string", "Validated project-relative failed path when safe and known.")),
             ("patch_line", nullable_schema("integer", "One-based patch line for a syntax error when known.")),
             ("expected_format", nullable_schema("string", "codex_patch for parse-format recovery; null otherwise.")),
+            ("match_diagnostic", apply_patch_match_diagnostic_schema()),
             ("retry_guidance", schema_type("string", "Bounded recovery guidance for deterministic no-mutation rejection.")),
         ])),
         "apply_text_edits" => Some(wrapped_output_schema(vec![

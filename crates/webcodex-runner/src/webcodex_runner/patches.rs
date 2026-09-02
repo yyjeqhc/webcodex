@@ -332,7 +332,8 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
 use crate::apply_patch_shared::{
-    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchChunkMatch, CodexPatchHunk,
+    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchChunkMatch,
+    CodexPatchError, CodexPatchHunk, CodexPatchMatchDiagnostic,
 };
 
 #[derive(Debug, Deserialize)]
@@ -1198,24 +1199,39 @@ fn resolve_unique_patch_path(
 fn apply_patch_conflict(
     index: usize,
     path: &str,
-    error_kind: &str,
-    message: impl Into<String>,
+    error: &CodexPatchError,
     start: Instant,
 ) -> CommandResult {
-    line_edit_stdout(
-        serde_json::json!({
-            "changed": false,
-            "state_changed": false,
-            "execution_state": "not_started",
-            "error_kind": error_kind,
-            "change_index": index,
-            "path": path,
-            "recovery_action": "reread_or_regenerate_patch",
-            "retry_guidance": "reread the current file, regenerate the Codex patch against that content, and retry the whole batch",
-            "error": format!("Rejected Codex patch before write: {}. No files were modified.", message.into()),
-        }),
-        start,
-    )
+    let mut result = serde_json::json!({
+        "changed": false,
+        "state_changed": false,
+        "execution_state": "not_started",
+        "error_kind": error.kind,
+        "change_index": index,
+        "path": path,
+        "recovery_action": "reread_or_regenerate_patch",
+        "retry_guidance": "use match_diagnostic to target the stale chunk when present; reread the current file, regenerate the Codex patch against that content, and retry the whole batch",
+        "error": format!("Rejected Codex patch before write: {}. No files were modified.", error.message),
+    });
+    if let Some(diagnostic) = error.match_diagnostic.as_ref() {
+        result["match_diagnostic"] = apply_patch_match_diagnostic_json(diagnostic);
+    }
+    line_edit_stdout(result, start)
+}
+
+fn apply_patch_match_diagnostic_json(diagnostic: &CodexPatchMatchDiagnostic) -> serde_json::Value {
+    serde_json::json!({
+        "chunk_index": diagnostic.chunk_index,
+        "match_source": diagnostic.match_source.as_str(),
+        "search_start_line": diagnostic.search_start_line,
+        "expected_line_count": diagnostic.expected_line_count,
+        "available_line_count": diagnostic.available_line_count,
+        "closest_start_line": diagnostic.closest_start_line,
+        "closest_exact_line_matches": diagnostic.closest_exact_line_matches,
+        "closest_trim_end_line_matches": diagnostic.closest_trim_end_line_matches,
+        "closest_trim_line_matches": diagnostic.closest_trim_line_matches,
+        "first_exact_mismatch_offset": diagnostic.first_exact_mismatch_offset,
+    })
 }
 
 fn apply_patch_strict_match_rejection(
@@ -1409,15 +1425,7 @@ pub(crate) fn handle_apply_patch_file_request(
                             }
                             (update.content, update.chunk_matches)
                         }
-                        Err(error) => {
-                            return apply_patch_conflict(
-                                index,
-                                path,
-                                error.kind,
-                                error.message,
-                                start,
-                            )
-                        }
+                        Err(error) => return apply_patch_conflict(index, path, &error, start),
                     }
                 };
                 if replacement.contains('\0') || replacement.len() > APPLY_TEXT_EDITS_MAX_FILE_BYTES

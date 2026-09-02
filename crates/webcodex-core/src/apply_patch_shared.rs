@@ -124,6 +124,32 @@ pub struct CodexPatchChunkMatch {
     pub strict_match: bool,
 }
 
+/// Body-free structural hint for a failed apply_patch text search.
+///
+/// This intentionally contains no source or patch line text. It is safe to
+/// surface to the model so a context mismatch can be refined without echoing
+/// file contents or relying on fuzzy auto-write behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexPatchMatchDiagnostic {
+    pub chunk_index: usize,
+    pub match_source: CodexPatchMatchSource,
+    /// One-based line where this chunk's search began after prior chunks.
+    pub search_start_line: usize,
+    pub expected_line_count: usize,
+    /// Number of source lines available from search_start_line to EOF.
+    pub available_line_count: usize,
+    /// One-based start of the structurally closest candidate, when any source
+    /// line remains in the search range.
+    pub closest_start_line: Option<usize>,
+    /// Positional line matches within the closest candidate at each tier.
+    pub closest_exact_line_matches: usize,
+    pub closest_trim_end_line_matches: usize,
+    pub closest_trim_line_matches: usize,
+    /// One-based offset inside the expected pattern for the first exact
+    /// mismatch (or first unavailable source line).
+    pub first_exact_mismatch_offset: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexPatchUpdate {
     pub content: String,
@@ -135,6 +161,7 @@ pub struct CodexPatchError {
     pub kind: &'static str,
     pub line: Option<usize>,
     pub message: String,
+    pub match_diagnostic: Option<CodexPatchMatchDiagnostic>,
 }
 
 impl CodexPatchError {
@@ -143,7 +170,13 @@ impl CodexPatchError {
             kind,
             line,
             message: message.into(),
+            match_diagnostic: None,
         }
+    }
+
+    fn with_match_diagnostic(mut self, diagnostic: CodexPatchMatchDiagnostic) -> Self {
+        self.match_diagnostic = Some(diagnostic);
+        self
     }
 }
 
@@ -522,6 +555,68 @@ fn seek_sequence(
     None
 }
 
+fn diagnose_sequence_miss(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    chunk_index: usize,
+    match_source: CodexPatchMatchSource,
+) -> CodexPatchMatchDiagnostic {
+    let effective_start = start.min(lines.len());
+    let available_line_count = lines.len().saturating_sub(effective_start);
+    let mut best: Option<(usize, usize, usize, usize)> = None;
+
+    for index in effective_start..lines.len() {
+        let compared = pattern.len().min(lines.len() - index);
+        let mut exact = 0usize;
+        let mut trim_end = 0usize;
+        let mut trim = 0usize;
+        for offset in 0..compared {
+            let candidate = &lines[index + offset];
+            let expected = &pattern[offset];
+            exact += usize::from(candidate == expected);
+            trim_end += usize::from(candidate.trim_end() == expected.trim_end());
+            trim += usize::from(candidate.trim() == expected.trim());
+        }
+        let score = (exact, trim_end, trim);
+        let replace = best
+            .map(|(_, best_exact, best_trim_end, best_trim)| {
+                score > (best_exact, best_trim_end, best_trim)
+            })
+            .unwrap_or(true);
+        if replace {
+            best = Some((index, exact, trim_end, trim));
+        }
+    }
+
+    let (closest_start_line, closest_exact, closest_trim_end, closest_trim, first_mismatch) =
+        if let Some((index, exact, trim_end, trim)) = best {
+            let first_mismatch = (0..pattern.len())
+                .find(|offset| {
+                    lines
+                        .get(index + *offset)
+                        .is_none_or(|candidate| candidate != &pattern[*offset])
+                })
+                .map(|offset| offset + 1);
+            (Some(index + 1), exact, trim_end, trim, first_mismatch)
+        } else {
+            (None, 0, 0, 0, (!pattern.is_empty()).then_some(1))
+        };
+
+    CodexPatchMatchDiagnostic {
+        chunk_index,
+        match_source,
+        search_start_line: effective_start + 1,
+        expected_line_count: pattern.len(),
+        available_line_count,
+        closest_start_line,
+        closest_exact_line_matches: closest_exact,
+        closest_trim_end_line_matches: closest_trim_end,
+        closest_trim_line_matches: closest_trim,
+        first_exact_mismatch_offset: first_mismatch,
+    }
+}
+
 pub fn derive_codex_patch_update(
     original: &str,
     path: &str,
@@ -565,10 +660,15 @@ pub fn derive_codex_patch_update_with_matches(
                 return Err(CodexPatchError::new(
                     "context_mismatch",
                     None,
-                    format!(
-                        "{path}: chunk {chunk_index} could not find change context '{context}'"
-                    ),
-                ));
+                    format!("{path}: chunk {chunk_index} could not find its change context"),
+                )
+                .with_match_diagnostic(diagnose_sequence_miss(
+                    &original_lines,
+                    std::slice::from_ref(context),
+                    line_index,
+                    chunk_index,
+                    CodexPatchMatchSource::ChangeContext,
+                )));
             };
             context_match = Some(matched_context);
             line_index = matched_context.index + 1;
@@ -611,7 +711,14 @@ pub fn derive_codex_patch_update_with_matches(
                 "context_mismatch",
                 None,
                 format!("{path}: chunk {chunk_index} could not find its expected old lines"),
-            ));
+            )
+            .with_match_diagnostic(diagnose_sequence_miss(
+                &original_lines,
+                pattern,
+                line_index,
+                chunk_index,
+                CodexPatchMatchSource::OldLines,
+            )));
         };
         let start = found.index;
         replacements.push((start, pattern.len(), replacement.to_vec()));
@@ -858,6 +965,56 @@ mod tests {
         assert_eq!(updated.chunk_matches[0].matched_start_line, 2);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(1));
         assert!(updated.chunk_matches[0].strict_match);
+    }
+
+    #[test]
+    fn context_mismatch_reports_body_free_nearest_match_diagnostic() {
+        let chunks = vec![CodexPatchChunk {
+            old_lines: vec!["alpha".into(), "expected-secret".into(), "omega".into()],
+            new_lines: vec!["changed".into()],
+            ..Default::default()
+        }];
+        let error = derive_codex_patch_update_with_matches(
+            "alpha\nactual-secret\nomega\n",
+            "file.txt",
+            &chunks,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, "context_mismatch");
+        assert!(!error.message.contains("expected-secret"));
+        assert!(!error.message.contains("actual-secret"));
+        let diagnostic = error.match_diagnostic.expect("match diagnostic");
+        assert_eq!(diagnostic.chunk_index, 0);
+        assert_eq!(diagnostic.match_source, CodexPatchMatchSource::OldLines);
+        assert_eq!(diagnostic.search_start_line, 1);
+        assert_eq!(diagnostic.expected_line_count, 3);
+        assert_eq!(diagnostic.available_line_count, 3);
+        assert_eq!(diagnostic.closest_start_line, Some(1));
+        assert_eq!(diagnostic.closest_exact_line_matches, 2);
+        assert_eq!(diagnostic.closest_trim_end_line_matches, 2);
+        assert_eq!(diagnostic.closest_trim_line_matches, 2);
+        assert_eq!(diagnostic.first_exact_mismatch_offset, Some(2));
+    }
+
+    #[test]
+    fn change_context_mismatch_does_not_echo_context_text() {
+        let chunks = vec![CodexPatchChunk {
+            change_context: Some("private-context-token".into()),
+            old_lines: vec!["old".into()],
+            new_lines: vec!["new".into()],
+            ..Default::default()
+        }];
+        let error = derive_codex_patch_update_with_matches("unrelated\nold\n", "file.txt", &chunks)
+            .unwrap_err();
+        assert_eq!(error.kind, "context_mismatch");
+        assert!(!error.message.contains("private-context-token"));
+        let diagnostic = error.match_diagnostic.expect("match diagnostic");
+        assert_eq!(
+            diagnostic.match_source,
+            CodexPatchMatchSource::ChangeContext
+        );
+        assert_eq!(diagnostic.expected_line_count, 1);
     }
 
     #[test]

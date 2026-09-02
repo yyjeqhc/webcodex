@@ -51,8 +51,9 @@ initialization targets `runner.toml`.
 
 An explicit `--config PATH` is always exact, so an explicitly named legacy
 `agent.toml` remains valid. `WEBCODEX_RUNNER_CONFIG` is the canonical default
-path override; `WEBCODEX_AGENT_CONFIG` is retained as a legacy alias. Setting
-both environment variables is an error. This filename migration does not rename
+path override; `WEBCODEX_AGENT_CONFIG` is retained as a legacy alias. When no
+explicit `--config` or `--profile` selects the config, setting both environment
+variables is an error. This filename migration does not rename
 `client_id`, `agent_instance_id`, `agent:<client_id>:<project_id>`, agent tokens,
 or Server/Runner wire fields.
 

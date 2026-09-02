@@ -43,7 +43,8 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 
 显式 `--config PATH` 始终按精确路径处理，因此显式指定旧 `agent.toml` 仍有效。
 `WEBCODEX_RUNNER_CONFIG` 是规范的默认路径覆盖变量；`WEBCODEX_AGENT_CONFIG` 作为
-旧 alias 保留；两者同时设置会报错。本次文件名迁移不会改名 `client_id`、
+旧 alias 保留；仅当没有显式 `--config` 或 `--profile` 选择配置时，两者同时设置才会
+报错。本次文件名迁移不会改名 `client_id`、
 `agent_instance_id`、`agent:<client_id>:<project_id>`、agent token 或 Server/Runner
 wire field。
 

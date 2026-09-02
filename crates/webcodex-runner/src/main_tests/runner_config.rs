@@ -343,10 +343,13 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         },
         "an explicit --config path must not be blocked by conflicting default-path env aliases"
     );
-    let error = parse_runner_args(["--profile", "special"]).unwrap_err();
-    assert!(
-        error.contains("cannot both be set"),
-        "dual env aliases must remain fail-closed unless --config supplies an exact path"
+    assert_eq!(
+        parse_runner_args(["--profile", "special"]).unwrap(),
+        RunnerCliAction::Run {
+            config_path: client_profile_runner_config("special").unwrap(),
+            once: false,
+        },
+        "an explicit profile must not be blocked by conflicting default-path env aliases"
     );
 }
 

@@ -442,9 +442,11 @@ narrow and deterministic: a config directory containing only legacy
 the canonical file; a directory containing both fails closed rather than
 choosing a winner; a directory containing neither creates/targets
 `runner.toml`. Explicit `--config PATH` remains exact and does not inspect a
-sibling filename. `WEBCODEX_RUNNER_CONFIG` is the canonical default-path env
-override, while `WEBCODEX_AGENT_CONFIG` remains a legacy alias; setting both is
-an error.
+sibling filename. Explicit `--profile` similarly selects its authoritative
+profile directory before environment defaults are considered.
+`WEBCODEX_RUNNER_CONFIG` is the canonical default-path env override, while
+`WEBCODEX_AGENT_CONFIG` remains a legacy alias; setting both is an error only
+when environment defaults are actually consulted.
 
 Other older `agent_*` names are compatibility vocabulary and remain frozen
 rather than being cosmetically duplicated. In particular,

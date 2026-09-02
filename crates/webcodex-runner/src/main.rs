@@ -692,15 +692,15 @@ where
     let config_path = if let Some(config_path) = config_path {
         config_path
     } else {
-        if runner_config_env.is_some() && legacy_agent_config_env.is_some() {
-            return Err(
-                "WEBCODEX_RUNNER_CONFIG and legacy WEBCODEX_AGENT_CONFIG cannot both be set"
-                    .to_string(),
-            );
-        }
         if let Some(profile) = profile {
             client_profile_runner_config(&profile)?
         } else {
+            if runner_config_env.is_some() && legacy_agent_config_env.is_some() {
+                return Err(
+                    "WEBCODEX_RUNNER_CONFIG and legacy WEBCODEX_AGENT_CONFIG cannot both be set"
+                        .to_string(),
+                );
+            }
             runner_config_env
                 .or(legacy_agent_config_env)
                 .map(PathBuf::from)

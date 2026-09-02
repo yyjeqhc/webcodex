@@ -294,6 +294,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
             path: config.root.to_string_lossy().into_owned(),
             allow_patch: true,
             kind: Some("auto".to_string()),
+            registration_source: None,
             description: None,
             hooks: Vec::new(),
             disabled: false,

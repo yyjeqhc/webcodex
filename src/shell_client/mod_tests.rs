@@ -84,6 +84,7 @@ fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
         path: path.to_string(),
         allow_patch: true,
         kind: Some("rust".to_string()),
+        registration_source: None,
         description: Some("test project".to_string()),
         hooks: vec!["doctor".to_string(), "precommit".to_string()],
         disabled: false,

@@ -737,6 +737,11 @@ pub struct ShellAgentProjectSummary {
     pub allow_patch: bool,
     #[serde(default)]
     pub kind: Option<String>,
+    /// Registration provenance reported by the Runner. This is descriptive
+    /// registry metadata, not execution authority. Unknown future values are
+    /// intentionally preserved at this wire boundary for rolling upgrades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_source: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]

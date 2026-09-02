@@ -23,7 +23,9 @@ const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const PROJECT_GIT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROJECT_GIT_CLEANUP_TIMEOUT: Duration = Duration::from_millis(500);
 const PROJECT_GIT_OUTPUT_MAX_BYTES: usize = 64 * 1024;
-const AUTO_REGISTERED_PROJECT_KIND: &str = "auto_registered";
+const EXPLICIT_REGISTRATION_SOURCE: &str = "explicit";
+const AUTO_REGISTERED_REGISTRATION_SOURCE: &str = "auto_registered";
+const LEGACY_AUTO_REGISTERED_PROJECT_KIND: &str = "auto_registered";
 const AUTO_PROJECT_HASH_PREFIX_LENGTHS: &[usize] = &[8, 12, 16, 24, 32, 48, 64];
 static PROJECT_REGISTRY_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -83,6 +85,8 @@ pub(crate) struct RunnerProjectFile {
     pub(crate) name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) registration_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
     #[serde(default)]
@@ -157,6 +161,7 @@ pub(crate) fn parse_runner_project_toml(content: &str) -> Result<RunnerProjectFi
     }
     project.name = trim_optional(project.name);
     project.kind = trim_optional(project.kind);
+    project.registration_source = trim_optional(project.registration_source);
     project.description = trim_optional(project.description);
     if let Some(shell_profile) = &project.shell_profile {
         validate_shell_profile_name("project.shell_profile", shell_profile)?;
@@ -503,6 +508,50 @@ fn project_revision(project: &RunnerProjectFile) -> String {
     format!("sha256:{:x}", Sha256::digest(normalized.as_bytes()))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectRegistrationSource {
+    Explicit,
+    AutoRegistered,
+}
+
+impl ProjectRegistrationSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => EXPLICIT_REGISTRATION_SOURCE,
+            Self::AutoRegistered => AUTO_REGISTERED_REGISTRATION_SOURCE,
+        }
+    }
+}
+
+/// Interpret registration provenance without changing the parsed persisted
+/// representation. Keeping this compatibility projection separate is
+/// important because `project_revision` hashes the raw normalized record.
+fn effective_registration_source(project: &RunnerProjectFile) -> ProjectRegistrationSource {
+    match project.registration_source.as_deref() {
+        Some(AUTO_REGISTERED_REGISTRATION_SOURCE) => ProjectRegistrationSource::AutoRegistered,
+        // A present new field is authoritative. `explicit` and unknown future
+        // values therefore fail closed to ordinary explicit registration rather
+        // than allowing a legacy `kind` value to override newer semantics.
+        Some(_) => ProjectRegistrationSource::Explicit,
+        None if project.kind.as_deref() == Some(LEGACY_AUTO_REGISTERED_PROJECT_KIND) => {
+            ProjectRegistrationSource::AutoRegistered
+        }
+        None => ProjectRegistrationSource::Explicit,
+    }
+}
+
+/// Preserve the historical auto-registration sentinel only at Runner→Server
+/// compatibility boundaries. Persisted `kind` remains genuine project metadata.
+fn project_wire_kind(project: &RunnerProjectFile) -> Option<String> {
+    if project.kind.is_none()
+        && project.registration_source.as_deref() == Some(AUTO_REGISTERED_REGISTRATION_SOURCE)
+    {
+        Some(LEGACY_AUTO_REGISTERED_PROJECT_KIND.to_string())
+    } else {
+        project.kind.clone()
+    }
+}
+
 fn runner_project_summary_with_shutdown(
     project: &RunnerProjectFile,
     updated_at: i64,
@@ -537,12 +586,18 @@ fn runner_project_summary_with_shutdown(
     } else {
         (None, None, None)
     };
+    let registration_source = effective_registration_source(project);
+    // Rolling-upgrade shim: old Servers only know the historical `kind`
+    // sentinel. New auto-registered records keep persisted `kind` empty, but
+    // temporarily project that sentinel on the wire when there is no genuine
+    // project kind. New Servers ignore it in favor of `registration_source`.
     ShellAgentProjectSummary {
         id: project.id.clone(),
         name: project.name.clone().or_else(|| Some(project.id.clone())),
         path: resolved_path,
         allow_patch: project.allow_patch,
-        kind: project.kind.clone(),
+        kind: project_wire_kind(project),
+        registration_source: Some(registration_source.as_str().to_string()),
         description: project.description.clone(),
         hooks,
         disabled: project.disabled,
@@ -740,14 +795,14 @@ fn build_project_toml(
     description: &Option<String>,
     allow_patch: bool,
 ) -> String {
-    build_project_toml_with_kind(id, name, path, None, description, allow_patch)
+    build_project_toml_with_registration_source(id, name, path, None, description, allow_patch)
 }
 
-fn build_project_toml_with_kind(
+fn build_project_toml_with_registration_source(
     id: &str,
     name: &str,
     path: &str,
-    kind: Option<&str>,
+    registration_source: Option<&str>,
     description: &Option<String>,
     allow_patch: bool,
 ) -> String {
@@ -755,8 +810,11 @@ fn build_project_toml_with_kind(
     toml.push_str(&format!("id = {}\n", toml_basic_string(id)));
     toml.push_str(&format!("name = {}\n", toml_basic_string(name)));
     toml.push_str(&format!("path = {}\n", toml_basic_string(path)));
-    if let Some(kind) = kind {
-        toml.push_str(&format!("kind = {}\n", toml_basic_string(kind)));
+    if let Some(registration_source) = registration_source {
+        toml.push_str(&format!(
+            "registration_source = {}\n",
+            toml_basic_string(registration_source)
+        ));
     }
     if let Some(desc) = description {
         toml.push_str(&format!("description = {}\n", toml_basic_string(desc)));
@@ -1139,7 +1197,8 @@ fn path_resolution_success(
         "client_id": request.client_id,
         "name": project.name,
         "path": canonical_path.to_string_lossy(),
-        "kind": project.kind,
+        "kind": project_wire_kind(project),
+        "registration_source": effective_registration_source(project).as_str(),
         "description": project.description,
         "allow_patch": project.allow_patch,
         "disabled": project.disabled,
@@ -1337,11 +1396,11 @@ pub(crate) fn handle_resolve_or_register_project(
         .to_string();
     let name = bounded_project_name(&canonical_path);
     let description = None;
-    let toml_content = build_project_toml_with_kind(
+    let toml_content = build_project_toml_with_registration_source(
         &project_id,
         &name,
         &canonical_path_string,
-        Some(AUTO_REGISTERED_PROJECT_KIND),
+        Some(AUTO_REGISTERED_REGISTRATION_SOURCE),
         &description,
         true,
     );
@@ -1544,7 +1603,9 @@ pub(crate) fn handle_project_lifecycle_op(
                 "outcome": if desired_disabled {"already_disabled"} else {"already_enabled"},
                 "changed": false, "revision": current_revision,
                 "disabled": project.disabled, "path": project.path,
-                "name": project.name, "description": project.description,
+                "name": project.name, "kind": project.kind,
+                "registration_source": effective_registration_source(&project).as_str(),
+                "description": project.description,
                 "allow_patch": project.allow_patch
             }),
         );
@@ -1604,7 +1665,9 @@ pub(crate) fn handle_project_lifecycle_op(
             "outcome": if desired_disabled {"disabled"} else {"enabled"},
             "changed": true, "revision": revision,
             "disabled": project.disabled, "path": project.path,
-            "name": project.name, "description": project.description,
+            "name": project.name, "kind": project.kind,
+            "registration_source": effective_registration_source(&project).as_str(),
+            "description": project.description,
             "allow_patch": project.allow_patch
         }),
     )
@@ -1670,7 +1733,9 @@ fn recovered_project_result(
 ) -> serde_json::Value {
     serde_json::json!({
         "id": runtime_id, "agent_project_id": project.id, "client_id": client_id,
-        "name": project.name, "path": project.path, "description": project.description,
+        "name": project.name, "path": project.path, "kind": project.kind,
+        "registration_source": effective_registration_source(project).as_str(),
+        "description": project.description,
         "created_directory": false, "created_config": false, "overwritten": false,
         "allow_patch": project.allow_patch, "template": template,
         "git_initialized": git_init, "recovered": true, "changed": false,
@@ -1871,6 +1936,7 @@ pub(crate) fn handle_project_op(
             "created_config": write_result.created_config,
             "overwritten": write_result.overwritten,
             "allow_patch": allow_patch,
+            "registration_source": EXPLICIT_REGISTRATION_SOURCE,
             "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
             "operation": "register", "outcome": "registered", "changed": true, "recovered": false,
         });
@@ -2079,6 +2145,7 @@ pub(crate) fn handle_project_op(
         "created_config": write_result.created_config,
         "overwritten": write_result.overwritten,
         "allow_patch": allow_patch,
+        "registration_source": EXPLICIT_REGISTRATION_SOURCE,
         "template": template,
         "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
         "git_initialized": git_initialized,
@@ -2143,6 +2210,7 @@ mod durability_tests {
             allow_patch: true,
             name: None,
             kind: None,
+            registration_source: None,
             description: None,
             disabled: false,
             hooks: HashMap::new(),

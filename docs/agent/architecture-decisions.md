@@ -457,6 +457,22 @@ copy, rename, or choose between two registries implicitly. The registry remains
 a directory of Runner-owned project registration records, not a second workspace
 or project-root abstraction.
 
+Project registration provenance is also normalized before the `v0.4.0` floor.
+The generic project-record `kind` field remains open project metadata, while the
+optional `registration_source` field describes how the record entered the
+Runner registry (`explicit` or `auto_registered`). New path auto-registration
+persists `registration_source = "auto_registered"` and does not persist a fake
+`kind`. For old records only, absent `registration_source` plus the exact
+historical `kind = "auto_registered"` sentinel remains a compatibility fallback;
+a present new field is authoritative. This interpretation is kept separate from
+the raw record representation used for project revision/CAS hashing, so merely
+upgrading WebCodex does not change an unchanged legacy record's revision. During
+rolling upgrades a new Runner may still project the historical sentinel on its
+inventory and path-operation wire results for a newly auto-registered project
+with no genuine kind so an old Server can classify it, while new Servers use the
+explicit additive provenance field.
+Public `list_projects.source` remains `agent_registered` / `auto_registered`.
+
 The pre-0.4 managed-temporary-project lifecycle is retired rather than carried
 into the `v0.4.0` product contract. Current project creation uses explicit
 `create_project`; existing directories use `work_on_project(path)` or

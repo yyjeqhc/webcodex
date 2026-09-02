@@ -192,6 +192,48 @@ async fn generation2_registration_accepts_canonical_inventory_pages() {
 }
 
 #[tokio::test]
+async fn inventory_round_trip_preserves_registration_source_and_tolerates_future_values() {
+    let registry = ShellClientRegistry::default();
+    let client_id = "inventory-registration-source";
+    let instance_id = "inventory-registration-source-instance";
+    registry
+        .register(paged_registration(client_id, instance_id))
+        .await
+        .unwrap();
+
+    let mut auto = project_summary("auto", "/tmp/auto");
+    auto.registration_source = Some("auto_registered".to_string());
+    let mut future = project_summary("future", "/tmp/future");
+    future.registration_source = Some("future_runner_value".to_string());
+    let page = snapshot_pages("registration-source", 1, &[auto, future])[0].clone();
+    let encoded = serde_json::to_vec(&page).unwrap();
+    let decoded: ShellProjectInventoryPage = serde_json::from_slice(&encoded).unwrap();
+
+    let status = registry
+        .apply_project_inventory_page(client_id, instance_id, decoded)
+        .await
+        .unwrap();
+    assert_eq!(status.sync_state, "complete");
+    assert!(status.last_error_code.is_none());
+    let published = registry.list_client_projects(client_id).await.unwrap();
+    assert_eq!(published.len(), 2);
+    assert_eq!(
+        published
+            .iter()
+            .find(|project| project.id == "auto")
+            .and_then(|project| project.registration_source.as_deref()),
+        Some("auto_registered")
+    );
+    assert_eq!(
+        published
+            .iter()
+            .find(|project| project.id == "future")
+            .and_then(|project| project.registration_source.as_deref()),
+        Some("future_runner_value")
+    );
+}
+
+#[tokio::test]
 async fn unsupported_protocol_registration_does_not_publish_project_inventory() {
     let registry = ShellClientRegistry::default();
     let client_id = "inventory-strategy-unsupported";

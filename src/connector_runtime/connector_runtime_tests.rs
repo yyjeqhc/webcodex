@@ -137,6 +137,7 @@ async fn register_agent_with_lsp_capabilities(
             path: path.to_string(),
             allow_patch: true,
             kind: None,
+            registration_source: None,
             description: None,
             hooks: Vec::new(),
             disabled: false,

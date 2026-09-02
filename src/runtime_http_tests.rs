@@ -296,6 +296,7 @@ async fn register_import_agent_with_capabilities(
             path: root.to_string_lossy().to_string(),
             allow_patch: true,
             kind: Some("repo".to_string()),
+            registration_source: None,
             description: None,
             hooks: Vec::new(),
             disabled: false,

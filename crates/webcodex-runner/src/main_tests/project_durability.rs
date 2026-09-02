@@ -21,9 +21,43 @@ fn legacy_managed_temporary_record_remains_readable_as_registry_data() {
     assert_eq!(summaries[0].id, "legacy");
     assert_eq!(summaries[0].kind.as_deref(), Some("managed_temporary"));
     assert_eq!(
+        summaries[0].registration_source.as_deref(),
+        Some("explicit")
+    );
+    assert_eq!(
         summaries[0].path,
         project_dir.canonicalize().unwrap().to_string_lossy()
     );
+}
+
+#[test]
+fn legacy_auto_registered_record_keeps_raw_revision_and_projects_as_auto_registered() {
+    let project = parse_runner_project_toml(
+        r#"id = "legacy-auto"
+path = "/tmp/legacy-auto"
+name = "Legacy Auto"
+kind = "auto_registered"
+allow_patch = true
+"#,
+    )
+    .unwrap();
+    assert_eq!(project.registration_source, None);
+    let summary = runner_project_summary(&project, 1, false);
+    assert_eq!(
+        summary.revision.as_deref(),
+        Some("sha256:1275b96a7ed780e5fb6eecc9c4a0132bb8c2f358cb9ecf7415bc02aaab22f653"),
+        "adding compatibility interpretation must not change the normalized legacy record CAS"
+    );
+    assert_eq!(summary.kind.as_deref(), Some("auto_registered"));
+    assert_eq!(
+        summary.registration_source.as_deref(),
+        Some("auto_registered")
+    );
+
+    let mut conflicting = project.clone();
+    conflicting.registration_source = Some("explicit".to_string());
+    let summary = runner_project_summary(&conflicting, 1, false);
+    assert_eq!(summary.registration_source.as_deref(), Some("explicit"));
 }
 
 #[test]
@@ -67,6 +101,7 @@ fn register_and_create_retries_converge_without_duplicate_side_effects() {
         }),
     );
     let first = project_ok(handle_project_op(&policy, &project_registry_dir, &register));
+    assert_eq!(first["registration_source"], "explicit");
     let retry = project_ok(handle_project_op(&policy, &project_registry_dir, &register));
     assert_eq!(retry["recovered"], true);
     assert_eq!(retry["changed"], false);
@@ -83,6 +118,7 @@ fn register_and_create_retries_converge_without_duplicate_side_effects() {
         }),
     );
     let created = project_ok(handle_project_op(&policy, &project_registry_dir, &create));
+    assert_eq!(created["registration_source"], "explicit");
     let readme_before = std::fs::read(create_dir.join("README.md")).unwrap();
     let recovered = project_ok(handle_project_op(&policy, &project_registry_dir, &create));
     assert_eq!(recovered["recovered"], true);

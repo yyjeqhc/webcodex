@@ -475,6 +475,38 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
 }
 
 #[tokio::test]
+async fn list_projects_uses_registration_provenance_without_reclassifying_project_kind() {
+    let runtime = test_runtime();
+    let explicit = registered_project("explicit-repo", "/root/git/explicit-repo");
+    assert_eq!(explicit.kind.as_deref(), Some("repo"));
+    let mut auto = registered_project("auto-repo", "/root/git/auto-repo");
+    auto.kind = Some("auto_registered".to_string());
+    auto.registration_source = Some("auto_registered".to_string());
+    register_agent_with_projects(
+        &runtime,
+        "registration-source-runner",
+        None,
+        ShellClientCapabilities::default(),
+        vec![explicit, auto],
+    )
+    .await;
+
+    let result = runtime.dispatch(list_projects_call()).await;
+    assert!(result.success, "{:?}", result.error);
+    let projects = result.output["projects"].as_array().unwrap();
+    let explicit = projects
+        .iter()
+        .find(|project| project["agent_project_id"] == "explicit-repo")
+        .unwrap();
+    let auto = projects
+        .iter()
+        .find(|project| project["agent_project_id"] == "auto-repo")
+        .unwrap();
+    assert_eq!(explicit["source"], "agent_registered");
+    assert_eq!(auto["source"], "auto_registered");
+}
+
+#[tokio::test]
 async fn list_projects_reports_smoke_selection_capabilities() {
     let runtime = test_runtime();
     let mut test_mcp = registered_project("test-mcp", "/tmp/test-mcp");

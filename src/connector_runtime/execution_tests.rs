@@ -284,6 +284,7 @@ fn project_summary(id: &str, path: &Path) -> ShellAgentProjectSummary {
         path: path.to_string_lossy().into_owned(),
         allow_patch: true,
         kind: Some("auto".into()),
+        registration_source: None,
         description: None,
         hooks: Vec::new(),
         disabled: false,

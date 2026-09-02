@@ -116,6 +116,23 @@ kind = "repo"
 allow_patch = true
 ```
 
+`kind` 是可选的项目/用户分类 metadata。它有意保持为开放字符串（例如 `repo`、`rust`），
+不是 lifecycle 或 registration provenance 枚举。
+
+`registration_source` 是由 WebCodex 拥有并解释的独立描述性注册来源。普通持久记录属于
+`explicit` 注册；由于这是安全默认值，可以省略该字段。Runner 通过 path resolution 自动注册
+项目时，不再伪造项目 `kind`，而是持久化例如：
+
+```toml
+id = "example-repo-abcd1234"
+path = "/srv/example-repo"
+name = "example-repo"
+registration_source = "auto_registered"
+allow_patch = true
+```
+
+`registration_source` 只描述 registry provenance，不授予执行 authority 或 permission。
+
 Runner project registry 的兼容 contract 明确采用 fail-closed：
 
 | 情况 | 行为 |
@@ -132,6 +149,13 @@ CLI 同样遵守该规则：优先使用 `--project-registry-dir`；旧 `--proje
 
 顶层 `id` 与 `path` 是必需的。旧的 `[projects.<id>]` 服务端嵌套格式不能用于
 `project-registry`。
+
+为兼容 cleanup 之前的 registry，当 `registration_source` 缺失且恰好存在历史
+`kind = "auto_registered"` sentinel 时，Runner 仍把它解释为自动注册来源。新的
+`registration_source` 一旦存在即为 authoritative，即使旧 sentinel 同时存在也一样；仅仅读取
+旧记录不会重写文件。其他 `kind` 值不会被解释为注册来源。尤其是旧
+`kind = "managed_temporary"` 记录仍可作为普通 explicit registration 读取，但当前产品不会恢复
+managed-temporary 创建或 lifecycle 行为。
 
 Runtime project id 形如 `agent:<client_id>:<project_id>`，例如
 `agent:workstation:my-repo`。project-bound Connector 会在内部解析它；普通用户

@@ -137,6 +137,26 @@ kind = "repo"
 allow_patch = true
 ```
 
+`kind` is optional project/user classification metadata. It is intentionally an
+open string (for example `repo` or `rust`) and is not a lifecycle or
+registration-provenance enum.
+
+`registration_source` is separate descriptive provenance owned and interpreted
+by WebCodex. Ordinary persistent records are `explicit` registration and may
+omit the field because that is the safe default. A project that Runner path
+resolution auto-registers is persisted without a fake project kind, for example:
+
+```toml
+id = "example-repo-abcd1234"
+path = "/srv/example-repo"
+name = "example-repo"
+registration_source = "auto_registered"
+allow_patch = true
+```
+
+`registration_source` is registry provenance only; it does not grant execution
+authority or permissions.
+
 The Runner project registry compatibility contract is deliberately fail-closed:
 
 | Situation | Result |
@@ -153,6 +173,15 @@ The CLI follows the same rule: `--project-registry-dir` is the preferred flag; l
 
 The top-level `id` and `path` are required. The old nested
 `[projects.<id>]` server-side format is not used in `project-registry`.
+
+For compatibility with pre-cleanup registries, an absent `registration_source`
+combined with the exact historical `kind = "auto_registered"` sentinel is read
+as auto-registration provenance. A present `registration_source` is
+authoritative, including when an old sentinel also exists, and merely reading a
+legacy record does not rewrite it. Other `kind` values are never interpreted as
+registration provenance. In particular, legacy `kind = "managed_temporary"`
+records remain readable as ordinary explicit registrations; managed-temporary
+creation/lifecycle behavior is not current functionality.
 
 Runtime project ids take the shape `agent:<client_id>:<project_id>`, for
 example `agent:workstation:my-repo`. A project-bound Connector resolves this

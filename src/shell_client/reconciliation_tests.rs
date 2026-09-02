@@ -48,6 +48,7 @@ fn project_summary() -> ShellAgentProjectSummary {
         path: "/srv/demo".to_string(),
         allow_patch: true,
         kind: Some("rust".to_string()),
+        registration_source: None,
         description: None,
         hooks: Vec::new(),
         disabled: false,

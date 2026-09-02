@@ -2333,6 +2333,7 @@ mod tests {
             path: private_path.to_string(),
             allow_patch: true,
             kind: None,
+            registration_source: None,
             description: Some("private description".to_string()),
             hooks: vec!["private-hook".to_string()],
             disabled: false,

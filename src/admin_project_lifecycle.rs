@@ -682,7 +682,14 @@ fn lifecycle_summary(output: &Value, id: &str) -> Option<ShellAgentProjectSummar
             .get("allow_patch")
             .and_then(Value::as_bool)
             .unwrap_or(true),
-        kind: None,
+        kind: output
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        registration_source: output
+            .get("registration_source")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         description: output
             .get("description")
             .and_then(Value::as_str)

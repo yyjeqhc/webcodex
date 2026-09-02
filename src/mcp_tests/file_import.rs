@@ -292,6 +292,7 @@ async fn mcp_import_runtime(
             path: root.to_string_lossy().into_owned(),
             allow_patch: true,
             kind: None,
+            registration_source: None,
             description: None,
             hooks: Vec::new(),
             disabled: false,

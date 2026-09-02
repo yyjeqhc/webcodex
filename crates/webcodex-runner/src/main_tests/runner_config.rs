@@ -883,6 +883,7 @@ doctor = ["git status --short"]
     assert_eq!(summary.name.as_deref(), Some("webcodex"));
     assert_eq!(summary.path, "/root/git/webcodex");
     assert_eq!(summary.kind.as_deref(), Some("rust"));
+    assert_eq!(summary.registration_source.as_deref(), Some("explicit"));
     assert_eq!(summary.hooks, vec!["doctor", "precommit"]);
     assert_eq!(summary.updated_at, 123456);
     assert_eq!(summary.git_branch, None);

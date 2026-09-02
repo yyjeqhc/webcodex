@@ -70,6 +70,8 @@ pub(crate) struct ProjectFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    registration_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(default = "default_true")]
     allow_patch: bool,
@@ -603,6 +605,7 @@ pub(crate) fn resolve_project(
             shell_profile: None,
             name: Some(basename.to_string()),
             kind: None,
+            registration_source: None,
             description: None,
             allow_patch: true,
             disabled: false,
@@ -919,6 +922,35 @@ mod tests {
         let error =
             resolve_project(&projects, &two.canonicalize().unwrap(), Some("demo")).unwrap_err();
         assert!(error.contains("different path"));
+    }
+
+    #[test]
+    fn project_record_round_trip_preserves_kind_and_registration_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects = tmp.path().join("project-registry");
+        std::fs::create_dir(&projects).unwrap();
+        std::fs::write(
+            projects.join("demo.toml"),
+            "id = \"demo\"\npath = \"/tmp/demo\"\nkind = \"repo\"\nregistration_source = \"auto_registered\"\nallow_patch = true\n",
+        )
+        .unwrap();
+
+        let records = read_project_files(&projects).unwrap();
+        assert_eq!(records.len(), 1);
+        let project = &records[0].1;
+        assert_eq!(project.kind.as_deref(), Some("repo"));
+        assert_eq!(
+            project.registration_source.as_deref(),
+            Some("auto_registered")
+        );
+
+        let rendered = render_project_file(project).unwrap();
+        let reparsed: ProjectFile = toml::from_str(&rendered).unwrap();
+        assert_eq!(reparsed.kind.as_deref(), Some("repo"));
+        assert_eq!(
+            reparsed.registration_source.as_deref(),
+            Some("auto_registered")
+        );
     }
 
     #[test]

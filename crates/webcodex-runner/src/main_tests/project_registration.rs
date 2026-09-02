@@ -38,6 +38,7 @@ fn register_project_writes_valid_toml_into_project_registry_dir() {
     assert_eq!(parsed.id, "demo");
     assert_eq!(parsed.name.as_deref(), Some("Demo"));
     assert_eq!(parsed.path, project_dir.to_string_lossy());
+    assert_eq!(parsed.registration_source, None);
     assert!(!parsed.allow_patch);
 }
 
@@ -65,6 +66,11 @@ fn resolve_or_register_project_persists_and_reuses_canonical_directory_without_t
     assert_eq!(first["outcome"], "auto_registered");
     assert_eq!(first["registered"], true);
     assert_eq!(first["changed"], true);
+    assert_eq!(first["registration_source"], "auto_registered");
+    assert_eq!(
+        first["kind"], "auto_registered",
+        "legacy kind sentinel is a wire-only old-Server compatibility projection"
+    );
     let project_id = first["agent_project_id"].as_str().unwrap();
     assert!(project_id.starts_with("example-repo-"), "{project_id}");
     assert!(project_id.len() <= 64);
@@ -77,7 +83,14 @@ fn resolve_or_register_project_persists_and_reuses_canonical_directory_without_t
         Path::new(&persisted.path),
         project_dir.canonicalize().unwrap()
     );
-    assert_eq!(persisted.kind.as_deref(), Some("auto_registered"));
+    assert_eq!(persisted.kind, None);
+    assert_eq!(
+        persisted.registration_source.as_deref(),
+        Some("auto_registered")
+    );
+    let persisted_text = std::fs::read_to_string(&config_path).unwrap();
+    assert!(persisted_text.contains("registration_source = \"auto_registered\""));
+    assert!(!persisted_text.contains("kind = \"auto_registered\""));
     assert!(persisted.allow_patch);
     assert_eq!(
         std::fs::read_to_string(project_dir.join("keep.txt")).unwrap(),
@@ -93,6 +106,15 @@ fn resolve_or_register_project_persists_and_reuses_canonical_directory_without_t
     let reloaded = load_runner_project_summaries_from_dir(&project_registry_dir);
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].id, project_id);
+    assert_eq!(
+        reloaded[0].registration_source.as_deref(),
+        Some("auto_registered")
+    );
+    assert_eq!(
+        reloaded[0].kind.as_deref(),
+        Some("auto_registered"),
+        "legacy kind sentinel is wire-only rolling-upgrade compatibility"
+    );
     let second = project_ok(handle_resolve_or_register_project(
         &policy,
         &project_registry_dir,

@@ -711,9 +711,16 @@ fn project_query_matches(
 }
 
 fn project_source(project: &ShellAgentProjectSummary) -> &'static str {
-    match project.kind.as_deref() {
+    match project.registration_source.as_deref() {
         Some(AUTO_REGISTERED_PROJECT_SOURCE) => AUTO_REGISTERED_PROJECT_SOURCE,
-        _ => "agent_registered",
+        // A present additive provenance field is authoritative. Known explicit
+        // and unknown future wire values both fail closed to ordinary registered
+        // provenance so a future string cannot break the project inventory.
+        Some(_) => "agent_registered",
+        None if project.kind.as_deref() == Some(AUTO_REGISTERED_PROJECT_SOURCE) => {
+            AUTO_REGISTERED_PROJECT_SOURCE
+        }
+        None => "agent_registered",
     }
 }
 
@@ -915,6 +922,10 @@ fn parse_project_summary_from_result(
             .get("kind")
             .and_then(Value::as_str)
             .map(str::to_string),
+        registration_source: result
+            .get("registration_source")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         description: result
             .get("description")
             .and_then(|v| v.as_str())
@@ -942,12 +953,13 @@ mod tests {
 
     #[test]
     fn legacy_managed_temporary_kind_is_projected_as_ordinary_registration() {
-        let mut project = ShellAgentProjectSummary {
+        let project = ShellAgentProjectSummary {
             id: "legacy".to_string(),
             name: Some("Legacy".to_string()),
             path: "/tmp/legacy".to_string(),
             allow_patch: true,
             kind: Some("managed_temporary".to_string()),
+            registration_source: None,
             description: None,
             hooks: Vec::new(),
             disabled: false,
@@ -959,8 +971,36 @@ mod tests {
             shell_profile: None,
         };
         assert_eq!(project_source(&project), "agent_registered");
-        project.kind = Some(AUTO_REGISTERED_PROJECT_SOURCE.to_string());
+    }
+
+    #[test]
+    fn old_runner_auto_registered_kind_is_compatibility_fallback() {
+        let mut project = ShellAgentProjectSummary {
+            id: "legacy-auto".to_string(),
+            name: Some("Legacy Auto".to_string()),
+            path: "/tmp/legacy-auto".to_string(),
+            allow_patch: true,
+            kind: Some(AUTO_REGISTERED_PROJECT_SOURCE.to_string()),
+            registration_source: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 0,
+            shell_profile: None,
+        };
         assert_eq!(project_source(&project), AUTO_REGISTERED_PROJECT_SOURCE);
+        project.registration_source = Some("explicit".to_string());
+        assert_eq!(
+            project_source(&project),
+            "agent_registered",
+            "new provenance must override the legacy kind sentinel"
+        );
+        project.registration_source = Some("future_registration_source".to_string());
+        assert_eq!(project_source(&project), "agent_registered");
     }
 
     #[test]

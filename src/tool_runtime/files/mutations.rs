@@ -2348,6 +2348,15 @@ mod tests {
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.output["execution_state"], "completed");
         assert_eq!(result.output["state_changed"], false);
+
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_patch");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&result).unwrap(),
+            &schema,
+        )
+        .unwrap_or_else(|schema_error| {
+            panic!("legacy apply_patch success must remain valid against the advertised output schema: {schema_error}")
+        });
     }
 
     #[test]

@@ -13,22 +13,38 @@ fn apply_patch_edit_summary_schema() -> Value {
             "old_line_count": {"type": "integer", "minimum": 0},
             "new_line_count": {"type": "integer", "minimum": 0},
             "end_of_file": {"type": "boolean"},
-            "match_mode": {"anyOf": [
-                {"type": "string", "enum": ["exact", "trim_end", "trim"]},
-                {"type": "null"}
-            ]},
-            "match_source": {"type": "string", "enum": ["old_lines", "change_context", "append"]},
-            "matched_start_line": {"type": "integer", "minimum": 1},
-            "candidate_count": {"anyOf": [
-                {"type": "integer", "minimum": 1},
-                {"type": "null"}
-            ]},
-            "strict_match": {"type": "boolean"}
+            "match_mode": {
+                "description": "Current-Runner positioning mode. Absent on legacy apply_patch success admitted under the legacy response contract; null for unanchored append.",
+                "anyOf": [
+                    {"type": "string", "enum": ["exact", "trim_end", "trim"]},
+                    {"type": "null"}
+                ]
+            },
+            "match_source": {
+                "type": "string",
+                "enum": ["old_lines", "change_context", "append"],
+                "description": "Current-Runner positioning source. Absent on legacy apply_patch success."
+            },
+            "matched_start_line": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Current-Runner 1-based matched/insertion line. Absent on legacy apply_patch success."
+            },
+            "candidate_count": {
+                "description": "Current-Runner candidate count in the selected match tier. Absent on legacy apply_patch success; null for unanchored append.",
+                "anyOf": [
+                    {"type": "integer", "minimum": 1},
+                    {"type": "null"}
+                ]
+            },
+            "strict_match": {
+                "type": "boolean",
+                "description": "Current-Runner exact-and-unique positioning fact. Absent on legacy apply_patch success."
+            }
         },
         "required": [
             "chunk_index", "change_context_present", "old_line_count", "new_line_count",
-            "end_of_file", "match_mode", "match_source", "matched_start_line",
-            "candidate_count", "strict_match"
+            "end_of_file"
         ]
     })
 }
@@ -37,7 +53,7 @@ fn apply_patch_file_summary_schema() -> Value {
     json!({
         "type": "array",
         "maxItems": crate::apply_patch_shared::MAX_CODEX_PATCH_FILE_CHANGES,
-        "description": "Validated per-file patch-plan summaries. Update/rename edits expose bounded match metadata; never file content.",
+        "description": "Validated per-file patch-plan summaries. Current Runners expose bounded update/rename match metadata; legacy apply_patch Runners may omit only those additive match fields. Never file content.",
         "items": {
             "type": "object",
             "additionalProperties": false,

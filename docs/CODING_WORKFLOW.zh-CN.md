@@ -116,6 +116,9 @@ logical validation 在修复后重跑，应复用原 `assertion_name`。这样 v
 `matched_start_line`、`candidate_count` 和 `strict_match`。只有该 chunk 用于定位的所有
 文本匹配都 exact 且 unique 时，`strict_match=true`。没有 anchor 的 append 不执行文本匹配，
 但仍然 strict-safe；它返回 `match_source=append`，且 `match_mode` / `candidate_count` 为 null。
+Server-first 滚动升级期间，旧版 `apply_patch` Runner 可以只缺省这些新增 match 字段；
+Server 会在请求 admission 时绑定 legacy response contract，同时继续校验原有 transactional
+success 字段，不会在 result 返回后根据当前 Runner 状态重新猜测版本。
 
 当要求所有需要定位的 chunk 在任何文件写入前都满足 exact-and-unique 规则时，设置
 `strict_matching=true`。该模式要求 Runner 显式支持 `apply_patch_strict_matching` capability，

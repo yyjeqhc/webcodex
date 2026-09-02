@@ -143,6 +143,9 @@ chunk reports bounded positioning metadata: `match_mode`, `match_source`,
 chunk has `strict_match=true` only when every match used for positioning was
 exact and unique. An unanchored append is strict-safe without a text match and
 reports `match_source=append` with null `match_mode` / `candidate_count`.
+During a rolling Server-first upgrade, a legacy `apply_patch` Runner may omit
+only these additive match fields; the Server binds that legacy response contract
+at request admission while preserving the original transactional success checks.
 
 Set `strict_matching=true` when every positioned chunk must satisfy that
 exact-and-unique rule before any file is written. This mode requires the Runner

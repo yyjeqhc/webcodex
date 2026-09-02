@@ -69,6 +69,88 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
 }
 
 #[tokio::test]
+async fn rejected_cross_client_result_does_not_consume_pending_request() {
+    let registry = ShellClientRegistry::default();
+    for (client_id, instance) in [("owner", "inst-owner"), ("other", "inst-other")] {
+        registry
+            .register(current_runner_registration(ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: instance.to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: crate::test_support::current_runner_capabilities(
+                    ShellClientCapabilities::default(),
+                ),
+                policy: None,
+            }))
+            .await
+            .unwrap();
+    }
+    let (request_id, waiter) = registry
+        .enqueue_run(
+            ShellRunRequest {
+                client_id: "owner".to_string(),
+                cwd: None,
+                command: "echo owner".to_string(),
+                stdin: None,
+                timeout_secs: 10,
+                wait_timeout_secs: 10,
+            },
+            "tester".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let error = registry
+        .complete(ShellAgentResultRequest {
+            client_id: "other".to_string(),
+            agent_instance_id: "inst-other".to_string(),
+            request_id: request_id.clone(),
+            exit_code: Some(0),
+            stdout: Some("spoofed\n".to_string()),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error, "request_id does not belong to client_id");
+
+    let polled = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "owner".to_string(),
+            agent_instance_id: "inst-owner".to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("rejected cross-client result must leave the request pending");
+    assert_eq!(polled.request_id, request_id);
+    registry
+        .complete(ShellAgentResultRequest {
+            client_id: "owner".to_string(),
+            agent_instance_id: "inst-owner".to_string(),
+            request_id,
+            exit_code: Some(0),
+            stdout: Some("owner\n".to_string()),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(waiter.await.unwrap().stdout.as_deref(), Some("owner\n"));
+}
+
+#[tokio::test]
 async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let registry = ShellClientRegistry::default();
     registry

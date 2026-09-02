@@ -10,7 +10,7 @@ use crate::mcp_gateway::{
 };
 use crate::shell_protocol::{
     ShellAgentPersistentShellResultRequest, ShellAgentPollRequest, ShellAgentResultPayload,
-    ShellAgentResultRequest, ShellAgentShellRequest, ShellCommandExecutionState, ShellRunResponse,
+    ShellAgentShellRequest, ShellCommandExecutionState, ShellRunResponse,
 };
 use webcodex_core::coding_agent::{
     validate_response_for_request as validate_coding_agent_response, CodingAgentDispatchState,
@@ -392,16 +392,7 @@ impl ShellClientRegistry {
         &self,
         payload: impl Into<ShellAgentResultPayload>,
     ) -> Result<(), String> {
-        let payload = payload.into();
-        crate::tool_request_trace::capture_runner_result(&payload.result.request_id, &payload);
-        self.complete_checked(
-            payload.result,
-            payload.command_execution_state,
-            payload.mcp_gateway,
-            payload.coding_agent,
-            None,
-        )
-        .await
+        self.complete_checked(payload.into(), None).await
     }
 
     /// Connection-scoped result entry point for long-lived transports. A
@@ -416,25 +407,15 @@ impl ShellClientRegistry {
         payload: ShellAgentResultPayload,
         connection_id: &str,
     ) -> Result<(), String> {
-        crate::tool_request_trace::capture_runner_result(&payload.result.request_id, &payload);
-        self.complete_checked(
-            payload.result,
-            payload.command_execution_state,
-            payload.mcp_gateway,
-            payload.coding_agent,
-            Some(connection_id),
-        )
-        .await
+        self.complete_checked(payload, Some(connection_id)).await
     }
 
     async fn complete_checked(
         &self,
-        body: ShellAgentResultRequest,
-        command_execution_state: Option<ShellCommandExecutionState>,
-        mcp_gateway: Option<crate::mcp_gateway::McpGatewayResponse>,
-        coding_agent: Option<CodingAgentResponse>,
+        payload: ShellAgentResultPayload,
         expected_connection_id: Option<&str>,
     ) -> Result<(), String> {
+        let body = &payload.result;
         validate_id(&body.client_id, "client_id")?;
         validate_id(&body.request_id, "request_id")?;
         validate_agent_instance_id(&body.agent_instance_id)?;
@@ -457,7 +438,7 @@ impl ShellClientRegistry {
                 client.last_seen = now_ts();
             }
         }
-        let Some(mut pending) = take_pending_request_locked(&mut inner, &body.request_id) else {
+        let Some(pending) = inner.pending_by_id.get(&body.request_id) else {
             return Err(format!(
                 "unknown or expired shell request: {}",
                 body.request_id
@@ -466,6 +447,26 @@ impl ShellClientRegistry {
         if pending.request.client_id != body.client_id {
             return Err("request_id does not belong to client_id".to_string());
         }
+        if pending.request.coding_agent.is_none() && payload.coding_agent.is_some() {
+            return Err("unexpected CodingAgentRun result for non-coding request".to_string());
+        }
+        if pending.request.mcp_gateway.is_none() && payload.mcp_gateway.is_some() {
+            return Err("unexpected MCP gateway result for non-bridge request".to_string());
+        }
+        crate::tool_request_trace::capture_runner_result(&body.request_id, &payload);
+        let trace_request_id = body.request_id.clone();
+        let ShellAgentResultPayload {
+            result: body,
+            command_execution_state,
+            mcp_gateway,
+            coding_agent,
+        } = payload;
+        let Some(mut pending) = take_pending_request_locked(&mut inner, &body.request_id) else {
+            return Err(format!(
+                "unknown or expired shell request: {}",
+                body.request_id
+            ));
+        };
         if pending.request.mcp_gateway.is_some() {
             let response = match mcp_gateway {
                 Some(response)
@@ -497,6 +498,7 @@ impl ShellClientRegistry {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);
             }
+            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
             return Ok(());
         }
         if pending.request.coding_agent.is_some() {
@@ -542,13 +544,8 @@ impl ShellClientRegistry {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);
             }
+            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
             return Ok(());
-        }
-        if coding_agent.is_some() {
-            return Err("unexpected CodingAgentRun result for non-coding request".to_string());
-        }
-        if mcp_gateway.is_some() {
-            return Err("unexpected MCP gateway result for non-bridge request".to_string());
         }
         let request_id = body.request_id.clone();
         let client_id = body.client_id.clone();
@@ -567,9 +564,10 @@ impl ShellClientRegistry {
             None | Some(ShellCommandExecutionState::Completed)
         ) && error.is_none()
             && body.exit_code == Some(0);
-        if let Some(job_id) = pending.job_id.clone() {
+        let terminal_job_id = pending.job_id.clone();
+        if let Some(job_id) = terminal_job_id.as_deref() {
             inner.request_to_job.remove(&request_id);
-            if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
+            if let Some(job) = inner.jobs_by_id.get_mut(job_id) {
                 let terminal_now = now_ts();
                 job.status = if success {
                     "completed".to_string()
@@ -603,6 +601,14 @@ impl ShellClientRegistry {
         };
         if let Some(waiter) = pending.waiter.take() {
             let _ = waiter.send(response);
+        }
+        if let Some(job_id) = terminal_job_id.as_deref() {
+            crate::tool_request_trace::finalize_runner_job_correlation(
+                Some(&trace_request_id),
+                job_id,
+            );
+        } else {
+            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
         }
         Ok(())
     }

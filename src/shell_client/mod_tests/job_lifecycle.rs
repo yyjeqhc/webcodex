@@ -118,6 +118,85 @@ async fn terminal_observed_poll_complete_and_log() {
 }
 
 #[tokio::test]
+async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() {
+    let registry = ShellClientRegistry::default();
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: async_job_capabilities(),
+            policy: None,
+        })
+        .await
+        .unwrap();
+
+    let start = |command: &str| ShellJobOpRequest {
+        op: "start".to_string(),
+        client_id: Some("oe".to_string()),
+        cwd: None,
+        command: Some(command.to_string()),
+        timeout_secs: Some(10),
+        job_id: None,
+        since_stdout_line: None,
+        since_stderr_line: None,
+        tail_lines: None,
+        limit: None,
+        codex: None,
+    };
+    let job_a = registry
+        .start_job(start("job-a"), "test".to_string())
+        .await
+        .unwrap();
+    let job_b = registry
+        .start_job(start("job-b"), "test".to_string())
+        .await
+        .unwrap();
+    let request_a = job_a.request_id.clone().expect("job A request id");
+    let request_b = job_b.request_id.clone().expect("job B request id");
+
+    let update = |request_id: String| ShellAgentJobUpdateRequest {
+        client_id: "oe".to_string(),
+        agent_instance_id: "inst".to_string(),
+        job_id: job_b.job_id.clone(),
+        request_id: Some(request_id),
+        update_seq: None,
+        status: "running".to_string(),
+        stdout_chunk: None,
+        stderr_chunk: None,
+        stdout_tail: None,
+        stderr_tail: None,
+        log_snapshot: None,
+        exit_code: None,
+        duration_ms: None,
+        error: None,
+        command_execution_state: None,
+        validation_progress: None,
+        finished: false,
+    };
+
+    let error = registry.update_job(update(request_a)).await.unwrap_err();
+    assert_eq!(error, "job update request_id does not match job_id");
+    assert_eq!(
+        registry.get_job(&job_b.job_id).await.unwrap().status,
+        "queued"
+    );
+
+    let accepted = registry.update_job(update(request_b)).await.unwrap();
+    assert_eq!(accepted.status, "running");
+}
+
+#[tokio::test]
 async fn terminal_observed_queued_stop_records_server_time() {
     let registry = ShellClientRegistry::default();
     registry

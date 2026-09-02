@@ -25,6 +25,7 @@ pub(crate) const NON_MEANINGFUL_ACTIVITY_TOOLS: &[&str] = &[
     "list_agents",
     "list_projects",
     "tool_manifest",
+    "read_tool_trace",
 ];
 
 pub(crate) fn is_meaningful_activity_tool(tool_name: &str) -> bool {

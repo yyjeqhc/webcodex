@@ -10,6 +10,7 @@ use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentProtocolGenerationNumber, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellJobOpRequest, AGENT_PROTOCOL_GENERATION_V2,
 };
+use crate::tool_runtime::observations::ToolCallObservation;
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::Value;
@@ -327,6 +328,31 @@ async fn meaningful_activity_is_scoped_and_not_refreshed_by_status_calls() {
     assert_eq!(last["surface"], "api");
     assert!(last["principal_kind"].is_string());
     let observed_at = last["observed_at"].as_i64().unwrap();
+
+    // Reading forensic trace data is itself observability and must not become
+    // meaningful activity even if the operator call succeeds.
+    runtime
+        .observations
+        .record_successful_tool_call(ToolCallObservation {
+            principal_kind: "bootstrap".to_string(),
+            principal_id: "trace-reader".to_string(),
+            project: None,
+            surface: "mcp".to_string(),
+            session_id: None,
+            tool: "read_tool_trace".to_string(),
+            observed_at: observed_at + 100,
+        });
+    let after_trace_read = layers(&runtime).await;
+    assert_eq!(
+        after_trace_read["last_successful_tool_call"]["tool"],
+        "start_session"
+    );
+    assert_eq!(
+        after_trace_read["last_successful_tool_call"]["observed_at"]
+            .as_i64()
+            .unwrap(),
+        observed_at
+    );
 
     // Additional status polling must not refresh the observation.
     for _ in 0..3 {

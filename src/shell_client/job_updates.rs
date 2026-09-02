@@ -1824,12 +1824,6 @@ impl ShellClientRegistry {
         &self,
         body: ShellAgentJobUpdateRequest,
     ) -> Result<ShellJobInfo, String> {
-        crate::tool_request_trace::capture_runner_job_update(
-            body.request_id.as_deref(),
-            &body.job_id,
-            body.finished,
-            &body,
-        );
         self.update_job_checked(body, None).await
     }
 
@@ -1844,12 +1838,6 @@ impl ShellClientRegistry {
         body: ShellAgentJobUpdateRequest,
         connection_id: &str,
     ) -> Result<ShellJobInfo, String> {
-        crate::tool_request_trace::capture_runner_job_update(
-            body.request_id.as_deref(),
-            &body.job_id,
-            body.finished,
-            &body,
-        );
         self.update_job_checked(body, Some(connection_id)).await
     }
 
@@ -2003,6 +1991,11 @@ impl ShellClientRegistry {
                         .to_string(),
                 );
             }
+            crate::tool_request_trace::capture_runner_job_update(
+                body.request_id.as_deref(),
+                &body.job_id,
+                &body,
+            );
             if let Err(error) = validate_validation_progress(job, &body)
                 .and_then(|_| validate_command_execution_state(job, &body))
             {
@@ -2103,6 +2096,12 @@ impl ShellClientRegistry {
         }
         if remove_cleanup_terminal {
             inner.jobs_by_id.remove(&body.job_id);
+        }
+        if is_final_job_status(&view.status) {
+            crate::tool_request_trace::finalize_runner_job_correlation(
+                body.request_id.as_deref(),
+                &body.job_id,
+            );
         }
         Ok(view)
     }

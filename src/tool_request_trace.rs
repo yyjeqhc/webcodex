@@ -54,7 +54,7 @@ static TRACE_IO_STATE: OnceLock<Mutex<TraceStoreAccounting>> = OnceLock::new();
 static TRACE_CORRELATIONS: OnceLock<Mutex<TraceCorrelations>> = OnceLock::new();
 static TRACE_WRITER: OnceLock<Option<TraceWriter>> = OnceLock::new();
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct TraceCorrelation {
     trace_id: String,
     request_id: String,
@@ -1411,12 +1411,23 @@ fn lookup_request_correlation(request_id: &str) -> Option<TraceCorrelation> {
     correlations.requests.get(request_id).cloned()
 }
 
+fn resolve_job_correlation(
+    correlations: &TraceCorrelations,
+    request_id: Option<&str>,
+    job_id: &str,
+) -> Option<TraceCorrelation> {
+    let job_correlation = correlations.jobs.get(job_id).cloned()?;
+    let Some(request_id) = request_id else {
+        return Some(job_correlation);
+    };
+    let request_correlation = correlations.requests.get(request_id).cloned()?;
+    (request_correlation == job_correlation).then_some(request_correlation)
+}
+
 fn lookup_job_correlation(request_id: Option<&str>, job_id: &str) -> Option<TraceCorrelation> {
     let mut correlations = correlations().lock().ok()?;
     prune_correlations(&mut correlations);
-    request_id
-        .and_then(|request_id| correlations.requests.get(request_id).cloned())
-        .or_else(|| correlations.jobs.get(job_id).cloned())
+    resolve_job_correlation(&correlations, request_id, job_id)
 }
 
 fn remove_correlation(correlation: &TraceCorrelation) {
@@ -1428,7 +1439,9 @@ fn remove_correlation(correlation: &TraceCorrelation) {
     }
 }
 
-/// Capture the raw typed Runner result at the Server-side correlation boundary.
+/// Capture one authoritative Runner result after the shell-client layer has
+/// accepted its client / instance / request ownership. Capture never consumes
+/// correlation; finalization is a separate post-acceptance step.
 pub(crate) fn capture_runner_result<T: Serialize>(request_id: &str, payload: &T) {
     let Some(correlation) = lookup_request_correlation(request_id) else {
         return;
@@ -1443,18 +1456,27 @@ pub(crate) fn capture_runner_result<T: Serialize>(request_id: &str, payload: &T)
             "tool_trace_capture_failed"
         ),
     }
+}
+
+/// Finalize a non-Job Runner result correlation only after authoritative result
+/// acceptance. Job-backed requests stay correlated until authoritative Job
+/// terminal state is accepted.
+pub(crate) fn finalize_runner_result_correlation(request_id: &str) {
+    let Some(correlation) = lookup_request_correlation(request_id) else {
+        return;
+    };
     if correlation.job_id.is_none() {
         remove_correlation(&correlation);
     }
 }
 
-/// Capture Runner Job updates, including terminal materialization, into the trace
-/// that originally admitted the Job. Updates lacking request_id can still use
-/// the bounded job_id correlation created at enqueue.
+/// Capture one authoritative Runner Job update into the trace that originally
+/// admitted the Job. Updates without request_id may use job_id correlation; when
+/// both identities are present they must resolve to the same TraceCorrelation.
+/// Capture never consumes correlation.
 pub(crate) fn capture_runner_job_update<T: Serialize>(
     request_id: Option<&str>,
     job_id: &str,
-    finished: bool,
     payload: &T,
 ) {
     let Some(correlation) = lookup_job_correlation(request_id, job_id) else {
@@ -1470,9 +1492,16 @@ pub(crate) fn capture_runner_job_update<T: Serialize>(
             "tool_trace_capture_failed"
         ),
     }
-    if finished {
-        remove_correlation(&correlation);
-    }
+}
+
+/// Consume Job correlation only after the shell-client layer has accepted a
+/// terminal Server-authoritative Job state. A mismatched request_id + job_id
+/// pair never resolves and therefore cannot consume either trace.
+pub(crate) fn finalize_runner_job_correlation(request_id: Option<&str>, job_id: &str) {
+    let Some(correlation) = lookup_job_correlation(request_id, job_id) else {
+        return;
+    };
+    remove_correlation(&correlation);
 }
 
 /// Lifecycle guard shared by MCP `/mcp` and API `/api/tools/call` handlers.
@@ -1725,6 +1754,44 @@ mod tests {
 
     fn event_line_len(event: &Value) -> u64 {
         serde_json::to_vec(event).unwrap().len() as u64 + 1
+    }
+
+    #[test]
+    fn job_trace_correlation_requires_request_and_job_to_agree() {
+        let request_correlation = TraceCorrelation {
+            trace_id: "trace-a".to_string(),
+            request_id: "request-a".to_string(),
+            job_id: Some("job-a".to_string()),
+            created_at: 1,
+        };
+        let other_correlation = TraceCorrelation {
+            trace_id: "trace-b".to_string(),
+            request_id: "request-b".to_string(),
+            job_id: Some("job-b".to_string()),
+            created_at: 1,
+        };
+        let mut correlations = TraceCorrelations::default();
+        correlations
+            .requests
+            .insert("request-a".to_string(), request_correlation.clone());
+        correlations
+            .jobs
+            .insert("job-b".to_string(), other_correlation.clone());
+
+        assert!(resolve_job_correlation(&correlations, Some("request-a"), "job-b").is_none());
+        assert!(resolve_job_correlation(&correlations, Some("missing"), "job-b").is_none());
+        assert_eq!(
+            resolve_job_correlation(&correlations, None, "job-b"),
+            Some(other_correlation)
+        );
+
+        correlations
+            .jobs
+            .insert("job-a".to_string(), request_correlation.clone());
+        assert_eq!(
+            resolve_job_correlation(&correlations, Some("request-a"), "job-a"),
+            Some(request_correlation)
+        );
     }
 
     fn accounting_snapshot() -> (PathBuf, u64, usize, u64) {

@@ -134,10 +134,10 @@ webcodex login http://127.0.0.1:18080 `
   --json
 ```
 
-`login --json` 会返回 `agent_config` 路径，但不会要求把 credential 粘贴给 ChatGPT。用返回的配置启动 Runner：
+`login --json` 会返回 `runner_config` 路径，但不会要求把 credential 粘贴给 ChatGPT。用返回的配置启动 Runner：
 
 ```powershell
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 本次验证中的 Runner 注册结果是：

@@ -79,9 +79,9 @@ fn cli_version_output_includes_build_metadata() {
 #[test]
 fn project_doctor_and_hosted_connect_dispatch() {
     assert!(matches!(
-        cli_action(["project", "register", "--config", "/tmp/agent.toml", "/tmp/repo"]),
+        cli_action(["project", "register", "--config", "/tmp/runner.toml", "/tmp/repo"]),
         CliAction::ProjectRegister(opts)
-            if opts.config == std::path::PathBuf::from("/tmp/agent.toml")
+            if opts.config == std::path::PathBuf::from("/tmp/runner.toml")
                 && opts.project == std::path::PathBuf::from("/tmp/repo")
                 && !opts.json
     ));
@@ -302,7 +302,7 @@ fn webcodex_cli_runner_help_mentions_lifecycle_subcommands() {
             assert!(stdout.contains("Usage: webcodex runner init"));
             assert!(stdout.contains("Stable Runner client id"));
             assert!(stdout.contains("Human-readable Runner name"));
-            assert!(stdout.contains("agent.toml"));
+            assert!(stdout.contains("runner.toml"));
         }
         other => panic!("expected Runner init help exit, got {other:?}"),
     }
@@ -335,7 +335,7 @@ fn webcodex_cli_runner_help_mentions_lifecycle_subcommands() {
             assert!(stdout.contains("--scope user|system"));
             assert!(stdout.contains("--service-file PATH"));
             assert!(stdout.contains("Runner config path"));
-            assert!(stdout.contains("agent.toml"));
+            assert!(stdout.contains("runner.toml"));
             assert!(stdout.contains("no tokens"));
         }
         other => panic!("expected help exit, got {other:?}"),

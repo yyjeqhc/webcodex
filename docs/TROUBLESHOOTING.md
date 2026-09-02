@@ -2,7 +2,7 @@
 
 [English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
 
-Practical checks for common WebCodex deployment issues. Do not paste or share real tokens, env files, `Authorization` headers, or complete `agent.toml` files while debugging.
+Practical checks for common WebCodex deployment issues. Do not paste or share real tokens, env files, `Authorization` headers, or complete `runner.toml` files while debugging.
 
 ## Operational checklist
 
@@ -19,7 +19,7 @@ Client:
 - For hosted quick-start, `webcodex runner status --profile <profile-from-connect>`
   reports `runner mode: hosted local process`, `runner active: true`, and
   `client online: yes`.
-- `webcodex runner status --profile workstation` can read the local Runner config (`agent.toml`).
+- `webcodex runner status --profile workstation` can read the local Runner config (`runner.toml`).
 - `webcodex doctor` passes for a canonical project, or advanced
   `webcodex ops status --strict --server-url https://your-domain.example`
   passes for a managed deployment.
@@ -166,7 +166,7 @@ Use the actual install path for your host.
 
 `webcodex pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webcodex login <server-url> --code <wc_pair_...>` with the short-lived `wc_pair_*` code from the server owner.
 
-Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete `agent.toml` files.
+Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete `runner.toml` files.
 
 ### Doctor warns `binary webcodex not found in PATH` on a client
 
@@ -231,12 +231,12 @@ In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
 In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
 `webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
 only for Runner transport — after `webcodex login` it lives inline in
-`agent.toml`, with no separate `webcodex-runner-token` file. A 403 after putting a `wc_agent_*`
+`runner.toml`, with no separate `webcodex-runner-token` file. A 403 after putting a `wc_agent_*`
 value in `--token` or `--token-file` is the expected security boundary: select
 the generated `webcodex-user-token` instead. Recent CLI commands also diagnose
 this mismatch without printing the complete token. `WEBCODEX_TOKEN` is
 bootstrap/admin-oriented and should not be copied into GPT Actions, MCP, or
-agent config.
+Runner config.
 
 ### Runner service is visible in one command but missing in another
 

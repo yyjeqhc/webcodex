@@ -9,7 +9,7 @@
 # config relay and does NOT need a server-side projects.toml for runtime project
 # discovery; project ids are exposed as agent:<client_id>:<project_id>.
 #
-# New deployments should prefer transport = "auto" in agent.toml with [quic]
+# New deployments should prefer transport = "auto" in runner.toml with [quic]
 # configured. The agent tries QUIC first, then WebSocket, then polling. Use a
 # strict transport only when you intentionally want exactly one transport.
 
@@ -22,14 +22,14 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=/opt/webcodex/webcodex-runner --config /etc/webcodex/clients/workstation/agent.toml
+ExecStart=/opt/webcodex/webcodex-runner --config /etc/webcodex/clients/workstation/runner.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s
 StandardOutput=journal
 StandardError=journal
 
-# Keep environment minimal; runner behavior should come from agent.toml.
+# Keep environment minimal; runner behavior should come from runner.toml.
 Environment=RUST_LOG=info
 
 [Install]

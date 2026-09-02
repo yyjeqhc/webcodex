@@ -1412,7 +1412,7 @@ fn agent_health_summary(
 /// `listAgents`. Only the safe fields are carried: `allow_raw_shell`,
 /// `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`,
 /// `max_output_bytes`. The agent token, shell env values, init_script
-/// contents, and full agent.toml contents are NEVER included. Older agents
+/// contents, and full Runner config contents are NEVER included. Older agents
 /// that registered without a policy produce `Value::Null` so the field is
 /// present-but-null for clients that expect it.
 fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySummary>) -> Value {

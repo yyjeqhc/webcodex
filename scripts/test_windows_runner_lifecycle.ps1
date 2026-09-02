@@ -62,7 +62,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('webcodex-lifecycle-tes
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     $runnerPath = Join-Path $tempRoot 'webcodex-runner.exe'
-    $configPath = Join-Path $tempRoot 'agent.toml'
+    $configPath = Join-Path $tempRoot 'runner.toml'
     $supervisorPath = Join-Path $tempRoot 'runner supervisor.ps1'
     $workingDirectory = Join-Path $tempRoot 'work'
     $secret = 'wc_pat_lifecycle_must_not_leak_0123456789'

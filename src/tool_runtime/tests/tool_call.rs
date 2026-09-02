@@ -535,6 +535,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
     for forbidden in [
         "token",
         "authorization",
+        "runner.toml",
         "agent.toml",
         "webcodex.env",
         "secret",

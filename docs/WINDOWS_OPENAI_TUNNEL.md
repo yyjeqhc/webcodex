@@ -132,10 +132,10 @@ webcodex login http://127.0.0.1:18080 `
   --json
 ```
 
-`login --json` reports an `agent_config` path without requiring the resulting credential to be pasted into ChatGPT. Start the Runner with that config:
+`login --json` reports a `runner_config` path without requiring the resulting credential to be pasted into ChatGPT. Start the Runner with that config:
 
 ```powershell
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 The Runner in this dogfood registered as:

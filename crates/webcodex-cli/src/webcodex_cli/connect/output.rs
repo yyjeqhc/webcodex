@@ -73,7 +73,7 @@ mod tests {
             "profile",
             "runner",
             "agent:runner:project",
-            Path::new("agent.toml"),
+            Path::new("runner.toml"),
             Path::new("runner.log"),
             &key(secret, true, None),
         );
@@ -94,7 +94,7 @@ mod tests {
             "profile",
             "runner",
             "agent:runner:project",
-            Path::new("agent.toml"),
+            Path::new("runner.toml"),
             Path::new("runner.log"),
             &key(secret, false, None),
         );

@@ -321,6 +321,7 @@ fn is_excluded_component(component: &str) -> bool {
             | "credential"
             | "passwords"
             | "password"
+            | "runner.toml"
             | "agent.toml"
             | "webcodex.env"
             | ".env"

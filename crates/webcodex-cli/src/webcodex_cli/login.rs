@@ -534,7 +534,7 @@ pub(crate) fn write_descriptor(
 
 /// Build the whole connection inside `staging`.
 ///
-/// The agent token is written only into `agent.toml`; there is deliberately no
+/// The Runner token is written only into `runner.toml`; there is deliberately no
 /// second copy on disk for it to drift from.
 pub(crate) fn stage_connection(
     staging: &Path,
@@ -566,15 +566,15 @@ pub(crate) fn stage_connection(
         transport: opts.transport.clone(),
         poll_interval_ms: crate::runner_config::DEFAULT_POLL_INTERVAL_MS,
         // The directory is created inside staging above so it is published
-        // atomically with the rest of the connection, but agent.toml must
+        // atomically with the rest of the connection, but runner.toml must
         // point at its final path after that staging directory is renamed.
         projects_dir: published_projects_dir.to_path_buf(),
-        output: paths.agent_config.clone(),
+        output: paths.runner_config.clone(),
         allowed_roots: opts.allowed_roots.clone(),
         allow_cwd_anywhere: false,
         overwrite: true,
     })?;
-    harden_secret_file(&paths.agent_config)?;
+    harden_secret_file(&paths.runner_config)?;
 
     write_descriptor(&paths, server_url, &identity.username, device, now)
 }
@@ -599,7 +599,7 @@ pub(crate) fn render_login_result(
         vec![
             "webcodex-runner".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ]
     });
     let runner_install_argv = (!effective_root && cfg!(target_os = "linux")).then(|| {
@@ -610,7 +610,7 @@ pub(crate) fn render_login_result(
             "--scope".to_string(),
             "user".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ]
     });
     let runner_install_reason = if effective_root {
@@ -630,7 +630,7 @@ pub(crate) fn render_login_result(
             "runner".to_string(),
             "run".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ])
     });
     let register_command = format!(
@@ -640,7 +640,7 @@ pub(crate) fn render_login_result(
             "project".to_string(),
             "register".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ])
     );
     let human_register_command = format!(
@@ -650,7 +650,7 @@ pub(crate) fn render_login_result(
             "project".to_string(),
             "register".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ])
     );
 
@@ -686,7 +686,7 @@ pub(crate) fn render_login_result(
             "mcp_url": format!("{server_url}/mcp"),
             "dir": paths.dir.to_string_lossy(),
             "user_token_file": paths.user_token.to_string_lossy(),
-            "agent_config": paths.agent_config.to_string_lossy(),
+            "runner_config": paths.runner_config.to_string_lossy(),
             "projects_registry": paths.projects_dir.to_string_lossy(),
             "allowed_roots": allowed_roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             "project_registration": {
@@ -696,7 +696,7 @@ pub(crate) fn render_login_result(
             "registered_projects": registered_projects,
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
-                "agent_config_token": "Runner transport only",
+                "runner_config_token": "Runner transport only",
             },
             "foreground_available": foreground_argv.is_some(),
             "foreground_argv": &foreground_argv,
@@ -736,7 +736,7 @@ pub(crate) fn render_login_result(
         out.push_str("No project has been added yet.\n");
     }
     out.push_str("\nRunner configuration:\n");
-    out.push_str(&format!("  {}\n", paths.agent_config.display()));
+    out.push_str(&format!("  {}\n", paths.runner_config.display()));
     if !allowed_roots.is_empty() {
         out.push_str("\nProjects may be added under:\n");
         for root in allowed_roots {
@@ -1315,7 +1315,7 @@ mod tests {
             paths.dir,
             temp.path().join("https_api.example.com").join("alice")
         );
-        assert_eq!(paths.agent_config, paths.dir.join("agent.toml"));
+        assert_eq!(paths.runner_config, paths.dir.join("runner.toml"));
     }
 
     #[test]
@@ -1333,15 +1333,15 @@ mod tests {
         assert_eq!(listed[0].server_url, "https://api.example.com");
 
         let paths = &listed[0].paths;
-        assert!(paths.agent_config.is_file());
+        assert!(paths.runner_config.is_file());
         assert!(paths.user_token.is_file());
         assert!(paths.projects_dir.is_dir());
         assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
         // The agent token has exactly one home.
         assert!(!paths.dir.join("webcodex-runner-token").exists());
-        let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
-        assert!(agent_config.contains(AGENT_TOKEN));
-        let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
+        let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
+        assert!(runner_config.contains(AGENT_TOKEN));
+        let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
         let configured_projects_dir = PathBuf::from(
             parsed
                 .get("projects_dir")
@@ -1351,7 +1351,7 @@ mod tests {
         assert_eq!(
             configured_projects_dir.canonicalize().unwrap(),
             paths.projects_dir.canonicalize().unwrap(),
-            "published agent.toml must reference the published projects.d directory"
+            "published runner.toml must reference the published projects.d directory"
         );
         // Canonical equality above proves this is the published projects.d,
         // not the differently named staging directory that existed before the
@@ -1389,8 +1389,8 @@ mod tests {
             PublishOutcome::Published
         );
         assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
-        let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
-        let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
+        let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
+        let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
         assert_eq!(
             PathBuf::from(parsed["projects_dir"].as_str().unwrap())
                 .canonicalize()
@@ -1414,7 +1414,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         publish_login(temp.path(), "https://api.example.com", false).unwrap();
         let paths = all_connections(temp.path())[0].paths.clone();
-        for secret in [&paths.agent_config, &paths.user_token] {
+        for secret in [&paths.runner_config, &paths.user_token] {
             let mode = std::fs::metadata(secret).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "{} has mode {mode:o}", secret.display());
         }
@@ -1444,8 +1444,8 @@ mod tests {
         std::fs::create_dir_all(paths.dir.parent().unwrap()).unwrap();
         let staging = create_staging_dir(paths.dir.parent().unwrap()).unwrap();
 
-        // Make agent.toml impossible to create by putting a directory there.
-        std::fs::create_dir_all(staging.join("agent.toml")).unwrap();
+        // Make runner.toml impossible to create by putting a directory there.
+        std::fs::create_dir_all(staging.join("runner.toml")).unwrap();
         let result = stage_connection(
             &staging,
             &paths.projects_dir,
@@ -1523,8 +1523,8 @@ mod tests {
             "old"
         );
         // ...the redeemed credentials still exist...
-        assert!(path.join("agent.toml").is_file());
-        assert!(std::fs::read_to_string(path.join("agent.toml"))
+        assert!(path.join("runner.toml").is_file());
+        assert!(std::fs::read_to_string(path.join("runner.toml"))
             .unwrap()
             .contains(AGENT_TOKEN));
         // ...and `status` shows one connection, not two.
@@ -1770,7 +1770,7 @@ mod tests {
             let name = entry.unwrap().file_name().to_string_lossy().to_string();
             if matches!(
                 name.as_str(),
-                "server.toml" | "agent.toml" | "webcodex-user-token"
+                "server.toml" | "runner.toml" | "webcodex-user-token"
             ) || name.starts_with(INTERNAL_DIR_PREFIX)
             {
                 offenders.push(name);
@@ -2317,8 +2317,8 @@ mod tests {
             reported_record.canonicalize().unwrap(),
             records[0].0.canonicalize().unwrap()
         );
-        let agent_config = std::fs::read_to_string(&paths.agent_config).unwrap();
-        let parsed: toml::Value = toml::from_str(&agent_config).unwrap();
+        let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
+        let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
         assert_eq!(
             PathBuf::from(parsed["projects_dir"].as_str().unwrap())
                 .canonicalize()
@@ -2625,7 +2625,7 @@ mod tests {
         assert!(text.contains("No project has been added yet."), "{text}");
         assert!(text.contains("Runner configuration:"), "{text}");
         assert!(
-            text.contains(&paths.agent_config.display().to_string()),
+            text.contains(&paths.runner_config.display().to_string()),
             "{text}"
         );
         assert!(
@@ -2737,7 +2737,7 @@ mod tests {
         let foreground_argv = vec![
             "webcodex-runner".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ];
         let install_argv = vec![
             "webcodex".to_string(),
@@ -2746,14 +2746,14 @@ mod tests {
             "--scope".to_string(),
             "user".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ];
         let human_foreground_argv = vec![
             "webcodex".to_string(),
             "runner".to_string(),
             "run".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ];
         let registration = ProjectRegistration {
             id: "demo".to_string(),
@@ -2875,7 +2875,7 @@ mod tests {
         let foreground_argv = vec![
             "webcodex-runner".to_string(),
             "--config".to_string(),
-            paths.agent_config.to_string_lossy().into_owned(),
+            paths.runner_config.to_string_lossy().into_owned(),
         ];
         let registration = ProjectRegistration {
             id: "demo".to_string(),

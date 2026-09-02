@@ -110,11 +110,11 @@ api_post() {
         -H 'Content-Type: application/json' -X POST \
         "http://127.0.0.1:${PORT}$1" -d "$2"
 }
-write_agent_config() {
+write_runner_config() {
     local marker="$1" max_timeout="$2" max_output="$3" strategy="$4"
     local enabled="$5" provider_timeout="$6" display="$7" max_jobs="$8"
     local search_mapping="$9"
-    cat >"$AGENT_CONFIG.next" <<EOF
+    cat >"$RUNNER_CONFIG.next" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
@@ -145,7 +145,7 @@ timeout_secs = ${provider_timeout}
 [tool_providers.claude_code.mapping]
 search_project_text = "${search_mapping}"
 EOF
-    mv "$AGENT_CONFIG.next" "$AGENT_CONFIG"
+    mv "$RUNNER_CONFIG.next" "$RUNNER_CONFIG"
 }
 status_matches() {
     local generation="$1" result="$2" error="$3" restart="$4"
@@ -221,7 +221,7 @@ PROJECTS_DIR="$TMP_ROOT/projects.d"
 FIXTURE="$TMP_ROOT/fixture"
 ISOLATED_HOME="$TMP_ROOT/home"
 RUNTIME_TMP="$TMP_ROOT/tmp"
-AGENT_CONFIG="$TMP_ROOT/agent.toml"
+RUNNER_CONFIG="$TMP_ROOT/runner.toml"
 GENERATION_TWO_CONFIG="$TMP_ROOT/generation-2.toml"
 SERVER_LOG="$TMP_ROOT/server.log"
 RUNNER_LOG="$TMP_ROOT/agent.log"
@@ -247,7 +247,7 @@ kind = "text"
 shell_profile = "reload-test"
 EOF
 PORT="$(find_port)"
-write_agent_config generation-1 5 65536 native false 30 "$STARTUP_DISPLAY" 1 \
+write_runner_config generation-1 5 65536 native false 30 "$STARTUP_DISPLAY" 1 \
     project_search_generation_1
 setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
@@ -261,7 +261,7 @@ setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" RUST_LOG=warn \
-    target/debug/webcodex-runner --config "$AGENT_CONFIG" >"$RUNNER_LOG" 2>&1 &
+    target/debug/webcodex-runner --config "$RUNNER_CONFIG" >"$RUNNER_LOG" 2>&1 &
 RUNNER_PID=$!
 START_RUNNER_PID="$RUNNER_PID"
 STAGE="generation 1 baseline"
@@ -270,9 +270,9 @@ assert_marker generation-1
 assert_runner_pid
 ok "generation 1 registered and dispatched marker generation-1"
 STAGE="generation 2 valid hot-only reload"
-write_agent_config generation-2 2 32768 claude_code_then_native true 17 "$STARTUP_DISPLAY" 1 \
+write_runner_config generation-2 2 32768 claude_code_then_native true 17 "$STARTUP_DISPLAY" 1 \
     project_search_generation_2
-cp "$AGENT_CONFIG" "$GENERATION_TWO_CONFIG"
+cp "$RUNNER_CONFIG" "$GENERATION_TWO_CONFIG"
 kill -HUP "$RUNNER_PID"
 wait_for_status 2 success null false - claude_code_then_native true \
     || fail "valid reload status did not arrive"
@@ -285,19 +285,19 @@ status_matches 2 success null false - claude_code_then_native true \
     || fail "provider status changed or Claude started after passive checks"
 ok "generation 2 applied shell, timeout policy, and lazy provider status"
 STAGE="invalid TOML fail-closed"
-printf 'display_name = "unterminated\n' >"$AGENT_CONFIG.next"
-mv "$AGENT_CONFIG.next" "$AGENT_CONFIG"
+printf 'display_name = "unterminated\n' >"$RUNNER_CONFIG.next"
+mv "$RUNNER_CONFIG.next" "$RUNNER_CONFIG"
 kill -HUP "$RUNNER_PID"
 wait_for_status 2 failure config_parse_failed false - claude_code_then_native true \
     || fail "invalid reload failure status did not arrive"
 assert_runner_pid
 assert_marker generation-2
-cp "$GENERATION_TWO_CONFIG" "$AGENT_CONFIG.next"
-mv "$AGENT_CONFIG.next" "$AGENT_CONFIG"
+cp "$GENERATION_TWO_CONFIG" "$RUNNER_CONFIG.next"
+mv "$RUNNER_CONFIG.next" "$RUNNER_CONFIG"
 ok "invalid TOML kept generation 2 and its active request snapshot"
 
 STAGE="generation 3 mixed reload"
-write_agent_config generation-3 5 24576 native false 11 'Restart-Only Display' 2 \
+write_runner_config generation-3 5 24576 native false 11 'Restart-Only Display' 2 \
     project_search_generation_3
 kill -HUP "$RUNNER_PID"
 wait_for_status 3 partial null true display_name,max_concurrent_jobs native false \
@@ -329,7 +329,7 @@ done
 ok "generation 3 applied hot fields and retained startup identity/concurrency"
 
 STAGE="generation 4 recovery"
-write_agent_config generation-4 3 16384 claude_code_then_native true 13 "$STARTUP_DISPLAY" 1 \
+write_runner_config generation-4 3 16384 claude_code_then_native true 13 "$STARTUP_DISPLAY" 1 \
     project_search_generation_4
 kill -HUP "$RUNNER_PID"
 wait_for_status 4 success null false - claude_code_then_native true \

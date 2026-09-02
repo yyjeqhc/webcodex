@@ -8,7 +8,7 @@
 //!   https_api.example.com/
 //!     alice/
 //!       server.toml               canonical server_url, username, device, time
-//!       agent.toml                the agent token lives here, inline
+//!       runner.toml               the Runner token lives here, inline
 //!       webcodex-user-token
 //!       projects.d/
 //! ```
@@ -22,11 +22,11 @@
 //!
 //! # Credential source of truth
 //!
-//! The agent token is stored **only** inline in `agent.toml`. `login` used to
+//! The Runner token is stored **only** inline in `runner.toml`. `login` used to
 //! also drop a `webcodex-runner-token` file, which left two copies that could
 //! drift with nothing saying which one won. The user token keeps its own file
 //! because a different consumer reads it (GPT Actions / MCP clients), not the
-//! agent.
+//! Runner.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -358,7 +358,7 @@ pub(crate) fn user_slug(username: &str) -> Result<String, String> {
 pub(crate) struct ConnectionPaths {
     pub(crate) dir: PathBuf,
     pub(crate) descriptor: PathBuf,
-    pub(crate) agent_config: PathBuf,
+    pub(crate) runner_config: PathBuf,
     pub(crate) projects_dir: PathBuf,
     pub(crate) user_token: PathBuf,
 }
@@ -367,7 +367,7 @@ impl ConnectionPaths {
     pub(crate) fn new(dir: PathBuf) -> Self {
         Self {
             descriptor: dir.join("server.toml"),
-            agent_config: dir.join("agent.toml"),
+            runner_config: dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE),
             projects_dir: dir.join("projects.d"),
             user_token: dir.join("webcodex-user-token"),
             dir,

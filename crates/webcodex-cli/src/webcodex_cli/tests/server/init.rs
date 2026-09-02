@@ -3,7 +3,7 @@ use super::super::support::*;
 #[test]
 fn runner_init_writes_valid_toml_and_refuses_overwrite() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = tmp.path().join("agent.toml");
+    let output = tmp.path().join("runner.toml");
     let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test/",
@@ -22,7 +22,7 @@ fn runner_init_writes_valid_toml_and_refuses_overwrite() {
     ]))
     .unwrap();
     let msg = run_runner_init(opts).unwrap();
-    assert!(msg.contains("agent.toml"));
+    assert!(msg.contains("runner.toml"));
 
     // Refuse overwrite without --overwrite.
     let opts2 = parse_cli_runner_init(&args(&[
@@ -70,7 +70,7 @@ fn runner_init_stdout_output_contains_token_only_once() {
 fn runner_init_writes_0600_permissions() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
-    let output = tmp.path().join("agent.toml");
+    let output = tmp.path().join("runner.toml");
     let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",

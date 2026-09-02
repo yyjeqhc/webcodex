@@ -1232,7 +1232,7 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir(&state).unwrap();
@@ -1313,7 +1313,7 @@ mod tests {
             "@echo off\r\n:loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n",
         )
         .unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir(&state).unwrap();
@@ -1385,7 +1385,7 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir(&state).unwrap();
@@ -1446,7 +1446,7 @@ mod tests {
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(&runner, "#!/bin/sh\nexit 23\n").unwrap();
         std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir(&state).unwrap();

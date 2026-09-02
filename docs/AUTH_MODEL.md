@@ -40,7 +40,7 @@ and should never be copied to client machines.
 
 `webcodex setup` creates one Project Credential for the selected Git root,
 profile, and private state directory. The Connector credential file and the
-generated Agent configuration carry the same secret; exact verification maps
+generated Runner configuration carry the same secret; exact verification maps
 both callers to one stable, non-secret `project_grant_id`. Agent registry
 access, readiness, file operations, jobs, logs, and cancellation all require
 that grant.
@@ -73,8 +73,8 @@ lightweight groups.
 
 The key is printed in full only when first created, then stored in the
 owner-only profile config at
-`~/.config/webcodex/clients/<profile>/agent.toml` (or
-`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`) as the top-level
+`~/.config/webcodex/clients/<profile>/runner.toml` (or
+`$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`) as the top-level
 `token = "wck_..."` field. A repeat `connect` reuses the profile and does not
 print it again. To recover it as a human, copy that `token` field; status and
 log commands deliberately do not print it. There is no `show-token` command.
@@ -157,8 +157,8 @@ stores only its hash and binds it to `allowed_client_id`. Use it only for
 `webcodex-runner` connectivity. It cannot call runtime, project, tool, MCP, or
 account endpoints.
 
-`webcodex login` stores it **only** inline in the generated `agent.toml`
-(`~/.config/webcodex/<server-slug>/<user>/agent.toml`); it does not create a
+`webcodex login` stores it **only** inline in the generated `runner.toml`
+(`~/.config/webcodex/<server-slug>/<user>/runner.toml`); it does not create a
 `webcodex-runner-token` file. This is the canonical managed enrollment layout.
 Selecting a `wc_agent_*` value for a
 user/runtime CLI token is diagnosed locally where possible and remains a
@@ -423,11 +423,11 @@ once at creation time and must be stored by the user or agent host.
 | Credential | Location (default) |
 | --- | --- |
 | `WEBCODEX_TOKEN` | server env file (`/etc/webcodex/webcodex.env`) |
-| Shared key `wck_...` | top-level `token` field in `~/.config/webcodex/clients/<profile>/agent.toml` (owner-only) |
+| Shared key `wck_...` | top-level `token` field in `~/.config/webcodex/clients/<profile>/runner.toml` (owner-only) |
 | Project Credential | project private state dir (owner-only files) |
 | `wc_acct_...` | given once by `users create --issue-credential` |
 | `wc_pat_...` (`webcodex-user-token`) | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |
-| `wc_agent_...` | inline inside `~/.config/webcodex/<server-slug>/<user>/agent.toml` |
+| `wc_agent_...` | inline inside `~/.config/webcodex/<server-slug>/<user>/runner.toml` |
 
 The per-(server, user) directory layout under `~/.config/webcodex/` is:
 
@@ -436,7 +436,7 @@ The per-(server, user) directory layout under `~/.config/webcodex/` is:
   <server-slug>/
     <user>/
       server.toml               canonical server URL, username, device
-      agent.toml                the agent token lives here, inline
+      runner.toml                the agent token lives here, inline
       webcodex-user-token
       projects.d/
 ```

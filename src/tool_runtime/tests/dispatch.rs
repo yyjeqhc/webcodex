@@ -584,6 +584,7 @@ fn cleanup_paths_match_sensitive_directories_by_complete_component() {
     assert!(validate_limited_cleanup_paths(&root, true).is_err());
 
     for path in [
+        "runner.toml",
         "agent.toml",
         ".env",
         ".git/config",

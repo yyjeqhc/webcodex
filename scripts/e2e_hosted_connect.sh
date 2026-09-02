@@ -204,8 +204,8 @@ RUNTIME_PROJECT="$(awk '$0 ~ /^Runtime project:/ {sub(/^Runtime project:[[:space
 
 PROFILE_DIR="$TMP_ROOT/config/webcodex/clients/$PROFILE"
 STATE_DIR="$TMP_ROOT/state/webcodex/clients/$PROFILE"
-[ "$(stat -c '%a' "$PROFILE_DIR/agent.toml")" = "600" ] \
-    || die "agent.toml is not mode 0600"
+[ "$(stat -c '%a' "$PROFILE_DIR/runner.toml")" = "600" ] \
+    || die "runner.toml is not mode 0600"
 [ "$(stat -c '%a' "$STATE_DIR/runner.toml")" = "600" ] \
     || die "runner state is not mode 0600"
 [ "$(stat -c '%a' "$STATE_DIR/runner.log")" = "600" ] \

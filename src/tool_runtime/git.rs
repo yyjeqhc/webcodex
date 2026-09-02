@@ -1614,6 +1614,7 @@ fn untracked_preview_path_is_sensitive(path: &str) -> bool {
                     | "target"
                     | "node_modules"
                     | "projects.d"
+                    | "runner.toml"
                     | "agent.toml"
                     | "webcodex.env"
                     | ".env"
@@ -1622,6 +1623,7 @@ fn untracked_preview_path_is_sensitive(path: &str) -> bool {
                     | "id_rsa"
                     | "id_ed25519"
             ) || part.starts_with(".env")
+                || part.starts_with("runner.toml")
                 || part.starts_with("agent.toml")
                 || part.starts_with("webcodex.env")
                 || part.ends_with(".pem")

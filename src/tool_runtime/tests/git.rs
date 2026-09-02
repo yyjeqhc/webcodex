@@ -3551,22 +3551,26 @@ async fn show_changes_untracked_binary_preview_is_skipped() {
 async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
+    fs::write(tmp.path().join("runner.toml"), "RUNNER_TOKEN=secret\n").unwrap();
     fs::write(tmp.path().join("agent.toml"), "API_TOKEN=secret\n").unwrap();
 
     let output = show_changes_output_from_command(tmp.path(), true);
 
-    assert_eq!(output["counts"]["untracked"], 1);
-    let preview = preview_for_path(&output, "agent.toml");
-    assert_eq!(preview["kind"], "skipped");
-    assert_eq!(preview["reason"], "sensitive_or_excluded_path");
+    assert_eq!(output["counts"]["untracked"], 2);
+    for path in ["runner.toml", "agent.toml"] {
+        let preview = preview_for_path(&output, path);
+        assert_eq!(preview["kind"], "skipped", "{path}");
+        assert_eq!(preview["reason"], "sensitive_or_excluded_path", "{path}");
+    }
     let serialized = serde_json::to_string(&output).unwrap();
+    assert!(!serialized.contains("RUNNER_TOKEN=secret"));
     assert!(
         !serialized.contains("API_TOKEN=secret"),
         "sensitive file content leaked: {serialized}"
     );
     assert_verdict_omits_raw_output_and_sensitive_values(
         &output["verdict"],
-        &["API_TOKEN=secret"],
+        &["RUNNER_TOKEN=secret", "API_TOKEN=secret"],
         "show_changes sensitive preview verdict",
     );
 }

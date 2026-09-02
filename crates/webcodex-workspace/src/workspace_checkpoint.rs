@@ -832,6 +832,7 @@ pub fn sensitive_path(path: &str) -> bool {
                 | "target"
                 | "node_modules"
                 | "projects.d"
+                | "runner.toml"
                 | "agent.toml"
                 | "webcodex.env"
                 | ".env"
@@ -849,6 +850,7 @@ pub fn sensitive_path(path: &str) -> bool {
             return true;
         }
         if part.starts_with(".env")
+            || part.starts_with("runner.toml")
             || part.starts_with("agent.toml")
             || part.starts_with("webcodex.env")
         {

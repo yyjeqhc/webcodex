@@ -25,6 +25,49 @@
 
 use std::path::{Path, PathBuf};
 
+/// Canonical Runner configuration filename for WebCodex 0.4 and later.
+pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
+/// Pre-0.4 Runner configuration filename retained as a read compatibility alias.
+pub const LEGACY_AGENT_CONFIG_FILE: &str = "agent.toml";
+
+fn path_entry_exists(path: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("failed to inspect {}: {error}", path.display())),
+    }
+}
+
+/// Resolve an existing Runner config within one authoritative config directory.
+///
+/// `runner.toml` is canonical. `agent.toml` remains readable only when it is the
+/// sole config entry. If both names exist, fail closed rather than choosing a
+/// winner and risking split-brain configuration.
+pub fn existing_runner_config_path(dir: &Path) -> Result<Option<PathBuf>, String> {
+    let runner = dir.join(RUNNER_CONFIG_FILE);
+    let legacy = dir.join(LEGACY_AGENT_CONFIG_FILE);
+    let runner_exists = path_entry_exists(&runner)?;
+    let legacy_exists = path_entry_exists(&legacy)?;
+    match (runner_exists, legacy_exists) {
+        (true, true) => Err(format!(
+            "both {} and {} exist in {}; refusing to guess which Runner config is authoritative",
+            RUNNER_CONFIG_FILE,
+            LEGACY_AGENT_CONFIG_FILE,
+            dir.display()
+        )),
+        (true, false) => Ok(Some(runner)),
+        (false, true) => Ok(Some(legacy)),
+        (false, false) => Ok(None),
+    }
+}
+
+/// Resolve the Runner config path for one authoritative config directory.
+/// Existing legacy-only directories keep using `agent.toml`; a new directory
+/// gets the canonical `runner.toml` creation target.
+pub fn resolve_runner_config_path(dir: &Path) -> Result<PathBuf, String> {
+    Ok(existing_runner_config_path(dir)?.unwrap_or_else(|| dir.join(RUNNER_CONFIG_FILE)))
+}
+
 /// Per-user home directory.
 ///
 /// - Windows: `USERPROFILE` (set by the OS at logon; `HOME` is ignored).
@@ -73,7 +116,7 @@ pub fn is_effective_root() -> bool {
 }
 
 /// Base directory for per-user WebCodex configuration and credentials
-/// (client profiles, `agent.toml`, `projects.d`, token files).
+/// (client profiles, `runner.toml`, `projects.d`, token files).
 ///
 /// - Unix (root): `/etc/webcodex`
 /// - Unix (user): `$XDG_CONFIG_HOME/webcodex`, else `$HOME/.config/webcodex`.
@@ -406,11 +449,60 @@ pub fn normalize_path_identity(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     // Single shared env-test lock for the whole crate: `lib.rs` tests and
     // `paths` tests both mutate process environment variables and must
     // serialize against each other.
     use crate::TEST_ENV_LOCK;
+
+    static TEST_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn test_temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "webcodex-runner-config-{label}-{}-{}",
+            std::process::id(),
+            TEST_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn runner_config_path_prefers_canonical_and_keeps_legacy_only_compatibility() {
+        let dir = test_temp_dir("compat");
+        assert_eq!(
+            resolve_runner_config_path(&dir).unwrap(),
+            dir.join(RUNNER_CONFIG_FILE)
+        );
+
+        std::fs::write(dir.join(LEGACY_AGENT_CONFIG_FILE), "legacy").unwrap();
+        assert_eq!(
+            resolve_runner_config_path(&dir).unwrap(),
+            dir.join(LEGACY_AGENT_CONFIG_FILE)
+        );
+
+        std::fs::remove_file(dir.join(LEGACY_AGENT_CONFIG_FILE)).unwrap();
+        std::fs::write(dir.join(RUNNER_CONFIG_FILE), "current").unwrap();
+        assert_eq!(
+            resolve_runner_config_path(&dir).unwrap(),
+            dir.join(RUNNER_CONFIG_FILE)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn runner_config_path_fails_closed_when_both_names_exist() {
+        let dir = test_temp_dir("dual");
+        std::fs::write(dir.join(RUNNER_CONFIG_FILE), "current").unwrap();
+        std::fs::write(dir.join(LEGACY_AGENT_CONFIG_FILE), "legacy").unwrap();
+        let error = resolve_runner_config_path(&dir).unwrap_err();
+        assert!(error.contains(RUNNER_CONFIG_FILE));
+        assert!(error.contains(LEGACY_AGENT_CONFIG_FILE));
+        assert!(error.contains("refusing to guess"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// RAII restore for environment variables: restores the previous value
     /// (or removes the variable) on drop, even if the test panics.

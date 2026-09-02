@@ -166,9 +166,9 @@ wait_for_provider_call() {
     return 1
 }
 
-write_agent_config() {
+write_runner_config() {
     local strategy="$1"
-    cat >"$AGENT_CONFIG" <<EOF
+    cat >"$RUNNER_CONFIG" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
@@ -202,7 +202,7 @@ start_runner() {
     XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     CLAUDE_CONFIG_DIR="$ISOLATED_HOME/.claude-e2e" \
     RUST_LOG=warn \
-        "$ROOT/target/debug/webcodex-runner" --config "$AGENT_CONFIG" \
+        "$ROOT/target/debug/webcodex-runner" --config "$RUNNER_CONFIG" \
         >"$RUNNER_LOG" 2>&1 &
     RUNNER_PID=$!
     wait_for_agent || fail "agent did not register"
@@ -247,7 +247,7 @@ DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/projects.d"
 FIXTURE="$TMP_ROOT/fixture"
 ISOLATED_HOME="$TMP_ROOT/home"
-AGENT_CONFIG="$TMP_ROOT/agent.toml"
+RUNNER_CONFIG="$TMP_ROOT/runner.toml"
 SERVER_LOG="$TMP_ROOT/server.log"
 RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$FIXTURE" \
@@ -276,7 +276,7 @@ SERVER_PID=$!
 wait_for_port "$PORT" || fail "server port did not open"
 ok "isolated server started"
 
-write_agent_config claude_code_then_native
+write_runner_config claude_code_then_native
 start_runner
 ok "fallback-strategy agent registered"
 
@@ -353,7 +353,7 @@ RUNNER_PID=""
 assert_groups_gone "$FIRST_GROUPS"
 ok "fallback-strategy Claude process group reaped"
 
-write_agent_config claude_code
+write_runner_config claude_code
 start_runner
 ok "strict Claude agent registered"
 

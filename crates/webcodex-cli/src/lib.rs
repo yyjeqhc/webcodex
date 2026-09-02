@@ -5,7 +5,7 @@
 //! `runner_config` module).
 //!
 //! This binary intentionally does NOT start a server and does NOT print real
-//! tokens, Authorization headers, or full agent.toml contents with secrets
+//! tokens, Authorization headers, or full Runner config contents with secrets
 //! (except explicit stdout materialization paths such as `runner init --output -`,
 //! which the user requests deliberately). Server initialization never prints the
 //! full bootstrap token.
@@ -33,9 +33,9 @@ use runner_config::{
 };
 use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
-    agent_config_for_scope, base_dir_or_default, client_profile_agent_config,
-    client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
-    client_profile_projects_dir, client_profile_state_dir, client_profile_user_token_file,
+    base_dir_or_default, client_profile_agent_token_file,
+    client_profile_agent_token_file_for_scope, client_profile_projects_dir,
+    client_profile_runner_config, client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, connect_usage, current_user_home,
     default_device_name, default_server_paths, disconnect_usage, discover_internal_binary,
     is_effective_root, login_usage, logout_usage, ops_agents_usage, ops_projects_usage,
@@ -45,14 +45,14 @@ use webcodex_cli::{
     run_internal_binary, run_login, run_logout, run_ops_command, run_pairing_create,
     run_project_register, run_runner_install_service, run_runner_service, run_runner_status,
     run_server_init, run_server_install_service, run_server_service, run_server_status, run_status,
-    run_token_create_local, runner_init_usage, runner_install_service_usage,
-    runner_service_file_for_scope, runner_status_usage, runner_usage, server_init_usage,
-    server_install_service_usage, server_status_usage, server_usage, service_unit_name,
-    status_usage, system_user_home, system_user_is_root, usage, validate_client_profile,
-    validate_service_file_scope, write_connect_result, ConnectAuth, ConnectOptions,
-    DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions,
-    OpsSmokePreflightOptions, ProjectRegisterOptions, ServerStatusOptions, ServiceControl,
-    StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
+    run_token_create_local, runner_config_for_scope, runner_init_usage,
+    runner_install_service_usage, runner_service_file_for_scope, runner_status_usage, runner_usage,
+    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
+    service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
+    validate_client_profile, validate_service_file_scope, write_connect_result, ConnectAuth,
+    ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions,
+    OpsRunnerOptions, OpsSmokePreflightOptions, ProjectRegisterOptions, ServerStatusOptions,
+    ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
     SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
@@ -1565,8 +1565,10 @@ fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
     let config = match config {
         Some(config) => config,
         None => match profile.as_deref() {
-            Some(profile) => client_profile_agent_config(profile)?,
-            None => PathBuf::from("/etc/webcodex/agent.toml"),
+            Some(profile) => client_profile_runner_config(profile)?,
+            None => webcodex_runner_config::paths::resolve_runner_config_path(Path::new(
+                "/etc/webcodex",
+            ))?,
         },
     };
     let bin = discover_internal_binary("webcodex-runner").ok_or_else(|| {
@@ -1733,7 +1735,7 @@ fn parse_runner_service_action(
     } else {
         match profile.as_deref() {
             Some(profile) => Some(LocalProfileOptions {
-                config: client_profile_agent_config(profile)?,
+                config: client_profile_runner_config(profile)?,
                 state_dir: client_profile_state_dir(profile)?,
                 runner_bin,
             }),
@@ -1852,7 +1854,7 @@ fn parse_runner_install_service_with_identity(
     let scope = scope.unwrap_or_else(|| default_runner_service_scope(effective_root));
     let config = config
         .map(Ok)
-        .unwrap_or_else(|| agent_config_for_scope(scope, profile.as_deref()))?;
+        .unwrap_or_else(|| runner_config_for_scope(scope, profile.as_deref()))?;
     let service_file = service_file
         .map(Ok)
         .unwrap_or_else(|| runner_service_file_for_scope(scope, profile.as_deref()))?;
@@ -2004,8 +2006,8 @@ fn parse_runner_status_with_identity(
         .transpose()?;
     opts.config = match (config, profile.as_deref(), scope_explicit) {
         (Some(config), _, _) => config,
-        (None, Some(profile), false) => client_profile_agent_config(profile)?,
-        (None, profile, _) => agent_config_for_scope(scope, profile)?,
+        (None, Some(profile), false) => client_profile_runner_config(profile)?,
+        (None, profile, _) => runner_config_for_scope(scope, profile)?,
     };
     opts.service_file = service_file
         .map(Ok)
@@ -2279,7 +2281,7 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
         .transpose()?
     {
         if !output_explicit {
-            opts.output = client_profile_agent_config(&profile)?;
+            opts.output = client_profile_runner_config(&profile)?;
         }
         if !projects_dir_explicit {
             opts.projects_dir = client_profile_projects_dir(&profile)?;
@@ -2287,7 +2289,7 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
     } else {
         if !output_explicit && opts.output.as_os_str().is_empty() {
             let profile = validate_client_profile(&opts.client_id)?;
-            opts.output = client_profile_agent_config(&profile)?;
+            opts.output = client_profile_runner_config(&profile)?;
             if !projects_dir_explicit {
                 opts.projects_dir = client_profile_projects_dir(&profile)?;
             }

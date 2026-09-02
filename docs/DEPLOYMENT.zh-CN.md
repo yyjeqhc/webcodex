@@ -55,7 +55,7 @@ webcodex pairing create --server-url http://127.0.0.1:8080 --env-file $envFile -
 
 ```powershell
 webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src --project C:\src\my-repo
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 如果 Server 与 Runner 位于不同机器，把 loopback URL 替换为 Server 可访问的 HTTPS URL，并按下文配置 Server listener/public URL 与受信任的反向代理或 tunnel。不要把 Server bootstrap token 或 env 文件复制到 Runner 机器。Windows 仍不支持 `webcodex server install/start/stop/restart/logs/uninstall` 与 `webcodex runner install`；Ctrl-C 或 Ctrl-Break 会结束前台 runtime。
@@ -221,14 +221,14 @@ webcodex login https://your-domain.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 webcodex runner status --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` 是 canonical 客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `agent.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-agent-config> /path/to/repo`。需要显式设备 identity 或不同的本地 base directory 时，使用 `login` 已文档化的 `--device` 与 `--dir`；不再有单独的 compatibility enrollment 命令。
+`webcodex login` 是 canonical 客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `runner.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-runner-config> /path/to/repo`。需要显式设备 identity 或不同的本地 base directory 时，使用 `login` 已文档化的 `--device` 与 `--dir`；不再有单独的 compatibility enrollment 命令。
 
 pairing code 由 server/admin 侧创建：
 
@@ -242,7 +242,7 @@ webcodex pairing create \
 ```
 
 只把短期 `wc_pair_*` code 传给客户端。不要跨机器复制 `WEBCODEX_TOKEN`、user API
-token、agent token、env 文件或完整 `agent.toml`。每个用户使用唯一 `username`。
+token、agent token、env 文件或完整 `runner.toml`。每个用户使用唯一 `username`。
 
 ## Runner 服务 scope
 
@@ -271,7 +271,7 @@ sudo webcodex runner install \
   --profile workstation \
   --user <runner-user> \
   --working-directory /home/<runner-user> \
-  --config /etc/webcodex/clients/workstation/agent.toml
+  --config /etc/webcodex/clients/workstation/runner.toml
 sudo webcodex runner status --scope system --profile workstation
 ```
 
@@ -343,9 +343,9 @@ package 时默认将其设为 private；维护者
 需要一次性把 package visibility 改成 Public，之后 workflow 的匿名拉取 gate 才会
 通过，普通用户无需配置 registry 凭据。
 
-## Agent 配置
+## Runner 配置
 
-客户端接入会生成 agent 配置。`agent.toml` 中的重要设置：
+客户端接入会生成 Runner 配置。`runner.toml` 中的重要设置：
 
 | 设置 | 说明 |
 | --- | --- |
@@ -371,7 +371,7 @@ max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
 
-编辑 `agent.toml` 后 reload 对应服务
+编辑 `runner.toml` 后 reload 对应服务
 （user scope：`systemctl --user reload webcodex-runner`；system scope：
 `sudo systemctl reload webcodex-runner`），以应用 policy、shell 与 SSH 资源设置。
 身份、server/auth、项目来源、并发、能力与传输变更需要重启。

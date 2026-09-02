@@ -1098,7 +1098,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
         first.changed,
         ["Connection", "Runner", "Project registration"]
     );
-    let agent = fs::read_to_string(state.join("agent/agent.toml")).unwrap();
+    let agent = fs::read_to_string(state.join("agent/runner.toml")).unwrap();
     let registration = fs::read_to_string(
         fs::read_dir(state.join("agent/projects.d"))
             .unwrap()
@@ -1137,7 +1137,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
     assert_eq!(second.status, "already_configured");
     assert!(second.changed.is_empty());
     assert_eq!(
-        fs::read_to_string(state.join("agent/agent.toml")).unwrap(),
+        fs::read_to_string(state.join("agent/runner.toml")).unwrap(),
         before.0
     );
     let project_file = fs::read_dir(state.join("agent/projects.d"))
@@ -1172,7 +1172,7 @@ fn setup_repairs_only_missing_components_and_preserves_existing_config() {
     let (_temp, root, state) = repo("repair");
     let options = options(root, state.clone());
     setup(&options).unwrap();
-    let agent_path = state.join("agent/agent.toml");
+    let agent_path = state.join("agent/runner.toml");
     let original_agent = fs::read_to_string(&agent_path).unwrap();
     let project_path = fs::read_dir(state.join("agent/projects.d"))
         .unwrap()
@@ -1189,11 +1189,43 @@ fn setup_repairs_only_missing_components_and_preserves_existing_config() {
 }
 
 #[test]
+fn setup_accepts_legacy_agent_toml_only_without_creating_runner_toml() {
+    let (_temp, root, state) = repo("legacy-runner-config");
+    let options = options(root, state.clone());
+    setup(&options).unwrap();
+    let runner_config = state.join("agent/runner.toml");
+    let legacy_config = state.join("agent/agent.toml");
+    let original = fs::read(&runner_config).unwrap();
+    fs::rename(&runner_config, &legacy_config).unwrap();
+
+    let report = setup(&options).unwrap();
+    assert_eq!(report.status, "already_configured");
+    assert_eq!(fs::read(&legacy_config).unwrap(), original);
+    assert!(!runner_config.exists());
+}
+
+#[test]
+fn setup_rejects_dual_runner_config_names_without_guessing() {
+    let (_temp, root, state) = repo("dual-runner-config");
+    let options = options(root, state.clone());
+    setup(&options).unwrap();
+    let runner_config = state.join("agent/runner.toml");
+    let legacy_config = state.join("agent/agent.toml");
+    fs::copy(&runner_config, &legacy_config).unwrap();
+
+    let error = setup(&options).unwrap_err();
+    assert_eq!(error.code, "project_registration_invalid");
+    assert!(error.message.contains("runner.toml"));
+    assert!(error.message.contains("agent.toml"));
+    assert!(error.message.contains("refusing to guess"));
+}
+
+#[test]
 fn setup_conflict_and_project_root_collision_fail_closed() {
     let (temp, root, state) = repo("first");
     let first = options(root, state.clone());
     setup(&first).unwrap();
-    let agent_path = state.join("agent/agent.toml");
+    let agent_path = state.join("agent/runner.toml");
     let before = fs::read_to_string(&agent_path).unwrap();
     let mut conflicting = before.replace("server_url = ", "server_url = \"http://invalid\" # ");
     if conflicting == before {
@@ -1282,7 +1314,7 @@ fn doctor_and_status_share_table_driven_readiness_facts_and_stay_read_only() {
     let (_temp, root, state) = repo("readiness");
     let options = options(root, state.clone());
     setup(&options).unwrap();
-    let agent_path = state.join("agent/agent.toml");
+    let agent_path = state.join("agent/runner.toml");
     let before = fs::read(&agent_path).unwrap();
     let managed_slot = state.join("runs/wc-slot-write-01");
     let managed_lease = state.join("runs/.wc-slot-write-01.lease.json");

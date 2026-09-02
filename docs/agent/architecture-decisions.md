@@ -403,7 +403,7 @@ standing rule for `0.4.x` is compatibility-first:
    human-oriented prose may improve. Documented machine-readable JSON or schema
    shapes require an additive or explicit migration/version strategy rather
    than an unannounced breaking reinterpretation.
-2. **Runner configuration.** A canonical `agent.toml` accepted by `v0.4.0`
+2. **Runner configuration.** A canonical `runner.toml` accepted by `v0.4.0`
    remains parseable throughout `0.4.x`. New fields should be optional or have
    safe defaults. Patch releases do not force a filename or field rename merely
    to make Runner terminology more uniform.
@@ -434,15 +434,24 @@ standing rule for `0.4.x` is compatibility-first:
    structured-result ownership stable, including any transport-specific
    post-framing output schema.
 
-The product concept and public lifecycle namespace are **Runner**, but several
-older `agent_*` names are already compatibility vocabulary and are deliberately
-frozen rather than cosmetically duplicated. In particular, `agent.toml`,
-`WEBCODEX_AGENT_CONFIG`, `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`,
-`agent_instance_id`, runtime project ids of the form
-`agent:<client_id>:<project_id>`, and established DB/wire `agent_*` fields keep
-their existing names. Do not introduce a `runner.toml || agent.toml` fallback or
-new `WEBCODEX_RUNNER_*` aliases solely for naming consistency; that would create
-a second representation instead of preserving one compatibility contract.
+The product concept and public lifecycle namespace are **Runner**. Before the
+`v0.4.0` compatibility floor, the local primary config filename is normalized
+from `agent.toml` to `runner.toml`. The compatibility contract is intentionally
+narrow and deterministic: a config directory containing only legacy
+`agent.toml` continues to use that file; one containing only `runner.toml` uses
+the canonical file; a directory containing both fails closed rather than
+choosing a winner; a directory containing neither creates/targets
+`runner.toml`. Explicit `--config PATH` remains exact and does not inspect a
+sibling filename. `WEBCODEX_RUNNER_CONFIG` is the canonical default-path env
+override, while `WEBCODEX_AGENT_CONFIG` remains a legacy alias; setting both is
+an error.
+
+Other older `agent_*` names are compatibility vocabulary and remain frozen
+rather than being cosmetically duplicated. In particular,
+`WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime project ids
+of the form `agent:<client_id>:<project_id>`, and established DB/wire `agent_*`
+fields keep their existing names. This local filename migration does not imply
+a Server/Runner protocol-generation or wire-identity rename.
 
 Compatibility never requires retaining a known authentication bypass, unsafe
 authority, ambiguous or stale identity, or weakened fail-closed validation. A

@@ -26,7 +26,7 @@ fi
 # Lightweight release-readiness gate. Runs focused local checks that must pass
 # before final acceptance. It does NOT run the full suite, E2E smoke, eval
 # harness, boot a public server, touch the network, or read/print real tokens,
-# secrets, agent.toml, webcodex.env, or .env files.
+# secrets, Runner configs (including legacy agent.toml), webcodex.env, or .env files.
 #
 # Stages:
 #   1. workspace boundary check
@@ -212,7 +212,7 @@ if grep -En -- '--bin webcodex([[:space:]]|`|$)|target/debug/webcodex([^/-]|$)|i
     scripts/e2e_zero_config_ws.sh \
     scripts/e2e_reconnect_ws.sh \
     scripts/eval_coding_loop.sh \
-    scripts/test-agent-config-reload-e2e.sh \
+    scripts/test-runner-config-reload-e2e.sh \
     scripts/test-claude-provider-e2e.sh \
     docs/TESTING.md \
     docs/RELEASE_CHECKLIST.md; then
@@ -254,6 +254,7 @@ stage_start "static: no sensitive files tracked/staged"
 # both tracked files and staged-but-untracked changes. We match by exact path
 # under the repo root so the deploy/*.example templates are NOT flagged.
 SENSITIVE_PATTERNS=(
+    'runner.toml'
     'agent.toml'
     'webcodex.env'
     '.env'

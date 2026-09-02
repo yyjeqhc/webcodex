@@ -597,8 +597,9 @@ fn usage() -> &'static str {
      ~/.config/webcodex/clients/<profile> for non-root users. Explicit\n\
      --config overrides the profile-derived default.\n\n\
      Environment:\n\
-       WEBCODEX_AGENT_CONFIG      default config path override\n\
-     Example agent.toml:\n\
+       WEBCODEX_RUNNER_CONFIG     default config path override\n\
+       WEBCODEX_AGENT_CONFIG      legacy alias for WEBCODEX_RUNNER_CONFIG\n\
+     Example runner.toml:\n\
        server_url = \"https://v4.yyjeqhc.cn\"\n\
        token = \"...\"\n\
        client_id = \"xrh\"\n\
@@ -646,10 +647,19 @@ where
             _ => {}
         }
     }
-    let mut config_path = match std::env::var("WEBCODEX_AGENT_CONFIG") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => default_config_path()?,
-    };
+    let runner_config_env = std::env::var("WEBCODEX_RUNNER_CONFIG").ok();
+    let legacy_agent_config_env = std::env::var("WEBCODEX_AGENT_CONFIG").ok();
+    if runner_config_env.is_some() && legacy_agent_config_env.is_some() {
+        return Err(
+            "WEBCODEX_RUNNER_CONFIG and legacy WEBCODEX_AGENT_CONFIG cannot both be set"
+                .to_string(),
+        );
+    }
+    let mut config_path = runner_config_env
+        .or(legacy_agent_config_env)
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(default_config_path)?;
     let mut config_explicit = false;
     let mut profile: Option<String> = None;
     let mut once = false;

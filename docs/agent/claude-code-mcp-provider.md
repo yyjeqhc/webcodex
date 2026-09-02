@@ -6,7 +6,7 @@ session, project, permission, timeout, and audit boundary.
 
 This provider is experimental, disabled by default, and not recommended for
 ordinary deployments. Native execution is the default strategy. Enable the
-provider only through an explicit agent configuration (not the server
+provider only through an explicit Runner configuration (not the server
 configuration):
 
 ```toml
@@ -87,7 +87,7 @@ The bounded version reported by MCP `initialize.serverInfo` is exposed in
 provider status after a successful start. A version is retained only when it
 matches a small version-string character allowlist. Status queries are passive:
 `runtime_status`, `list_agents`, and local snapshot reads never start Claude.
-With the default agent configuration, the expected snapshot is
+With the default Runner configuration, the expected snapshot is
 `strategy=native`, `enabled=false`, and `process_state=not_started`; this confirms
 that observability is deployed but does not mean Claude has been configured or
 started. The executable path is not exposed, and a missing command never
@@ -104,9 +104,9 @@ older snapshot cannot overwrite a newer `last_call`. Metadata send failure
 releases the claim for a later keepalive/reconnect retry, does not change a tool
 result, and network I/O occurs after the provider state lock has been released.
 
-## Explicit agent config reload
+## Explicit Runner config reload
 
-`agent.toml` is loaded at startup. On Unix, an operator can explicitly reload
+`runner.toml` is loaded at startup. On Unix, an operator can explicitly reload
 the same config path without disconnecting the agent:
 
 ```bash
@@ -145,7 +145,7 @@ Unix signal path:
 
 ```bash
 WEBCODEX_E2E_AGENT_RELOAD=1 \
-./scripts/test-agent-config-reload-e2e.sh
+./scripts/test-runner-config-reload-e2e.sh
 ```
 
 It runs a temporary Server, Agent, project, Git fixture, and config without
@@ -223,7 +223,7 @@ WEBCODEX_E2E_CLAUDE_PROVIDER=1 \
 ./scripts/test-claude-provider-e2e.sh
 ```
 
-It builds a temporary Git fixture, uses independent server/agent configuration,
+It builds a temporary Git fixture, uses independent Server/Runner configuration,
 an automatically selected loopback port, and a temporary HOME/XDG/Claude config
 directory. It checks the public MCP tool set before and after Claude discovery
 (including that the removed `replace_in_file` never re-enters the surface),

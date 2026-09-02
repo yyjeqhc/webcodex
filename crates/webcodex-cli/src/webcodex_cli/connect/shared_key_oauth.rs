@@ -957,7 +957,7 @@ mod tests {
             warn_short: false,
         };
         let generated_line =
-            bridge_browser_authorization_key_line(&generated, Path::new("agent.toml"));
+            bridge_browser_authorization_key_line(&generated, Path::new("runner.toml"));
         assert_eq!(generated_line.matches("wck_browser_once").count(), 1);
 
         let recovered = ResolvedKey {

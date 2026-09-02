@@ -198,7 +198,7 @@ MANAGED_AGENT_TOKEN="$(printf '%s' "$MANAGED_AGENT_RESPONSE" | json_field token)
 [ -n "$MANAGED_AGENT_TOKEN" ] || die "failed to create managed Agent token"
 unset MANAGED_PAT_RESPONSE MANAGED_AGENT_RESPONSE
 
-cat >"$TMP_ROOT/shared-agent.toml" <<EOF
+cat >"$TMP_ROOT/shared-runner.toml" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "$SHARED_KEY_A"
 client_id = "shared-runner"
@@ -212,7 +212,7 @@ allow_cwd_anywhere = false
 allowed_roots = ["$SHARED_PROJECT"]
 allow_raw_shell = true
 EOF
-cat >"$TMP_ROOT/managed-agent.toml" <<EOF
+cat >"$TMP_ROOT/managed-runner.toml" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "$MANAGED_AGENT_TOKEN"
 client_id = "managed-runner"
@@ -226,12 +226,12 @@ allow_cwd_anywhere = false
 allowed_roots = ["$MANAGED_PROJECT"]
 allow_raw_shell = true
 EOF
-chmod 600 "$TMP_ROOT/shared-agent.toml" "$TMP_ROOT/managed-agent.toml"
+chmod 600 "$TMP_ROOT/shared-runner.toml" "$TMP_ROOT/managed-runner.toml"
 
-"$REPO_DIR/target/debug/webcodex-runner" --config "$TMP_ROOT/shared-agent.toml" \
+"$REPO_DIR/target/debug/webcodex-runner" --config "$TMP_ROOT/shared-runner.toml" \
     >"$TMP_ROOT/shared-runner.log" 2>&1 &
 SHARED_PID=$!
-"$REPO_DIR/target/debug/webcodex-runner" --config "$TMP_ROOT/managed-agent.toml" \
+"$REPO_DIR/target/debug/webcodex-runner" --config "$TMP_ROOT/managed-runner.toml" \
     >"$TMP_ROOT/managed-runner.log" 2>&1 &
 MANAGED_PID=$!
 

@@ -2,7 +2,7 @@
 
 [English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
 
-这里整理 WebCodex 部署中常见问题的实用检查。排障时不要粘贴或分享真实 tokens、env files、`Authorization` headers 或完整 `agent.toml` files。
+这里整理 WebCodex 部署中常见问题的实用检查。排障时不要粘贴或分享真实 tokens、env files、`Authorization` headers 或完整 `runner.toml` files。
 
 ## 运维检查清单
 
@@ -20,7 +20,7 @@ Client：
   `webcodex runner status --profile <connect 输出的 profile>`，应显示
   `runner mode: hosted local process`、`runner active: true` 和
   `client online: yes`。
-- `webcodex runner status --profile workstation` 能读取本地 Runner config（`agent.toml`）。
+- `webcodex runner status --profile workstation` 能读取本地 Runner config（`runner.toml`）。
 - canonical project 的 `webcodex doctor` 通过；managed deployment 则使用
   `webcodex ops status --strict --server-url https://your-domain.example`。
 - `listAgents` / `runtime_status` 显示 agent online。
@@ -152,7 +152,7 @@ sudo ln -s /opt/webcodex/bin/webcodex /usr/local/bin/webcodex
 
 `webcodex pairing create` 是 server/admin-side 命令，需要 server bootstrap env file。朋友或 client 机器应运行 `webcodex login <server-url> --code <wc_pair_...>`，并使用 server owner 发来的短期 `wc_pair_*` code。
 
-机器之间只复制 `wc_pair_*` code。不要复制 `WEBCODEX_TOKEN`、user API tokens、agent tokens、env files 或完整 `agent.toml` files。
+机器之间只复制 `wc_pair_*` code。不要复制 `WEBCODEX_TOKEN`、user API tokens、agent tokens、env files 或完整 `runner.toml` files。
 
 ### Client 上 doctor 警告 `binary webcodex not found in PATH`
 
@@ -215,12 +215,12 @@ webcodex runner logs --scope user --lines 100
 Hosted quick-start 中，MCP 与 Runner 使用同一个非 `wc_` shared key。Managed
 mode 中，GPT Actions、MCP 和普通 REST/project API 使用
 `webcodex-user-token`（`wc_pat_*`）；Runner 令牌（`wc_agent_*`）只给
-Runner transport 使用——`webcodex login` 之后它内联在 `agent.toml` 中，
+Runner transport 使用——`webcodex login` 之后它内联在 `runner.toml` 中，
 没有单独的 `webcodex-runner-token` 文件。把 `wc_agent_*` 放入
 `--token` 或 `--token-file` 后得到 403，正是预期安全边界；应改用生成的
 `webcodex-user-token`。新版 CLI 也会在不打印完整 token 的前提下诊断这个错误。
 `WEBCODEX_TOKEN` 面向 bootstrap/admin，
-不应复制到 GPT Actions、MCP 或 agent config。
+不应复制到 GPT Actions、MCP 或 Runner config。
 
 ### 一条命令能看到 Runner service，另一条却看不到
 

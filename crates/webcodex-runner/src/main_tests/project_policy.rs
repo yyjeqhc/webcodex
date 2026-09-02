@@ -63,7 +63,7 @@ fn load_config_defaults_empty_allowed_roots_to_home() {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if let Some(home) = home {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("agent.toml");
+        let path = tmp.path().join("runner.toml");
         std::fs::write(
             &path,
             "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n",
@@ -128,7 +128,7 @@ fn default_policy_denies_paths_outside_allowed_roots() {
 fn load_config_explicit_allowed_roots_override_home_default() {
     let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
             &path,
             "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n[policy]\nallowed_roots = [\"/root/git\"]\n",
@@ -152,7 +152,7 @@ fn load_config_empty_roots_without_home_and_no_cwd_anywhere_errors() {
         .remove("USERPROFILE")
         .remove("APPDATA");
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
         &path,
         "server_url = \"http://x\"\ntoken = \"t\"\nclient_id = \"c\"\nprojects_dir = \"projects.d\"\n\

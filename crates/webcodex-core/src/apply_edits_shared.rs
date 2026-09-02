@@ -371,8 +371,8 @@ pub const MAX_APPLY_TEXT_EDIT_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
 /// Matching is component-wise (split on `/`) so legitimate filenames that
 /// merely contain a sensitive substring (e.g. `targeting.md`) are NOT rejected.
 /// A component is sensitive if it equals one of the guarded names, starts with
-/// `.env` / `agent.toml` / `webcodex.env` (catching backups like `.env.local`
-/// or `agent.toml.bak`), or ends with `.env` / `.toml.bak` (catching
+/// `.env` / Runner config / `webcodex.env` (catching backups like `.env.local`
+/// or `runner.toml.bak`), or ends with `.env` / `.toml.bak` (catching
 /// `service.env` or `config.toml.bak`). This is the single source of truth for
 /// both the host write path and the agent wire boundary.
 pub fn is_sensitive_edit_path(path: &str) -> bool {

@@ -45,7 +45,7 @@ search_project_text = "{search_mapping}"
 
 fn reload_fixture() -> (tempfile::TempDir, PathBuf, ReloadableRunnerConfig) {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
         &path,
         reload_toml(

@@ -1561,6 +1561,7 @@ fn sensitive_result_path(path: &str) -> bool {
                 | "credentials"
                 | "id_rsa"
                 | "id_ed25519"
+                | "runner.toml"
                 | "agent.toml"
                 | "webcodex.env"
         ) || name.ends_with(".key")

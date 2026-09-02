@@ -303,6 +303,67 @@ fn runner_cli_legacy_runtime_args_are_preserved() {
 }
 
 #[test]
+fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed() {
+    let _guard = test_env_lock();
+    let _env = EnvGuard::new()
+        .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
+        .remove("WEBCODEX_AGENT_CONFIG");
+    assert_eq!(
+        parse_runner_args(std::iter::empty::<&str>()).unwrap(),
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/runner.toml"),
+            once: false,
+        }
+    );
+    drop(_env);
+
+    let _legacy = EnvGuard::new()
+        .remove("WEBCODEX_RUNNER_CONFIG")
+        .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
+    assert_eq!(
+        parse_runner_args(std::iter::empty::<&str>()).unwrap(),
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/agent.toml"),
+            once: false,
+        }
+    );
+    drop(_legacy);
+
+    let _ambiguous = EnvGuard::new()
+        .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
+        .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
+    let error = parse_runner_args(std::iter::empty::<&str>()).unwrap_err();
+    assert!(error.contains("cannot both be set"));
+}
+
+#[test]
+fn runner_profile_config_resolution_accepts_legacy_only_and_rejects_dual_files() {
+    let _guard = test_env_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let _env = EnvGuard::new()
+        .set("XDG_CONFIG_HOME", tmp.path())
+        .set("APPDATA", tmp.path())
+        .set("USERPROFILE", tmp.path())
+        .remove("WEBCODEX_RUNNER_CONFIG")
+        .remove("WEBCODEX_AGENT_CONFIG");
+    let profile_dir = tmp.path().join("webcodex/clients/special");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+
+    assert_eq!(
+        client_profile_runner_config("special").unwrap(),
+        profile_dir.join("runner.toml")
+    );
+    std::fs::write(profile_dir.join("agent.toml"), "legacy").unwrap();
+    assert_eq!(
+        client_profile_runner_config("special").unwrap(),
+        profile_dir.join("agent.toml")
+    );
+    std::fs::write(profile_dir.join("runner.toml"), "current").unwrap();
+    let error = client_profile_runner_config("special").unwrap_err();
+    assert!(error.contains("refusing to guess"));
+}
+
+#[test]
 fn runner_cli_profile_derives_default_config_path() {
     let _guard = test_env_lock();
     let action = parse_runner_args(["--profile", "special"]).unwrap();
@@ -340,7 +401,7 @@ fn runner_cli_rejects_unsafe_profile() {
 fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
     for token in ["", "   "] {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("agent.toml");
+        let path = tmp.path().join("runner.toml");
         std::fs::write(
                 &path,
                 format!(
@@ -359,7 +420,7 @@ fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
 #[test]
 fn runner_config_host_context_is_normalized_closed_and_restart_scoped() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
         &path,
         r#"

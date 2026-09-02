@@ -3940,6 +3940,9 @@ fn validate_edit_file_path_rejects_unsafe_and_sensitive_paths() {
     assert!(validate_edit_file_path("src/../../outside").is_err());
     // Sensitive paths hard-rejected.
     for sensitive in [
+        "runner.toml",
+        "config/runner.toml",
+        "runner.toml.bak",
         "agent.toml",
         "config/agent.toml",
         "agent.toml.bak",
@@ -4428,6 +4431,7 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
         "certs/server.pem",
         "certs/server.key",
         "certs/Server.PEM",
+        "runner.toml",
         "agent.toml",
         "secrets/token",
         "tokens/agent",

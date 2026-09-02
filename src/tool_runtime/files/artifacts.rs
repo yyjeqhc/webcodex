@@ -135,7 +135,7 @@ pub(crate) fn validate_artifact_file_path(path: &str) -> Result<(), String> {
 }
 
 pub(crate) fn is_sensitive_artifact_path(path: &str) -> bool {
-    // Artifacts previously missed `*.key` and `agent.toml`; they now share the
+    // Artifacts previously missed `*.key` and Runner configs; they now share the
     // same policy as edits.
     crate::sensitive_paths::is_bulk_skipped_path(path)
 }

@@ -166,7 +166,7 @@ fn shell_config_dialect_field_parses_and_validates() {
     use crate::webcodex_runner::config::ShellDialect;
 
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
         &path,
         r#"

@@ -2,7 +2,7 @@
 #
 # Place one *.toml per project under the agent's projects_dir (default
 # ~/.config/webcodex/projects.d, or whatever projects_dir is set to
-# in agent.toml). The agent reads these and reports them to the server at
+# in runner.toml). The agent reads these and reports them to the server at
 # registration; the server exposes them as runtime ids
 # agent:<client_id>:<project_id>.
 #

@@ -26,16 +26,30 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 | **CLI** | 运维与开发者使用的 `webcodex` 命令。 |
 | **Runner** | 在仓库机器上执行工作的 `webcodex-runner` 进程。 |
 | **Runner CLI 命名空间** | `webcodex runner ...`，管理 `webcodex-runner` 的生命周期和服务。 |
-| **profile** | 一个命名的本地客户端配置（`agent.toml`、令牌、路径）。 |
+| **profile** | 一个命名的本地客户端配置（`runner.toml`、令牌、路径）。 |
 | **client_id** | 一个 Runner/设备的稳定逻辑标识。 |
 | **agent_instance_id** | `webcodex-runner` 启动时生成的进程级身份；Server 把它当作活跃租约身份（见「重连与恢复」）。 |
 | **project_id** | Runner 在其项目注册表中注册的项目 id。 |
 | **runtime project id** | `agent:<client_id>:<project_id>` —— Server 定位已注册项目的方式。 |
 | **Connector** | 已配置本地项目的 project-bound coding surface；把一个项目绑定到其执行器。 |
 
+### Runner 配置文件名兼容
+
+0.4 的规范 Runner 配置文件名是 `runner.toml`。新的 `runner init`、`login`、
+`connect`、profile 与 service layout 都使用它。pre-0.4 目录如果只有旧
+`agent.toml`，仍可继续读取并原地使用，不会自动生成第二份配置。如果同一权威配置
+目录同时存在 `runner.toml` 与 `agent.toml`，WebCodex 会 fail closed，要求运维者先
+消除歧义；两者都不存在时，初始化目标是 `runner.toml`。
+
+显式 `--config PATH` 始终按精确路径处理，因此显式指定旧 `agent.toml` 仍有效。
+`WEBCODEX_RUNNER_CONFIG` 是规范的默认路径覆盖变量；`WEBCODEX_AGENT_CONFIG` 作为
+旧 alias 保留；两者同时设置会报错。本次文件名迁移不会改名 `client_id`、
+`agent_instance_id`、`agent:<client_id>:<project_id>`、agent token 或 Server/Runner
+wire field。
+
 ## 连接 Server
 
-Runner 主动向外连接 Server，使用四种传输之一，由 `agent.toml` 中的 `transport`
+Runner 主动向外连接 Server，使用四种传输之一，由 `runner.toml` 中的 `transport`
 设置选择：
 
 | 传输 | 配置值 | 用途 |
@@ -186,7 +200,7 @@ profile 的 `init_script`（如果有），再捕获最终环境。
 WebCodex 默认不 source `~/.bashrc` 或 `~/.profile`：它们可能很慢、面向交互、
 污染环境且不可复现。请改用显式 profile。
 
-`agent.toml` 中的 Rust/Cargo 示例：
+`runner.toml` 中的 Rust/Cargo 示例：
 
 ```toml
 [shell]
@@ -394,8 +408,8 @@ webcodex runner restart --profile <profile>
 用户服务：
 
 ```bash
-webcodex runner install --scope user --config <login-reported-agent-config>
-webcodex runner status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-runner-config>
+webcodex runner status --scope user --config <login-reported-runner-config>
 ```
 
 管理员管理的系统服务：
@@ -409,6 +423,6 @@ sudo webcodex runner status --scope system --profile <profile>
 install、status、start、stop、restart、logs、uninstall 请使用相同的 `--scope`。
 User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`。
 
-编辑 `agent.toml` 后，reload 对应服务以应用 policy、shell 与 SSH 资源变更。
+编辑 `runner.toml` 后，reload 对应服务以应用 policy、shell 与 SSH 资源变更。
 身份、server/auth、传输与并发变更仍需要重启。无效 reload 会保留当前生效的
 generation。

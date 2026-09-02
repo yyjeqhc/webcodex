@@ -299,7 +299,7 @@ pub(crate) fn runner_usage() -> &'static str {
     "Usage: webcodex runner <COMMAND>\n\n\
 The Runner is the machine that executes project work for the full daily setup.\n\n\
 Commands:\n\
-  init        Generate a Runner config (`agent.toml`)\n\
+  init        Generate a Runner config (`runner.toml`)\n\
   install     Install, enable, and start the Linux systemd Runner service\n\
   run         Run webcodex-runner directly in the foreground (all supported platforms)\n\
   start       Start a hosted background Runner or installed Linux service\n\
@@ -327,7 +327,7 @@ pub(crate) fn runner_init_usage() -> &'static str {
        --projects-dir PATH        Project config directory [default: profile projects.d]\n\
        --allowed-root PATH        Allowed project/root path; repeatable\n\
        --allow-cwd-anywhere BOOL  Allow cwd outside allowed_roots; default false\n\
-       --output PATH|-            Output config path, or '-' for stdout [default: profile agent.toml]\n\
+       --output PATH|-            Output config path, or '-' for stdout [default: profile runner.toml]\n\
        --overwrite                Replace an existing output file\n\
        -h, --help                 Print help and exit\n\n\
      With --profile, missing output/projects-dir paths are derived under\n\
@@ -364,7 +364,7 @@ pub(crate) fn runner_status_usage() -> &'static str {
      Options:\n\
        --profile NAME             Client config profile for config/token defaults\n\
        --scope user|system        Service manager scope [default: user for non-root; system for root]\n\
-       --config PATH              Runner config path [default: scope-specific agent.toml]\n\
+       --config PATH              Runner config path [default: scope-specific runner.toml]\n\
        --service-file PATH        Override the scope-specific systemd unit path\n\
        --server-url URL           Override server URL for runtime checks\n\
        --proxy http://HOST:PORT  Explicit proxy override for Server checks\n\
@@ -379,7 +379,7 @@ pub(crate) fn runner_status_usage() -> &'static str {
      /etc/systemd/system. Explicit path flags override profile-derived defaults.\n\
      Profiles created by `connect` report their detached process when --scope\n\
      is omitted; an explicit scope checks systemd instead. Status prints safe metadata only:\n\
-     no tokens, Authorization headers, full agent.toml, env files, or secrets.\n"
+     no tokens, Authorization headers, full Runner config, env files, or secrets.\n"
 }
 
 pub(crate) fn login_usage() -> &'static str {

@@ -367,7 +367,7 @@ def run_graceful_inflight(binary: Path, runner_binary: Path) -> Dict[str, object
             'name = "Graceful Drain E2E"\n'
             "allow_patch = true\n"
         )
-        runner_config = root_path / "agent.toml"
+        runner_config = root_path / "runner.toml"
         runner_config.write_text(
             f"server_url = {json.dumps(f'http://{HOST}:{port}')}\n"
             f"token = {json.dumps(TOKEN)}\n"

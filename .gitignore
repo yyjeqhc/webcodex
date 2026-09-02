@@ -22,6 +22,7 @@ data*
 # committed or exposed, rotate WEBCODEX_TOKEN immediately.
 /.env
 /.webcodex-bootstrap.receipt
+/runner.toml
 /agent.toml
 /projects.d/
 /*.local.toml

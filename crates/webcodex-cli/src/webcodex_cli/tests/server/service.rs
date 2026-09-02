@@ -66,7 +66,7 @@ fn user_runner_unit_uses_user_target_without_identity_directives_or_root_workdir
             "--scope",
             "user",
             "--config",
-            "/home/alice/.config/webcodex/agent.toml",
+            "/home/alice/.config/webcodex/runner.toml",
             "--service-file",
             "/home/alice/.config/systemd/user/webcodex-runner.service",
             "--bin",
@@ -471,7 +471,7 @@ fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
 #[test]
 fn runner_install_service_generates_expected_unit_without_tokens() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = tmp.path().join("agent.toml");
+    let config = tmp.path().join("runner.toml");
     std::fs::write(&config, "token = \"agent_secret_should_not_print\"\n").unwrap();
     let opts = parse_runner_install_service(&args(&[
         "--scope",
@@ -527,7 +527,7 @@ fn runner_install_service_refuses_overwrite_unless_requested() {
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/agent.toml",
+        "/etc/webcodex/runner.toml",
         "--bin",
         "/opt/webcodex/bin/webcodex-runner",
         "--service-file",
@@ -551,14 +551,14 @@ fn runner_install_service_dry_run_and_output_work_without_systemd() {
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/agent.toml",
+        "/etc/webcodex/runner.toml",
         "--bin",
         "/opt/webcodex/bin/webcodex-runner",
         "--dry-run",
     ]))
     .unwrap();
     assert!(run_runner_install_service(dry).unwrap().contains(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/agent.toml\""
+        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/runner.toml\""
     ));
 
     let out = parse_runner_install_service(&args(&[
@@ -569,7 +569,7 @@ fn runner_install_service_dry_run_and_output_work_without_systemd() {
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/agent.toml",
+        "/etc/webcodex/runner.toml",
         "--bin",
         "/opt/webcodex/bin/webcodex-runner",
         "--output",
@@ -580,7 +580,7 @@ fn runner_install_service_dry_run_and_output_work_without_systemd() {
     let json: Value = serde_json::from_str(&run_runner_install_service(out).unwrap()).unwrap();
     assert_eq!(json["dry_run"], true);
     assert!(json["unit"].as_str().unwrap().contains(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/agent.toml\""
+        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/runner.toml\""
     ));
 }
 
@@ -718,7 +718,7 @@ fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
     assert!(socket_unit.contains("ListenStream=127.0.0.1:8080\n"));
     verify_systemd_units(&[(service_name, service_unit), (socket_name, socket_unit)]);
 
-    let config = tmp.path().join("agent.toml");
+    let config = tmp.path().join("runner.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
     let agent = parse_runner_install_service(&args(&[
         "--scope",
@@ -827,7 +827,7 @@ fn runner_output_mode_rejects_invalid_unit_fields() {
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/agent.toml\nEnvironment=BAD=1",
+        "/etc/webcodex/runner.toml\nEnvironment=BAD=1",
         "--bin",
         "/opt/webcodex/bin/webcodex-runner",
         "--output",
@@ -843,11 +843,11 @@ fn runner_output_mode_rejects_invalid_unit_fields() {
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn runner_status_parses_agent_toml_without_printing_token_and_systemd_unknown() {
+fn runner_status_parses_runner_toml_without_printing_token_and_systemd_unknown() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set_os("PATH", OsString::new());
     let tmp = tempfile::tempdir().unwrap();
-    let config = tmp.path().join("agent.toml");
+    let config = tmp.path().join("runner.toml");
     let secret = "agent_status_secret_1234567890";
     std::fs::write(
         &config,
@@ -901,7 +901,7 @@ fn runner_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set_os("PATH", OsString::new());
     let tmp = tempfile::tempdir().unwrap();
-    let config = tmp.path().join("agent.toml");
+    let config = tmp.path().join("runner.toml");
     std::fs::write(
         &config,
         "server_url = \"https://example.test\"\nclient_id = \"alice\"\n",
@@ -975,7 +975,7 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
     let home = tmp.path().join("home");
     let config_home = tmp.path().join("config");
     let state_home = tmp.path().join("state");
-    let profile_config = config_home.join("webcodex/clients/hosted/agent.toml");
+    let profile_config = config_home.join("webcodex/clients/hosted/runner.toml");
     let profile_state = state_home.join("webcodex/clients/hosted");
     let fake_bin = tmp.path().join("bin");
     let systemctl_called = tmp.path().join("systemctl-called");
@@ -1057,7 +1057,7 @@ async fn runner_status_detects_current_client_online_and_agent_boundary() {
         }
     });
     let tmp = tempfile::tempdir().unwrap();
-    let config = tmp.path().join("agent.toml");
+    let config = tmp.path().join("runner.toml");
     std::fs::write(
         &config,
         r#"

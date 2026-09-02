@@ -1014,7 +1014,7 @@ start_eval_services() {
     TMP_ROOT="$(mktemp -d -t webcodex-eval-coding-loop-XXXXXX)"
     DATA_DIR="$TMP_ROOT/data"
     PROJECTS_DIR="$TMP_ROOT/projects.d"
-    AGENT_TOML="$TMP_ROOT/agent.toml"
+    AGENT_TOML="$TMP_ROOT/runner.toml"
     TEST_REPO="$TMP_ROOT/coding-loop-project"
     SERVER_LOG="$TMP_ROOT/server.log"
     RUNNER_LOG="$TMP_ROOT/agent.log"

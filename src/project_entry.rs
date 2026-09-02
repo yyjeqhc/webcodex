@@ -275,7 +275,9 @@ pub(crate) fn readiness_with_probe(
     let mut capabilities = "not_ready".to_string();
     let local_complete = can_probe_remote
         && paths.as_ref().is_some_and(|paths| {
-            paths.agent_config.is_file()
+            paths
+                .resolved_runner_config()
+                .is_ok_and(|config| config.is_file())
                 && paths.connector_key.is_file()
                 && paths.agent_token.is_file()
                 && paths.bootstrap_key.is_file()
@@ -841,6 +843,7 @@ pub(super) async fn start_local_runtime(
 
     let runner_log = open_log(&paths.logs.join("agent.log"))?;
     let runner_error = runner_log.try_clone().map_err(io_error)?;
+    let runner_config = paths.resolved_runner_config()?;
     let mut runner_command = Command::new(runner_binary);
     remove_npm_wrapper_network_environment(&mut runner_command);
     for name in &runtime_options.child_environment_remove {
@@ -848,7 +851,7 @@ pub(super) async fn start_local_runtime(
     }
     runner_command
         .arg("--config")
-        .arg(&paths.agent_config)
+        .arg(&runner_config)
         .current_dir(&paths.state)
         .env_remove("WEBCODEX_TOKEN")
         .env_remove("WEBCODEX_AGENT_TOKEN")

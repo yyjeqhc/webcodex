@@ -39,7 +39,8 @@ pub(super) struct ProjectPaths {
     pub(super) bootstrap_key: PathBuf,
     pub(super) connector_key: PathBuf,
     pub(super) agent_token: PathBuf,
-    pub(super) agent_config: PathBuf,
+    pub(super) runner_config: PathBuf,
+    pub(super) legacy_agent_config: PathBuf,
 }
 
 impl ProjectPaths {
@@ -59,10 +60,28 @@ impl ProjectPaths {
             bootstrap_key: credentials.join("bootstrap-key"),
             connector_key: credentials.join("connector-key"),
             agent_token: credentials.join("agent-token"),
-            agent_config: runner_state_dir.join("agent.toml"),
+            runner_config: runner_state_dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE),
+            legacy_agent_config: runner_state_dir
+                .join(webcodex_runner_config::paths::LEGACY_AGENT_CONFIG_FILE),
             credentials,
             state,
         }
+    }
+
+    pub(super) fn resolved_runner_config(&self) -> Result<PathBuf, ProductError> {
+        let dir = self
+            .runner_config
+            .parent()
+            .ok_or_else(|| invalid_registration("Runner config path has no parent directory"))?;
+        webcodex_runner_config::paths::resolve_runner_config_path(dir).map_err(|message| {
+            ProductError::new(
+                "project_registration_invalid",
+                message,
+                Some(
+                    "Keep exactly one Runner config in the project state directory; prefer runner.toml for new state.",
+                ),
+            )
+        })
     }
 
     fn create(&self) -> Result<(), ProductError> {
@@ -232,6 +251,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     // a protected current-user + SYSTEM boundary; on Unix it preserves 0700.
     paths.create()?;
     prepare_runtime_private_state(&paths)?;
+    let runner_config = paths.resolved_runner_config()?;
     let config = match read_toml_optional::<ProjectConfig>(&paths.config)? {
         Some(existing) => {
             validate_product_config(&expected, &existing)?;
@@ -244,7 +264,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     };
     validate_existing_runner(&config, &paths)?;
     validate_existing_registration(&config, &paths)?;
-    if paths.agent_config.exists() {
+    if runner_config.exists() {
         validate_agent_authentication(&config, &paths)?;
     }
 
@@ -252,7 +272,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     if paths.connector_key.is_file() {
         let _ = read_project_credential(&paths.connector_key)?;
     } else {
-        if paths.agent_config.exists() {
+        if runner_config.exists() {
             return Err(ProductError::new(
                 "project_registration_invalid",
                 "existing Runner configuration conflicts with missing authentication material",
@@ -285,7 +305,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
         value
     };
 
-    if !paths.agent_config.is_file() {
+    if !runner_config.is_file() {
         let content = generated_runner_config_toml(&RunnerInitOptions {
             server_url: config.server_url(),
             token: Some(agent_token),
@@ -296,7 +316,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             transport: TRANSPORT_WEBSOCKET.to_string(),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             projects_dir: paths.projects.clone(),
-            output: paths.agent_config.clone(),
+            output: runner_config.clone(),
             allowed_roots: vec![config.root.clone(), paths.runs.clone(), paths.cache.clone()],
             allow_cwd_anywhere: false,
             overwrite: false,
@@ -308,7 +328,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
                 Some("Correct the reported configuration issue, then run webcodex setup."),
             )
         })?;
-        write_new_private(&paths.agent_config, content.as_bytes())?;
+        write_new_private(&runner_config, content.as_bytes())?;
         changed.push("Runner".to_string());
     }
 
@@ -585,7 +605,8 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
 }
 
 fn contains_setup_state(paths: &ProjectPaths) -> bool {
-    paths.agent_config.exists()
+    paths.runner_config.exists()
+        || paths.legacy_agent_config.exists()
         || paths.connector_key.exists()
         || paths.agent_token.exists()
         || paths.bootstrap_key.exists()
@@ -633,10 +654,11 @@ pub(super) fn validate_existing_runner(
     config: &ProjectConfig,
     paths: &ProjectPaths,
 ) -> Result<(), ProductError> {
-    if !paths.agent_config.exists() {
+    let runner_config = paths.resolved_runner_config()?;
+    if !runner_config.exists() {
         return Ok(());
     }
-    let value: toml::Value = read_toml(&paths.agent_config)?;
+    let value: toml::Value = read_toml(&runner_config)?;
     let expected = [
         ("server_url", config.server_url()),
         ("client_id", config.executor_client_id.clone()),
@@ -674,8 +696,9 @@ pub(super) fn validate_agent_authentication(
     config: &ProjectConfig,
     paths: &ProjectPaths,
 ) -> Result<(), ProductError> {
-    let _ = read_private_value_with_code(&paths.agent_config, "agent_credential_invalid")?;
-    let value: toml::Value = read_toml(&paths.agent_config)?;
+    let runner_config = paths.resolved_runner_config()?;
+    let _ = read_private_value_with_code(&runner_config, "agent_credential_invalid")?;
+    let value: toml::Value = read_toml(&runner_config)?;
     let configured_token = value
         .get("token")
         .and_then(toml::Value::as_str)

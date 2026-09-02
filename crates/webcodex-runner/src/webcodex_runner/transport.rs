@@ -3224,10 +3224,9 @@ fn run_quic_runner(
 /// Validate the `[quic]` config section. Returns a cloned, resolved config so
 /// the session owns a concrete value (defaults applied).
 pub(crate) fn resolve_quic_config(cfg: &RunnerConfig) -> Result<QuicClientConfig, String> {
-    let quic = cfg
-        .quic
-        .clone()
-        .ok_or_else(|| "transport=quic requires a [quic] section in agent.toml".to_string())?;
+    let quic = cfg.quic.clone().ok_or_else(|| {
+        "transport=quic requires a [quic] section in the Runner config".to_string()
+    })?;
     validate_quic_config(&quic)?;
     Ok(quic)
 }

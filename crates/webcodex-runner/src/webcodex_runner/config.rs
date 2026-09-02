@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
+const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webcodex";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
@@ -217,7 +217,7 @@ impl Default for ClaudeCodeMcpConfig {
     }
 }
 
-/// Runner-side QUIC transport configuration (`[quic]` in `agent.toml`). All
+/// Runner-side QUIC transport configuration (`[quic]` in the Runner config). All
 /// fields are required when `transport = "quic"`; `run_quic_runner` validates
 /// them before connecting. The token is NOT stored here — it stays in the
 /// top-level `RunnerConfig.token`. QUIC encodes that credential only in its v1
@@ -263,7 +263,7 @@ pub(crate) fn default_websocket_connect_timeout_secs() -> u64 {
 pub(crate) struct RunnerPolicy {
     #[serde(default = "default_true")]
     pub(crate) allow_raw_shell: bool,
-    /// Fail closed: an `agent.toml` that omits `[policy]` must not disable the
+    /// Fail closed: a Runner config that omits `[policy]` must not disable the
     /// filesystem boundary. When false, `allowed_roots` (defaulted to `$HOME`
     /// by `effective_allowed_roots`) is the outer bound for every file op.
     #[serde(default)]
@@ -735,21 +735,28 @@ pub(crate) fn validate_client_profile(profile: &str) -> Result<String, String> {
 }
 
 pub(crate) fn client_profile_runner_config(profile: &str) -> Result<PathBuf, String> {
-    Ok(default_client_base_dir()?
-        .join("clients")
-        .join(profile)
-        .join("agent.toml"))
+    webcodex_runner_config::paths::resolve_runner_config_path(
+        &default_client_base_dir()?.join("clients").join(profile),
+    )
 }
 
 pub(crate) fn default_config_path() -> Result<PathBuf, String> {
-    let user_path = default_client_base_dir()?.join("agent.toml");
-    let system_path = PathBuf::from(DEFAULT_CONFIG_PATH);
-    for path in [user_path.clone(), system_path.clone()] {
-        if path.exists() {
-            return Ok(path);
+    let user_dir = default_client_base_dir()?;
+    if let Some(path) = webcodex_runner_config::paths::existing_runner_config_path(&user_dir)? {
+        return Ok(path);
+    }
+    #[cfg(not(windows))]
+    {
+        let system_dir = PathBuf::from(DEFAULT_SYSTEM_CONFIG_DIR);
+        if system_dir != user_dir {
+            if let Some(path) =
+                webcodex_runner_config::paths::existing_runner_config_path(&system_dir)?
+            {
+                return Ok(path);
+            }
         }
     }
-    Ok(user_path)
+    Ok(user_dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE))
 }
 
 fn validate_env_key(key: &str) -> bool {
@@ -1080,7 +1087,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
         }
     }
     // When allowed_roots is missing/empty, default to [$HOME] so a
-    // minimal agent.toml without an explicit policy.allowed_roots still works
+    // minimal Runner config without an explicit policy.allowed_roots still works
     // predictably. If HOME is unavailable and allow_cwd_anywhere is false,
     // surface a clear configuration error. Explicit allowed_roots is preserved
     // as-is and overrides the HOME default.
@@ -1089,7 +1096,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     cfg.policy.allowed_roots = effective;
     // Materialize the default projects dir at load time so request-time code
     // never re-derives it and can never fall back to a relative path. A
-    // minimal agent.toml without an explicit projects_dir gets the shared
+    // minimal Runner config without an explicit projects_dir gets the shared
     // per-user config base (`$HOME/.config/webcodex/projects.d` on Unix,
     // `%APPDATA%\webcodex\projects.d` on Windows).
     if cfg.projects_dir.is_none() {
@@ -1100,7 +1107,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     if let Some(quic) = &cfg.quic {
         validate_quic_config(quic)?;
     } else if cfg.transport.as_deref().map(str::trim) == Some(TRANSPORT_QUIC) {
-        return Err("transport=quic requires a [quic] section in agent.toml".to_string());
+        return Err("transport=quic requires a [quic] section in the Runner config".to_string());
     }
     if cfg.tool_providers.claude_code.enabled {
         if cfg.tool_providers.claude_code.command.trim().is_empty() {

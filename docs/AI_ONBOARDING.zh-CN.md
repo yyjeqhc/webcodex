@@ -81,10 +81,10 @@ webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 ```
 
-面向普通用户只解释：`--project` 是实际项目，`--allowed-root` 是以后允许继续添加项目的父目录。不要要求用户手工编辑 `agent.toml` 或 `projects.d`；只有排障或 reference 场景才解释 registry/authority 的内部表示。如果 login 时没有传 `--project`，再用 `webcodex project register --config <login-reported-agent-config> /path/to/repo` 添加项目。
+面向普通用户只解释：`--project` 是实际项目，`--allowed-root` 是以后允许继续添加项目的父目录。不要要求用户手工编辑 `runner.toml` 或 `projects.d`；只有排障或 reference 场景才解释 registry/authority 的内部表示。如果 login 时没有传 `--project`，再用 `webcodex project register --config <login-reported-runner-config> /path/to/repo` 添加项目。
 
 只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
 `connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT、
@@ -114,7 +114,7 @@ Runner token 或 bootstrap administrator token 合并成一个概念。
 - shared key、PAT、Runner token、account credential、bootstrap token；
 - Project Credential；
 - OAuth client secret；
-- 完整 `agent.toml` 或 Server env 文件；
+- 完整 `runner.toml` 或 Server env 文件；
 - `Authorization` header。
 
 需要把 credential 填进 ChatGPT/Claude 时，要准确说明来源并让**人类**复制。优先使用当前流程显式产生的连接信息，例如完整使用中的 `login --print-mcp-config`，或临时 `share` / 已有 Server `connect` 的成功 disclosure。若必须恢复已保存的值，只指出精确受保护文件/字段，不要由 AI 自己回显。status/log 命令故意不显示 secret。

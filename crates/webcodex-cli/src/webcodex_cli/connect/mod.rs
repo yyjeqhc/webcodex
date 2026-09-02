@@ -31,7 +31,7 @@ use self::process::{
 };
 use self::profile::{
     atomic_write, derived_profile, ensure_private_directory, generated_client_id,
-    read_existing_agent_config, render_agent_document, render_project_file, resolve_key,
+    read_existing_runner_config, render_project_file, render_runner_document, resolve_key,
     resolve_project, validate_existing_profile, ProfileLock,
 };
 
@@ -119,10 +119,10 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
     let state_dir = ensure_private_directory(&client_state_dir_for_profile(&state_base, &profile))?;
     let _lock = ProfileLock::acquire(&state_dir)?;
 
-    let config_path = profile_dir.join("agent.toml");
+    let config_path = webcodex_runner_config::paths::resolve_runner_config_path(&profile_dir)?;
     let projects_dir = ensure_private_directory(&profile_dir.join("projects.d"))?;
     let log_path = local_runner_log_path(&state_dir);
-    let existing_config = read_existing_agent_config(&config_path)?;
+    let existing_config = read_existing_runner_config(&config_path)?;
     validate_existing_profile(
         existing_config.as_ref(),
         &canonical_server.url,
@@ -173,7 +173,7 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
         let project_content = render_project_file(&project)?;
         atomic_write(&project_path, project_content.as_bytes(), false)?
     };
-    let agent_content = render_agent_document(
+    let runner_content = render_runner_document(
         &config_path,
         &canonical_server.url,
         &resolved_key.value,
@@ -181,7 +181,7 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
         &projects_dir,
         &canonical_project,
     )?;
-    atomic_write(&config_path, agent_content.as_bytes(), true)?;
+    atomic_write(&config_path, runner_content.as_bytes(), true)?;
     atomic_write(
         &local_runner_profile_marker(&state_dir),
         format!("profile = {profile:?}\n").as_bytes(),

@@ -53,7 +53,7 @@ pub(super) struct ResolvedKey {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct ExistingAgentConfig {
+pub(super) struct ExistingRunnerConfig {
     pub(super) server_url: String,
     pub(super) token: String,
     pub(super) client_id: String,
@@ -269,18 +269,18 @@ pub(super) fn validate_existing_regular_file(path: &Path) -> Result<(), String> 
     Ok(())
 }
 
-pub(super) fn read_existing_agent_config(
+pub(super) fn read_existing_runner_config(
     path: &Path,
-) -> Result<Option<ExistingAgentConfig>, String> {
+) -> Result<Option<ExistingRunnerConfig>, String> {
     if !path.exists() {
         return Ok(None);
     }
     validate_existing_regular_file(path)?;
     let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read agent config {}: {error}", path.display()))?;
+        .map_err(|error| format!("failed to read Runner config {}: {error}", path.display()))?;
     toml::from_str(&content)
         .map(Some)
-        .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))
+        .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))
 }
 
 pub(crate) fn read_project_files(
@@ -366,8 +366,8 @@ fn recover_key_for_project(
     };
     for profile in profile_names {
         let profile_dir = client_output_dir_for_profile(config_base, &profile);
-        let config_path = profile_dir.join("agent.toml");
-        let Some(config) = read_existing_agent_config(&config_path)? else {
+        let config_path = webcodex_runner_config::paths::resolve_runner_config_path(&profile_dir)?;
+        let Some(config) = read_existing_runner_config(&config_path)? else {
             continue;
         };
         let Ok(stored_server) = canonical_server_url(&config.server_url) else {
@@ -594,22 +594,22 @@ pub(crate) fn resolve_project(
     ))
 }
 
-fn read_agent_document(path: &Path) -> Result<Table, String> {
+fn read_runner_document(path: &Path) -> Result<Table, String> {
     if !path.exists() {
         return Ok(Table::new());
     }
     validate_existing_regular_file(path)?;
     let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read agent config {}: {error}", path.display()))?;
+        .map_err(|error| format!("failed to read Runner config {}: {error}", path.display()))?;
     let document: TomlValue = toml::from_str(&content)
-        .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))?;
+        .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))?;
     document
         .as_table()
         .cloned()
-        .ok_or_else(|| format!("agent config {} is not a TOML table", path.display()))
+        .ok_or_else(|| format!("Runner config {} is not a TOML table", path.display()))
 }
 
-pub(super) fn render_agent_document(
+pub(super) fn render_runner_document(
     path: &Path,
     server_url: &str,
     key: &str,
@@ -617,7 +617,7 @@ pub(super) fn render_agent_document(
     projects_dir: &Path,
     canonical_project: &Path,
 ) -> Result<String, String> {
-    let mut root = read_agent_document(path)?;
+    let mut root = read_runner_document(path)?;
     root.insert(
         "server_url".to_string(),
         TomlValue::String(server_url.to_string()),
@@ -647,7 +647,7 @@ pub(super) fn render_agent_document(
         .entry("policy".to_string())
         .or_insert_with(|| TomlValue::Table(Table::new()))
         .as_table_mut()
-        .ok_or_else(|| format!("agent config {} has a non-table policy", path.display()))?;
+        .ok_or_else(|| format!("Runner config {} has a non-table policy", path.display()))?;
     policy.insert("allow_raw_shell".to_string(), TomlValue::Boolean(true));
     policy.insert("allow_cwd_anywhere".to_string(), TomlValue::Boolean(false));
     let mut roots = policy
@@ -663,11 +663,11 @@ pub(super) fn render_agent_document(
         "allowed_roots".to_string(),
         TomlValue::Array(roots.into_iter().map(TomlValue::String).collect()),
     );
-    toml::to_string(&root).map_err(|error| format!("failed to render agent config: {error}"))
+    toml::to_string(&root).map_err(|error| format!("failed to render Runner config: {error}"))
 }
 
 pub(super) fn validate_existing_profile(
-    config: Option<&ExistingAgentConfig>,
+    config: Option<&ExistingRunnerConfig>,
     canonical_server: &str,
     key: &str,
 ) -> Result<(), String> {
@@ -820,10 +820,18 @@ mod tests {
             recovered.recovered_profile.as_deref(),
             Some(profile.as_str())
         );
+        assert!(!profile_dir.join("runner.toml").exists());
         std::fs::write(profile_dir.join(KEY_DISCLOSED_FILE), "disclosed = true\n").unwrap();
         let disclosed =
             resolve_key(&options, &config_base, "https://example.test", &project).unwrap();
         assert!(!disclosed.generated);
+
+        std::fs::write(profile_dir.join("runner.toml"), "conflicting = true\n").unwrap();
+        let error =
+            resolve_key(&options, &config_base, "https://example.test", &project).unwrap_err();
+        assert!(error.contains("runner.toml"));
+        assert!(error.contains("agent.toml"));
+        assert!(error.contains("refusing to guess"));
     }
 
     #[test]
@@ -873,14 +881,14 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         let project_one = tmp.path().join("one");
         let project_two = tmp.path().join("two");
         let projects = tmp.path().join("projects.d");
         std::fs::create_dir(&project_one).unwrap();
         std::fs::create_dir(&project_two).unwrap();
         std::fs::create_dir(&projects).unwrap();
-        let first = render_agent_document(
+        let first = render_runner_document(
             &config,
             "https://example.test",
             "shared",
@@ -890,7 +898,7 @@ mod tests {
         )
         .unwrap();
         assert!(atomic_write(&config, first.as_bytes(), true).unwrap());
-        let second = render_agent_document(
+        let second = render_runner_document(
             &config,
             "https://example.test",
             "shared",
@@ -907,7 +915,7 @@ mod tests {
             std::fs::metadata(&config).unwrap().permissions().mode() & 0o777,
             0o600
         );
-        assert!(!tmp.path().join("one/agent.toml").exists());
+        assert!(!tmp.path().join("one/runner.toml").exists());
         assert!(!atomic_write(&config, second.as_bytes(), true).unwrap());
     }
 }

@@ -127,7 +127,7 @@ webcodex login <server-url> `
 如果以后再添加一个项目，使用 login 输出的 Runner 配置：
 
 ```bash
-webcodex project register --config <agent-config> /path/to/another-repo
+webcodex project register --config <runner-config> /path/to/another-repo
 ```
 
 ## 6. 启动 Runner
@@ -135,19 +135,19 @@ webcodex project register --config <agent-config> /path/to/another-repo
 `login` 会打印 Runner 配置路径。Windows 可以直接以前台方式运行：
 
 ```bash
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 Linux 普通用户可以先以前台验证，也可以安装 user service：
 
 ```bash
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 或：
 
 ```bash
-webcodex runner install --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-runner-config>
 ```
 
 Runner 运行后，WebCodex 才真正拥有调用本机文件、Git、编译器和测试工具的执行入口。
@@ -192,7 +192,7 @@ Tunnel 是网络入口，不是权限模式。是否使用公网域名、Cloudfl
 
 ```bash
 webcodex server status --env-file <server-env-file>
-webcodex runner status --config <agent-config>
+webcodex runner status --config <runner-config>
 webcodex ops status --server-url <server-url> --token-file <login-reported-webcodex-user-token>
 ```
 

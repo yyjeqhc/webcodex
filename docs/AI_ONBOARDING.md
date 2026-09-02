@@ -85,10 +85,10 @@ webcodex login https://webcodex.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 ```
 
-For ordinary users, explain only that `--project` is the actual project and `--allowed-root` is a parent directory from which more projects may be added later. Do not require manual edits to `agent.toml` or `projects.d`; reserve registry/authority internals for troubleshooting and reference material. If login intentionally omitted `--project`, add it later with `webcodex project register --config <login-reported-agent-config> /path/to/repo`.
+For ordinary users, explain only that `--project` is the actual project and `--allowed-root` is a parent directory from which more projects may be added later. Do not require manual edits to `runner.toml` or `projects.d`; reserve registry/authority internals for troubleshooting and reference material. If login intentionally omitted `--project`, add it later with `webcodex project register --config <login-reported-runner-config> /path/to/repo`.
 
 Use `share --auth oauth` or `connect --auth oauth` only when the client requires
 OAuth and the exact callback URL is known. Do not collapse OAuth client secrets,
@@ -122,7 +122,7 @@ Do **not** read back, print, log, commit, or echo into chat:
 - shared keys, PATs, Runner tokens, account credentials, bootstrap tokens;
 - Project Credentials;
 - OAuth client secrets;
-- full `agent.toml` contents or Server env files;
+- full `runner.toml` contents or Server env files;
 - `Authorization` headers.
 
 When a credential must be entered into ChatGPT/Claude, identify the source precisely and ask the **human** to copy it. Prefer connection details explicitly produced by the current flow, such as `login --print-mcp-config` for full setup or the successful disclosure from a temporary `share` / existing-Server `connect`. If a stored value must be recovered, point the user to the exact protected file/field without echoing it yourself. Status/log commands intentionally do not reveal secrets.

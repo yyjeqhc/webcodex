@@ -837,7 +837,7 @@ pub struct ShellProfileSummaryEntry {
 /// see which profiles are configured and which one a project resolves to.
 ///
 /// This summary NEVER includes: init_script bodies, env values, tokens,
-/// Authorization headers, full agent.toml, the full env snapshot, or stderr
+/// Authorization headers, full Runner config, the full env snapshot, or stderr
 /// tails. `prepared_cache_count` reflects the number of prepared snapshots at
 /// the last registration (snapshots are prepared lazily on first use, so this
 /// is typically 0 right after agent start; it is not a live counter).
@@ -901,7 +901,7 @@ pub struct ClaudeCodeProviderStatus {
 /// Sanitized agent policy summary. Carried in the registration payload and
 /// exposed in `runtime_status` / `listAgents`. Contains ONLY non-secret
 /// fields: it never includes the agent token, shell env values, init_script
-/// contents, or full agent.toml contents. `allowed_roots` is intentionally
+/// contents, or full Runner config contents. `allowed_roots` is intentionally
 /// exposed as a path-policy summary. `shell_profiles` carries the sanitized
 /// prepared-shell-profile configuration summary (profile names, default
 /// profile, counts) so observability can show which profile a project uses;

@@ -28,7 +28,7 @@ struct RegistrationPolicy {
 }
 
 #[derive(Debug, Deserialize)]
-struct RegistrationAgentConfig {
+struct RegistrationRunnerConfig {
     projects_dir: Option<PathBuf>,
     #[serde(default)]
     policy: RegistrationPolicy,
@@ -134,22 +134,26 @@ pub(crate) fn register_existing_project(
     ))
 }
 
-fn read_registration_config(path: &Path) -> Result<RegistrationAgentConfig, String> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| format!("failed to inspect agent config {}: {error}", path.display()))?;
+fn read_registration_config(path: &Path) -> Result<RegistrationRunnerConfig, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "failed to inspect Runner config {}: {error}",
+            path.display()
+        )
+    })?;
     if metadata.is_symlink() || !metadata.is_file() {
         return Err(format!(
-            "agent config {} is not a regular file",
+            "Runner config {} is not a regular file",
             path.display()
         ));
     }
     let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read agent config {}: {error}", path.display()))?;
+        .map_err(|error| format!("failed to read Runner config {}: {error}", path.display()))?;
     toml::from_str(&content)
-        .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))
+        .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))
 }
 
-fn registration_projects_dir(config: &RegistrationAgentConfig) -> Result<PathBuf, String> {
+fn registration_projects_dir(config: &RegistrationRunnerConfig) -> Result<PathBuf, String> {
     config.projects_dir.clone().map(Ok).unwrap_or_else(|| {
         webcodex_runner_config::paths::default_client_config_base_dir()
             .map(|base| base.join("projects.d"))
@@ -158,7 +162,7 @@ fn registration_projects_dir(config: &RegistrationAgentConfig) -> Result<PathBuf
 
 pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<String, String> {
     let config = read_registration_config(&opts.config)?;
-    // Mirror Runner config loading exactly: a minimal agent.toml may omit
+    // Mirror Runner config loading exactly: a minimal Runner config may omit
     // projects_dir, in which case the Runner materializes the shared per-user
     // config-base projects.d path. The local registration CLI must write to that
     // same registry rather than rejecting a config the Runner itself accepts.
@@ -172,7 +176,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     )?;
     if opts.json {
         return serde_json::to_string_pretty(&serde_json::json!({
-            "agent_config": opts.config.to_string_lossy(),
+            "runner_config": opts.config.to_string_lossy(),
             "projects_dir": projects_dir.to_string_lossy(),
             "project": {
                 "id": registration.id,
@@ -252,7 +256,7 @@ mod tests {
         let project = root.join("demo");
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&project).unwrap();
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config(&config_path, &registry, &root);
 
         let first = run_project_register(ProjectRegisterOptions {
@@ -287,7 +291,7 @@ mod tests {
         let project = root.join("demo");
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&project).unwrap();
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config(&config_path, &registry, &root);
 
         let first = run_project_register(ProjectRegisterOptions {
@@ -327,7 +331,7 @@ mod tests {
 
     #[test]
     fn omitted_projects_dir_uses_the_same_default_as_runner_config_loading() {
-        let config = RegistrationAgentConfig {
+        let config = RegistrationRunnerConfig {
             projects_dir: None,
             policy: RegistrationPolicy::default(),
         };
@@ -345,7 +349,7 @@ mod tests {
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config(&config_path, &registry, &root);
         let error = run_project_register(ProjectRegisterOptions {
             config: config_path,
@@ -400,7 +404,7 @@ mod tests {
         let _env = crate::webcodex_cli::test_support::EnvGuard::new()
             .set_os("HOME", home.as_os_str().to_os_string());
         let registry = tmp.path().join("registry");
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[], true);
 
         let error = run_project_register(ProjectRegisterOptions {
@@ -424,7 +428,7 @@ mod tests {
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&authority).unwrap();
         std::fs::create_dir_all(&project).unwrap();
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[authority], true);
 
         let output = run_project_register(ProjectRegisterOptions {
@@ -443,7 +447,7 @@ mod tests {
     fn explicit_dangerous_root_authority_allows_intentional_registration() {
         let tmp = tempfile::tempdir().unwrap();
         let registry = tmp.path().join("registry");
-        let config_path = tmp.path().join("agent.toml");
+        let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[PathBuf::from("/etc")], true);
 
         let output = run_project_register(ProjectRegisterOptions {

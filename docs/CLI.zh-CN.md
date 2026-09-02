@@ -53,7 +53,7 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行
 带 fencing 的 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
-匹配的本地项目 registration。其他项目、profile credential 和 `agent.toml` 都会保留。
+匹配的本地项目 registration。其他项目、profile credential 和 `runner.toml` 都会保留。
 
 接入 MCP coding client 后，可阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，了解 canonical
 `work_on_project` model bootstrap、behavioral guidance、validation 与 closeout evidence。
@@ -77,7 +77,7 @@ Runner 可执行文件是 `webcodex-runner`。其规范 CLI 生命周期命名�
 
 | 命令 | 用途 |
 | --- | --- |
-| `webcodex runner init` | 手动生成 `agent.toml` 配置 |
+| `webcodex runner init` | 手动生成 `runner.toml` 配置 |
 | `webcodex runner install` | 安装、启用并启动 Runner 服务 |
 | `webcodex runner run` | 前台运行 `webcodex-runner` |
 | `webcodex runner start` | 启动 hosted 后台 Runner 或已安装的 profile 服务 |
@@ -185,7 +185,7 @@ credential；admin token management 也使用相同的 plural namespace。
 - **CLI** —— 本文档介绍的 `webcodex` 命令。
 - **Runner** —— 运行在持有仓库机器上的 `webcodex-runner` 进程，执行实际工作。
 - **profile** —— 用户 WebCodex 配置目录下的一个命名客户端配置（路径、
-  `agent.toml`、令牌）。`webcodex connect` 会创建一个；
+  `runner.toml`、令牌）。`webcodex connect` 会创建一个；
   `webcodex runner ... --profile <name>` 指向它。
 - **client_id** —— 一个 Runner/设备的稳定逻辑标识（如 `workstation` 或
   `alice-macbook`）。它是 runtime project id 的一部分，也是 Runner 令牌所绑定
@@ -232,8 +232,8 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 - 未提供 `--key` 或 `--key-file` 时由 `webcodex connect` 生成。
 - 仅在首次创建时完整显示；profile 保存后，重复 `connect` 会复用而不再次打印。
 - 保存在 owner-only profile 配置下：
-  `~/.config/webcodex/clients/<profile>/agent.toml`（或
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`），即顶层
+  `~/.config/webcodex/clients/<profile>/runner.toml`（或
+  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`），即顶层
   `token = "wck_..."` 字段。
 - 如需人工恢复该值，请复制那个 `token` 字段。status 与 log 命令故意不打印它。
   不存在 `show-token` 命令。AI agent 应定位 profile 并把文件位置告诉人类，而不是
@@ -245,7 +245,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 ### Project Credential
 
 - 由 `webcodex setup` 为选定的 Git root 与 profile 创建，保存在 owner-only
-  私有文件中（Connector credential 文件与生成的 Agent 配置）。
+  私有文件中（Connector credential 文件与生成的 Runner 配置）。
 - 丢失时请恢复两个匹配的私有文件。不存在就地 rotate 命令；若无法恢复，请停止
   runtime 并显式重建私有 project-state profile（这也会同时作废该 profile 的本地
   task 历史）。
@@ -272,7 +272,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 - 由 `webcodex agent-tokens create-local` 本地生成并绑定 `client_id` 的 Runner
   传输令牌。
-- `webcodex login` 只会把它**内联**写进生成的 `agent.toml`（位于
+- `webcodex login` 只会把它**内联**写进生成的 `runner.toml`（位于
   `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的
   `webcodex-runner-token` 文件。这是 canonical managed enrollment 布局。
 - 只被 Runner 传输 endpoint 接受；用在 MCP/REST 上会返回 403。不要当作
@@ -300,7 +300,7 @@ webcodex login https://your-server.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo" \
   --print-mcp-config
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 只想临时试用一个仓库：
@@ -333,8 +333,8 @@ webcodex runner logs --profile <profile> --lines 100
 Linux 上把已经验证过的 Runner 改为 user service：
 
 ```bash
-webcodex runner install --scope user --config <login-reported-agent-config>
-webcodex runner status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-runner-config>
+webcodex runner status --scope user --config <login-reported-runner-config>
 webcodex ops status --server-url https://your-server.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```

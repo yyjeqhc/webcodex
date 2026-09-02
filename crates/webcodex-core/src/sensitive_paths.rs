@@ -3,7 +3,7 @@
 //! Four separate predicates used to encode this, one per surface (search,
 //! search globs, artifacts, edits). They disagreed in ways that mattered: the
 //! edit path did not stop `*.pem`/`*.key`, the artifact path did not stop
-//! `*.key`/`agent.toml`, and the search paths were case-sensitive, so a file
+//! Runner config files, and the search paths were case-sensitive, so a file
 //! literally named `.ENV` was excluded from one surface but not another.
 //!
 //! The policy is split along the two distinct jobs those predicates were doing:
@@ -20,12 +20,12 @@
 /// Exact component names whose entire subtree holds credentials.
 const SECRET_COMPONENTS: &[&str] = &["secrets", "tokens", "projects.d"];
 
-/// Component prefixes that mark a credential or agent-config file.
+/// Component prefixes that mark a credential or Runner-config file.
 ///
 /// `.env` as a prefix also covers `.env.local`, `.env.production`, and the
-/// like. `agent.toml`/`webcodex.env` as prefixes cover editor and backup
-/// suffixes (`agent.toml.swp`).
-const SECRET_PREFIXES: &[&str] = &[".env", "agent.toml", "webcodex.env"];
+/// like. Runner config names and `webcodex.env` are prefixes so editor and
+/// backup suffixes (`runner.toml.swp`, `agent.toml.bak`) remain protected.
+const SECRET_PREFIXES: &[&str] = &[".env", "runner.toml", "agent.toml", "webcodex.env"];
 
 /// Component suffixes that mark key material or a credential backup.
 const SECRET_SUFFIXES: &[&str] = &[".pem", ".key", ".env", ".toml.bak"];
@@ -109,7 +109,9 @@ mod tests {
             "secrets/key.txt",
             "tokens/agent",
             "projects.d/demo.toml",
-            // agent configuration
+            // Runner configuration, canonical and legacy
+            "runner.toml",
+            "config/runner.toml",
             "agent.toml",
             "config/agent.toml",
             "webcodex.env",
@@ -121,6 +123,7 @@ mod tests {
             "certs/server.pem",
             "certs/server.key",
             // credential backups
+            "runner.toml.bak",
             "agent.toml.bak",
             "deploy.env",
         ] {
@@ -132,7 +135,13 @@ mod tests {
     fn secret_matching_is_case_insensitive() {
         // The search predicates used to be case-sensitive, so a file named
         // `.ENV` was protected on some surfaces and exposed on others.
-        for path in [".ENV", "Certs/Server.PEM", "SECRETS/token", "Agent.TOML"] {
+        for path in [
+            ".ENV",
+            "Certs/Server.PEM",
+            "SECRETS/token",
+            "Runner.TOML",
+            "Agent.TOML",
+        ] {
             assert!(is_secret_path(path), "expected secret: {path}");
         }
     }
@@ -178,6 +187,8 @@ mod tests {
             "**/.env.*",
             "agent.toml",
             "**/agent.toml",
+            "runner.toml",
+            "**/runner.toml",
             "*.pem",
             "**/*.pem",
             "*.key",

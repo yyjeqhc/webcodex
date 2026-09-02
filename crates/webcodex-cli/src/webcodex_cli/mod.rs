@@ -78,15 +78,15 @@ pub(crate) use output::{
     runtime_build_metadata, server_status_revision_check,
 };
 pub(crate) use pairing::run_pairing_create;
-pub(crate) use profiles::{
-    agent_config_for_scope, client_profile_agent_config, client_profile_agent_token_file,
-    client_profile_agent_token_file_for_scope, client_profile_projects_dir,
-    client_profile_state_dir, client_profile_user_token_file,
-    client_profile_user_token_file_for_scope, current_user_home, runner_service_file_for_scope,
-    validate_client_profile, validate_service_file_scope,
-};
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
+pub(crate) use profiles::{
+    client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
+    client_profile_projects_dir, client_profile_runner_config, client_profile_state_dir,
+    client_profile_user_token_file, client_profile_user_token_file_for_scope, current_user_home,
+    runner_config_for_scope, runner_service_file_for_scope, validate_client_profile,
+    validate_service_file_scope,
+};
 pub(crate) use project::{
     register_existing_project, run_project_register, ProjectRegisterOptions, ProjectRegistration,
 };
@@ -136,7 +136,7 @@ mod shell_command_tests {
     #[test]
     fn shell_quote_arg_handles_shell_metacharacters() {
         assert_eq!(shell_quote_arg("webcodex-runner"), "webcodex-runner");
-        assert_eq!(shell_quote_arg("/tmp/agent.toml"), "/tmp/agent.toml");
+        assert_eq!(shell_quote_arg("/tmp/runner.toml"), "/tmp/runner.toml");
         assert_eq!(shell_quote_arg(""), "''");
         assert_eq!(shell_quote_arg("path with spaces"), "'path with spaces'");
         assert_eq!(shell_quote_arg("it's"), "'it'\\''s'");

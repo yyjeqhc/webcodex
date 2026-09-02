@@ -10,8 +10,8 @@ use super::super::profiles::{
 };
 use super::process::{local_runner_state_summary, stop_runner_unlocked};
 use super::profile::{
-    read_existing_agent_config, read_project_files, stored_project_matches,
-    validate_existing_regular_file, ExistingAgentConfig, ProfileLock, ProjectFile,
+    read_existing_runner_config, read_project_files, stored_project_matches,
+    validate_existing_regular_file, ExistingRunnerConfig, ProfileLock, ProjectFile,
 };
 
 const MAX_AMBIGUOUS_PROFILES: usize = 8;
@@ -135,9 +135,10 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
         );
     }
 
-    let config_path = candidate.profile_dir.join("agent.toml");
-    let config = read_existing_agent_config(&config_path)?
-        .ok_or_else(|| format!("hosted profile {} has no agent.toml", candidate.profile))?;
+    let config_path =
+        webcodex_runner_config::paths::resolve_runner_config_path(&candidate.profile_dir)?;
+    let config = read_existing_runner_config(&config_path)?
+        .ok_or_else(|| format!("hosted profile {} has no Runner config", candidate.profile))?;
     let runtime_project_id = format!("agent:{}:{}", config.client_id, current.1.id);
     let runner = local_runner_state_summary(&candidate.state_dir)?;
     if !runner.managed {
@@ -320,7 +321,7 @@ fn resolve_registration(
 }
 
 async fn unregister_live_project(
-    config: &ExistingAgentConfig,
+    config: &ExistingRunnerConfig,
     server_http: &ServerHttpOptions,
     runtime_project_id: &str,
     observer_token: &str,
@@ -549,7 +550,7 @@ mod tests {
         std::fs::create_dir_all(profile_dir.join("projects.d")).unwrap();
         std::fs::create_dir_all(&state_dir).unwrap();
         std::fs::write(
-            profile_dir.join("agent.toml"),
+            profile_dir.join("runner.toml"),
             "server_url = \"http://127.0.0.1:1\"\ntoken = \"shared-key\"\nclient_id = \"client\"\n",
         )
         .unwrap();
@@ -661,12 +662,73 @@ mod tests {
         assert_eq!(result.outcome, "local_unregistered");
         assert_eq!(result.runner_action, "not_running");
         assert!(profile_dir.join("projects.d/other.toml").is_file());
-        assert!(profile_dir.join("agent.toml").is_file());
+        assert!(profile_dir.join("runner.toml").is_file());
         assert_eq!(
             std::fs::read_to_string(project.join("keep.txt")).unwrap(),
             "keep"
         );
         assert!(project.join(".git").is_dir());
+    }
+
+    #[tokio::test]
+    async fn offline_disconnect_accepts_legacy_agent_toml_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let state = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(config.join("clients")).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let (profile_dir, _) = write_profile(&config, &state, "legacy", &project, "repo");
+        std::fs::rename(
+            profile_dir.join("runner.toml"),
+            profile_dir.join("agent.toml"),
+        )
+        .unwrap();
+
+        let result = run_disconnect(DisconnectOptions {
+            project,
+            profile: Some("legacy".to_string()),
+            config_base: Some(config),
+            state_base: Some(state),
+            server_http: ServerHttpOptions::default(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.outcome, "local_unregistered");
+        assert!(profile_dir.join("agent.toml").is_file());
+        assert!(!profile_dir.join("runner.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn offline_disconnect_rejects_dual_runner_config_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let state = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(config.join("clients")).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let (profile_dir, _) = write_profile(&config, &state, "dual", &project, "repo");
+        std::fs::copy(
+            profile_dir.join("runner.toml"),
+            profile_dir.join("agent.toml"),
+        )
+        .unwrap();
+
+        let error = run_disconnect(DisconnectOptions {
+            project,
+            profile: Some("dual".to_string()),
+            config_base: Some(config),
+            state_base: Some(state),
+            server_http: ServerHttpOptions::default(),
+        })
+        .await
+        .unwrap_err();
+        assert!(error.contains("runner.toml"));
+        assert!(error.contains("agent.toml"));
+        assert!(error.contains("refusing to guess"));
+        assert!(profile_dir.join("projects.d/repo.toml").is_file());
     }
 
     #[tokio::test]
@@ -680,7 +742,7 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         let (profile_dir, _) = write_profile(&config, &state, "oauth", &project, "repo");
         std::fs::write(
-            profile_dir.join("agent.toml"),
+            profile_dir.join("runner.toml"),
             "server_url = \"https://example.test\"\ntoken = \"wc_agent_runner-only\"\nclient_id = \"client\"\n",
         )
         .unwrap();
@@ -742,7 +804,7 @@ mod tests {
                 .unwrap();
             }
         });
-        let config = ExistingAgentConfig {
+        let config = ExistingRunnerConfig {
             server_url: format!("http://{address}"),
             token: "shared-key".to_string(),
             client_id: "client".to_string(),
@@ -780,7 +842,7 @@ mod tests {
         let (profile_dir, state_dir) =
             write_profile(&config_base, &state_base, "one", &project, "repo");
         std::fs::write(
-            profile_dir.join("agent.toml"),
+            profile_dir.join("runner.toml"),
             format!(
                 "server_url = \"http://{address}\"\ntoken = \"shared-key\"\nclient_id = \"client\"\n"
             ),
@@ -798,7 +860,7 @@ mod tests {
         assert_eq!(
             super::super::process::ensure_runner_unlocked(
                 &runner,
-                &profile_dir.join("agent.toml"),
+                &profile_dir.join("runner.toml"),
                 &state_dir,
             )
             .unwrap(),
@@ -873,7 +935,7 @@ mod tests {
         let (profile_dir, state_dir) =
             write_profile(&config_base, &state_base, "one", &project, "repo");
         std::fs::write(
-            profile_dir.join("agent.toml"),
+            profile_dir.join("runner.toml"),
             format!(
                 "server_url = \"http://{address}\"\ntoken = \"shared-key\"\nclient_id = \"client\"\n"
             ),
@@ -891,7 +953,7 @@ mod tests {
         assert_eq!(
             super::super::process::ensure_runner_unlocked(
                 &runner,
-                &profile_dir.join("agent.toml"),
+                &profile_dir.join("runner.toml"),
                 &state_dir,
             )
             .unwrap(),
@@ -979,7 +1041,7 @@ mod tests {
             )
             .unwrap();
         });
-        let config = ExistingAgentConfig {
+        let config = ExistingRunnerConfig {
             server_url: format!("http://{address}"),
             token: "shared-key".to_string(),
             client_id: "client".to_string(),
@@ -1021,7 +1083,7 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let config = tmp.path().join("agent.toml");
+        let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir(&state).unwrap();
@@ -1053,6 +1115,7 @@ mod tests {
         assert!(rendered.contains("profile: demo"));
         assert!(rendered.contains("project_id: agent:client:repo"));
         assert!(!rendered.contains("shared-key"));
+        assert!(!rendered.contains("runner.toml"));
         assert!(!rendered.contains("agent.toml"));
     }
 

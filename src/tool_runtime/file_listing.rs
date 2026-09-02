@@ -354,6 +354,7 @@ mod tests {
             "src/main.rs",
             ".env",
             ".env.production",
+            "deploy/runner.toml",
             "deploy/agent.toml",
             "certs/server.pem",
             "certs/server.key",

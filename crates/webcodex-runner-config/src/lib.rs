@@ -27,7 +27,7 @@ pub const TRANSPORT_POLLING: &str = "polling";
 /// Config value selecting the WebSocket transport.
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 /// Config value selecting the supported custom QUIC stream transport.
-/// Requires a `[quic]` section in `agent.toml` with `server_addr` / `server_name`.
+/// Requires a `[quic]` section in the Runner config with `server_addr` / `server_name`.
 pub const TRANSPORT_QUIC: &str = "quic";
 /// Recommended fallback mode for new deployments: try QUIC when `[quic]` is
 /// configured, then WebSocket, then polling.

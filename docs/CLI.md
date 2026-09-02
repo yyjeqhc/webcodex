@@ -57,7 +57,7 @@ The advanced managed identity flow remains available as `--auth managed-oauth --
 repository is registered in more than one hosted profile, specify `--profile`. With a live
 managed Runner it performs a fenced structured unregister before removing the local registration;
 with a stopped Runner it removes only the exact local project registration. Other projects,
-profile credentials, and `agent.toml` are preserved.
+profile credentials, and `runner.toml` are preserved.
 
 After connecting an MCP coding client, see the [Coding Workflow](CODING_WORKFLOW.md) for the
 canonical `work_on_project` model bootstrap, behavioral guidance, validation, and closeout
@@ -81,7 +81,7 @@ service. `webcodex` and `webcodex-runner` remain separate executables.
 
 | Command | Purpose |
 | --- | --- |
-| `webcodex runner init` | Generate an `agent.toml` config manually |
+| `webcodex runner init` | Generate a `runner.toml` config manually |
 | `webcodex runner install` | Install, enable, and start the Runner service |
 | `webcodex runner run` | Run `webcodex-runner` in the foreground |
 | `webcodex runner start` | Start a hosted background Runner or installed profile service |
@@ -194,7 +194,7 @@ normal entry points.
 - **CLI** — the `webcodex` command described here.
 - **Runner** — the `webcodex-runner` process on the machine that owns the
   repositories. It executes the actual work.
-- **profile** — a named local client configuration (paths, `agent.toml`,
+- **profile** — a named local client configuration (paths, `runner.toml`,
   tokens) under the user's WebCodex config directory. `webcodex connect`
   creates one; `webcodex runner ... --profile <name>` targets it.
 - **client_id** — a stable logical identifier for one Runner/device (for
@@ -252,8 +252,8 @@ quick answer.
 - Printed in full only when first created; the profile stores it so a repeat
   `connect` reuses it without printing it again.
 - Stored in the owner-only profile config at
-  `~/.config/webcodex/clients/<profile>/agent.toml` (or
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`) as the top-level
+  `~/.config/webcodex/clients/<profile>/runner.toml` (or
+  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`) as the top-level
   `token = "wck_..."` field.
 - To recover the value as a human, copy that `token` field. Status and log
   commands deliberately do not print it. There is no `show-token` command. An
@@ -267,7 +267,7 @@ quick answer.
 
 - Created by `webcodex setup` for the selected Git root and profile; stored in
   owner-only private files (a Connector credential file and the generated
-  Agent configuration).
+  Runner configuration).
 - If lost, restore both matching private files. There is no in-place rotate
   command; if unrecoverable, stop the runtime and explicitly recreate the
   private project-state profile (this also retires that profile's local task
@@ -300,7 +300,7 @@ quick answer.
 
 - A Runner transport token generated locally by
   `webcodex agent-tokens create-local` and bound to a `client_id`.
-- `webcodex login` stores it **only** inline in the generated `agent.toml`
+- `webcodex login` stores it **only** inline in the generated `runner.toml`
   under `~/.config/webcodex/<server-slug>/<user>/` — no separate
   `webcodex-runner-token` file is created. This is the canonical managed
   enrollment layout.
@@ -331,7 +331,7 @@ webcodex login https://your-server.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo" \
   --print-mcp-config
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 To try one repository temporarily:
@@ -366,8 +366,8 @@ Managed enrollment:
 ```bash
 webcodex login https://your-server.example --code <wc_pair_...> \
   --allowed-root "$HOME/git"
-webcodex runner install --scope user --config <login-reported-agent-config>
-webcodex runner status --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-runner-config>
+webcodex runner status --scope user --config <login-reported-runner-config>
 webcodex ops status --server-url https://your-server.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```

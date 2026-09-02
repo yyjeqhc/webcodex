@@ -177,7 +177,8 @@ fn sensitive_path_warning(path: &str) -> Option<String> {
         let lower = component.to_ascii_lowercase();
         let is_sensitive = matches!(
             lower.as_str(),
-            "agent.toml"
+            "runner.toml"
+                | "agent.toml"
                 | "webcodex.env"
                 | "secret.pem"
                 | "id_rsa"

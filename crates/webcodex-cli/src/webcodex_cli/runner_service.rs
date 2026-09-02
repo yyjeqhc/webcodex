@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn human_readiness_requires_registered_project_and_observed_connection() {
-        let config = Path::new("/tmp/webcodex/agent.toml");
+        let config = Path::new("/tmp/webcodex/runner.toml");
 
         let ready = render_runner_readiness_summary(Some(true), Some(1), Some(1), config);
         assert!(ready.contains("Runner: connected"), "{ready}");
@@ -710,7 +710,7 @@ mod tests {
         );
         assert!(
             zero.contains(
-                "webcodex project register --config /tmp/webcodex/agent.toml /path/to/project"
+                "webcodex project register --config /tmp/webcodex/runner.toml /path/to/project"
             ),
             "{zero}"
         );

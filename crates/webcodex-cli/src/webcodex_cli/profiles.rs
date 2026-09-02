@@ -26,15 +26,16 @@ pub(crate) fn client_base_dir_for_scope(scope: ServiceScope) -> Result<PathBuf, 
     }
 }
 
-pub(crate) fn agent_config_for_scope(
+pub(crate) fn runner_config_for_scope(
     scope: ServiceScope,
     profile: Option<&str>,
 ) -> Result<PathBuf, String> {
     let base = client_base_dir_for_scope(scope)?;
-    Ok(match profile {
-        Some(profile) => client_output_dir_for_profile(&base, profile).join("agent.toml"),
-        None => base.join("agent.toml"),
-    })
+    let dir = match profile {
+        Some(profile) => client_output_dir_for_profile(&base, profile),
+        None => base,
+    };
+    paths::resolve_runner_config_path(&dir)
 }
 
 pub(crate) fn client_profile_user_token_file_for_scope(
@@ -157,8 +158,8 @@ pub(crate) fn client_profile_state_dir(profile: &str) -> Result<PathBuf, String>
     ))
 }
 
-pub(crate) fn client_profile_agent_config(profile: &str) -> Result<PathBuf, String> {
-    Ok(client_profile_dir(profile)?.join("agent.toml"))
+pub(crate) fn client_profile_runner_config(profile: &str) -> Result<PathBuf, String> {
+    paths::resolve_runner_config_path(&client_profile_dir(profile)?)
 }
 
 pub(crate) fn client_profile_projects_dir(profile: &str) -> Result<PathBuf, String> {

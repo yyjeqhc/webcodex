@@ -41,7 +41,7 @@ WebCodex does not grant the model:
 - Access to projects not registered by an agent.
 - Admin, account-management, pairing, token-creation, or agent-token creation through GPT Actions or MCP.
 - Permission to bypass path safety, sensitive-path denial, read-only session guards, or agent policy.
-- A reason to see secrets, tokens, env files, Authorization headers, or complete agent configs.
+- A reason to see secrets, tokens, env files, Authorization headers, or complete Runner configs.
 
 ## Project Access Model
 
@@ -64,7 +64,7 @@ Operational guidance:
 - Run agents under an OS user appropriate for the repositories they serve.
 - Keep project roots narrow.
 - Configure shell profiles deliberately; do not inherit broad interactive shell state by accident.
-- Do not copy complete agent configs between machines unless that is the intended deployment action.
+- Do not copy complete Runner configs between machines unless that is the intended deployment action.
 
 ## Shell And Job Risk
 
@@ -92,7 +92,7 @@ Never share or commit:
 - account credentials,
 - agent tokens,
 - env files,
-- complete `agent.toml` files,
+- complete `runner.toml` files (and legacy `agent.toml` files),
 - Authorization headers.
 
 Use the right credential for the right surface:
@@ -137,7 +137,7 @@ After revocation, verify with `runtime_status`, `list_projects`, and a read-only
 
 Please report vulnerabilities through GitHub Issues on `yyjeqhc/webcodex` or by contacting the maintainer privately through GitHub if the report contains sensitive details.
 
-Do not publish real tokens, env files, complete agent configs, private repository contents, or exploit details in public issues. Use placeholders and minimal reproduction steps.
+Do not publish real tokens, env files, complete Runner configs, private repository contents, or exploit details in public issues. Use placeholders and minimal reproduction steps.
 
 ## Known Limitations
 

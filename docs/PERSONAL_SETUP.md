@@ -127,7 +127,7 @@ You do not need to edit the Runner's internal configuration files manually.
 To add another project later, use the Runner config printed by login:
 
 ```bash
-webcodex project register --config <agent-config> /path/to/another-repo
+webcodex project register --config <runner-config> /path/to/another-repo
 ```
 
 ## 6. Start the Runner
@@ -135,19 +135,19 @@ webcodex project register --config <agent-config> /path/to/another-repo
 `login` prints the Runner configuration path. On Windows, run it in the foreground:
 
 ```bash
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 On Linux, foreground mode is also a good first check:
 
 ```bash
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 Or install it as a user service:
 
 ```bash
-webcodex runner install --scope user --config <login-reported-agent-config>
+webcodex runner install --scope user --config <login-reported-runner-config>
 ```
 
 Once the Runner is online, WebCodex has an execution path to the machine's files, Git checkout, compiler, tests, and other development tools.
@@ -192,7 +192,7 @@ Start with three simple checks:
 
 ```bash
 webcodex server status --env-file <server-env-file>
-webcodex runner status --config <agent-config>
+webcodex runner status --config <runner-config>
 webcodex ops status --server-url <server-url> --token-file <login-reported-webcodex-user-token>
 ```
 

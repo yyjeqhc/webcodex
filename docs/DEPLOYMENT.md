@@ -57,7 +57,7 @@ Then, on the Windows machine that owns the repositories, redeem only that short-
 
 ```powershell
 webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src --project C:\src\my-repo
-webcodex runner run --config <login-reported-agent-config>
+webcodex runner run --config <login-reported-runner-config>
 ```
 
 When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
@@ -253,14 +253,14 @@ webcodex login https://your-domain.example --code <wc_pair_...> \
   --allowed-root "$HOME/git" \
   --project "$HOME/git/my-repo"
 webcodex runner install --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 webcodex runner status --scope user \
-  --config <login-reported-agent-config>
+  --config <login-reported-runner-config>
 webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` is the canonical client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and an `agent.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-agent-config> /path/to/repo` before project-bound work. Use the documented `login --device` and `--dir` options when an explicit device identity or alternate local base directory is required; there is no separate compatibility enrollment command.
+`webcodex login` is the canonical client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and a `runner.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-runner-config> /path/to/repo` before project-bound work. Use the documented `login --device` and `--dir` options when an explicit device identity or alternate local base directory is required; there is no separate compatibility enrollment command.
 
 The pairing code is created server/admin-side:
 
@@ -275,7 +275,7 @@ webcodex pairing create \
 
 Copy only the short-lived `wc_pair_*` code to the client. Do not copy
 `WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete
-`agent.toml` files between machines. Each friend should use a unique
+`runner.toml` files between machines. Each friend should use a unique
 `username`.
 
 ## Runner service scopes
@@ -307,7 +307,7 @@ sudo webcodex runner install \
   --profile workstation \
   --user <runner-user> \
   --working-directory /home/<runner-user> \
-  --config /etc/webcodex/clients/workstation/agent.toml
+  --config /etc/webcodex/clients/workstation/runner.toml
 sudo webcodex runner status --scope system --profile workstation
 ```
 
@@ -392,10 +392,10 @@ GitHub default; a maintainer must make that package public once before the
 workflow's anonymous-pull gate can succeed. End users do not need registry
 credentials after that one-time activation.
 
-## Agent configuration
+## Runner configuration
 
-Client enrollment generates the agent config. Important settings in
-`agent.toml`:
+Client enrollment generates the Runner config. Important settings in
+`runner.toml`:
 
 | Setting | Notes |
 | --- | --- |
@@ -422,7 +422,7 @@ max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
 
-After editing `agent.toml`, reload the matching service
+After editing `runner.toml`, reload the matching service
 (`systemctl --user reload webcodex-runner` for user scope, or
 `sudo systemctl reload webcodex-runner` for system scope) to apply policy,
 shell, and SSH-resource settings. Identity, server/auth, project source,

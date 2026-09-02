@@ -3147,9 +3147,6 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "tests_failed": 0,
             "zero_tests_run": false,
             "diagnostics": {},
-            "session_recorded": true,
-            "session_id": "wc_sess_test",
-            "session_event_id": "evt_test",
             "permission": {"policy": "trusted_agent"}
         }
     });

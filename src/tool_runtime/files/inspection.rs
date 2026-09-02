@@ -1775,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn read_file_payload_reserves_final_result_and_session_telemetry_budget() {
+    fn read_file_payload_reserves_final_result_and_session_metadata_budget() {
         fn result_for(content_len: usize) -> ToolResult {
             let range = FileReadRange {
                 content: "\0".repeat(content_len),
@@ -1807,9 +1807,6 @@ mod tests {
 
         let mut result = result_for(accepted);
         assert!(result.success);
-        result.output["session_recorded"] = json!(true);
-        result.output["session_id"] = json!(format!("wc_sess_{}", "s".repeat(64)));
-        result.output["session_event_id"] = json!(format!("evt_{}", "e".repeat(64)));
         result.output["session_hint"] = json!({
             "has_open_messages": true,
             "open_counts": {

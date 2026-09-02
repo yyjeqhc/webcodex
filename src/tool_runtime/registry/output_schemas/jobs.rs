@@ -508,9 +508,6 @@ fn observe_jobs_output_schema() -> Value {
             "terminal_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
-            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
-            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
-            "session_event_id": schema_type("string", "Outer batch Session event id."),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },

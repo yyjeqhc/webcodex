@@ -339,7 +339,9 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
-    assert!(result.output["session_event_id"].as_str().is_some());
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     for omitted in [
         "project",
         "pattern",
@@ -1708,7 +1710,9 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
     }
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     for item in result.output["items"].as_array().unwrap() {
         assert!(item["output"].get("session_recorded").is_none());
         assert!(item["output"].get("permission").is_none());
@@ -1803,7 +1807,8 @@ async fn search_project_texts_outer_recording_session_preserves_complete_sparse_
     assert!(result.success, "{:?}", result.error);
     assert!(result.output.get("session_recorded").is_none());
     assert!(result.output.get("session_event_id").is_none());
-    assert_eq!(result.output["session_context_revision"], 0);
+    assert!(result.output.get("session_id").is_none());
+    assert!(result.output.get("session_context_revision").is_none());
     assert!(result.output.get("session_continuity").is_none());
     assert!(result.output.get("session_recovery").is_none());
     for omitted in [

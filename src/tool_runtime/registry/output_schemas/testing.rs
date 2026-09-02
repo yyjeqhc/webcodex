@@ -124,9 +124,6 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("command_ok", schema_type("boolean", "Whether execution completed successfully.")),
             ("tool_failure", schema_type("boolean", "Whether rejection happened before execution.")),
             ("async_handoff_available", schema_type("boolean", "Whether this Runner supports validation Job handoff.")),
-            ("session_recorded", schema_type("boolean", "Whether the call was recorded in a Workflow Session.")),
-            ("session_id", schema_type("string", "Workflow Session id.")),
-            ("session_event_id", schema_type("string", "Workflow Session event id.")),
             ("session_hint", session_hint_schema()),
             ("permission", permission_decision_schema()),
     ];

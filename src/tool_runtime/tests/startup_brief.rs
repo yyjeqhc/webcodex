@@ -1283,11 +1283,10 @@ async fn minimal_standard_and_full_coding_task_outputs_validate_against_strict_s
             .unwrap_or_else(|error| panic!("{label} startup schema mismatch: {error}\n{value}"));
 
         let mut recorded = ToolResult::ok(value["output"].clone());
-        crate::tool_runtime::add_session_telemetry_hint(
+        crate::tool_runtime::add_session_hint(
             &mut recorded,
             &runtime.sessions,
             &recorder.session_id,
-            Some("evt_startup_schema".to_string()),
         );
         recorded.output["session_hint"] = json!({
             "has_open_messages": true,

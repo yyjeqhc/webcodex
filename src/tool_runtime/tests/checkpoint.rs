@@ -645,7 +645,9 @@ async fn checkpoint_restore_tracked_changes() {
     assert_eq!(restored.output["state_changed"], true);
     assert_eq!(restored.output["changed_paths"], json!(["a.txt"]));
     assert_eq!(restored.output["checkpoint_id"], checkpoint_id);
-    assert_eq!(restored.output["session_recorded"], true);
+    assert!(restored.output.get("session_recorded").is_none());
+    assert!(restored.output.get("session_event_id").is_none());
+    assert!(restored.output.get("session_id").is_none());
     assert_eq!(
         fs::read_to_string(root.join("a.txt")).unwrap(),
         "checkpoint\n"
@@ -1075,7 +1077,9 @@ async fn checkpoint_session_guards() {
     )
     .await;
     assert!(created.success, "{:?}", created.error);
-    assert_eq!(created.output["session_recorded"], true);
+    assert!(created.output.get("session_recorded").is_none());
+    assert!(created.output.get("session_event_id").is_none());
+    assert!(created.output.get("session_id").is_none());
     let checkpoint_id = created.output["checkpoint_id"]
         .as_str()
         .unwrap()
@@ -1092,7 +1096,9 @@ async fn checkpoint_session_guards() {
         )
         .await;
     assert!(listed.success, "{:?}", listed.error);
-    assert_eq!(listed.output["session_recorded"], true);
+    assert!(listed.output.get("session_recorded").is_none());
+    assert!(listed.output.get("session_event_id").is_none());
+    assert!(listed.output.get("session_id").is_none());
 
     let shown = runtime
         .dispatch_with_auth(
@@ -1106,7 +1112,9 @@ async fn checkpoint_session_guards() {
         )
         .await;
     assert!(shown.success, "{:?}", shown.error);
-    assert_eq!(shown.output["session_recorded"], true);
+    assert!(shown.output.get("session_recorded").is_none());
+    assert!(shown.output.get("session_event_id").is_none());
+    assert!(shown.output.get("session_id").is_none());
 
     let restore_denied = runtime
         .dispatch_with_auth(
@@ -1121,7 +1129,9 @@ async fn checkpoint_session_guards() {
         .await;
     assert!(!restore_denied.success);
     assert_eq!(restore_denied.output["error_kind"], "session_guard_denied");
-    assert_eq!(restore_denied.output["session_recorded"], true);
+    assert!(restore_denied.output.get("session_recorded").is_none());
+    assert!(restore_denied.output.get("session_event_id").is_none());
+    assert_eq!(restore_denied.output["session_id"], read_only_session);
 
     let delete_denied = runtime
         .dispatch_with_auth(
@@ -1136,7 +1146,9 @@ async fn checkpoint_session_guards() {
         .await;
     assert!(!delete_denied.success);
     assert_eq!(delete_denied.output["error_kind"], "session_guard_denied");
-    assert_eq!(delete_denied.output["session_recorded"], true);
+    assert!(delete_denied.output.get("session_recorded").is_none());
+    assert!(delete_denied.output.get("session_event_id").is_none());
+    assert_eq!(delete_denied.output["session_id"], read_only_session);
 
     let summary = runtime
         .sessions

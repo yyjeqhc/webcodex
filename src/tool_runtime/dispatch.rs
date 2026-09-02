@@ -2,7 +2,7 @@
 
 use super::edit_tool_telemetry;
 use super::session_context::{
-    add_session_telemetry_hint, session_guard_denied_result, session_lifecycle_denied_result,
+    add_session_hint, session_guard_denied_result, session_lifecycle_denied_result,
     session_project_mismatch_result, SessionProjectMismatch,
 };
 use super::{
@@ -149,8 +149,8 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
 }
 
-/// Strip successful wrapper/telemetry facts only after every authority and
-/// Session recorder that needs them has consumed the canonical ToolResult.
+/// Strip successful wrapper/audit facts only after every authority and Session
+/// recorder that needs them has consumed the canonical ToolResult.
 /// Failure projection is handled separately and preserves every fact required
 /// for retry, escalation, uncertainty, Job handoff, and reconciliation.
 pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
@@ -161,10 +161,8 @@ pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
         return;
     };
     output.remove("permission");
-    if output.get("session_recorded").and_then(Value::as_bool) == Some(true) {
-        output.remove("session_recorded");
-        output.remove("session_event_id");
-    }
+    output.remove("session_recorded");
+    output.remove("session_event_id");
 }
 
 /// Strip model-irrelevant audit/wrapper facts from failures only after the
@@ -186,10 +184,8 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
     {
         output.remove("permission");
     }
-    if output.get("session_recorded").and_then(Value::as_bool) == Some(true) {
-        output.remove("session_recorded");
-        output.remove("session_event_id");
-    }
+    output.remove("session_recorded");
+    output.remove("session_event_id");
     if matches!(tool_name, "run_process" | "run_script") {
         for key in [
             "executor",
@@ -836,12 +832,7 @@ impl ToolRuntime {
                 error.as_deref(),
                 error_kind,
             );
-            add_session_telemetry_hint(
-                result,
-                &self.sessions,
-                session_id,
-                recorded.as_ref().map(|recorded| recorded.event_id.clone()),
-            );
+            add_session_hint(result, &self.sessions, session_id);
             if let Some(recorded) = recorded.as_ref() {
                 if session_context::add_session_context_continuity(result, recorded) {
                     self.add_session_history_recovery(result, recorded, auth)
@@ -858,14 +849,14 @@ impl ToolRuntime {
                 );
             }
         } else {
-            let event_id = self.sessions.record_tool_call_finished(
+            self.sessions.record_tool_call_finished(
                 start,
                 success,
                 &result.output,
                 error.as_deref(),
                 error_kind,
             );
-            add_session_telemetry_hint(result, &self.sessions, session_id, event_id);
+            add_session_hint(result, &self.sessions, session_id);
         }
     }
 

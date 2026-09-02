@@ -1412,7 +1412,6 @@ impl SessionStore {
             };
             let history_lost = expected_recovery_count > recovery_events.len() as u64;
             event.context_revision = advances_context_checkpoint.then_some(context_revision);
-            let event_id = event.event_id.clone();
             if advances_context_checkpoint {
                 record.context_revision = context_revision;
             }
@@ -1423,7 +1422,6 @@ impl SessionStore {
                 record.events.pop_front();
             }
             let outcome = RecordedModelFacingToolCall {
-                event_id,
                 session_id: session_id.clone(),
                 context_revision,
                 pre_response_context_revision,

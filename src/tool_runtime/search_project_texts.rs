@@ -744,9 +744,6 @@ mod tests {
         assert_eq!(output["output_truncated"], true);
 
         let mut result = ToolResult::ok(output);
-        result.output["session_recorded"] = json!(true);
-        result.output["session_id"] = json!(format!("wc_sess_{}", "s".repeat(64)));
-        result.output["session_event_id"] = json!(format!("evt_{}", "e".repeat(64)));
         result.output["session_hint"] = json!({
             "has_open_messages": true,
             "open_counts": {

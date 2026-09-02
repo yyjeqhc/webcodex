@@ -74,7 +74,9 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     .await;
     let ok = ok_task.await.unwrap();
     assert!(ok.success, "{:?}", ok.error);
-    assert_eq!(ok.output["session_recorded"], true);
+    assert!(ok.output.get("session_recorded").is_none());
+    assert!(ok.output.get("session_event_id").is_none());
+    assert!(ok.output.get("session_id").is_none());
     assert_eq!(ok.output["permission"]["required"], true);
     assert_eq!(ok.output["permission"]["policy"], "trusted_agent");
     assert_eq!(ok.output["permission"]["status"], "auto_approved");
@@ -115,7 +117,9 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let fail = fail_task.await.unwrap();
     assert!(!fail.success);
     assert_eq!(fail.output["failure_kind"], "command_exit_nonzero");
-    assert_eq!(fail.output["session_recorded"], true);
+    assert!(fail.output.get("session_recorded").is_none());
+    assert!(fail.output.get("session_event_id").is_none());
+    assert!(fail.output.get("session_id").is_none());
     assert_eq!(fail.output["permission"]["status"], "auto_approved");
 
     let summary = runtime

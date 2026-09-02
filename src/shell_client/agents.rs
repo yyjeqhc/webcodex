@@ -249,11 +249,18 @@ impl ShellClientRegistry {
         let accepted_protocol =
             AcceptedRunnerProtocol::try_from_registration(body.agent_protocol_generation)?;
         let runner_features = RunnerFeatureSet::try_from_registration(&body.capabilities)?;
-        if runner_features.supports(RunnerFeature::ApplyPatchStrictMatching)
+        if runner_features.supports(RunnerFeature::ApplyPatchMatchMetadata)
             && !runner_features.supports(RunnerFeature::ApplyPatch)
         {
             return Err(
-                "apply_patch_strict_matching capability requires apply_patch capability"
+                "apply_patch_match_metadata capability requires apply_patch capability".to_string(),
+            );
+        }
+        if runner_features.supports(RunnerFeature::ApplyPatchStrictMatching)
+            && !runner_features.supports(RunnerFeature::ApplyPatchMatchMetadata)
+        {
+            return Err(
+                "apply_patch_strict_matching capability requires apply_patch_match_metadata capability"
                     .to_string(),
             );
         }

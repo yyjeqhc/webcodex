@@ -38,7 +38,9 @@ async fn git_status_with_session_id_records_git_read_event() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))
@@ -256,7 +258,9 @@ async fn git_log_read_only_session_allowed_and_recorded() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
     assert_eq!(summary.counts.tool_calls, 1);
     assert_eq!(summary.counts.read_like, 1);

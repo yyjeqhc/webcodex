@@ -148,7 +148,7 @@ pub(crate) use registry::{
     memory_runtime_tool_specs, operator_diagnostic_tool_specs, registered_tool_specs,
     skill_management_tool_specs, skill_runtime_tool_specs,
 };
-pub(crate) use session_context::{add_session_telemetry_hint, unknown_session_result};
+pub(crate) use session_context::{add_session_hint, unknown_session_result};
 pub(crate) use session_shell::SessionShellRegistry;
 #[cfg(test)]
 pub(crate) use surface::{recommended_flows, registered_tool_categories};

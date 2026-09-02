@@ -1550,11 +1550,19 @@ fn read_file_output_schema_matches_real_results_and_strict_tool_payloads() {
     .unwrap();
     validate(&generic_object).unwrap();
 
-    let mut telemetry = success.clone();
-    telemetry["output"]["session_recorded"] = json!(true);
-    telemetry["output"]["session_id"] = json!("wc_sess_test");
-    telemetry["output"]["session_event_id"] = json!("evt_test");
-    validate(&telemetry).unwrap();
+    for recorder_only in ["session_recorded", "session_event_id", "session_id"] {
+        let mut telemetry = success.clone();
+        telemetry["output"][recorder_only] = match recorder_only {
+            "session_recorded" => json!(true),
+            "session_event_id" => json!("evt_test"),
+            "session_id" => json!("wc_sess_test"),
+            _ => unreachable!(),
+        };
+        assert!(
+            validate(&telemetry).is_err(),
+            "read_file schema admitted recorder-only field {recorder_only}"
+        );
+    }
 
     for missing in ["next_start_line", "sha256"] {
         let mut value = success.clone();
@@ -1596,14 +1604,46 @@ fn read_file_output_schema_matches_real_results_and_strict_tool_payloads() {
 
 fn default_output_schema_field_names() -> BTreeSet<&'static str> {
     BTreeSet::from([
-        "session_recorded",
-        "session_id",
-        "session_event_id",
         "session_hint",
         "permission",
         "recovery_kind",
         "recovery_tool",
     ])
+}
+
+#[test]
+fn model_facing_output_schemas_do_not_publish_recorder_only_telemetry() {
+    let specs = registered_tool_specs();
+    for spec in &specs {
+        let serialized = serde_json::to_string(&spec.output_schema).unwrap();
+        for field in ["session_recorded", "session_event_id"] {
+            assert!(
+                !serialized.contains(&format!("\"{field}\"")),
+                "{} still publishes recorder-only {field}",
+                spec.name
+            );
+        }
+    }
+
+    for tool in [
+        "read_file",
+        "read_files",
+        "search_project_texts",
+        "apply_patch",
+        "cargo_check",
+    ] {
+        let fields = output_schema_field_names(spec_named(&specs, tool));
+        assert!(
+            !fields.contains("session_id"),
+            "{tool} still publishes synthetic recorder session_id"
+        );
+    }
+
+    assert!(
+        output_schema_field_names(spec_named(&specs, "update_session_context"))
+            .contains("session_id"),
+        "business Workflow Session tools must retain their business session_id"
+    );
 }
 
 fn output_schema_field_names(spec: &ToolSpec) -> BTreeSet<&str> {

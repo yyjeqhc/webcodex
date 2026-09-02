@@ -879,7 +879,8 @@ async fn memory_bootstrap_is_explicit_and_never_inferred_from_session_ack_recove
     )
     .await;
     assert!(exact.success);
-    assert_eq!(exact.output["session_context_revision"], 0);
+    assert!(exact.output.get("session_context_revision").is_none());
+    assert!(exact.output.get("session_continuity").is_none());
     assert!(exact.output.get("session_recovery").is_none());
     assert!(exact.output.get("context_projection").is_none());
     assert!(!exact.output.to_string().contains(private_summary));

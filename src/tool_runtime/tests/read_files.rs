@@ -844,8 +844,9 @@ async fn read_files_records_one_outer_session_event_and_keeps_metadata_outer_onl
     }
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
-    assert!(result.output["session_event_id"].as_str().is_some());
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     assert!(result.output.get("permission").is_none());
     for item in result.output["items"].as_array().unwrap() {
         let serialized = serde_json::to_string(item).unwrap();
@@ -993,7 +994,8 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
     assert!(result.success, "{:?}", result.error);
     assert!(result.output.get("session_recorded").is_none());
     assert!(result.output.get("session_event_id").is_none());
-    assert_eq!(result.output["session_context_revision"], 0);
+    assert!(result.output.get("session_id").is_none());
+    assert!(result.output.get("session_context_revision").is_none());
     assert!(result.output.get("session_continuity").is_none());
     assert!(result.output.get("session_recovery").is_none());
     for omitted in [

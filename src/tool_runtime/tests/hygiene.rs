@@ -600,7 +600,9 @@ async fn workspace_hygiene_check_read_only_session_allowed() {
         "read_only session should allow workspace_hygiene_check: {:?}",
         result.error
     );
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
 }
 
 // =========================================================================

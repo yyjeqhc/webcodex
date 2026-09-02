@@ -728,7 +728,6 @@ pub(crate) enum SessionContextRevisionAck {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RecordedModelFacingToolCall {
-    pub(crate) event_id: String,
     pub(crate) session_id: String,
     pub(crate) context_revision: u64,
     /// Session checkpoint watermark immediately before the current model-facing

@@ -338,27 +338,6 @@ pub(crate) fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Va
                 "Opaque operator diagnostic reference emitted only on eligible failed calls while full tracing is enabled. Read with read_tool_trace; on Adaptive Runtime invoke that target through call_runtime_tool. Never a native path.",
             ),
         ),
-        (
-            "session_recorded",
-            schema_type(
-                "boolean",
-                "True when this tool call was recorded in a provided session_id.",
-            ),
-        ),
-        (
-            "session_id",
-            schema_type(
-                "string",
-                "Session id used for telemetry recording, when provided.",
-            ),
-        ),
-        (
-            "session_event_id",
-            schema_type(
-                "string",
-                "Session event id for the recorded finished tool call.",
-            ),
-        ),
         ("session_hint", session_hint_schema()),
         ("permission", permission_decision_schema()),
         ("recovery_kind", recovery_kind_schema()),

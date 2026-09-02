@@ -501,12 +501,7 @@ impl ToolRuntime {
                 result.error.as_deref(),
                 Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
             );
-            super::add_session_telemetry_hint(
-                &mut result,
-                &self.sessions,
-                session_id,
-                recording.as_ref().map(|recorded| recorded.event_id.clone()),
-            );
+            super::add_session_hint(&mut result, &self.sessions, session_id);
             if let Some(recorded) = recording.as_ref() {
                 if session_context::add_session_context_continuity(&mut result, recorded) {
                     self.add_session_history_recovery(&mut result, recorded, context.auth)
@@ -555,12 +550,7 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("tool_disabled"),
                 );
-                super::add_session_telemetry_hint(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
-                );
+                super::add_session_hint(&mut result, &self.sessions, session_id);
                 if let Some(recorded) = recording.as_ref() {
                     if session_context::add_session_context_continuity(&mut result, recorded) {
                         self.add_session_history_recovery(&mut result, recorded, context.auth)
@@ -687,12 +677,7 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("session_message_resolution_failed"),
                 );
-                super::add_session_telemetry_hint(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    recording.as_ref().map(|recorded| recorded.event_id.clone()),
-                );
+                super::add_session_hint(&mut result, &self.sessions, session_id);
                 if let Some(recorded) = recording.as_ref() {
                     if session_context::add_session_context_continuity(&mut result, recorded) {
                         self.add_session_history_recovery(&mut result, recorded, context.auth)
@@ -774,21 +759,11 @@ impl ToolRuntime {
             result.error.as_deref(),
             None,
         );
-        // When a `recording_session_id` (context.session_id) recorded this
-        // generic wrapper call into the tracking session, surface the recorder
-        // telemetry hint. This is the only telemetry path for tools like
-        // session_summary whose `session_id` is business input rather than a
-        // recorder session, so the inner dispatch does not emit it. The hint
-        // preserves any existing business `output.session_id`.
+        // Recorder provenance remains ledger-only. Surface only collaboration
+        // guidance that can affect the model's next action, while preserving any
+        // business `output.session_id` emitted by the concrete tool.
         if let Some(session_id) = context.session_id {
-            super::add_session_telemetry_hint(
-                &mut result,
-                &self.sessions,
-                session_id,
-                outer_recording
-                    .as_ref()
-                    .map(|recorded| recorded.event_id.clone()),
-            );
+            super::add_session_hint(&mut result, &self.sessions, session_id);
             if let Some(recorded) = outer_recording.as_ref() {
                 if session_context::add_session_context_continuity(&mut result, recorded) {
                     self.add_session_history_recovery(&mut result, recorded, context.auth)

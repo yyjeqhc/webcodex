@@ -522,7 +522,9 @@ async fn read_only_session_allows_read_file_and_records_success() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     assert!(result.output.get("permission").is_none());
     let summary = runtime
         .sessions
@@ -591,8 +593,9 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
     assert_eq!(result.output["guard"], "deny_write_tools");
     assert_eq!(result.output["mode"], "read_only");
     assert!(result.output.get("permission").is_none());
-    assert_eq!(result.output["session_recorded"], true);
-    assert!(result.output["session_event_id"].as_str().is_some());
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert_eq!(result.output["session_id"], session.session_id);
     assert_eq!(result.output["session_hint"]["has_open_messages"], true);
     assert_eq!(result.output["session_hint"]["open_counts"]["risk"], 1);
     assert_eq!(result.output["session_hint"]["highest_priority"], "high");
@@ -688,7 +691,18 @@ async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak
         assert_eq!(result.output["error_kind"], "session_guard_denied");
         assert_eq!(result.output["guard"], "deny_write_tools");
         assert_eq!(result.output["mode"], "read_only");
-        assert_eq!(result.output["session_recorded"], true);
+        assert!(
+            result.output.get("session_recorded").is_none(),
+            "{tool_name}"
+        );
+        assert!(
+            result.output.get("session_event_id").is_none(),
+            "{tool_name}"
+        );
+        assert_eq!(
+            result.output["session_id"], session.session_id,
+            "{tool_name}"
+        );
     }
     assert!(
         probe_patch_agent_request(&runtime, "guard-artifact-upload")
@@ -782,7 +796,9 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     assert_eq!(result.output["guard"], "deny_shell_tools");
     assert_eq!(result.output["command_started"], false);
     assert!(result.output.get("permission").is_none());
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert_eq!(result.output["session_id"], session.session_id);
     assert!(
         probe_patch_agent_request(&runtime, "guard-shell")
             .await
@@ -1055,10 +1071,13 @@ fn project_tool_schemas_include_optional_session_id() {
         let spec = spec_named(&specs, name);
         assert!(spec.output_schema["properties"]["output"]["properties"]
             .get("session_recorded")
-            .is_some());
+            .is_none());
         assert!(spec.output_schema["properties"]["output"]["properties"]
             .get("session_event_id")
-            .is_some());
+            .is_none());
+        assert!(spec.output_schema["properties"]["output"]["properties"]
+            .get("session_id")
+            .is_none());
         let session_hint =
             &spec.output_schema["properties"]["output"]["properties"]["session_hint"];
         assert_eq!(session_hint["type"], "object");

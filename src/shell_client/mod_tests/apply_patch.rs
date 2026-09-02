@@ -31,6 +31,7 @@ async fn register_patch_instance(
     registry: &ShellClientRegistry,
     client_id: &str,
     supported: bool,
+    metadata_supported: bool,
     strict_supported: bool,
 ) -> Result<ShellClientView, String> {
     register_instance_with_capabilities(
@@ -40,6 +41,7 @@ async fn register_patch_instance(
         ShellClientCapabilities {
             file_write: true,
             apply_patch: supported,
+            apply_patch_match_metadata: metadata_supported,
             apply_patch_strict_matching: strict_supported,
             ..Default::default()
         },
@@ -50,7 +52,7 @@ async fn register_patch_instance(
 #[tokio::test]
 async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically() {
     let registry = ShellClientRegistry::default();
-    register_patch_instance(&registry, "patch-off", false, false)
+    register_patch_instance(&registry, "patch-off", false, false, false)
         .await
         .unwrap();
     let error = registry
@@ -72,18 +74,39 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .unwrap()
         .is_none());
 
-    register_patch_instance(&registry, "patch-on", true, false)
+    register_patch_instance(&registry, "legacy-patch", true, false, false)
         .await
         .unwrap();
-    let (request_id, _rx, response_contract) = registry
+    let error = registry
+        .enqueue_apply_patch(
+            patch_request("legacy-patch", false),
+            false,
+            "tester".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("capability_unavailable"), "{error}");
+    assert!(error.contains("apply_patch_match_metadata"), "{error}");
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "legacy-patch".to_string(),
+            agent_instance_id: "inst".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    register_patch_instance(&registry, "patch-on", true, true, false)
+        .await
+        .unwrap();
+    let (request_id, _rx) = registry
         .enqueue_apply_patch(
             patch_request("patch-on", false),
             false,
             "tester".to_string(),
         )
         .await
-        .expect("capable Runner should accept apply_patch");
-    assert_eq!(response_contract, ApplyPatchResponseContract::Legacy);
+        .expect("current Runner should accept ordinary apply_patch");
     let queued = registry
         .poll(ShellAgentPollRequest {
             client_id: "patch-on".to_string(),
@@ -100,24 +123,7 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .unwrap()
         .contains("*** Begin Patch"));
 
-    register_patch_instance(&registry, "metadata-on", true, true)
-        .await
-        .unwrap();
-    let (_, _, response_contract) = registry
-        .enqueue_apply_patch(
-            patch_request("metadata-on", false),
-            false,
-            "tester".to_string(),
-        )
-        .await
-        .expect("current Runner should accept ordinary apply_patch");
-    assert_eq!(
-        response_contract,
-        ApplyPatchResponseContract::MatchMetadata,
-        "response contract follows admitted Runner capability, not strict request mode"
-    );
-
-    register_patch_instance(&registry, "strict-off", true, false)
+    register_patch_instance(&registry, "strict-off", true, true, false)
         .await
         .unwrap();
     let error = registry
@@ -139,14 +145,13 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .unwrap()
         .is_none());
 
-    register_patch_instance(&registry, "strict-on", true, true)
+    register_patch_instance(&registry, "strict-on", true, true, true)
         .await
         .unwrap();
-    let (_, _, response_contract) = registry
+    let (_, _) = registry
         .enqueue_apply_patch(patch_request("strict-on", true), true, "tester".to_string())
         .await
         .expect("strict-capable Runner should accept strict apply_patch");
-    assert_eq!(response_contract, ApplyPatchResponseContract::MatchMetadata);
     let queued = registry
         .poll(ShellAgentPollRequest {
             client_id: "strict-on".to_string(),
@@ -169,8 +174,10 @@ fn apply_patch_missing_capability_defaults_false_and_is_omitted() {
     )
     .unwrap();
     assert!(!legacy.apply_patch);
+    assert!(!legacy.apply_patch_match_metadata);
     assert!(!legacy.apply_patch_strict_matching);
     let serialized = serde_json::to_value(ShellClientCapabilities::default()).unwrap();
     assert!(serialized.get("apply_patch").is_none());
+    assert!(serialized.get("apply_patch_match_metadata").is_none());
     assert!(serialized.get("apply_patch_strict_matching").is_none());
 }

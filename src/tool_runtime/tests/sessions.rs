@@ -119,9 +119,9 @@ async fn read_file_with_session_id_records_event_without_content() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
-    assert_eq!(result.output["session_id"], session.session_id);
-    assert!(result.output["session_event_id"].as_str().is_some());
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     assert!(result.output.get("session_hint").is_none());
     let summary = runtime
         .sessions
@@ -346,20 +346,10 @@ fn outer_session_telemetry_hint_clears_stale_inner_recorder_hint() {
         .unwrap();
 
     let mut result = ToolResult::ok(serde_json::json!({}));
-    super::super::add_session_telemetry_hint(
-        &mut result,
-        &runtime.sessions,
-        &inner.session_id,
-        Some("evt_inner".to_string()),
-    );
+    super::super::add_session_hint(&mut result, &runtime.sessions, &inner.session_id);
     assert_eq!(result.output["session_hint"]["attention_required"], true);
 
-    super::super::add_session_telemetry_hint(
-        &mut result,
-        &runtime.sessions,
-        &outer.session_id,
-        Some("evt_outer".to_string()),
-    );
+    super::super::add_session_hint(&mut result, &runtime.sessions, &outer.session_id);
     assert!(result.output.get("session_hint").is_none());
 }
 

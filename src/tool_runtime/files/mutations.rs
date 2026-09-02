@@ -201,11 +201,14 @@ fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> T
     )
 }
 
-fn apply_patch_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+fn apply_patch_capability_rejection(
+    reason: impl AsRef<str>,
+    capability: &'static str,
+) -> ToolResult {
     let reason = reason.as_ref();
     ToolResult::err_with_output(
         format!(
-            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_patch."
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a current Runner that explicitly supports {capability}."
         ),
         json!({
             "changed": false,
@@ -213,9 +216,9 @@ fn apply_patch_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
             "execution_state": "not_started",
             "error_kind": "agent_capability_unavailable",
             "failure_kind": "capability_unavailable",
-            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+            "capability": capability,
             "recovery_action": "upgrade_or_reconnect_runner",
-            "retry_guidance": "reconnect or upgrade the Runner so it explicitly advertises apply_patch"
+            "retry_guidance": format!("reconnect or upgrade the Runner so it explicitly advertises {capability}")
         }),
     )
     .with_recovery(crate::tool_runtime::RecoveryKind::RetrySame, None)
@@ -828,7 +831,6 @@ fn apply_patch_agent_stdout_result(
     patch: &crate::apply_patch_shared::CodexPatch,
     expected_dry_run: bool,
     expected_strict_matching: bool,
-    response_contract: crate::shell_client::ApplyPatchResponseContract,
 ) -> ToolResult {
     let mut result = transactional_edit_agent_stdout_result(
         "apply_patch",
@@ -837,9 +839,6 @@ fn apply_patch_agent_stdout_result(
         expected_dry_run,
     );
     if !result.success {
-        return result;
-    }
-    if response_contract == crate::shell_client::ApplyPatchResponseContract::Legacy {
         return result;
     }
     sanitize_apply_patch_success_metadata(&mut result.output);
@@ -1765,7 +1764,7 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let (request_id, rx, response_contract) = match self
+        let (request_id, rx) = match self
             .shell_clients
             .enqueue_apply_patch(
                 request,
@@ -1785,10 +1784,24 @@ impl ToolRuntime {
             }
             Err(error)
                 if error.starts_with("capability_unavailable:")
+                    && error.contains(
+                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+                    ) =>
+            {
+                return apply_patch_capability_rejection(
+                    error,
+                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+                )
+            }
+            Err(error)
+                if error.starts_with("capability_unavailable:")
                     && error
                         .contains(crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH) =>
             {
-                return apply_patch_capability_rejection(error)
+                return apply_patch_capability_rejection(
+                    error,
+                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+                )
             }
             Err(_) => {
                 return structured_edit_not_started_result(
@@ -1814,7 +1827,6 @@ impl ToolRuntime {
             &parsed,
             expected_dry_run,
             expected_strict_matching,
-            response_contract,
         )
     }
 
@@ -2140,13 +2152,7 @@ mod tests {
             ("exact", 2, false, false),
         ] {
             let payload = apply_patch_success_payload(mode, count, strict_match).to_string();
-            let result = apply_patch_agent_stdout_result(
-                &payload,
-                &patch,
-                true,
-                strict_request,
-                crate::shell_client::ApplyPatchResponseContract::MatchMetadata,
-            );
+            let result = apply_patch_agent_stdout_result(&payload, &patch, true, strict_request);
             assert!(result.success, "{:?}", result.error);
             assert_eq!(result.output["execution_state"], "completed");
             assert_eq!(result.output["files"][0]["edits"][0]["match_mode"], mode);
@@ -2177,13 +2183,7 @@ mod tests {
         cases.push(contradictory_strict);
 
         for payload in cases {
-            let result = apply_patch_agent_stdout_result(
-                &payload.to_string(),
-                &patch,
-                true,
-                true,
-                crate::shell_client::ApplyPatchResponseContract::MatchMetadata,
-            );
+            let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
             assert!(!result.success);
             assert_eq!(result.output["execution_state"], "outcome_unknown");
             assert!(result.output["state_changed"].is_null());
@@ -2209,13 +2209,7 @@ mod tests {
         payload["files"][0]["edits"][0]["future_edit_field"] =
             json!("NEVER_SURVIVE_PATCH_METADATA");
 
-        let result = apply_patch_agent_stdout_result(
-            &payload.to_string(),
-            &patch,
-            true,
-            true,
-            crate::shell_client::ApplyPatchResponseContract::MatchMetadata,
-        );
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.output["execution_state"], "completed");
         let serialized = serde_json::to_string(&result.output).unwrap();
@@ -2309,58 +2303,14 @@ mod tests {
             "changed_paths": ["new.txt", "old.txt", "move.txt", "moved.txt", "append.txt"]
         });
 
-        let result = apply_patch_agent_stdout_result(
-            &payload.to_string(),
-            &patch,
-            true,
-            true,
-            crate::shell_client::ApplyPatchResponseContract::MatchMetadata,
-        );
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.output["files"].as_array().unwrap().len(), 4);
         assert_eq!(result.output["changed_paths"].as_array().unwrap().len(), 5);
     }
 
     #[test]
-    fn apply_patch_legacy_runner_success_uses_legacy_transactional_contract() {
-        let patch = one_update_patch();
-        let mut payload = apply_patch_success_payload("exact", 1, true);
-        let edit = payload["files"][0]["edits"][0]
-            .as_object_mut()
-            .expect("legacy edit object");
-        for field in [
-            "match_mode",
-            "match_source",
-            "matched_start_line",
-            "candidate_count",
-            "strict_match",
-        ] {
-            edit.remove(field);
-        }
-
-        let result = apply_patch_agent_stdout_result(
-            &payload.to_string(),
-            &patch,
-            true,
-            false,
-            crate::shell_client::ApplyPatchResponseContract::Legacy,
-        );
-        assert!(result.success, "{:?}", result.error);
-        assert_eq!(result.output["execution_state"], "completed");
-        assert_eq!(result.output["state_changed"], false);
-
-        let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_patch");
-        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
-            &serde_json::to_value(&result).unwrap(),
-            &schema,
-        )
-        .unwrap_or_else(|schema_error| {
-            panic!("legacy apply_patch success must remain valid against the advertised output schema: {schema_error}")
-        });
-    }
-
-    #[test]
-    fn apply_patch_current_runner_missing_match_metadata_is_outcome_unknown() {
+    fn apply_patch_missing_current_match_metadata_is_outcome_unknown() {
         let patch = one_update_patch();
         let mut payload = apply_patch_success_payload("exact", 1, true);
         payload["files"][0]["edits"][0]
@@ -2368,13 +2318,7 @@ mod tests {
             .expect("current edit object")
             .remove("strict_match");
 
-        let result = apply_patch_agent_stdout_result(
-            &payload.to_string(),
-            &patch,
-            true,
-            false,
-            crate::shell_client::ApplyPatchResponseContract::MatchMetadata,
-        );
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, false);
         assert!(!result.success);
         assert_eq!(result.output["execution_state"], "outcome_unknown");
         assert!(result.output.get("files").is_none());

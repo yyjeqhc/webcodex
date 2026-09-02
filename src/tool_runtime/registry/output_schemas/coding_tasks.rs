@@ -162,33 +162,15 @@ fn start_coding_task_output_schema() -> Value {
 
 fn startup_brief_output_schema(detail: &str) -> Value {
     let mut schema = startup_brief_schema(detail);
-    add_startup_recorder_metadata(&mut schema);
+    add_startup_model_metadata(&mut schema);
     schema
 }
 
-fn add_startup_recorder_metadata(schema: &mut Value) {
+fn add_startup_model_metadata(schema: &mut Value) {
     let properties = schema
         .get_mut("properties")
         .and_then(Value::as_object_mut)
         .expect("startup output schema properties");
-    properties.insert(
-        "session_recorded".to_string(),
-        schema_type(
-            "boolean",
-            "True when wrapper-level recording_session_id recorded this startup call.",
-        ),
-    );
-    properties.insert(
-        "session_id".to_string(),
-        schema_type(
-            "string",
-            "Workflow Session id used only for wrapper-level telemetry recording.",
-        ),
-    );
-    properties.insert(
-        "session_event_id".to_string(),
-        schema_type("string", "Recorded wrapper event id when available."),
-    );
     properties.insert("session_hint".to_string(), session_hint_schema());
     properties.insert("permission".to_string(), permission_decision_schema());
 }
@@ -283,7 +265,7 @@ fn full_startup_output_schema() -> Value {
         ],
         "additionalProperties": false,
     });
-    add_startup_recorder_metadata(&mut schema);
+    add_startup_model_metadata(&mut schema);
     schema
 }
 

@@ -17,6 +17,7 @@ pub(crate) enum RunnerFeature {
     ApplyTextEditOccurrence,
     ApplyTextEditLineScope,
     ApplyPatch,
+    ApplyPatchMatchMetadata,
     ApplyPatchStrictMatching,
     Git,
     Jobs,
@@ -60,7 +61,7 @@ pub(crate) enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 50] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 51] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -70,6 +71,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 50] = [
     RunnerFeature::ApplyTextEditOccurrence,
     RunnerFeature::ApplyTextEditLineScope,
     RunnerFeature::ApplyPatch,
+    RunnerFeature::ApplyPatchMatchMetadata,
     RunnerFeature::ApplyPatchStrictMatching,
     RunnerFeature::Git,
     RunnerFeature::Jobs,
@@ -149,6 +151,9 @@ impl RunnerFeature {
                 wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE
             }
             Self::ApplyPatch => wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+            Self::ApplyPatchMatchMetadata => {
+                wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA
+            }
             Self::ApplyPatchStrictMatching => {
                 wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
             }
@@ -234,6 +239,9 @@ impl RunnerFeature {
                 Self::ApplyTextEditLineScope
             }
             wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH => Self::ApplyPatch,
+            wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA => {
+                Self::ApplyPatchMatchMetadata
+            }
             wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING => {
                 Self::ApplyPatchStrictMatching
             }
@@ -329,6 +337,7 @@ impl RunnerFeature {
             | Self::Git
             | Self::ApplyTextEditLineScope
             | Self::ApplyPatch
+            | Self::ApplyPatchMatchMetadata
             | Self::ApplyPatchStrictMatching
             | Self::SshShell
             | Self::PersistentShell
@@ -369,6 +378,7 @@ impl RunnerFeature {
             Self::ApplyTextEditOccurrence => capabilities.apply_text_edit_occurrence,
             Self::ApplyTextEditLineScope => capabilities.apply_text_edit_line_scope,
             Self::ApplyPatch => capabilities.apply_patch,
+            Self::ApplyPatchMatchMetadata => capabilities.apply_patch_match_metadata,
             Self::ApplyPatchStrictMatching => capabilities.apply_patch_strict_matching,
             Self::Git => capabilities.git,
             Self::Jobs => capabilities.jobs,

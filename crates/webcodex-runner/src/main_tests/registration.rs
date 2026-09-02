@@ -59,8 +59,20 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
     );
     assert!(
         !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+            .contains(&"apply_patch_match_metadata"),
+        "the 0.4 patch success contract is additive and must not become a generation-2 baseline"
+    );
+    assert!(
+        !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
             .contains(&"apply_patch_strict_matching"),
         "strict patch matching is additive and must not become a generation-2 registration baseline"
+    );
+    assert_eq!(
+        capabilities
+            .get("apply_patch_match_metadata")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "current Runner must explicitly advertise the current apply_patch success contract"
     );
     assert_eq!(
         capabilities

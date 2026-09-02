@@ -1874,8 +1874,12 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // Codex Patch is an additive request kind with Runner-authoritative parsing and
     // transaction semantics. Older Runners omit it and must fail closed.
     capabilities.apply_patch = true;
+    // WebCodex 0.4 requires every successful patch to expose the complete bounded
+    // patch-plan/match metadata consumed by Server validation. Older apply_patch
+    // implementations omit this capability and are rejected before dispatch.
+    capabilities.apply_patch_match_metadata = true;
     // Strict patch positioning is an additive extension to apply_patch. Older
-    // Runners omit it, so new Servers must not send strict_matching to them.
+    // Runners omit it, so Servers must not send strict_matching to them.
     capabilities.apply_patch_strict_matching = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;

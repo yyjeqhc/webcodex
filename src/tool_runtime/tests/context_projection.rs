@@ -531,7 +531,9 @@ async fn context_projection_coexists_with_session_continuity_and_attention() {
         .await;
     let result = outcome.result.expect("model-facing result");
     assert!(result.success);
-    assert!(result.output["session_context_revision"].is_u64());
+    assert!(result.output.get("session_context_revision").is_none());
+    assert!(result.output.get("session_continuity").is_none());
+    assert!(result.output.get("session_recovery").is_none());
     assert!(result.output["session_attention"]["requires_ack"].as_bool() == Some(true));
     assert_eq!(result.output["context_projection"]["timing"], "post_tool");
     assert_eq!(

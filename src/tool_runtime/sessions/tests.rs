@@ -4886,6 +4886,25 @@ fn raw_model_facing_events_do_not_consume_context_revisions() {
             SessionContextRevisionAck::Revision(0),
             "{tool}"
         );
+        let mut projected = super::super::ToolResult::ok(json!({"observed": true}));
+        assert!(
+            !super::super::session_context::add_session_context_continuity(
+                &mut projected,
+                &observed,
+            ),
+            "exact no-op {tool} should not request recovery"
+        );
+        for field in [
+            "session_context_revision",
+            "session_continuity",
+            "session_recovery",
+        ] {
+            assert!(
+                projected.output.get(field).is_none(),
+                "exact no-op {tool} leaked {field}: {}",
+                projected.output
+            );
+        }
     }
 
     let edit = record_model_facing_result(
@@ -4897,6 +4916,14 @@ fn raw_model_facing_events_do_not_consume_context_revisions() {
         json!({"state_changed": true}),
     );
     assert_eq!(edit.context_revision, 1);
+    assert!(edit.checkpoint_advanced);
+    let mut edit_projection = super::super::ToolResult::ok(json!({"state_changed": true}));
+    assert!(
+        !super::super::session_context::add_session_context_continuity(&mut edit_projection, &edit,)
+    );
+    assert_eq!(edit_projection.output["session_context_revision"], 1);
+    assert!(edit_projection.output.get("session_continuity").is_none());
+    assert!(edit_projection.output.get("session_recovery").is_none());
 
     let read_batch = record_model_facing_result(
         &store,
@@ -5528,20 +5555,19 @@ fn batch_budget_preserves_recorder_overlay_for_no_ack_read_batch() {
         assert!(recorded.recovery_events.is_empty());
 
         let mut response = super::super::ToolResult::ok(batch);
-        super::super::session_context::add_session_telemetry_hint(
-            &mut response,
-            &store,
-            &session.session_id,
-            Some(recorded.event_id.clone()),
-        );
+        super::super::session_context::add_session_hint(&mut response, &store, &session.session_id);
         assert!(
-            super::super::session_context::add_session_context_continuity(&mut response, &recorded,)
+            !super::super::session_context::add_session_context_continuity(
+                &mut response,
+                &recorded,
+            )
         );
         super::super::read_files::apply_model_facing_output_budget(&mut response, None);
         super::super::dispatch::sparsify_complete_read_success("read_files", &mut response);
-        assert_eq!(response.output["session_recorded"], true);
-        assert_eq!(response.output["session_id"], session.session_id);
-        assert_eq!(response.output["session_context_revision"], 1);
+        assert!(response.output.get("session_recorded").is_none());
+        assert!(response.output.get("session_event_id").is_none());
+        assert!(response.output.get("session_id").is_none());
+        assert!(response.output.get("session_context_revision").is_none());
         assert!(response.output.get("session_continuity").is_none());
         assert!(response.output.get("session_recovery").is_none());
         assert!(

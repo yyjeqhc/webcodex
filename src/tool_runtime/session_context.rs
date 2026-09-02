@@ -315,48 +315,32 @@ fn completion_persistence_uncertain_exposes_exact_retry_same_recovery() {
     assert!(result.output.get("recovery_tool").is_none());
 }
 
-pub(crate) fn add_session_telemetry_hint(
+pub(crate) fn add_session_hint(
     result: &mut ToolResult,
     sessions: &sessions::SessionStore,
     session_id: &str,
-    event_id: Option<String>,
 ) {
-    let mut output = match std::mem::take(&mut result.output) {
-        Value::Object(map) => map,
-        other => {
-            let mut map = serde_json::Map::new();
-            map.insert("value".to_string(), other);
-            map
+    let hint = sessions.inbox_hint(session_id);
+    if let Some(output) = result.output.as_object_mut() {
+        // The outer recorder is authoritative only for collaboration guidance.
+        // Recorder provenance stays ledger-only, and any business `session_id`
+        // produced by the concrete tool is preserved untouched.
+        output.remove("session_hint");
+        if let Some(hint) = hint {
+            output.insert(
+                "session_hint".to_string(),
+                serde_json::to_value(hint).unwrap_or(Value::Null),
+            );
         }
-    };
-    output.insert(
-        "session_recorded".to_string(),
-        Value::Bool(event_id.is_some()),
-    );
-    // Preserve an existing business `session_id` in the tool output (e.g.
-    // session_summary's required business input) instead of overwriting it
-    // with the recorder session id. Only synthesize one when the tool output
-    // does not already carry one.
-    if !output.contains_key("session_id") {
-        output.insert(
-            "session_id".to_string(),
-            Value::String(session_id.to_string()),
-        );
+        return;
     }
-    if let Some(event_id) = event_id {
-        output.insert("session_event_id".to_string(), Value::String(event_id));
+    if let Some(hint) = hint {
+        let prior = std::mem::take(&mut result.output);
+        result.output = json!({
+            "value": prior,
+            "session_hint": hint,
+        });
     }
-    // This decorator is authoritative for `session_id`. A nested business
-    // recorder may already have decorated the result; do not let its inbox hint
-    // survive when an outer model-facing recorder has no current hint of its own.
-    output.remove("session_hint");
-    if let Some(hint) = sessions.inbox_hint(session_id) {
-        output.insert(
-            "session_hint".to_string(),
-            serde_json::to_value(hint).unwrap_or(Value::Null),
-        );
-    }
-    result.output = Value::Object(output);
 }
 
 fn model_facing_recovery_event(event: &sessions::SessionEvent) -> Value {
@@ -421,18 +405,6 @@ pub(crate) fn add_session_context_continuity(
     ) {
         return false;
     }
-    let mut output = match std::mem::take(&mut result.output) {
-        Value::Object(map) => map,
-        other => {
-            let mut map = serde_json::Map::new();
-            map.insert("value".to_string(), other);
-            map
-        }
-    };
-    output.insert(
-        "session_context_revision".to_string(),
-        Value::from(recorded.context_revision),
-    );
     let pre_response_context_revision = recorded.pre_response_context_revision;
     let (status, ack_revision, needs_recovery, events_after_ack) = match recorded
         .ack_session_context_revision
@@ -462,30 +434,48 @@ pub(crate) fn add_session_context_continuity(
         sessions::SessionContextRevisionAck::Unacknowledged => ("unacknowledged", None, true, None),
         sessions::SessionContextRevisionAck::Invalid => ("invalid", None, true, None),
     };
-    if needs_recovery {
-        let total_retained = recorded.recovery_events.len();
-        let events = bounded_model_facing_recovery_events(recorded);
-        let omitted_count = total_retained.saturating_sub(events.len());
-        let mut continuity = json!({
-            "status": status,
-            "ack_revision": ack_revision,
-            "pre_call_revision": recorded.pre_call_context_revision,
-            "history_lost": recorded.history_lost,
-        });
-        if let Some(events_after_ack) = events_after_ack {
-            continuity["events_after_ack"] = Value::from(events_after_ack);
-        }
-        output.insert("session_continuity".to_string(), continuity);
-        output.insert(
-            "session_recovery".to_string(),
-            json!({
-                "model_facing_events": events,
-                "omitted_count": omitted_count,
-                "truncated": omitted_count > 0,
-                "history_lost": recorded.history_lost,
-            }),
-        );
+    if !needs_recovery && !recorded.checkpoint_advanced {
+        return false;
     }
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    output.insert(
+        "session_context_revision".to_string(),
+        Value::from(recorded.context_revision),
+    );
+    if !needs_recovery {
+        result.output = Value::Object(output);
+        return false;
+    }
+
+    let total_retained = recorded.recovery_events.len();
+    let events = bounded_model_facing_recovery_events(recorded);
+    let omitted_count = total_retained.saturating_sub(events.len());
+    let mut continuity = json!({
+        "status": status,
+        "ack_revision": ack_revision,
+        "pre_call_revision": recorded.pre_call_context_revision,
+        "history_lost": recorded.history_lost,
+    });
+    if let Some(events_after_ack) = events_after_ack {
+        continuity["events_after_ack"] = Value::from(events_after_ack);
+    }
+    output.insert("session_continuity".to_string(), continuity);
+    output.insert(
+        "session_recovery".to_string(),
+        json!({
+            "model_facing_events": events,
+            "omitted_count": omitted_count,
+            "truncated": omitted_count > 0,
+            "history_lost": recorded.history_lost,
+        }),
+    );
     result.output = Value::Object(output);
     true
 }

@@ -85,6 +85,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::Shell,
         RunnerFeature::Git,
         RunnerFeature::ApplyTextEditLineScope,
+        RunnerFeature::ApplyPatchMatchMetadata,
         RunnerFeature::ApplyPatchStrictMatching,
         RunnerFeature::SshShell,
         RunnerFeature::PersistentShell,
@@ -122,19 +123,31 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
 }
 
 #[tokio::test]
-async fn strict_patch_capability_requires_base_apply_patch_capability() {
+async fn patch_contract_capabilities_require_their_prerequisites() {
     let registry = ShellClientRegistry::default();
-    let mut registration = runner_registration("strict-without-base", "inst-a", Vec::new());
+    let mut registration = runner_registration("metadata-without-base", "inst-a", Vec::new());
     registration.capabilities = with_wire_feature(
         &v2_baseline_capabilities(),
-        RunnerFeature::ApplyPatchStrictMatching,
+        RunnerFeature::ApplyPatchMatchMetadata,
         true,
     );
 
     let error = registry.register(registration).await.unwrap_err();
     assert_eq!(
         error,
-        "apply_patch_strict_matching capability requires apply_patch capability"
+        "apply_patch_match_metadata capability requires apply_patch capability"
+    );
+
+    let mut registration = runner_registration("strict-without-metadata", "inst-b", Vec::new());
+    registration.capabilities = with_wire_feature(
+        &with_wire_feature(&v2_baseline_capabilities(), RunnerFeature::ApplyPatch, true),
+        RunnerFeature::ApplyPatchStrictMatching,
+        true,
+    );
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(
+        error,
+        "apply_patch_strict_matching capability requires apply_patch_match_metadata capability"
     );
 }
 

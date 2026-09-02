@@ -163,9 +163,15 @@ pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text
 /// Missing on older Runners is false and is never inferred from file_write or
 /// protocol generation, so a new Server cannot send this request kind to an old Runner.
 pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
+/// The Runner returns the complete trusted apply_patch patch-plan/match metadata
+/// required by the 0.4 success contract. Missing on older Runners is false; a
+/// current Server must reject apply_patch before dispatch rather than accepting a
+/// legacy success shape.
+pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA: &str = "apply_patch_match_metadata";
 /// The Runner understands `strict_matching=true` for apply_patch and rejects
 /// any update chunk whose positioning is not exact and unique before writing.
-/// Missing on older Runners is false and is never inferred from apply_patch.
+/// Missing on older Runners is false and is never inferred from apply_patch or
+/// apply_patch_match_metadata.
 pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING: &str = "apply_patch_strict_matching";
 pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
@@ -360,6 +366,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
     SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
@@ -470,8 +477,13 @@ pub struct ShellClientCapabilities {
     /// Missing on older Runners is false and never follows from generic file_write.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_patch: bool,
+    /// Complete per-chunk patch-plan/match metadata for successful apply_patch
+    /// results. Missing on older Runners is false and never follows from apply_patch.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_patch_match_metadata: bool,
     /// Fail-closed exact-and-unique positioning for apply_patch requests that
-    /// explicitly opt into strict_matching. Missing on older Runners is false.
+    /// explicitly opt into strict_matching. Missing on older Runners is false and
+    /// requires the current match-metadata success contract.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_patch_strict_matching: bool,
     #[serde(default)]
@@ -669,6 +681,7 @@ impl Default for ShellClientCapabilities {
             apply_text_edit_occurrence: false,
             apply_text_edit_line_scope: false,
             apply_patch: false,
+            apply_patch_match_metadata: false,
             apply_patch_strict_matching: false,
             git: false,
             jobs: false,
@@ -3212,6 +3225,7 @@ mod envelope_tests {
                 apply_text_edit_occurrence: false,
                 apply_text_edit_line_scope: false,
                 apply_patch: false,
+                apply_patch_match_metadata: false,
                 apply_patch_strict_matching: false,
                 git: false,
                 jobs: true,

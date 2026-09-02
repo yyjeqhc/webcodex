@@ -442,9 +442,6 @@ fn search_project_texts_output_schema() -> Value {
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
             "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
-            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
-            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
-            "session_event_id": schema_type("string", "Outer batch Session event id."),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },
@@ -470,9 +467,6 @@ fn search_project_texts_output_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "items": {"type": "array", "minItems": 1, "maxItems": 8, "items": sparse_success_item},
-            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
-            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
-            "session_event_id": schema_type("string", "Outer batch Session event id."),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },
@@ -536,9 +530,6 @@ fn read_file_output_schema() -> Value {
                 {"type": "null"}
             ]
         },
-        "session_recorded": schema_type("boolean", "True when this call was recorded in a provided session_id."),
-        "session_id": schema_type("string", "Session id used for telemetry recording."),
-        "session_event_id": schema_type("string", "Session event id for the recorded call."),
         "session_hint": session_hint_schema(),
         "permission": permission_decision_schema()
     });
@@ -554,9 +545,6 @@ fn read_file_output_schema() -> Value {
         },
         "path": schema_type("string", "Project-relative input path."),
         "state_changed": {"type": "boolean", "const": false},
-        "session_recorded": schema_type("boolean", "True when this call was recorded in a provided session_id."),
-        "session_id": schema_type("string", "Session id used for telemetry recording."),
-        "session_event_id": schema_type("string", "Session event id for the recorded call."),
         "session_hint": session_hint_schema(),
         "permission": permission_decision_schema()
     });
@@ -806,9 +794,6 @@ fn read_files_output_schema() -> Value {
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
             "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
-            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
-            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
-            "session_event_id": schema_type("string", "Session event id for the outer batch call."),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },
@@ -834,9 +819,6 @@ fn read_files_output_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "items": {"type": "array", "minItems": 1, "maxItems": 8, "items": sparse_complete_item},
-            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
-            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
-            "session_event_id": schema_type("string", "Session event id for the outer batch call."),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },

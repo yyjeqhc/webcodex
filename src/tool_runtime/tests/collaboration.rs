@@ -465,12 +465,7 @@ fn urgent_guidance_attention_is_bounded_safe_and_also_decorates_failure_results(
         "synthetic failure",
         json!({"error_kind": "synthetic"}),
     );
-    super::super::add_session_telemetry_hint(
-        &mut failed,
-        &runtime.sessions,
-        &session.session_id,
-        Some("evt_attention_bounds".to_string()),
-    );
+    super::super::add_session_hint(&mut failed, &runtime.sessions, &session.session_id);
     assert_eq!(failed.output["session_hint"]["attention_required"], true);
     super::super::session_context::add_session_attention(
         &mut failed,

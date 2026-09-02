@@ -14,7 +14,7 @@ fn apply_patch_edit_summary_schema() -> Value {
             "new_line_count": {"type": "integer", "minimum": 0},
             "end_of_file": {"type": "boolean"},
             "match_mode": {
-                "description": "Current-Runner positioning mode. Absent on legacy apply_patch success admitted under the legacy response contract; null for unanchored append.",
+                "description": "Validated current apply_patch positioning mode; null only for unanchored append.",
                 "anyOf": [
                     {"type": "string", "enum": ["exact", "trim_end", "trim"]},
                     {"type": "null"}
@@ -23,15 +23,15 @@ fn apply_patch_edit_summary_schema() -> Value {
             "match_source": {
                 "type": "string",
                 "enum": ["old_lines", "change_context", "append"],
-                "description": "Current-Runner positioning source. Absent on legacy apply_patch success."
+                "description": "Validated positioning source for this current apply_patch chunk."
             },
             "matched_start_line": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Current-Runner 1-based matched/insertion line. Absent on legacy apply_patch success."
+                "description": "Validated 1-based matched/insertion line."
             },
             "candidate_count": {
-                "description": "Current-Runner candidate count in the selected match tier. Absent on legacy apply_patch success; null for unanchored append.",
+                "description": "Validated candidate count in the selected match tier; null only for unanchored append.",
                 "anyOf": [
                     {"type": "integer", "minimum": 1},
                     {"type": "null"}
@@ -39,12 +39,13 @@ fn apply_patch_edit_summary_schema() -> Value {
             },
             "strict_match": {
                 "type": "boolean",
-                "description": "Current-Runner exact-and-unique positioning fact. Absent on legacy apply_patch success."
+                "description": "Validated exact-and-unique positioning fact."
             }
         },
         "required": [
             "chunk_index", "change_context_present", "old_line_count", "new_line_count",
-            "end_of_file"
+            "end_of_file", "match_mode", "match_source", "matched_start_line",
+            "candidate_count", "strict_match"
         ]
     })
 }
@@ -53,7 +54,7 @@ fn apply_patch_file_summary_schema() -> Value {
     json!({
         "type": "array",
         "maxItems": crate::apply_patch_shared::MAX_CODEX_PATCH_FILE_CHANGES,
-        "description": "Validated per-file patch-plan summaries. Current Runners expose bounded update/rename match metadata; legacy apply_patch Runners may omit only those additive match fields. Never file content.",
+        "description": "Validated per-file patch-plan summaries for the current 0.4 apply_patch success contract, including bounded update/rename match metadata. Never file content.",
         "items": {
             "type": "object",
             "additionalProperties": false,

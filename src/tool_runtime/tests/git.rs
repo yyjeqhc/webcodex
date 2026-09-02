@@ -3672,7 +3672,9 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     let result = show_task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
+    assert!(result.output.get("session_id").is_none());
     assert_eq!(result.output["session"]["found"], true);
     assert_eq!(result.output["session"]["counts"]["tool_calls"], 1);
     assert!(result.output["session"]["recent_events"]

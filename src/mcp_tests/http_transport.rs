@@ -1184,7 +1184,7 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     .await;
     assert_eq!(status, StatusCode::OK, "{second_cached_read_body}");
     let second_cached_read = stateless_tool_output(&second_cached_read_body);
-    assert_eq!(second_cached_read["session_context_revision"], 1);
+    assert!(second_cached_read.get("session_context_revision").is_none());
     assert!(second_cached_read.get("session_continuity").is_none());
     assert!(second_cached_read.get("session_recovery").is_none());
     assert_eq!(runtime.sessions.context_revision(&session_id), Some(1));

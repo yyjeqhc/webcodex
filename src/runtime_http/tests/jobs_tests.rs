@@ -73,7 +73,9 @@ async fn dedicated_run_shell_with_session_id_records_event() {
     assert_eq!(super::effective_status(&resp), StatusCode::OK);
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], true);
-    assert_eq!(body["output"]["session_recorded"], true);
+    assert!(body["output"].get("session_recorded").is_none());
+    assert!(body["output"].get("session_event_id").is_none());
+    assert!(body["output"].get("session_id").is_none());
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")

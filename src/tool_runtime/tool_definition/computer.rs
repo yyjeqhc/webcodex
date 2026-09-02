@@ -6,7 +6,8 @@ use super::AgentCapability::{
 };
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, model_spec, require_all_scopes, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER,
+    def, model_spec, permission_risk, require_all_scopes, unit_arguments, ToolDefinition,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_COMPUTER,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::{Artifact, None},
@@ -55,7 +56,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         &[COMPUTER_READ, COMPUTER_CLIPBOARD_READ],
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "computer_write_clipboard",
                 ModelVisible,
@@ -71,11 +73,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMPUTER_CLIPBOARD_WRITE),
                 false,
                 None,
-                false,
+                true,
                 false,
             ),
             "Replace exact macOS or Windows clipboard with bounded Unicode text using NSPasteboardTypeString or CF_UNICODETEXT, clearing prior formats. Never pastes, focuses, activates, restores, retries, or reads back implicitly. Unknown outcomes require separate clipboard-read reconciliation.",
             computer_write_clipboard_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         &[COMPUTER_CONTROL, COMPUTER_CLIPBOARD_WRITE],
     ),
@@ -110,7 +114,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ],
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "computer_pointer_click",
                 ModelVisible,
@@ -126,11 +131,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMPUTER_POINTER_CONTROL),
                 false,
                 None,
-                false,
+                true,
                 false,
             ),
             "Send a macOS or Windows left click at exact display-local source coordinates using the unspent snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry; reconcile unknown outcomes with fresh computer_snapshot_display.",
             computer_pointer_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         &[
             COMPUTER_READ,
@@ -362,8 +369,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Activate and raise one exact previously observed macOS or Windows window surface. The tool accepts no app name, PID, path, bundle, command, or fallback target. Stale surfaces fail closed; if delivery may have occurred but the response is lost, observe current UI state before retrying.",
         computer_activate_window_input_schema,
     ),
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "computer_control",
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
@@ -378,11 +386,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(COMPUTER_CONTROL),
             false,
             None,
+            true,
             false,
-            false,
+            ),
+            "Perform native macOS Accessibility or Windows UI Automation press/focus on an exact reusable element_id. Stale, protected, disabled, or unsupported targets fail closed. There is no script, shell, coordinate, or generic fallback; uncertain post-dispatch outcomes require re-observation.",
+            computer_control_input_schema,
         ),
-        "Perform native macOS Accessibility or Windows UI Automation press/focus on an exact reusable element_id. Stale, protected, disabled, or unsupported targets fail closed. There is no script, shell, coordinate, or generic fallback; uncertain post-dispatch outcomes require re-observation.",
-        computer_control_input_schema,
+        PERMISSION_RISK_WRITE,
     ),
     model_spec(
         def(
@@ -406,8 +416,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Scroll one exact macOS Accessibility or Windows UIA element into view with the native semantic scroll action. Stale, mismatched, unsupported, or protected targets fail closed; no wheel, coordinate, script, or shell fallback. Unknown post-dispatch outcomes require re-observation before retrying.",
         computer_scroll_to_element_input_schema,
     ),
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "computer_key_input",
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
@@ -422,11 +433,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(COMPUTER_CONTROL),
             false,
             None,
+            true,
             false,
-            false,
+            ),
+            "Send one closed key to an exact revalidated frontmost/focused macOS or Windows window. Windows rejects command, unsafe system chords, and interfering held keys; input uses the shared input stream. No text, keycodes, repeat/held state, implicit focus, or fallback. Re-observe unknown outcomes.",
+            computer_key_input_input_schema,
         ),
-        "Send one closed key to an exact revalidated frontmost/focused macOS or Windows window. Windows rejects command, unsafe system chords, and interfering held keys; input uses the shared input stream. No text, keycodes, repeat/held state, implicit focus, or fallback. Re-observe unknown outcomes.",
-        computer_key_input_input_schema,
+        PERMISSION_RISK_WRITE,
     ),
     model_spec(
         def(

@@ -2,7 +2,7 @@ use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
-    TOOL_CATEGORY_AGENT_TASK,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
 };
 use crate::auth::scopes::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 use crate::tool_runtime::metadata::{
@@ -96,7 +96,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "assign_agent_task",
                 ModelVisible,
@@ -112,11 +113,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Explicitly assign or reassign an owned AgentTask to an owned durable Agent. A live unexpired Attempt fences reassignment; lease expiry never transfers work automatically. Assignment grants no Project or executor authority.",
             assign_agent_task_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
@@ -178,9 +181,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         PERMISSION_RISK_JOB,
     ),
-    model_spec(
-        require_all_scopes(
-            def(
+    permission_risk(
+        model_spec(
+            require_all_scopes(
+                def(
                 "reconcile_agent_task_coding_run",
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
@@ -195,16 +199,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
+                true,
                 false,
-                false,
+                ),
+                &[COMMUNICATION_READ, COMMUNICATION_MANAGE, CODING_AGENT_RUN],
             ),
-            &[COMMUNICATION_READ, COMMUNICATION_MANAGE, CODING_AGENT_RUN],
+            "Reconcile only the exact CodingAgentRun already durably bound to one owned AgentTaskAttempt. It never starts execution, chooses a provider, changes intent, or requires the old browser's Attempt fence. Authoritative Completed/Failed/Cancelled truth can terminalize the exact latest bound Attempt even after its ordinary lease expires; Lost remains outcome_unknown.",
+            reconcile_agent_task_coding_run_input_schema,
         ),
-        "Reconcile only the exact CodingAgentRun already durably bound to one owned AgentTaskAttempt. It never starts execution, chooses a provider, changes intent, or requires the old browser's Attempt fence. Authoritative Completed/Failed/Cancelled truth can terminalize the exact latest bound Attempt even after its ordinary lease expires; Lost remains outcome_unknown.",
-        reconcile_agent_task_coding_run_input_schema,
+        PERMISSION_RISK_WRITE,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "heartbeat_agent_task_attempt",
                 ModelVisible,
@@ -220,16 +227,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Renew only the exact latest unexpired AgentTaskAttempt identified by task, attempt, assignee, opaque fence, and current Attempt-local controller generation. Expired, superseded, wrong-generation, or wrong-fence Attempts remain stale and cannot be revived.",
             heartbeat_agent_task_attempt_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "complete_agent_task_attempt",
                 ModelVisible,
@@ -245,11 +255,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Commit terminal success or failure only from the exact latest unexpired AgentTaskAttempt with matching assignee, fence, and controller generation. Completion is independently keyed: exact retry replays once, changed reuse conflicts, and stale Attempts cannot write Task truth.",
             complete_agent_task_attempt_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),

@@ -711,7 +711,7 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
 }
 
 #[tokio::test]
-async fn full_operator_tools_list_projects_destructive_hints_for_project_mutations() {
+async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mutations() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let listed = handle_mcp_request(
         &runtime,
@@ -738,6 +738,25 @@ async fn full_operator_tools_list_projects_destructive_hints_for_project_mutatio
         "import_conversation_files_to_project",
         "artifact_upload_finish",
         "artifact_upload_abort",
+        "assign_agent_task",
+        "reconcile_agent_task_coding_run",
+        "heartbeat_agent_task_attempt",
+        "complete_agent_task_attempt",
+        "update_agent_identity",
+        "attach_agent_endpoint",
+        "detach_agent_endpoint",
+        "consume_agent_deliveries",
+        "consume_agent_wake",
+        "coding_agent_cancel",
+        "computer_write_clipboard",
+        "computer_pointer_click",
+        "computer_control",
+        "computer_key_input",
+        "update_session_context",
+        "close_session",
+        "resolve_session_message",
+        "complete_session_message",
+        "cargo_fmt",
     ] {
         let tool = tools
             .iter()
@@ -754,6 +773,12 @@ async fn full_operator_tools_list_projects_destructive_hints_for_project_mutatio
         "artifact_upload_begin",
         "artifact_upload_chunk",
         "computer_save_snapshot",
+        "start_agent_task_attempt",
+        "create_conversation",
+        "post_conversation_message",
+        "post_session_message",
+        "work_on_project",
+        "cargo_check",
     ] {
         let tool = tools
             .iter()

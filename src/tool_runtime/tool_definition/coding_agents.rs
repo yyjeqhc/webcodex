@@ -2,7 +2,7 @@ use super::AgentCapability::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
-    TOOL_CATEGORY_CODING_AGENT,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_CODING_AGENT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -65,8 +65,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Observe bounded normalized events and lifecycle for one existing CodingAgentRun. Return the opaque token for only-new follow-ups; history loss/reset is explicit. Observation never starts, retries, or resumes ACP work.",
         coding_agent_observe_input_schema,
     ),
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "coding_agent_cancel",
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
@@ -83,10 +84,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(CODING_AGENT_RUN),
             false,
             NoPath,
+            true,
             false,
-            false,
+            ),
+            "Request cancellation of one existing CodingAgentRun. This does not grant permission, retry a prompt, or create a replacement Run; observe the same run_id for authoritative terminal state.",
+            coding_agent_cancel_input_schema,
         ),
-        "Request cancellation of one existing CodingAgentRun. This does not grant permission, retry a prompt, or create a replacement Run; observe the same run_id for authoritative terminal state.",
-        coding_agent_cancel_input_schema,
+        PERMISSION_RISK_WRITE,
     ),
 ];

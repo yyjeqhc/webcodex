@@ -28,7 +28,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(JOB_RUN),
             true,
             NoPath,
-            false,
+            true,
             false,
         ),
         "Run cargo fmt. With check=true it is read-only validation; a long check continues as the same execution and returns job_id for observation. Mutating format stays synchronous.",

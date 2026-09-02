@@ -1,5 +1,8 @@
 use super::ToolVisibility::ModelVisible;
-use super::{def, model_spec, require_all_scopes, ToolDefinition, TOOL_CATEGORY_COMMUNICATION};
+use super::{
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_COMMUNICATION,
+};
 use crate::auth::scopes::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -68,7 +71,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "update_agent_identity",
                 ModelVisible,
@@ -84,16 +88,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Update an owned Agent Card behind expected_profile_revision. Canonical agent_id never changes, and handle/display-name collisions remain allowed. On uncertain outcome, re-read the Agent instead of changing the revision fence blindly.",
             update_agent_identity_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "attach_agent_endpoint",
                 ModelVisible,
@@ -109,11 +116,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Attach a replacement Host/Client Endpoint to an owned durable Agent. The Server assigns a new monotonic controller generation and fences every older attachment. Public attachment is not wake-capable; only callable process-local Host adapter registration may enable continuation. Exact idempotency replay returns the original Endpoint.",
             attach_agent_endpoint_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
@@ -143,7 +152,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "detach_agent_endpoint",
                 ModelVisible,
@@ -159,11 +169,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Detach a principal-bound Agent Endpoint without deleting the durable Agent, Conversation transcript, or Inbox. Repeating the same detach is a safe desired-state retry; a new Endpoint may later attach the same agent_id.",
             detach_agent_endpoint_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
@@ -293,7 +305,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "consume_agent_deliveries",
                 ModelVisible,
@@ -309,16 +322,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Mark exact deliveries consumed in an Agent Inbox proven by an active principal-bound Endpoint. This mutates recipient state only, never the append-only Message or Wake state. Repeating already-consumed ids is a safe desired-state retry.",
             consume_agent_deliveries_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        model_spec(
+        permission_risk(
+            model_spec(
             def(
                 "consume_agent_wake",
                 ModelVisible,
@@ -334,11 +350,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
                 NoPath,
-                false,
+                true,
                 false,
             ),
             "Consume one exact durable Agent Wake continuation after accepting the resumed model turn. wake_id and consume_token identify the exact continuation, while endpoint_id and expected_controller_generation fence stale attachments. Repeating the same exact consume returns already_consumed without another state change. This operation never consumes Agent Inbox deliveries and grants no Project, filesystem, Runner, Task, or Workflow Session authority.",
             consume_agent_wake_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),

@@ -101,6 +101,25 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "import_conversation_files_to_project",
         "artifact_upload_finish",
         "artifact_upload_abort",
+        "assign_agent_task",
+        "reconcile_agent_task_coding_run",
+        "heartbeat_agent_task_attempt",
+        "complete_agent_task_attempt",
+        "update_agent_identity",
+        "attach_agent_endpoint",
+        "detach_agent_endpoint",
+        "consume_agent_deliveries",
+        "consume_agent_wake",
+        "coding_agent_cancel",
+        "computer_write_clipboard",
+        "computer_pointer_click",
+        "computer_control",
+        "computer_key_input",
+        "update_session_context",
+        "close_session",
+        "resolve_session_message",
+        "complete_session_message",
+        "cargo_fmt",
     ] {
         let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
         assert!(metadata.destructive, "{name}");
@@ -116,6 +135,12 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "artifact_upload_begin",
         "artifact_upload_chunk",
         "computer_save_snapshot",
+        "start_agent_task_attempt",
+        "create_conversation",
+        "post_conversation_message",
+        "post_session_message",
+        "work_on_project",
+        "cargo_check",
     ] {
         let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
         assert!(!metadata.destructive, "{name}");

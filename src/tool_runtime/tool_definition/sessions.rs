@@ -2,8 +2,8 @@ use super::AgentCapability::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     adaptive_runtime_direct, context_recovery_only, def, extra_accepted_flattened_args, model_spec,
-    requires_explicit_business_session, ToolDefinition, TOOL_CATEGORY_SESSION,
-    TOOL_CATEGORY_VALIDATION,
+    permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
@@ -131,8 +131,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured.",
         session_summary_input_schema,
     )),
-    requires_explicit_business_session(model_spec(
-        def(
+    requires_explicit_business_session(permission_risk(
+        model_spec(
+            def(
             "update_session_context",
             ModelVisible,
             TOOL_CATEGORY_SESSION,
@@ -147,14 +148,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             NoPath,
+            true,
             false,
-            false,
+            ),
+            "Update Session defaults. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
+            update_session_context_input_schema,
         ),
-        "Update Session defaults. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
-        update_session_context_input_schema,
+        PERMISSION_RISK_WRITE,
     )),
-    requires_explicit_business_session(model_spec(
-        def(
+    requires_explicit_business_session(permission_risk(
+        model_spec(
+            def(
             "close_session",
             ModelVisible,
             TOOL_CATEGORY_SESSION,
@@ -169,11 +173,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(SESSION_COLLABORATE),
             false,
             NoPath,
+            true,
             false,
-            false,
+            ),
+            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed; unknown ids fail without create. finish_coding_task does not close.",
+            close_session_input_schema,
         ),
-        "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed; unknown ids fail without create. finish_coding_task does not close.",
-        close_session_input_schema,
+        PERMISSION_RISK_WRITE,
     )),
     requires_explicit_business_session(model_spec(
         def(
@@ -285,8 +291,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Observe Session message-state delta after an opaque durable cursor. No token establishes the current baseline and returns no history; token calls may wait once for change. Reports retention loss; never a subscription, delivery receipt, or model-context proof.",
         observe_session_messages_input_schema,
     )),
-    requires_explicit_business_session(model_spec(
-        def(
+    requires_explicit_business_session(permission_risk(
+        model_spec(
+            def(
             "resolve_session_message",
             ModelVisible,
             TOOL_CATEGORY_SESSION,
@@ -301,14 +308,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(SESSION_COLLABORATE),
             false,
             NoPath,
+            true,
             false,
-            false,
+            ),
+            "Mark a session-local ledger message resolved. Idempotent when the message is already resolved; metadata-only and never modifies project files.",
+            resolve_session_message_input_schema,
         ),
-        "Mark a session-local ledger message resolved. Idempotent when the message is already resolved; metadata-only and never modifies project files.",
-        resolve_session_message_input_schema,
+        PERMISSION_RISK_WRITE,
     )),
-    requires_explicit_business_session(model_spec(
-        def(
+    requires_explicit_business_session(permission_risk(
+        model_spec(
+            def(
             "complete_session_message",
             ModelVisible,
             TOOL_CATEGORY_SESSION,
@@ -323,11 +333,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(SESSION_COLLABORATE),
             false,
             NoPath,
+            true,
             false,
-            false,
+            ),
+            "Atomically answer and resolve one exact open todo. expected_assignment_fence is required and must be the exact opaque fence from get_session_assignment; completion_key separately keeps uncertain-result retries idempotent.",
+            complete_session_message_input_schema,
         ),
-        "Atomically answer and resolve one exact open todo. expected_assignment_fence is required and must be the exact opaque fence from get_session_assignment; completion_key separately keeps uncertain-result retries idempotent.",
-        complete_session_message_input_schema,
+        PERMISSION_RISK_WRITE,
     )),
     requires_explicit_business_session(model_spec(
         def(

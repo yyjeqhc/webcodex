@@ -551,7 +551,28 @@ mod tests {
         ok == 1 && exit_code == 259 // 259 == STILL_ACTIVE
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
+    fn process_alive(pid: u32) -> bool {
+        // `kill(pid, 0)` also succeeds for zombies, while ManagedChild's Linux
+        // tree-liveness contract deliberately treats zombies as unable to run.
+        // Use /proc to align this test probe with that contract, but fall back
+        // conservatively if procfs cannot be read or parsed.
+        // SAFETY: signal 0 is an existence probe; the pid comes from our own
+        // test helper.
+        if (unsafe { libc::kill(pid as i32, 0) }) != 0 {
+            return false;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return true;
+        };
+        let Some((_, rest)) = stat.rsplit_once(')') else {
+            return true;
+        };
+        let state = rest.split_whitespace().next().unwrap_or("");
+        state != "Z" && state != "X"
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
     fn process_alive(pid: u32) -> bool {
         // SAFETY: signal 0 is an existence probe; the pid comes from our own
         // test helper.

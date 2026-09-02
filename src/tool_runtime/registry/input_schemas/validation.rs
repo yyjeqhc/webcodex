@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
+use crate::tool_runtime::sessions::TOOL_RESULT_EXPECTATION_FIELD;
 
 /// `timeout_secs` for read-only structured validation tools is the total
 /// runtime budget of the command. Short validations return immediately; a
@@ -17,6 +18,15 @@ fn with_validation_timeout_bounds(mut schema: Value, default: u64) -> Value {
     schema["properties"]["timeout_secs"]["default"] = json!(default);
     schema["properties"]["timeout_secs"]["description"] =
         json!(VALIDATION_TIMEOUT_SECS_DESCRIPTION);
+    schema
+}
+
+fn with_optional_result_expectation(mut schema: Value) -> Value {
+    schema["properties"][TOOL_RESULT_EXPECTATION_FIELD] = json!({
+        "type": "string",
+        "enum": ["success", "failure", "observe"],
+        "description": "Optional pre-execution validation-result expectation. Omit (or use success) for the normal success-required path; failure is for negative tests that must reach a completed known failing validation result; observe accepts either completed known validation result. The real validation ToolResult and process outcome remain unchanged, and pre-execution rejection, timeout, cancellation, transport failure, malformed output, or outcome-unknown never satisfy the expectation."
+    });
     schema
 }
 
@@ -65,11 +75,11 @@ pub(crate) fn cargo_fmt_input_schema() -> Value {
             }
         }
     }]);
-    schema
+    with_optional_result_expectation(schema)
 }
 
 pub(crate) fn cargo_check_input_schema() -> Value {
-    with_validation_timeout_bounds(
+    with_optional_result_expectation(with_validation_timeout_bounds(
         object_schema(with_optional_session_id(vec![
             ("project", "string", "Agent-registered project id.", true),
             (
@@ -106,7 +116,7 @@ pub(crate) fn cargo_check_input_schema() -> Value {
             ),
         ])),
         600,
-    )
+    ))
 }
 
 pub(crate) fn cargo_test_input_schema() -> Value {
@@ -172,7 +182,7 @@ pub(crate) fn cargo_test_input_schema() -> Value {
             }
         }
     }]);
-    schema
+    with_optional_result_expectation(schema)
 }
 
 pub(crate) fn go_test_input_schema() -> Value {
@@ -206,5 +216,5 @@ pub(crate) fn go_test_input_schema() -> Value {
     schema["properties"]["packages"]["items"]["minLength"] = json!(1);
     schema["properties"]["packages"]["items"]["maxLength"] =
         json!(crate::shell_protocol::GO_TEST_PACKAGE_MAX_BYTES);
-    schema
+    with_optional_result_expectation(schema)
 }

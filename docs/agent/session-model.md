@@ -238,6 +238,29 @@ arguments do not advertise it. Read-only mismatches may continue with a factual
 warning and without inheriting Session context; write/shell boundaries that
 require the escape fail closed on ordinary model paths.
 
+### Pre-declared execution result expectations
+
+Execution intent (`purpose=diagnostic`, `test`, and so on) is evidence metadata, not
+proof that a failed process is harmless. A started shell/process failure therefore
+remains actionable by default. Model-facing execution and structured-validation tools
+may instead declare a bounded `result_expectation` **before** execution: the omitted
+`success` default requires ordinary success; `failure` expects a completed known
+business failure; and `observe` accepts either completed known business result. The
+legacy internal `expected_failure` / `expected_failure_kind` recorder fields remain a
+separate compatibility/testing mechanism and are not exposed as the normal model
+contract.
+
+`run_process` additionally accepts a bounded `accepted_exit_codes` set for commands
+whose exit status is itself a result (for example a boolean Git predicate). Matching
+expectations change only ledger classification and validation assertion actionability;
+they never rewrite the ToolResult, exit code, effect evidence, authorization decision,
+or execution state. Pre-start rejection, permission/guard denial, transport failure,
+malformed result, timeout/cancellation, and unknown/lost outcomes remain fail-closed.
+A Job admission is not a terminal match: structured validation Jobs inherit the
+pre-declared expectation and classify it only when terminal evidence is materialized.
+If the originating expectation evidence is no longer retained, terminal projection
+falls back to the normal success-required behavior rather than guessing.
+
 ### Explicit persistent shell
 
 The full operator runtime has a separate, command-oriented `PersistentShell`

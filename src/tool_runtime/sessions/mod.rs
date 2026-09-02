@@ -39,7 +39,7 @@ pub(crate) use events::{
     is_tool_call_expectation_metadata_field, is_valid_session_id, normalize_observed_project_path,
     safe_model_facing_assertion_name, strip_tool_call_expectation_metadata,
     tool_failure_summary_from_events, tool_supports_model_facing_assertion_name,
-    validate_model_facing_assertion_name,
+    validate_model_facing_assertion_name, validate_model_facing_result_expectation,
     validation_output_summary_for_tool_result as execution_output_summary_for_tool_result,
     ExplorationToolKind, EXPLORATION_TOOL_NAMES,
 };
@@ -57,13 +57,13 @@ pub(crate) use model::{
     MAX_MESSAGE_COMPLETION_KEY_CHARS, MAX_MESSAGE_LIST_LIMIT, MAX_MESSAGE_RESOLUTION_CHARS,
     MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
     SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
-    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_ASSERTION_NAME_FIELD,
-    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_ACCEPTED_EXIT_CODES_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
     TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
     TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
-    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_RESULT_EXPECTATION_FIELD,
 };
 pub(crate) use store::SessionStore;
 pub(crate) use util::redact_and_bound_instruction;

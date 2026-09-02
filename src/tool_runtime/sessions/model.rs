@@ -57,6 +57,7 @@ pub(super) const MAX_MESSAGE_SUMMARY_CHARS: usize = 240;
 pub(super) const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
 pub(crate) const TOOL_EXPECTATION_RESULT_NONE: &str = "none";
 pub(crate) const TOOL_EXPECTATION_RESULT_MATCHED: &str = "matched_expected_failure";
+pub(crate) const TOOL_EXPECTATION_RESULT_MATCHED_RESULT: &str = "matched_expected_result";
 pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE: &str = "unexpected_failure";
 pub(crate) const TOOL_EXPECTATION_RESULT_MISMATCH: &str = "expectation_mismatch";
 pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_success";
@@ -74,10 +75,14 @@ pub(crate) const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: &str =
 pub(crate) const MAX_TOOL_CALL_ACK_MESSAGE_IDS: usize = 8;
 pub(crate) const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
 pub(crate) const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
+pub(crate) const TOOL_RESULT_EXPECTATION_FIELD: &str = "result_expectation";
+pub(crate) const TOOL_ACCEPTED_EXIT_CODES_FIELD: &str = "accepted_exit_codes";
 pub(crate) const TOOL_ASSERTION_NAME_FIELD: &str = "assertion_name";
 pub(crate) const TOOL_CALL_EXPECTATION_METADATA_FIELDS: &[&str] = &[
     TOOL_EXPECTED_FAILURE_FIELD,
     TOOL_EXPECTED_FAILURE_KIND_FIELD,
+    TOOL_RESULT_EXPECTATION_FIELD,
+    TOOL_ACCEPTED_EXIT_CODES_FIELD,
     TOOL_ASSERTION_NAME_FIELD,
 ];
 
@@ -683,6 +688,8 @@ pub(crate) struct ToolCallStart {
 pub(crate) struct ToolCallExpectation {
     pub(crate) expected_failure: bool,
     pub(crate) expected_failure_kind: Option<String>,
+    pub(crate) result_expectation: Option<String>,
+    pub(crate) accepted_exit_codes: Vec<i64>,
     pub(crate) assertion_name: Option<String>,
 }
 
@@ -854,6 +861,10 @@ pub(crate) struct SessionEvent {
     pub(crate) expected_failure: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) expected_failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) result_expectation: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) accepted_exit_codes: Vec<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) assertion_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

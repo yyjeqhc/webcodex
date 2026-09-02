@@ -19,13 +19,14 @@ use super::model::{
     LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
     LOGICAL_INVOCATION_ROLE_RECORDER, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
     MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
-    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    TOOL_ACCEPTED_EXIT_CODES_FIELD, TOOL_ASSERTION_NAME_FIELD,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
     TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
-    TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
-    TOOL_EXPECTATION_RESULT_NONE, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
-    TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD,
+    TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MATCHED_RESULT,
+    TOOL_EXPECTATION_RESULT_MISMATCH, TOOL_EXPECTATION_RESULT_NONE,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS,
+    TOOL_EXPECTED_FAILURE_FIELD, TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
 };
 use super::util::redact_and_bound_value;
 use super::util::{bound_summary_string, looks_like_secret_string, validation_excerpt};
@@ -321,11 +322,87 @@ pub(crate) fn validate_model_facing_assertion_name(
     Ok(())
 }
 
+pub(crate) fn tool_supports_model_facing_result_expectation(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "run_process"
+            | "run_script"
+            | "run_shell"
+            | "cargo_fmt"
+            | "cargo_check"
+            | "cargo_test"
+            | "go_test"
+    )
+}
+
+pub(crate) fn validate_model_facing_result_expectation(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<(), String> {
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let result_expectation = object.get(TOOL_RESULT_EXPECTATION_FIELD);
+    let accepted_exit_codes = object.get(TOOL_ACCEPTED_EXIT_CODES_FIELD);
+    if result_expectation.is_none() && accepted_exit_codes.is_none() {
+        return Ok(());
+    }
+    if !tool_supports_model_facing_result_expectation(tool_name) {
+        return Err(format!(
+            "invalid arguments for tool '{tool_name}': result expectation is not supported by this tool"
+        ));
+    }
+    if let Some(value) = result_expectation {
+        let Some(value) = value.as_str() else {
+            return Err(format!(
+                "invalid arguments for tool '{tool_name}': result_expectation must be one of success, failure, or observe"
+            ));
+        };
+        if !matches!(value, "success" | "failure" | "observe") {
+            return Err(format!(
+                "invalid arguments for tool '{tool_name}': result_expectation must be one of success, failure, or observe"
+            ));
+        }
+    }
+    if let Some(value) = accepted_exit_codes {
+        if tool_name != "run_process" {
+            return Err(format!(
+                "invalid arguments for tool '{tool_name}': accepted_exit_codes is supported only by run_process"
+            ));
+        }
+        let Some(values) = value.as_array() else {
+            return Err(
+                "invalid arguments for tool 'run_process': accepted_exit_codes must be a non-empty array of integers"
+                    .to_string(),
+            );
+        };
+        if values.is_empty()
+            || values.len() > 32
+            || values.iter().any(|value| value.as_i64().is_none())
+        {
+            return Err(
+                "invalid arguments for tool 'run_process': accepted_exit_codes must contain 1..32 integers"
+                    .to_string(),
+            );
+        }
+        if result_expectation
+            .and_then(Value::as_str)
+            .is_some_and(|value| value != "observe")
+        {
+            return Err(
+                "invalid arguments for tool 'run_process': accepted_exit_codes may be combined only with result_expectation=observe (or with result_expectation omitted)"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCallExpectation {
     let Some(obj) = arguments.as_object() else {
         return ToolCallExpectation::default();
     };
-    let expected_failure = obj
+    let legacy_expected_failure = obj
         .get(TOOL_EXPECTED_FAILURE_FIELD)
         .and_then(Value::as_bool)
         .unwrap_or(false);
@@ -341,10 +418,29 @@ pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCal
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(bound_summary_string);
+    let result_expectation = obj
+        .get(TOOL_RESULT_EXPECTATION_FIELD)
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "failure" | "observe"))
+        .map(str::to_string);
+    let expected_failure =
+        legacy_expected_failure || result_expectation.as_deref() == Some("failure");
+    let mut accepted_exit_codes = obj
+        .get(TOOL_ACCEPTED_EXIT_CODES_FIELD)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_i64)
+        .take(32)
+        .collect::<Vec<_>>();
+    accepted_exit_codes.sort_unstable();
+    accepted_exit_codes.dedup();
 
     ToolCallExpectation {
         expected_failure,
         expected_failure_kind,
+        result_expectation,
+        accepted_exit_codes,
         assertion_name,
     }
 }
@@ -387,7 +483,7 @@ pub(crate) fn tool_failure_summary_from_events(events: &[SessionEvent], limit: u
             .as_deref()
             .unwrap_or_else(|| legacy_failure_expectation_result(event))
         {
-            TOOL_EXPECTATION_RESULT_MATCHED => {
+            TOOL_EXPECTATION_RESULT_MATCHED | TOOL_EXPECTATION_RESULT_MATCHED_RESULT => {
                 expected_count += 1;
                 if recent_expected.len() < limit {
                     recent_expected.push(tool_failure_event_summary(event));
@@ -449,7 +545,78 @@ pub(super) fn classify_failure_expectation(
     success: bool,
     expectation: &ToolCallExpectation,
     actual_failure_kind: Option<&str>,
+    output: &Value,
 ) -> &'static str {
+    let pending_job = output.get("job_id").and_then(Value::as_str).is_some()
+        && output.get("exit_code").is_none_or(Value::is_null)
+        && matches!(
+            output.get("execution_state").and_then(Value::as_str),
+            Some("started" | "queued" | "running")
+        );
+    if pending_job {
+        return TOOL_EXPECTATION_RESULT_NONE;
+    }
+    let completed = output.get("command_completed").and_then(Value::as_bool) == Some(true)
+        || output.get("execution_state").and_then(Value::as_str) == Some("completed");
+    let known_business_result = completed
+        && !matches!(
+            actual_failure_kind,
+            Some("outcome_unknown" | "timeout" | "timed_out" | "cancelled" | "execution_lost")
+        );
+
+    if !expectation.accepted_exit_codes.is_empty() {
+        let Some(exit_code) = output.get("exit_code").and_then(Value::as_i64) else {
+            return if success {
+                TOOL_EXPECTATION_RESULT_NONE
+            } else {
+                TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+            };
+        };
+        if !known_business_result {
+            return if success {
+                TOOL_EXPECTATION_RESULT_NONE
+            } else {
+                TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+            };
+        }
+        return if expectation.accepted_exit_codes.contains(&exit_code) {
+            if success {
+                TOOL_EXPECTATION_RESULT_NONE
+            } else {
+                TOOL_EXPECTATION_RESULT_MATCHED_RESULT
+            }
+        } else {
+            TOOL_EXPECTATION_RESULT_MISMATCH
+        };
+    }
+
+    if expectation.result_expectation.as_deref() == Some("observe") {
+        return if success {
+            TOOL_EXPECTATION_RESULT_NONE
+        } else if known_business_result {
+            TOOL_EXPECTATION_RESULT_MATCHED_RESULT
+        } else {
+            TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+        };
+    }
+
+    if expectation.result_expectation.as_deref() == Some("failure") {
+        if success {
+            return TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS;
+        }
+        if !known_business_result {
+            return TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE;
+        }
+        let Some(expected_kind) = expectation.expected_failure_kind.as_deref() else {
+            return TOOL_EXPECTATION_RESULT_MATCHED;
+        };
+        return if Some(expected_kind) == actual_failure_kind {
+            TOOL_EXPECTATION_RESULT_MATCHED
+        } else {
+            TOOL_EXPECTATION_RESULT_MISMATCH
+        };
+    }
+
     if expectation.expected_failure {
         if success {
             return TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS;
@@ -499,6 +666,7 @@ pub(super) fn classify_error_message(message: &str) -> String {
 pub(super) fn sanitize_failure_expectation_result(value: &str) -> String {
     match value {
         TOOL_EXPECTATION_RESULT_MATCHED
+        | TOOL_EXPECTATION_RESULT_MATCHED_RESULT
         | TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
         | TOOL_EXPECTATION_RESULT_MISMATCH
         | TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS
@@ -522,6 +690,9 @@ pub(super) fn tool_failure_event_summary(event: &SessionEvent) -> Value {
         "project": event.resolved_project.as_ref().or(event.project.as_ref()).cloned(),
         "assertion_name": event.assertion_name.clone(),
         "expected_failure_kind": event.expected_failure_kind.clone(),
+        "result_expectation": event.result_expectation.clone(),
+        "accepted_exit_codes": event.accepted_exit_codes.clone(),
+        "exit_code": event.exit_code,
         "actual_failure_kind": event.actual_failure_kind.clone(),
         "status": event.status.clone(),
         "success": success,

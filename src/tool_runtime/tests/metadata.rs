@@ -1697,18 +1697,30 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
         let tool_name = tool["name"].as_str().unwrap_or("unknown");
         for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
             let advertised = accepted.iter().any(|value| value.as_str() == Some(field));
-            if field == "assertion_name" {
-                assert_eq!(
-                    advertised,
-                    matches!(tool_name, "run_process" | "run_script" | "run_shell" | "run_job"),
-                    "{tool_name} manifest assertion_name exposure must match the model-facing generic validation tools"
-                );
-            } else {
-                assert!(
-                    !advertised,
-                    "{tool_name} manifest entry must not advertise internal expectation field {field}"
-                );
-            }
+            let expected = match field {
+                "assertion_name" => {
+                    matches!(
+                        tool_name,
+                        "run_process" | "run_script" | "run_shell" | "run_job"
+                    )
+                }
+                "result_expectation" => matches!(
+                    tool_name,
+                    "run_process"
+                        | "run_script"
+                        | "run_shell"
+                        | "cargo_fmt"
+                        | "cargo_check"
+                        | "cargo_test"
+                        | "go_test"
+                ),
+                "accepted_exit_codes" => tool_name == "run_process",
+                _ => false,
+            };
+            assert_eq!(
+                advertised, expected,
+                "{tool_name} manifest expectation-field exposure mismatch for {field}"
+            );
         }
     }
 

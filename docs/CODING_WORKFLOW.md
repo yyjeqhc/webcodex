@@ -171,6 +171,23 @@ minimum; incomplete or truncated evidence fails the validation contract without
 rewriting the process exit code. Count assertions cannot be combined with
 `no_run: true`.
 
+**Declare non-default execution outcomes before running them.** Supported execution and
+structured-validation tools accept `result_expectation` with three meanings: omitted
+(or `success`) keeps the normal fail-closed success requirement; `failure` is for a
+negative test whose completed known business failure is the expected assertion; and
+`observe` accepts either a completed known success or completed known business failure
+when the purpose is to inspect the result rather than judge pass/fail. The declaration
+changes only Session-ledger expectation classification: the real ToolResult, exit code,
+authorization, and execution state are never rewritten. Timeout, cancellation,
+transport failure, guard/permission rejection, malformed output, and `outcome_unknown`
+do not satisfy `failure` or `observe`.
+
+For predicate-style `run_process` commands, prefer `accepted_exit_codes` when the valid
+result set is known. For example, `git merge-base --is-ancestor` can use `[0, 1]` so
+both boolean answers are accepted while another exit code remains an expectation
+mismatch. Result expectations must be present before execution; they cannot be added
+retroactively to excuse an unexpected failure.
+
 **Read closeout as evidence, not completion authority.** `finish_coding_task`
 returns a deterministic advisory snapshot of recorded Session evidence,
 including validation, workspace, jobs, and tool history when requested. It does

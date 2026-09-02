@@ -941,14 +941,14 @@ fn compact_workflow_outcomes(
         push_unique(&mut integrity_errors, "expectation_mismatches");
         push_unique_action(
             &mut actions,
-            "review expected failure mismatches before proceeding",
+            "review result expectation mismatches before proceeding",
         );
     }
     if unexpected_success_count > 0 {
         push_unique(&mut integrity_warnings, "unexpected_successes");
         push_unique_action(
             &mut actions,
-            "review expected-failure assertions that unexpectedly succeeded",
+            "review failure expectations that unexpectedly succeeded",
         );
     }
     if expected_count > 0
@@ -958,7 +958,7 @@ fn compact_workflow_outcomes(
     {
         push_unique(
             &mut informational_notes,
-            "expected failure assertions matched",
+            "declared result expectations matched",
         );
     }
     if count_field(tool_failures, "historical_non_actionable_count") > 0 {
@@ -1401,13 +1401,13 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
     if expectation_mismatch_count > 0 {
         push(
             &mut actions,
-            "review expected failure mismatches before proceeding",
+            "review result expectation mismatches before proceeding",
         );
     }
     if unexpected_success_count > 0 {
         push(
             &mut actions,
-            "review expected-failure assertions that unexpectedly succeeded",
+            "review failure expectations that unexpectedly succeeded",
         );
     }
     let open_todos = output["counts"]["open_todos"].as_u64().unwrap_or(0);

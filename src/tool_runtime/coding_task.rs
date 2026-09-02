@@ -2739,13 +2739,13 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
     if expectation_mismatch_count > 0 {
         push(
             &mut actions,
-            "review expected failure mismatches before proceeding",
+            "review result expectation mismatches before proceeding",
         );
     }
     if unexpected_success_count > 0 {
         push(
             &mut actions,
-            "review expected-failure assertions that unexpectedly succeeded",
+            "review failure expectations that unexpectedly succeeded",
         );
     }
     if output

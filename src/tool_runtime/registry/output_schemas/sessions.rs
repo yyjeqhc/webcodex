@@ -501,34 +501,34 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "tool_failures",
-                open_object_schema("Expected/unexpected tool failure classification from the session ledger. unexpected_count remains raw historical evidence; historical_non_actionable_count identifies resolved validation or structurally proven fail-closed attempts; actionable_unexpected_count is the conservative current blocker projection. Expectation mismatches and unexpected successes remain separate integrity evidence. Never includes raw input payloads, command text, stdout/stderr, tails, or excerpts."),
+                open_object_schema("Pre-declared result-expectation classification from the session ledger. Default success remains fail-closed; matched negative/observation outcomes are expected evidence. unexpected_count remains raw historical evidence; historical_non_actionable_count identifies resolved validation or structurally proven fail-closed attempts; actionable_unexpected_count is the conservative current blocker projection. Expectation mismatches and unexpected successes remain separate integrity evidence. Never includes raw input payloads, command text, stdout/stderr, tails, or excerpts."),
             ),
             (
                 "expected_failed_tool_calls",
                 array_schema(
-                    open_object_schema("Bounded expected failed tool call summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."),
-                    "Expected failed tool calls whose expectation matched.",
+                    open_object_schema("Bounded matched-result tool call summary: event_id, tool_name, project, assertion_name, result_expectation, accepted_exit_codes, exit_code, expected_failure_kind, actual_failure_kind, status, success, created_at."),
+                    "Failed tool calls whose pre-declared failure/observation or accepted-exit expectation matched.",
                 ),
             ),
             (
                 "unexpected_failed_tool_calls",
                 array_schema(
-                    open_object_schema("Bounded unexpected failed tool call summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."),
+                    open_object_schema("Bounded unexpected failed tool call summary: event_id, tool_name, project, assertion_name, result_expectation, accepted_exit_codes, exit_code, expected_failure_kind, actual_failure_kind, status, success, created_at."),
                     "Raw bounded unexpected failed tool-call history. Entries may be historical non-actionable evidence; use tool_failures.actionable_unexpected_count for the current blocker projection.",
                 ),
             ),
             (
                 "expectation_mismatches",
                 array_schema(
-                    open_object_schema("Bounded expectation mismatch summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."),
-                    "Expected failures whose actual failure kind did not match.",
+                    open_object_schema("Bounded expectation mismatch summary: event_id, tool_name, project, assertion_name, result_expectation, accepted_exit_codes, exit_code, expected_failure_kind, actual_failure_kind, status, success, created_at."),
+                    "Pre-declared result expectations whose completed result did not match (for example an exit code outside accepted_exit_codes).",
                 ),
             ),
             (
                 "unexpected_success_tool_calls",
                 array_schema(
-                    open_object_schema("Bounded unexpected success summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."),
-                    "Calls marked expected_failure=true that succeeded.",
+                    open_object_schema("Bounded unexpected success summary: event_id, tool_name, project, assertion_name, result_expectation, accepted_exit_codes, exit_code, expected_failure_kind, actual_failure_kind, status, success, created_at."),
+                    "Calls whose pre-declared failure expectation unexpectedly succeeded.",
                 ),
             ),
             (

@@ -43,11 +43,12 @@ use super::model::{
     SessionExecutionContextUpdateOutcome, SessionGuardDenial, SessionGuards, SessionLifecycle,
     SessionLifecycleDenial, SessionMessage, SessionMessageClosureKind, SessionMessageError,
     SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
-    StoredSession, ToolCallRecorderMetadata, ToolCallStart, ToolEffectEventEvidence,
-    WithdrawSessionMessageOutcome, CALL_ID_PREFIX, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX,
-    MAX_CODING_INSTRUCTION_CHARS, MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_SUMMARY_LIMIT,
-    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    StoredSession, ToolCallExpectation, ToolCallRecorderMetadata, ToolCallStart,
+    ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
+    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
+    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
+    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX,
+    SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -1247,6 +1248,8 @@ impl SessionStore {
             error_kind: None,
             expected_failure: expectation.expected_failure.then_some(true),
             expected_failure_kind: expectation.expected_failure_kind.clone(),
+            result_expectation: expectation.result_expectation.clone(),
+            accepted_exit_codes: expectation.accepted_exit_codes.clone(),
             assertion_name: expectation.assertion_name.clone(),
             actual_failure_kind: None,
             failure_expectation_result: None,
@@ -1515,6 +1518,7 @@ impl SessionStore {
             success,
             &start.expectation,
             actual_failure_kind.as_deref(),
+            output,
         );
         let warning_kind = output
             .get("warning_kind")
@@ -1583,6 +1587,8 @@ impl SessionStore {
             error_kind: error.map(|_| error_kind.unwrap_or("runtime_error").to_string()),
             expected_failure: start.expectation.expected_failure.then_some(true),
             expected_failure_kind: start.expectation.expected_failure_kind,
+            result_expectation: start.expectation.result_expectation,
+            accepted_exit_codes: start.expectation.accepted_exit_codes,
             assertion_name: start.expectation.assertion_name,
             actual_failure_kind,
             failure_expectation_result: Some(failure_expectation_result.to_string()),
@@ -1678,6 +1684,32 @@ impl SessionStore {
         {
             return false;
         }
+        let inherited_expectation = self
+            .summary(session_id, Some(MAX_SUMMARY_LIMIT))
+            .and_then(|summary| {
+                summary
+                    .events
+                    .iter()
+                    .rev()
+                    .find(|event| {
+                        event.kind == "tool_call_finished"
+                            && event.job_id.as_deref() == Some(job_id)
+                            && event.tool_name == tool_name
+                            && event
+                                .resolved_project
+                                .as_deref()
+                                .or(event.project.as_deref())
+                                == project.as_deref()
+                    })
+                    .map(|event| ToolCallExpectation {
+                        expected_failure: event.expected_failure == Some(true),
+                        expected_failure_kind: event.expected_failure_kind.clone(),
+                        result_expectation: event.result_expectation.clone(),
+                        accepted_exit_codes: event.accepted_exit_codes.clone(),
+                        assertion_name: event.assertion_name.clone(),
+                    })
+            })
+            .unwrap_or_default();
         let process_succeeded = job_status == "completed" && exit_code == Some(0);
         let succeeded = process_succeeded && validation_passed.unwrap_or(true);
         let failure_kind = (!succeeded).then(|| match job_status {
@@ -1687,6 +1719,25 @@ impl SessionStore {
             _ if process_succeeded => "validation_failed".to_string(),
             _ => "command_exit_nonzero".to_string(),
         });
+        let terminal_execution_state = match job_status {
+            "completed" | "failed" => "completed",
+            "timeout" | "timed_out" => "timed_out",
+            "stopped" | "cancelled" => "cancelled",
+            "lost" => "outcome_unknown",
+            _ => "outcome_unknown",
+        };
+        let expectation_output = serde_json::json!({
+            "job_id": job_id,
+            "exit_code": exit_code,
+            "execution_state": terminal_execution_state,
+            "command_completed": matches!(job_status, "completed" | "failed") && exit_code.is_some(),
+        });
+        let failure_expectation_result = classify_failure_expectation(
+            succeeded,
+            &inherited_expectation,
+            failure_kind.as_deref(),
+            &expectation_output,
+        );
         let classification = SessionToolClassification::for_tool(tool_name);
         let mut input_summary = serde_json::json!({
             "execution_identity": validation_target_id,
@@ -1702,6 +1753,11 @@ impl SessionStore {
         {
             input_summary["validation_tool"] = serde_json::json!(validation_tool);
         }
+        let inherited_expected_failure = inherited_expectation.expected_failure;
+        let inherited_expected_failure_kind = inherited_expectation.expected_failure_kind.clone();
+        let inherited_result_expectation = inherited_expectation.result_expectation.clone();
+        let inherited_accepted_exit_codes = inherited_expectation.accepted_exit_codes.clone();
+        let inherited_assertion_name = inherited_expectation.assertion_name.clone();
         let event = SessionEvent {
             event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
             call_id: None,
@@ -1728,13 +1784,15 @@ impl SessionStore {
             duration_ms,
             status: Some(if succeeded { "succeeded" } else { "failed" }.to_string()),
             exit_code,
-            failure_kind,
+            failure_kind: failure_kind.clone(),
             error_kind: None,
-            expected_failure: None,
-            expected_failure_kind: None,
-            assertion_name,
-            actual_failure_kind: None,
-            failure_expectation_result: None,
+            expected_failure: inherited_expected_failure.then_some(true),
+            expected_failure_kind: inherited_expected_failure_kind,
+            result_expectation: inherited_result_expectation,
+            accepted_exit_codes: inherited_accepted_exit_codes,
+            assertion_name: assertion_name.or(inherited_assertion_name),
+            actual_failure_kind: failure_kind,
+            failure_expectation_result: Some(failure_expectation_result.to_string()),
             warning_kind: None,
             session_project: None,
             request_project: None,
@@ -2244,6 +2302,8 @@ fn coding_instruction_event(
         error_kind: None,
         expected_failure: None,
         expected_failure_kind: None,
+        result_expectation: None,
+        accepted_exit_codes: Vec::new(),
         assertion_name: None,
         actual_failure_kind: None,
         failure_expectation_result: None,
@@ -2333,6 +2393,8 @@ fn coding_agent_lifecycle_event(
         error_kind: terminal_error_code.map(bound_summary_string),
         expected_failure: None,
         expected_failure_kind: None,
+        result_expectation: None,
+        accepted_exit_codes: Vec::new(),
         assertion_name: None,
         actual_failure_kind: None,
         failure_expectation_result: None,
@@ -2392,6 +2454,8 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
         error_kind: None,
         expected_failure: None,
         expected_failure_kind: None,
+        result_expectation: None,
+        accepted_exit_codes: Vec::new(),
         assertion_name: None,
         actual_failure_kind: None,
         failure_expectation_result: None,
@@ -2459,6 +2523,8 @@ fn session_execution_context_updated_event(
         error_kind: None,
         expected_failure: None,
         expected_failure_kind: None,
+        result_expectation: None,
+        accepted_exit_codes: Vec::new(),
         assertion_name: None,
         actual_failure_kind: None,
         failure_expectation_result: None,

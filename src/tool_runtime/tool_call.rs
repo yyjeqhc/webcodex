@@ -6,8 +6,8 @@
 
 use super::sessions::{
     strip_tool_call_expectation_metadata, validate_model_facing_assertion_name,
-    SessionExecutionContext, SessionMessageKind, SessionMessagePriority, SessionMessageStatus,
-    ToolCallRecorderMetadata,
+    validate_model_facing_result_expectation, SessionExecutionContext, SessionMessageKind,
+    SessionMessagePriority, SessionMessageStatus, ToolCallRecorderMetadata,
 };
 use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
@@ -2381,6 +2381,7 @@ impl ToolCall {
             )
         })?;
         validate_model_facing_assertion_name(name, &arguments)?;
+        validate_model_facing_result_expectation(name, &arguments)?;
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "read_project_artifact"

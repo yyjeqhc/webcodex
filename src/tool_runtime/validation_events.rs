@@ -50,6 +50,8 @@ pub(crate) struct ValidationEvent {
     pub(crate) purpose: String,
     pub(crate) validation_kind: String,
     pub(crate) success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_success: Option<bool>,
     pub(crate) failure_kind: &'static str,
     pub(crate) failure_category: &'static str,
     pub(crate) unresolved_failure: bool,
@@ -1254,7 +1256,7 @@ fn validation_event_from_finished(
         .map(|adapter| adapter.validation_kind().to_string())
         .or_else(|| validation_kind_for_tool(&finished.tool_name).map(str::to_string))
         .unwrap_or_else(|| purpose.clone());
-    let success = match finished.status.as_deref() {
+    let execution_success = match finished.status.as_deref() {
         Some("succeeded") => true,
         Some("failed") => false,
         _ => return None,
@@ -1263,7 +1265,9 @@ fn validation_event_from_finished(
     // denial, schema reject) must not become validation evidence. Only calls
     // that actually entered validation execution — exit code and/or bounded
     // validation output metadata — feed the ledger summary.
-    if !validation_execution_started(finished) && (!success || finished.tool_name == "run_job") {
+    if !validation_execution_started(finished)
+        && (!execution_success || finished.tool_name == "run_job")
+    {
         return None;
     }
     let started_at = finished
@@ -1285,7 +1289,20 @@ fn validation_event_from_finished(
     };
     let diagnostics =
         adapter.and_then(|adapter| validation_diagnostics_from_summary(finished, adapter));
-    let failure_kind = validation_failure_kind(finished, success, diagnostics.as_ref(), adapter);
+    let failure_kind =
+        validation_failure_kind(finished, execution_success, diagnostics.as_ref(), adapter);
+    let public_result_expectation =
+        finished.result_expectation.is_some() || !finished.accepted_exit_codes.is_empty();
+    let expectation_matched = !execution_success
+        && public_result_expectation
+        && matches!(
+            finished.failure_expectation_result.as_deref(),
+            Some("matched_expected_failure" | "matched_expected_result")
+        );
+    // Validation success describes whether the declared validation assertion
+    // was satisfied, not whether the underlying process exited zero. The raw
+    // process outcome remains available as execution_success/exit_code.
+    let success = execution_success || expectation_matched;
     let command_summary = execution_string(started, finished, "command_summary").or_else(|| {
         started
             .and_then(|event| event.input_summary.as_ref())
@@ -1342,6 +1359,7 @@ fn validation_event_from_finished(
         purpose,
         validation_kind,
         success,
+        execution_success: (success != execution_success).then_some(execution_success),
         failure_kind,
         failure_category: failure_kind,
         unresolved_failure: !success,

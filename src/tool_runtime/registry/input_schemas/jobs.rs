@@ -9,7 +9,8 @@ use crate::shell_protocol::{
     SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
 use crate::tool_runtime::sessions::{
-    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ASSERTION_NAME_FIELD,
+    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
 };
 use crate::tool_runtime::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
@@ -20,6 +21,24 @@ fn with_optional_validation_assertion(mut schema: Value) -> Value {
         "maxLength": MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
         "description": "Optional stable human-readable validation assertion label. Reuse the same value after a fix to correlate later validation evidence even when the command changes. It never grants execution authority, changes success, or bypasses structured validation proof. It is inert unless the existing purpose/evidence rules classify the execution as validation-like."
     });
+    schema
+}
+
+fn with_optional_result_expectation(mut schema: Value, accepted_exit_codes: bool) -> Value {
+    schema["properties"][TOOL_RESULT_EXPECTATION_FIELD] = json!({
+        "type": "string",
+        "enum": ["success", "failure", "observe"],
+        "description": "Optional pre-execution result expectation. Omit (or use success) for the normal success-required path; failure means a completed known business failure is the expected negative-test result; observe means either a completed known success or completed known business failure is acceptable. It changes only Session ledger expectation classification, never authorization, the real ToolResult, exit code, timeout, guard, transport, or outcome-unknown semantics."
+    });
+    if accepted_exit_codes {
+        schema["properties"][TOOL_ACCEPTED_EXIT_CODES_FIELD] = json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "type": "integer" },
+            "description": "Optional exact set of completed process exit codes that are valid observations (for example [0,1] for boolean probe commands). A completed exit code outside the set is an expectation mismatch. This is more precise than observe and may be combined only with result_expectation=observe or with result_expectation omitted. Timeout, cancellation, transport failure, guard/permission rejection, malformed results, and outcome-unknown remain failures."
+        });
+    }
     schema
 }
 
@@ -98,7 +117,7 @@ pub(crate) fn run_process_input_schema() -> Value {
         "operation",
         "other"
     ]);
-    with_optional_validation_assertion(schema)
+    with_optional_result_expectation(with_optional_validation_assertion(schema), true)
 }
 
 pub(crate) fn run_detached_process_input_schema() -> Value {
@@ -107,6 +126,14 @@ pub(crate) fn run_detached_process_input_schema() -> Value {
         .as_object_mut()
         .expect("run_process schema properties")
         .remove(TOOL_ASSERTION_NAME_FIELD);
+    schema["properties"]
+        .as_object_mut()
+        .expect("run_process schema properties")
+        .remove(TOOL_RESULT_EXPECTATION_FIELD);
+    schema["properties"]
+        .as_object_mut()
+        .expect("run_process schema properties")
+        .remove(TOOL_ACCEPTED_EXIT_CODES_FIELD);
     schema["properties"]
         .as_object_mut()
         .expect("run_process schema properties")
@@ -215,7 +242,7 @@ pub(crate) fn run_script_input_schema() -> Value {
         "operation",
         "other"
     ]);
-    with_optional_validation_assertion(schema)
+    with_optional_result_expectation(with_optional_validation_assertion(schema), false)
 }
 
 pub(crate) fn run_shell_input_schema() -> Value {
@@ -265,7 +292,7 @@ pub(crate) fn run_shell_input_schema() -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(120);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
-    with_optional_validation_assertion(schema)
+    with_optional_result_expectation(with_optional_validation_assertion(schema), false)
 }
 
 pub(crate) fn run_job_input_schema() -> Value {

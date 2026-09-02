@@ -94,6 +94,92 @@ fn from_tool_name_records_and_strips_testing_metadata_before_parsing() {
 }
 
 #[test]
+fn from_tool_name_records_public_result_expectations_before_parsing() {
+    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "run_process",
+        json!({
+            "project": "demo",
+            "executable": "git",
+            "args": ["merge-base", "--is-ancestor", "a", "b"],
+            "result_expectation": "observe",
+            "accepted_exit_codes": [1, 0, 1]
+        }),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::RunProcess { .. }));
+    assert!(!metadata.expectation.expected_failure);
+    assert_eq!(
+        metadata.expectation.result_expectation.as_deref(),
+        Some("observe")
+    );
+    assert_eq!(metadata.expectation.accepted_exit_codes, vec![0, 1]);
+
+    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "cargo_test",
+        json!({
+            "project": "demo",
+            "filter": "reproduce_bug",
+            "result_expectation": "failure"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::CargoTest { .. }));
+    assert!(metadata.expectation.expected_failure);
+    assert_eq!(
+        metadata.expectation.result_expectation.as_deref(),
+        Some("failure")
+    );
+    assert!(metadata.expectation.accepted_exit_codes.is_empty());
+}
+
+#[test]
+fn from_tool_name_rejects_unsafe_result_expectation_combinations() {
+    let invalid = [
+        (
+            "run_process",
+            json!({
+                "project": "demo",
+                "executable": "git",
+                "result_expectation": "maybe"
+            }),
+        ),
+        (
+            "run_process",
+            json!({
+                "project": "demo",
+                "executable": "git",
+                "result_expectation": "failure",
+                "accepted_exit_codes": [0, 1]
+            }),
+        ),
+        (
+            "cargo_test",
+            json!({
+                "project": "demo",
+                "accepted_exit_codes": [0, 1]
+            }),
+        ),
+        (
+            "job_status",
+            json!({
+                "job_id": "job-1",
+                "result_expectation": "observe"
+            }),
+        ),
+    ];
+
+    for (tool, arguments) in invalid {
+        let error = ToolCall::from_tool_name_with_recorder_metadata(tool, arguments).unwrap_err();
+        assert!(
+            error.contains("result_expectation")
+                || error.contains("accepted_exit_codes")
+                || error.contains("result expectation"),
+            "{tool}: {error}"
+        );
+    }
+}
+
+#[test]
 fn from_tool_name_does_not_treat_removed_failure_kind_alias_as_metadata() {
     let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
         "job_status",

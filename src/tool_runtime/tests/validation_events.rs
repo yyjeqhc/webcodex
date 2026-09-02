@@ -2713,6 +2713,147 @@ fn current_evidence_validation_started_before_new_attempt_does_not_enter_new_att
 }
 
 #[test]
+fn validation_job_terminal_inherits_public_failure_expectation() {
+    let store = SessionStore::default();
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), None);
+    let job_id = "job_expected_negative_validation";
+    let target = "target:aaaaaaaaaaaaaaaaaaaaaaaa";
+
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({
+            "project": project,
+            "result_expectation": "failure"
+        }),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "job_id": job_id,
+            "execution_state": "running"
+        }),
+        None,
+        None,
+    );
+
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        job_id,
+        &[job_id],
+        "cargo_check",
+        Some(project.to_string()),
+        target,
+        None,
+        "failed",
+        Some(101),
+        Some(false),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        None,
+    ));
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let terminal = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "validation_job_terminal")
+        .expect("materialized terminal validation event");
+    assert_eq!(terminal.status.as_deref(), Some("failed"));
+    assert_eq!(terminal.exit_code, Some(101));
+    assert_eq!(terminal.result_expectation.as_deref(), Some("failure"));
+    assert_eq!(
+        terminal.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["latest"]["exit_code"], 101);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+}
+
+#[test]
+fn validation_job_terminal_inherits_expectation_beyond_default_summary_window() {
+    let store = SessionStore::default();
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), None);
+    let job_id = "job_expected_negative_validation_deep_history";
+    let target = "target:bbbbbbbbbbbbbbbbbbbbbbbb";
+
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({
+            "project": project,
+            "result_expectation": "failure"
+        }),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "job_id": job_id,
+            "execution_state": "running"
+        }),
+        None,
+        None,
+    );
+
+    // Keep the Job admission inside the retained 200-event ledger while
+    // pushing it outside the public/default 50-event Session summary window.
+    for index in 0..30 {
+        record_finished_tool(
+            &store,
+            &session.session_id,
+            "read_file",
+            json!({"project": project, "path": format!("src/noise-{index}.rs")}),
+            true,
+            json!({}),
+        );
+    }
+
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        job_id,
+        &[job_id],
+        "cargo_check",
+        Some(project.to_string()),
+        target,
+        None,
+        "failed",
+        Some(101),
+        Some(false),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        None,
+    ));
+
+    let summary = store.summary(&session.session_id, Some(200)).unwrap();
+    let terminal = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "validation_job_terminal")
+        .expect("materialized terminal validation event");
+    assert_eq!(terminal.result_expectation.as_deref(), Some("failure"));
+    assert_eq!(
+        terminal.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+}
+
+#[test]
 fn current_evidence_validation_job_started_before_content_change_is_stale() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

@@ -137,6 +137,19 @@ test，或使用 `min_tests: N` 声明更大的 bounded minimum；两者同时�
 evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 validation contract 会失败，
 但不会改写真实 process exit code。count assertion 不能与 `no_run: true` 同时使用。
 
+**在执行前声明非默认结果。** 支持该契约的执行与 structured-validation 工具接受
+`result_expectation`：省略（或 `success`）保持默认的 fail-closed 成功要求；`failure` 用于
+负向测试，只有已完成且结果已知的业务失败才算命中预期；`observe` 用于只观察结果的探测，
+已完成且结果已知的业务成功或失败都可接受。这个声明只改变 Session ledger 的 expectation
+分类，不会改写真实 ToolResult、exit code、授权或 execution state。timeout、cancelled、transport
+failure、guard/permission rejection、malformed output 与 `outcome_unknown` 都不能满足 `failure`
+或 `observe`。
+
+对于 exit code 本身就是业务结果的 `run_process` predicate，已知合法结果集合时优先使用
+`accepted_exit_codes`。例如 `git merge-base --is-ancestor` 可声明 `[0, 1]`，两个布尔答案都
+是有效 observation，其他 exit code 仍记为 expectation mismatch。result expectation 必须在
+执行前声明，不能在 unexpected failure 发生以后补写来免除账本证据。
+
 **把 closeout 当 evidence，不当 completion authority。** `finish_coding_task` 返回 recorded
 Session evidence 的 deterministic advisory snapshot；按请求可包含 validation、workspace、
 jobs 与 tool history。它不决定任务已经完成，不替代直接的 diff/test review，也不替代最后

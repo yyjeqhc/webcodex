@@ -678,6 +678,12 @@ pub(super) fn sanitize_persisted_event(
         .expected_failure_kind
         .map(|value| bound_summary_string(value.trim()))
         .filter(|value| !value.is_empty());
+    event.result_expectation = event
+        .result_expectation
+        .filter(|value| matches!(value.as_str(), "failure" | "observe"));
+    event.accepted_exit_codes.sort_unstable();
+    event.accepted_exit_codes.dedup();
+    event.accepted_exit_codes.truncate(32);
     event.assertion_name = event
         .assertion_name
         .map(|value| bound_summary_string(value.trim()))

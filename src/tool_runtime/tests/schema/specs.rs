@@ -439,11 +439,25 @@ fn supports_model_facing_validation_assertion(tool_name: &str) -> bool {
     )
 }
 
+fn supports_model_facing_result_expectation(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "run_process"
+            | "run_script"
+            | "run_shell"
+            | "cargo_fmt"
+            | "cargo_check"
+            | "cargo_test"
+            | "go_test"
+    )
+}
+
 #[test]
 fn tool_specs_expose_only_safe_validation_assertion_metadata() {
     use crate::tool_runtime::sessions::{
-        MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ASSERTION_NAME_FIELD,
-        TOOL_CALL_EXPECTATION_METADATA_FIELDS,
+        MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
+        TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
+        TOOL_RESULT_EXPECTATION_FIELD,
     };
 
     for spec in registered_tool_specs() {
@@ -452,20 +466,19 @@ fn tool_specs_expose_only_safe_validation_assertion_metadata() {
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
         for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
             let exposed = props.contains_key(field);
-            if field == TOOL_ASSERTION_NAME_FIELD {
-                assert_eq!(
-                    exposed,
-                    supports_model_facing_validation_assertion(&spec.name),
-                    "{} assertion_name exposure must stay limited to generic validation execution tools",
-                    spec.name
-                );
-            } else {
-                assert!(
-                    !exposed,
-                    "{} model-facing input schema must not expose internal expectation field {field}",
-                    spec.name
-                );
-            }
+            let expected = match field {
+                TOOL_ASSERTION_NAME_FIELD => supports_model_facing_validation_assertion(&spec.name),
+                TOOL_RESULT_EXPECTATION_FIELD => {
+                    supports_model_facing_result_expectation(&spec.name)
+                }
+                TOOL_ACCEPTED_EXIT_CODES_FIELD => spec.name == "run_process",
+                _ => false,
+            };
+            assert_eq!(
+                exposed, expected,
+                "{} model-facing expectation-field exposure mismatch for {field}",
+                spec.name
+            );
         }
         if supports_model_facing_validation_assertion(&spec.name) {
             let assertion = &props[TOOL_ASSERTION_NAME_FIELD];
@@ -476,6 +489,21 @@ fn tool_specs_expose_only_safe_validation_assertion_metadata() {
                 "{}",
                 spec.name
             );
+        }
+        if supports_model_facing_result_expectation(&spec.name) {
+            assert_eq!(
+                props[TOOL_RESULT_EXPECTATION_FIELD]["enum"],
+                json!(["success", "failure", "observe"]),
+                "{}",
+                spec.name
+            );
+        }
+        if spec.name == "run_process" {
+            let accepted = &props[TOOL_ACCEPTED_EXIT_CODES_FIELD];
+            assert_eq!(accepted["type"], "array");
+            assert_eq!(accepted["minItems"], 1);
+            assert_eq!(accepted["maxItems"], 32);
+            assert_eq!(accepted["items"]["type"], "integer");
         }
     }
 }
@@ -718,19 +746,23 @@ fn assert_schema_property_names_are_safe(tool_name: &str, schema: &Value, path: 
                 !field.starts_with("test_"),
                 "{tool_name} {path}.{field} must not expose testing-only input fields"
             );
-            if field == crate::tool_runtime::sessions::TOOL_ASSERTION_NAME_FIELD {
-                assert!(
-                    path == "input_schema"
-                        && supports_model_facing_validation_assertion(tool_name),
-                    "{tool_name} {path}.{field} may expose assertion_name only as a top-level generic validation execution input"
-                );
-            } else {
-                assert!(
-                    !crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
-                        .contains(&field.as_str()),
-                    "{tool_name} {path}.{field} must not expose internal expectation metadata in model-facing schemas"
-                );
-            }
+            let expectation_field_allowed = match field.as_str() {
+                crate::tool_runtime::sessions::TOOL_ASSERTION_NAME_FIELD => {
+                    path == "input_schema" && supports_model_facing_validation_assertion(tool_name)
+                }
+                crate::tool_runtime::sessions::TOOL_RESULT_EXPECTATION_FIELD => {
+                    path == "input_schema" && supports_model_facing_result_expectation(tool_name)
+                }
+                crate::tool_runtime::sessions::TOOL_ACCEPTED_EXIT_CODES_FIELD => {
+                    path == "input_schema" && tool_name == "run_process"
+                }
+                _ => !crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
+                    .contains(&field.as_str()),
+            };
+            assert!(
+                expectation_field_allowed,
+                "{tool_name} {path}.{field} expectation metadata exposure is not allowed here"
+            );
 
             let nested_path = format!("{path}.properties.{field}");
             assert_schema_property_names_are_safe(tool_name, property_schema, &nested_path);

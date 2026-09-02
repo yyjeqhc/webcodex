@@ -1,6 +1,5 @@
 //! Agent-side project management tools: `register_project`, `unregister_project`,
-//! `create_project`, and the internal Runner-managed temporary-project path used
-//! by coding-task startup.
+//! and `create_project`.
 //!
 //! Registration and creation route to the selected agent through the project-op
 //! path. Unregistration reuses the shared project lifecycle path so the
@@ -29,7 +28,6 @@ use crate::shell_protocol::{
 /// operations are fast (write a small TOML, maybe create a directory + git
 /// init), so 30s is generous while still bounding the caller.
 const PROJECT_OP_WAIT_SECS: u64 = 32;
-const MANAGED_TEMPORARY_PROJECT_SOURCE: &str = "managed_temporary";
 const AUTO_REGISTERED_PROJECT_SOURCE: &str = "auto_registered";
 
 const LIST_PROJECTS_MAX_QUERY_CHARS: usize = 200;
@@ -417,35 +415,6 @@ impl ToolRuntime {
         .await
     }
 
-    /// Ask a Runner to create a directory under its configured managed
-    /// temporary-project root and register it through the ordinary project-registry
-    /// lifecycle. The Runner, rather than this server, owns all directory-name
-    /// generation, path validation, and filesystem mutation.
-    pub(crate) async fn create_managed_temporary_project(
-        &self,
-        client_id: String,
-        name: Option<String>,
-        auth: Option<&AuthContext>,
-    ) -> ToolResult {
-        if let Some(name) = name.as_deref() {
-            if let Err(error) = validate_project_op_name(name) {
-                return ToolResult::err(error);
-            }
-        }
-        self.submit_project_op(
-            "create_project",
-            client_id.clone(),
-            json!({
-                "kind": "create_project",
-                "client_id": client_id,
-                "managed_temporary_project": true,
-                "name": name,
-            }),
-            auth,
-        )
-        .await
-    }
-
     /// Ask the selected Runner to resolve an existing registration by
     /// canonical path or persist a new project registration record under its registry
     /// write lock. This internal operation is intentionally absent from the
@@ -558,8 +527,7 @@ impl ToolRuntime {
     }
 
     /// Shared transport, response parsing, cache-upsert, and owner-boundary
-    /// path for public project operations and internal managed temporary
-    /// project creation.
+    /// path for public project operations.
     async fn submit_project_op(
         &self,
         kind: &str,
@@ -744,7 +712,6 @@ fn project_query_matches(
 
 fn project_source(project: &ShellAgentProjectSummary) -> &'static str {
     match project.kind.as_deref() {
-        Some(MANAGED_TEMPORARY_PROJECT_SOURCE) => MANAGED_TEMPORARY_PROJECT_SOURCE,
         Some(AUTO_REGISTERED_PROJECT_SOURCE) => AUTO_REGISTERED_PROJECT_SOURCE,
         _ => "agent_registered",
     }
@@ -972,6 +939,29 @@ fn parse_project_summary_from_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_managed_temporary_kind_is_projected_as_ordinary_registration() {
+        let mut project = ShellAgentProjectSummary {
+            id: "legacy".to_string(),
+            name: Some("Legacy".to_string()),
+            path: "/tmp/legacy".to_string(),
+            allow_patch: true,
+            kind: Some("managed_temporary".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 0,
+            shell_profile: None,
+        };
+        assert_eq!(project_source(&project), "agent_registered");
+        project.kind = Some(AUTO_REGISTERED_PROJECT_SOURCE.to_string());
+        assert_eq!(project_source(&project), AUTO_REGISTERED_PROJECT_SOURCE);
+    }
 
     #[test]
     fn validate_id_rejects_empty() {

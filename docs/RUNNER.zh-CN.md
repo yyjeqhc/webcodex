@@ -151,13 +151,12 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-### 临时项目根目录
+### 旧临时项目配置
 
-`temporary_projects_root` 继续作为 WebCodex 内部 managed-temporary startup primitive
-的有界根目录。旧的 `start_coding_task` wire/API 入口已经退休，不再直接暴露 managed
-temporary 创建。当前外部工作流应通过 `work_on_project` 的 path 输入 / `register_project`
-注册已有目录，或显式使用 `create_project` 创建项目。配置的根目录必须已存在且被 policy
-允许。
+managed temporary project 创建在 v0.4 compatibility floor 前已退休。当前工作流使用
+`work_on_project` / `register_project` 处理已有目录，使用显式 `create_project` 创建新项目。
+pre-0.4 的 `temporary_projects_root` 键在一个兼容窗口内仍会被解析：Runner 继续校验其原有
+absolute-path 形状，然后给出 deprecation warning 并忽略该值。当前 Runner config 应删除该键。
 
 ### 运行时注册项目
 

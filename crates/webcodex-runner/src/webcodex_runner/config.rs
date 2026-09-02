@@ -45,11 +45,11 @@ pub(crate) struct RunnerConfig {
     /// field so runtime comparisons operate on one effective registry path.
     #[serde(default, rename = "projects_dir")]
     pub(crate) legacy_projects_dir: Option<PathBuf>,
-    /// Optional Runner-owned root for managed temporary projects. When absent,
-    /// temporary project creation is disabled; ordinary project registration is
-    /// unchanged.
-    #[serde(default)]
-    pub(crate) temporary_projects_root: Option<PathBuf>,
+    /// Pre-0.4 managed-temporary-project setting retained only so old configs
+    /// are parsed explicitly. The feature is retired; load_config validates the
+    /// former path shape, reports the deprecation, and clears this inert field.
+    #[serde(default, rename = "temporary_projects_root")]
+    pub(crate) deprecated_temporary_projects_root: Option<PathBuf>,
     #[serde(default = "default_poll_interval_ms")]
     pub(crate) poll_interval_ms: u64,
     #[serde(default)]
@@ -531,13 +531,6 @@ impl ReloadableRunnerConfig {
         &self.startup.server_url
     }
 
-    /// Startup-owned managed temporary-project root. Like `project_registry_dir`, a
-    /// changed value is reported as restart-required so one running Runner
-    /// cannot silently switch its project-registration boundary.
-    pub(crate) fn temporary_projects_root(&self) -> Option<&Path> {
-        self.startup.temporary_projects_root.as_deref()
-    }
-
     #[cfg(any(unix, test))]
     pub(crate) fn is_stopping(&self) -> bool {
         self.stopping.load(Ordering::SeqCst)
@@ -626,7 +619,8 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, ssh: _, tool_providers: _, legacy_projects_dir: _, $($field: _),+
+                policy: _, shell: _, ssh: _, tool_providers: _, legacy_projects_dir: _,
+                deprecated_temporary_projects_root: _, $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
                 .into_iter()
@@ -646,7 +640,6 @@ pub(crate) fn restart_required_fields(
         owner,
         poll_interval_ms,
         project_registry_dir,
-        temporary_projects_root,
         quic,
         server_url,
         token,
@@ -1076,10 +1069,14 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     if let Some(host_context) = cfg.host_context.take() {
         cfg.host_context = Some(host_context.normalized()?);
     }
-    if let Some(root) = cfg.temporary_projects_root.as_ref() {
+    if let Some(root) = cfg.deprecated_temporary_projects_root.as_ref() {
         if root.as_os_str().is_empty() || !root.is_absolute() {
             return Err("temporary_projects_root must be a non-empty absolute path".to_string());
         }
+        eprintln!(
+            "webcodex-runner config warning: temporary_projects_root is deprecated and ignored"
+        );
+        cfg.deprecated_temporary_projects_root = None;
     }
     if let Some(transport) = cfg.transport.as_deref().map(str::trim) {
         if !transport.is_empty()

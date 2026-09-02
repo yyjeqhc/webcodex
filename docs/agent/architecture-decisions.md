@@ -457,6 +457,19 @@ copy, rename, or choose between two registries implicitly. The registry remains
 a directory of Runner-owned project registration records, not a second workspace
 or project-root abstraction.
 
+The pre-0.4 managed-temporary-project lifecycle is retired rather than carried
+into the `v0.4.0` product contract. Current project creation uses explicit
+`create_project`; existing directories use `work_on_project(path)` or
+`register_project`. For one pre-0.4 config compatibility window, the old
+`temporary_projects_root` key is parsed with its former absolute-path validation,
+then warned and ignored. Existing project-registry records whose generic
+`kind = "managed_temporary"` value predates this cleanup remain readable as
+ordinary registrations; current Server projections do not treat that value as
+an active lifecycle. A legacy Server request containing the old
+`managed_temporary_project` create flag fails closed on a new Runner before any
+filesystem mutation. This retirement does not change protocol generation,
+baseline capabilities, `client_id`, `agent_project_id`, or runtime project ids.
+
 Other older `agent_*` names are compatibility vocabulary and remain frozen
 rather than being cosmetically duplicated. In particular,
 `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime project ids

@@ -135,6 +135,24 @@ temporary_projects_root = "temporary"
 }
 
 #[test]
+fn runner_config_accepts_absolute_legacy_temporary_projects_root_as_inert() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("runner.toml");
+    let legacy_root = tmp.path().join("legacy-temporary-projects");
+    let legacy_root = toml::Value::String(legacy_root.to_string_lossy().into_owned()).to_string();
+    std::fs::write(
+        &path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\nproject_registry_dir = \"project-registry\"\ntemporary_projects_root = {legacy_root}\n[policy]\nallow_cwd_anywhere = true\n"
+        ),
+    )
+    .unwrap();
+
+    let cfg = load_config(&path).unwrap();
+    assert_eq!(cfg.deprecated_temporary_projects_root, None);
+}
+
+#[test]
 fn runner_config_accepts_transport_quic_with_quic_section() {
     let toml = r#"
 server_url = "http://127.0.0.1:8000"

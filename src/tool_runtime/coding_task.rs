@@ -68,17 +68,8 @@ pub(crate) struct ProjectResolutionMetadata {
 }
 
 enum CodingProjectSource {
-    Existing {
-        project: String,
-    },
-    RunnerPath {
-        client_id: String,
-        path: String,
-    },
-    ManagedTemporary {
-        client_id: String,
-        name: Option<String>,
-    },
+    Existing { project: String },
+    RunnerPath { client_id: String, path: String },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -161,14 +152,10 @@ fn resolve_project_source(
     project: String,
     client_id: Option<String>,
     path: Option<String>,
-    temporary_project_name: Option<String>,
-    managed_temporary_allowed: bool,
 ) -> Result<CodingProjectSource, ToolResult> {
     let project = project.trim().to_string();
     let client_id = non_empty_optional_field("client_id", client_id)?;
     let path = non_empty_optional_field("path", path)?;
-    let temporary_project_name =
-        non_empty_optional_field("temporary_project_name", temporary_project_name)?;
 
     if !project.is_empty() {
         let mut conflicts = Vec::new();
@@ -178,14 +165,11 @@ fn resolve_project_source(
         if path.is_some() {
             conflicts.push("path");
         }
-        if temporary_project_name.is_some() {
-            conflicts.push("temporary_project_name");
-        }
         if !conflicts.is_empty() {
             let mut fields = vec!["project"];
             fields.extend(conflicts);
             return Err(invalid_project_source(
-                "project cannot be combined with client_id, path, or temporary_project_name",
+                "project cannot be combined with client_id or path",
                 json!({"conflicting_fields": fields}),
             ));
         }
@@ -193,12 +177,6 @@ fn resolve_project_source(
     }
 
     if let Some(path) = path {
-        if temporary_project_name.is_some() {
-            return Err(invalid_project_source(
-                "path cannot be combined with temporary_project_name",
-                json!({"conflicting_fields": ["path", "temporary_project_name"]}),
-            ));
-        }
         if let Err(error) = super::projects::validate_project_op_path(&path) {
             return Err(invalid_project_source(
                 error,
@@ -214,35 +192,16 @@ fn resolve_project_source(
         return Ok(CodingProjectSource::RunnerPath { client_id, path });
     }
 
-    if !managed_temporary_allowed {
-        return Err(if client_id.is_some() {
-            invalid_project_source(
-                "client_id requires path",
-                json!({"field": "path", "required_with": "client_id"}),
-            )
-        } else {
-            invalid_project_source(
-                "project or client_id + path is required",
-                json!({"required_any_of": ["project", "client_id + path"]}),
-            )
-        });
-    }
-    let Some(client_id) = client_id else {
-        return Err(if temporary_project_name.is_some() {
-            invalid_project_source(
-                "temporary_project_name requires client_id",
-                json!({"field": "client_id", "required_with": "temporary_project_name"}),
-            )
-        } else {
-            invalid_project_source(
-                "start_coding_task requires project, client_id + path, or client_id for a managed temporary project",
-                json!({"required_any_of": ["project", "client_id + path", "client_id"]}),
-            )
-        });
-    };
-    Ok(CodingProjectSource::ManagedTemporary {
-        client_id,
-        name: temporary_project_name,
+    Err(if client_id.is_some() {
+        invalid_project_source(
+            "client_id requires path",
+            json!({"field": "path", "required_with": "client_id"}),
+        )
+    } else {
+        invalid_project_source(
+            "project or client_id + path is required",
+            json!({"required_any_of": ["project", "client_id + path"]}),
+        )
     })
 }
 
@@ -277,8 +236,8 @@ fn attach_project_resolution(
     resolution: &ProjectResolutionMetadata,
 ) -> ToolResult {
     // Existing-project aliases are not authoritative until runtime resolution
-    // succeeds. Path and managed-temporary sources already carry a Runner-issued
-    // full id, so their metadata remains useful on later Session failures.
+    // succeeds. Path sources already carry a Runner-issued full id, so their
+    // metadata remains useful on later Session failures.
     if !resolution.resolved_project.is_empty() {
         result.output["project_resolution"] =
             serde_json::to_value(resolution).unwrap_or_else(|_| json!({}));
@@ -323,7 +282,6 @@ impl ToolRuntime {
         project: String,
         client_id: Option<String>,
         path: Option<String>,
-        temporary_project_name: Option<String>,
         title: Option<String>,
         mode: SessionMode,
         deny_write_tools: bool,
@@ -340,7 +298,6 @@ impl ToolRuntime {
             project,
             client_id,
             path,
-            temporary_project_name,
             title,
             mode,
             deny_write_tools,
@@ -418,7 +375,6 @@ impl ToolRuntime {
         project: String,
         client_id: Option<String>,
         path: Option<String>,
-        temporary_project_name: Option<String>,
         title: Option<String>,
         mode: SessionMode,
         deny_write_tools: bool,
@@ -432,11 +388,10 @@ impl ToolRuntime {
         transport: SessionTransport,
     ) -> ToolResult {
         let detail = startup.detail;
-        let project_source =
-            match resolve_project_source(project, client_id, path, temporary_project_name, true) {
-                Ok(source) => source,
-                Err(result) => return result,
-            };
+        let project_source = match resolve_project_source(project, client_id, path) {
+            Ok(source) => source,
+            Err(result) => return result,
+        };
         let resume_requested = resume_session_id.is_some();
         let execution_context = match execution_context
             .map(sessions::SessionExecutionContext::validated)
@@ -526,92 +481,6 @@ impl ToolRuntime {
                     resolved_project: String::new(),
                     registered: false,
                     permission: None,
-                };
-                (project, resolution)
-            }
-            CodingProjectSource::ManagedTemporary { client_id, name } => {
-                if let Some(recording_session_id) = trusted_recording_session_id {
-                    return session_project_mismatch_result(
-                        recording_session_id,
-                        startup.tool_name,
-                        &SessionProjectMismatch {
-                            session_project: trusted_recording_session_project
-                                .unwrap_or("<unscoped>")
-                                .to_string(),
-                            request_project: format!(
-                                "managed_temporary:{client_id}:{}",
-                                name.as_deref().unwrap_or("<generated>")
-                            ),
-                        },
-                    );
-                }
-                if resume_session_id.is_some() {
-                    return ToolResult::err_with_output(
-                        "resume_session_id requires an existing project",
-                        json!({
-                            "error_kind": "invalid_arguments",
-                            "failure_kind": "invalid_arguments",
-                            "field": "resume_session_id",
-                            "constraint": "managed_temporary_project_cannot_resume",
-                            "state_changed": false,
-                        }),
-                    );
-                }
-                if let Some(result) =
-                    registration_scope_denied(auth, "managed temporary project creation")
-                {
-                    return result;
-                }
-                let permission = super::permissions::evaluate_permission_for_tool(
-                    &self.permission_evaluator,
-                    "create_project",
-                    None,
-                );
-                if let Some(decision) = permission.as_ref() {
-                    if !decision.allows_execution() {
-                        let mut result =
-                            super::permissions::permission_execution_denied_result(decision);
-                        super::permissions::add_permission_to_result(&mut result, decision);
-                        return result;
-                    }
-                }
-                if let Err(result) = self
-                    .require_runner_coding_capability(&client_id, auth)
-                    .await
-                {
-                    return attach_permission(result, permission.as_ref());
-                }
-                let created = self
-                    .create_managed_temporary_project(client_id, name, auth)
-                    .await;
-                if !created.success {
-                    return attach_permission(created, permission.as_ref());
-                }
-                let Some(project) = created
-                    .output
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .filter(|id| !id.trim().is_empty())
-                    .map(str::to_string)
-                else {
-                    return attach_permission(
-                        ToolResult::err_with_output(
-                            "agent returned a managed temporary project without a runtime id",
-                            json!({
-                                "error_kind": "operation_failed",
-                                "failure_kind": "operation_failed",
-                                "state_changed": true,
-                            }),
-                        ),
-                        permission.as_ref(),
-                    );
-                };
-                let resolution = ProjectResolutionMetadata {
-                    source: "managed_temporary".to_string(),
-                    outcome: "managed_temporary_created".to_string(),
-                    resolved_project: project.clone(),
-                    registered: true,
-                    permission,
                 };
                 (project, resolution)
             }
@@ -1220,7 +1089,7 @@ impl ToolRuntime {
         trusted_recording_session_project: Option<&str>,
         transport: SessionTransport,
     ) -> ToolResult {
-        let project_source = match resolve_project_source(project, client_id, path, None, false) {
+        let project_source = match resolve_project_source(project, client_id, path) {
             Ok(source) => source,
             Err(result) => return result,
         };
@@ -1228,9 +1097,6 @@ impl ToolRuntime {
             CodingProjectSource::Existing { project } => (project, None, None),
             CodingProjectSource::RunnerPath { client_id, path } => {
                 (String::new(), Some(client_id), Some(path))
-            }
-            CodingProjectSource::ManagedTemporary { .. } => {
-                unreachable!("managed temporary project is disabled for work_on_project")
             }
         };
         let instruction = instruction.trim().to_string();
@@ -1279,7 +1145,6 @@ impl ToolRuntime {
                 project.clone(),
                 client_id,
                 path,
-                None,
                 Some(instruction.clone()),
                 SessionMode::Normal,
                 false,

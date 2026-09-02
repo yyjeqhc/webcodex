@@ -3,9 +3,8 @@ use super::lsp::{handle_lsp_request, is_lsp_request_kind, LspSupervisor};
 use super::transport::ResultSubmission;
 use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
-    handle_computer_request, handle_project_lifecycle_op,
-    handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
-    handle_skill_store_request, is_computer_request_kind,
+    handle_computer_request, handle_project_lifecycle_op, handle_project_op,
+    handle_resolve_or_register_project, handle_skill_store_request, is_computer_request_kind,
     run_internal_posix_script_with_profiles_and_execution_state,
     run_internal_search_script_with_profiles_and_execution_state,
     run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
@@ -522,12 +521,7 @@ pub(crate) fn dispatch_request(
         }
         "register_project" | "create_project" => {
             let request_id = request.request_id.clone();
-            let result = handle_project_op_with_temporary_projects_root(
-                policy,
-                project_registry_dir,
-                runtime.temporary_projects_root(),
-                &request,
-            );
+            let result = handle_project_op(policy, project_registry_dir, &request);
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }

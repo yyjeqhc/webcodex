@@ -640,33 +640,6 @@ fn from_tool_name_parses_runtime_status() {
 }
 
 #[test]
-fn internal_start_coding_task_deserializes_managed_temporary_project_request() {
-    let call: ToolCall = serde_json::from_value(json!({
-        "tool": "start_coding_task",
-        "params": {
-            "client_id": "runner-1",
-            "temporary_project_name": "Scratch task"
-        }
-    }))
-    .unwrap();
-
-    match &call {
-        ToolCall::StartCodingTask {
-            project,
-            client_id,
-            temporary_project_name,
-            ..
-        } => {
-            assert!(project.is_empty());
-            assert_eq!(client_id.as_deref(), Some("runner-1"));
-            assert_eq!(temporary_project_name.as_deref(), Some("Scratch task"));
-        }
-        _ => panic!("expected start_coding_task"),
-    }
-    assert!(call.project().is_none());
-}
-
-#[test]
 fn work_on_project_parses_path_source_and_rejects_ambiguous_sources() {
     let work = ToolCall::from_tool_name(
         "work_on_project",
@@ -1298,4 +1271,20 @@ fn retired_start_coding_task_wire_name_is_rejected() {
         .expect_err("retired start_coding_task entry must fail closed");
     assert!(error.contains("no longer supported"), "{error}");
     assert!(error.contains("work_on_project"), "{error}");
+}
+
+#[test]
+fn create_project_rejects_retired_managed_temporary_field() {
+    let error = ToolCall::from_tool_name(
+        "create_project",
+        json!({
+            "client_id":"oe",
+            "id":"hello",
+            "name":"Hello",
+            "path":"/root/git/hello",
+            "managed_temporary_project":true
+        }),
+    )
+    .expect_err("retired managed-temporary field must not be model/API reachable");
+    assert!(error.contains("managed_temporary_project"), "{error}");
 }

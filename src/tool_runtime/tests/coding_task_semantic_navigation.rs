@@ -48,7 +48,6 @@ fn start_call(project: String, mode: SessionMode) -> ToolCall {
         project,
         client_id: None,
         path: None,
-        temporary_project_name: None,
         title: Some("semantic navigation startup".to_string()),
         mode,
         detail: Default::default(),

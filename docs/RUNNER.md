@@ -173,14 +173,14 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-### Temporary-project root
+### Legacy temporary-project setting
 
-`temporary_projects_root` remains the bounded root used by WebCodex's internal
-managed-temporary startup primitive. The retired `start_coding_task` wire/API
-entry no longer exposes managed-temporary creation directly. For current
-external workflows, register an existing directory with `work_on_project` path
-input / `register_project`, or create one explicitly with `create_project`. The
-configured root must already exist and be allowed by policy.
+Managed temporary project creation is retired before the v0.4 compatibility
+floor. Current workflows use `work_on_project` / `register_project` for existing
+directories and explicit `create_project` for new ones. A pre-0.4
+`temporary_projects_root` key is still parsed for one compatibility window: its
+former absolute-path shape is validated, then the value is ignored with a
+deprecation warning. Remove the key from current Runner configs.
 
 ### Registering projects at runtime
 

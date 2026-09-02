@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn legacy_managed_temporary_record_remains_readable_as_registry_data() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_dir = tmp.path().join("legacy-project");
+    let project_registry_dir = tmp.path().join("project-registry");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::create_dir(&project_registry_dir).unwrap();
+    std::fs::write(
+        project_registry_dir.join("legacy.toml"),
+        format!(
+            "id = \"legacy\"\nname = \"Legacy\"\npath = {:?}\nkind = \"managed_temporary\"\nallow_patch = true\n",
+            project_dir.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let summaries = load_runner_project_summaries_from_dir(&project_registry_dir);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].id, "legacy");
+    assert_eq!(summaries[0].kind.as_deref(), Some("managed_temporary"));
+    assert_eq!(
+        summaries[0].path,
+        project_dir.canonicalize().unwrap().to_string_lossy()
+    );
+}
+
+#[test]
 fn create_post_rename_sync_failure_preserves_source_and_registry() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");

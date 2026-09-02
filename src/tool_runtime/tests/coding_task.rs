@@ -1,6 +1,6 @@
 use super::support::*;
 use crate::auth::AuthContext;
-use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
+use crate::shell_protocol::AgentPolicySummary;
 use crate::tool_runtime::handoff::VALIDATION_IDENTITY_REUSE_ACTION;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::sessions::SessionTransport;
@@ -304,185 +304,6 @@ async fn hidden_start_coding_task_keeps_internal_advanced_dispatch() {
 }
 
 #[tokio::test]
-async fn start_coding_task_creates_managed_temporary_project_then_restores_it_as_normal_project() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let existing_root = tmp.path().join("existing-project");
-    let temporary_root = tmp.path().join("managed-temporary-project");
-    std::fs::create_dir(&existing_root).unwrap();
-    std::fs::create_dir(&temporary_root).unwrap();
-    init_git_repo(&existing_root);
-    init_git_repo(&temporary_root);
-    commit_file(
-        &temporary_root,
-        "README.md",
-        "temporary\n",
-        "initial temporary project",
-    );
-
-    let client_id = "temporary-runner";
-    let temporary_project_id = "temporary-7f01";
-    let temporary_runtime_id =
-        crate::tool_runtime::agent_project_runtime_id(client_id, temporary_project_id);
-    let temporary_path = temporary_root.to_string_lossy().to_string();
-    let auth = auth_context(None, true);
-    let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let existing_runtime_id =
-        register_agent_project_at_path(&runtime1, client_id, "existing", &existing_root).await;
-
-    let task = tokio::spawn({
-        let runtime = runtime1.clone();
-        let auth = auth.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::StartCodingTask {
-                        project: String::new(),
-                        client_id: Some(client_id.to_string()),
-                        path: None,
-                        temporary_project_name: Some("Scratch task".to_string()),
-                        title: Some("implement a temporary task".to_string()),
-                        mode: SessionMode::Normal,
-                        detail: crate::tool_runtime::StartupDetail::Full,
-                        deny_write_tools: false,
-                        deny_shell_tools: false,
-                        resume_session_id: None,
-                        execution_context: None,
-                    },
-                    Some(&auth),
-                )
-                .await
-        }
-    });
-
-    let mut create_seen = false;
-    let startup_deadline = Instant::now() + Duration::from_secs(10);
-    while !task.is_finished() {
-        assert!(
-            Instant::now() < startup_deadline,
-            "managed temporary startup did not finish within the 10-second test deadline"
-        );
-        let Some(request) = probe_patch_agent_request(&runtime1, client_id).await else {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            continue;
-        };
-        if request.kind == "create_project" {
-            create_seen = true;
-            let payload: Value = serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
-            assert_eq!(payload["managed_temporary_project"], true);
-            assert_eq!(payload["name"], "Scratch task");
-            assert!(payload.get("id").is_none());
-            assert!(payload.get("path").is_none());
-            complete_patch_agent_request(
-                &runtime1,
-                client_id,
-                &request.request_id,
-                0,
-                &json!({
-                    "id": temporary_runtime_id.clone(),
-                    "agent_project_id": temporary_project_id,
-                    "client_id": client_id,
-                    "name": "Scratch task",
-                    "path": temporary_path,
-                    "kind": "managed_temporary",
-                    "source": "managed_temporary",
-                    "allow_patch": true,
-                    "created_directory": true,
-                    "created_config": true,
-                    "overwritten": false,
-                    "operation": "create",
-                    "outcome": "created"
-                })
-                .to_string(),
-                "",
-            )
-            .await;
-        } else {
-            complete_agent_request_by_running_locally(&runtime1, client_id, request).await;
-        }
-    }
-    assert!(
-        task.is_finished(),
-        "managed temporary startup did not finish"
-    );
-    assert!(
-        create_seen,
-        "startup did not ask the Runner to create a project"
-    );
-
-    let result = task.await.unwrap();
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["project"], temporary_runtime_id);
-    assert_eq!(
-        result.output["resolved_project"]["id"],
-        temporary_runtime_id
-    );
-    let session_id = result.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(session_id.starts_with("wc_sess_"));
-
-    let projects = runtime1.list_projects(Some(&auth)).await;
-    assert!(projects.success);
-    let projects = projects.output["projects"].as_array().unwrap();
-    assert!(projects.iter().any(|project| {
-        project["id"] == temporary_runtime_id && project["source"] == "managed_temporary"
-    }));
-    assert!(projects.iter().any(|project| {
-        project["id"] == existing_runtime_id && project["source"] == "agent_registered"
-    }));
-    let resolved = runtime1
-        .resolve_project_input_for_auth(&temporary_runtime_id, Some(&auth))
-        .await
-        .unwrap();
-    assert_eq!(resolved.resolved_id, temporary_runtime_id);
-    assert_eq!(resolved.config.path, temporary_root.to_string_lossy());
-
-    runtime1.sessions.flush_persistence();
-    drop(runtime1);
-
-    // A restarted server only needs the Runner's normal persisted project
-    // registration to be reported again. The same normal resolver and Session
-    // ledger then recover the project/session pair without a temporary type.
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let capabilities = ShellClientCapabilities {
-        shell: true,
-        git: true,
-        file_read: true,
-        file_write: true,
-        ..Default::default()
-    };
-    let mut temporary_summary = registered_project(
-        temporary_project_id,
-        temporary_root.to_string_lossy().as_ref(),
-    );
-    temporary_summary.name = Some("Scratch task".to_string());
-    temporary_summary.kind = Some("managed_temporary".to_string());
-    register_agent_projects(
-        &runtime2,
-        client_id,
-        None,
-        capabilities,
-        vec![temporary_summary],
-    )
-    .await;
-    let resolved_after_restart = runtime2
-        .resolve_project_input_for_auth(&temporary_runtime_id, Some(&auth))
-        .await
-        .unwrap();
-    assert_eq!(resolved_after_restart.resolved_id, temporary_runtime_id);
-    assert_eq!(
-        runtime2
-            .sessions
-            .summary(&session_id, None)
-            .unwrap()
-            .project,
-        Some(temporary_runtime_id)
-    );
-}
-
-#[tokio::test]
 async fn start_coding_task_full_brief_has_no_binding_projection() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -509,7 +330,6 @@ async fn start_coding_task_full_brief_has_no_binding_projection() {
                         project,
                         client_id: None,
                         path: None,
-                        temporary_project_name: None,
                         title: Some("implement deterministic aggregate".to_string()),
                         mode: SessionMode::Normal,
                         detail: crate::tool_runtime::StartupDetail::Full,
@@ -638,7 +458,6 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
                 project,
                 client_id: None,
                 path: None,
-                temporary_project_name: None,
                 title: Some("small startup payload".to_string()),
                 mode: SessionMode::Normal,
                 detail: Default::default(),
@@ -1279,7 +1098,6 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 project: project.clone(),
                 client_id: None,
                 path: None,
-                temporary_project_name: None,
                 title: Some("finish contract".to_string()),
                 mode: SessionMode::Normal,
                 detail: Default::default(),

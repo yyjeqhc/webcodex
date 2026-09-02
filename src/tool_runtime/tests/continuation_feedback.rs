@@ -1718,7 +1718,6 @@ fn coding_call(project: &str, instruction: &str, resume: Option<&str>) -> ToolCa
         project: project.to_string(),
         client_id: None,
         path: None,
-        temporary_project_name: None,
         title: Some(instruction.to_string()),
         mode: SessionMode::Normal,
         deny_write_tools: false,

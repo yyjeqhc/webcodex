@@ -276,15 +276,14 @@ fn project_resolution_schema() -> Value {
         "properties": {
             "source": {
                 "type": "string",
-                "enum": ["project", "path", "managed_temporary"]
+                "enum": ["project", "path"]
             },
             "outcome": {
                 "type": "string",
                 "enum": [
                     "resolved_existing_project",
                     "reused_existing_registration",
-                    "auto_registered",
-                    "managed_temporary_created"
+                    "auto_registered"
                 ]
             },
             "resolved_project": {

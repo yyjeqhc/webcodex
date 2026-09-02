@@ -24,7 +24,6 @@ fn start_call(
         project: project.to_string(),
         client_id: None,
         path: None,
-        temporary_project_name: None,
         title: Some(title.to_string()),
         mode: SessionMode::Normal,
         detail,

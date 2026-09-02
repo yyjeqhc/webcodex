@@ -159,3 +159,25 @@ fn create_project_does_not_delete_pre_existing_files() {
     assert_eq!(err, "path_not_empty");
     assert_eq!(std::fs::read_to_string(pre_existing).unwrap(), "original");
 }
+
+#[test]
+fn legacy_managed_temporary_create_request_fails_before_filesystem_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_registry_dir = tmp.path().join("project-registry");
+    let project_dir = tmp.path().join("must-not-be-created");
+    let policy = project_policy(tmp.path());
+    let req = project_request(
+        "create_project",
+        serde_json::json!({
+            "managed_temporary_project": true,
+            "id": "legacy",
+            "name": "Legacy",
+            "path": project_dir.to_string_lossy(),
+        }),
+    );
+
+    let err = project_err(handle_project_op(&policy, &project_registry_dir, &req));
+    assert_eq!(err, "managed_temporary_projects_retired");
+    assert!(!project_dir.exists());
+    assert!(!project_registry_dir.exists());
+}

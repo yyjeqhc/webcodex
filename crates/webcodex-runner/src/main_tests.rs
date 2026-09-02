@@ -2,8 +2,7 @@ use super::*;
 use crate::webcodex_runner::config::validate_shell_config;
 use crate::webcodex_runner::run_shell_with_profiles;
 use crate::webcodex_runner::{
-    handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
-    handle_resolve_or_register_project,
+    handle_project_lifecycle_op, handle_project_op, handle_resolve_or_register_project,
 };
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -78,7 +77,7 @@ fn test_config(project_registry_dir: PathBuf) -> RunnerConfig {
         host_context: None,
         project_registry_dir: Some(project_registry_dir),
         legacy_projects_dir: None,
-        temporary_projects_root: None,
+        deprecated_temporary_projects_root: None,
         poll_interval_ms: 1000,
         capabilities: None,
         max_concurrent_jobs: None,
@@ -144,8 +143,6 @@ mod dispatch_shell;
 mod file_read;
 #[path = "main_tests/http_recovery.rs"]
 mod http_recovery;
-#[path = "main_tests/managed_temporary_projects.rs"]
-mod managed_temporary_projects;
 #[path = "main_tests/profile_process_lifecycle.rs"]
 mod profile_process_lifecycle;
 #[path = "main_tests/project_creation.rs"]

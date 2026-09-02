@@ -128,8 +128,8 @@ Provider.
 Identity, server/auth, registration, project source, concurrency, and transport
 fields still require restart: `server_url`, `token`, `client_id`,
 `display_name`, `owner`, `hostname`, `project_registry_dir`, `poll_interval_ms`,
-`temporary_projects_root`, `capabilities`, `max_concurrent_jobs`, `transport`,
-`websocket_connect_timeout_secs`, and `quic.*`. A mixed reload applies the hot
+`capabilities`, `max_concurrent_jobs`, `transport`, `websocket_connect_timeout_secs`,
+and `quic.*`. A mixed reload applies the hot
 sections and reports these field names as `restart_required_fields`; it never
 reports their values. Read, parse, validation, or Provider-config failure keeps
 the active generation unchanged.

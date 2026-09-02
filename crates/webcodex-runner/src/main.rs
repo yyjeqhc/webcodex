@@ -57,8 +57,8 @@ use webcodex_runner::QuicClientConfig;
 use webcodex_runner::{
     auto_transport_plan, build_ws_request, default_quic_alpn, default_quic_connect_timeout_secs,
     default_quic_keepalive_interval_secs, default_websocket_connect_timeout_secs,
-    effective_transport, handle_project_op, load_runner_project_summaries_from_dir,
-    non_empty_token, parse_runner_project_toml, quic_client_bind_addr_for, resolve_quic_config,
+    effective_transport, load_runner_project_summaries_from_dir, non_empty_token,
+    parse_runner_project_toml, quic_client_bind_addr_for, resolve_quic_config,
     resolve_quic_server_addrs, run_shell, runner_project_summary, server_url_to_ws,
     sha256_hex_bytes, validate_project_path_policy, websocket_session, RunnerRuntimeState,
     ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,

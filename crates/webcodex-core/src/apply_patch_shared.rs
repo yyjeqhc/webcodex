@@ -119,6 +119,9 @@ pub struct CodexPatchChunkMatch {
     /// Number of candidates at the selected match mode for match_source.
     /// Append operations do not perform text matching and report None.
     pub candidate_count: Option<usize>,
+    /// True only when every text match used to position this chunk was exact
+    /// and unique. Unanchored append performs no text match and is strict-safe.
+    pub strict_match: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -457,6 +460,12 @@ struct SequenceMatch {
     candidate_count: usize,
 }
 
+impl SequenceMatch {
+    fn is_exact_unique(self) -> bool {
+        self.mode == CodexPatchMatchMode::Exact && self.candidate_count == 1
+    }
+}
+
 fn seek_sequence(
     lines: &[String],
     pattern: &[String],
@@ -582,6 +591,7 @@ pub fn derive_codex_patch_update_with_matches(
                 },
                 matched_start_line: insertion_index + 1,
                 candidate_count: context_match.map(|matched| matched.candidate_count),
+                strict_match: context_match.is_none_or(SequenceMatch::is_exact_unique),
             });
             continue;
         }
@@ -615,6 +625,8 @@ pub fn derive_codex_patch_update_with_matches(
             match_source: CodexPatchMatchSource::OldLines,
             matched_start_line: start + 1,
             candidate_count: Some(found.candidate_count),
+            strict_match: found.is_exact_unique()
+                && context_match.is_none_or(SequenceMatch::is_exact_unique),
         });
         line_index = start + pattern.len();
     }
@@ -688,6 +700,7 @@ mod tests {
         );
         assert_eq!(updated.chunk_matches[0].matched_start_line, 1);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(1));
+        assert!(!updated.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -738,6 +751,7 @@ mod tests {
             CodexPatchMatchSource::OldLines
         );
         assert_eq!(update.chunk_matches[0].matched_start_line, 2);
+        assert!(!update.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -769,6 +783,7 @@ mod tests {
         );
         assert_eq!(updated.chunk_matches[0].matched_start_line, 2);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(1));
+        assert!(updated.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -789,6 +804,7 @@ mod tests {
         assert_eq!(updated.chunk_matches[0].match_mode, None);
         assert_eq!(updated.chunk_matches[0].matched_start_line, 3);
         assert_eq!(updated.chunk_matches[0].candidate_count, None);
+        assert!(updated.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -805,6 +821,7 @@ mod tests {
         assert_eq!(updated.content, "same\nmid\nlast\n");
         assert_eq!(updated.chunk_matches[0].matched_start_line, 3);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(2));
+        assert!(!updated.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -820,6 +837,7 @@ mod tests {
         assert_eq!(updated.content, "first\nmid\nsame\n");
         assert_eq!(updated.chunk_matches[0].matched_start_line, 1);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(2));
+        assert!(!updated.chunk_matches[0].strict_match);
     }
 
     #[test]
@@ -839,6 +857,7 @@ mod tests {
         );
         assert_eq!(updated.chunk_matches[0].matched_start_line, 2);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(1));
+        assert!(updated.chunk_matches[0].strict_match);
     }
 
     #[test]

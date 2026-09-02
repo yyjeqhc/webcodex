@@ -29,7 +29,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Primary model-generated edit path for contextual, multi-hunk, or multi-file changes using Codex *** Begin Patch. Transactional with bounded matching, source-SHA rechecks, rollback, dry_run, and structured recovery. Use apply_text_edits only for exact guarded edits; apply_unified_diff for external Git diffs.",
+            "Primary model edit path for contextual/multi-file Codex *** Begin Patch changes. Transactional with SHA rechecks, rollback, dry_run, recovery. Inspect strict_match/match_mode/candidate_count; strict_match=false needs review. Use apply_text_edits for exact edits; unified diff for external diffs.",
             apply_patch_input_schema,
         ),
         65,

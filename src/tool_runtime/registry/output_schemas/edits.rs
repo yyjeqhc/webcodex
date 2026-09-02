@@ -149,7 +149,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("applied_count", schema_type("integer", "Number of parsed file operations in the patch.")),
             ("changed", schema_type("boolean", "Whether the worktree was confirmed changed by this request.")),
             ("would_change", schema_type("boolean", "Whether the fully preflighted patch plan would change the worktree.")),
-            ("files", schema_type("array", "Per-file bounded summaries; update edits include match_mode exact|trim_end|trim|null (widest positioning tier used), match_source old_lines|change_context|append, 1-based matched_start_line, and candidate_count for match_source at its own selected tier (null for append). Never includes file content.")),
+            ("files", schema_type("array", "Per-file bounded summaries; update edits include match_mode exact|trim_end|trim|null (widest positioning tier used), match_source, 1-based matched_start_line, candidate_count, and strict_match=true only when every positioning match was exact and unique. Never includes file content.")),
             ("changed_paths", schema_type("array", "Validated project-relative source and destination paths touched by the patch plan.")),
             ("state_changed", nullable_schema("boolean", "True or false for a trustworthy patch effect; null when a dispatched mutation may have completed but its result is unavailable or invalid.")),
             ("execution_state", json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Transactional patch mutation effect state."})),

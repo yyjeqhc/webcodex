@@ -270,9 +270,10 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         .expect("apply_patch files output description");
     for contract in [
         "match_mode exact|trim_end|trim|null (widest positioning tier used)",
-        "match_source old_lines|change_context|append",
+        "match_source",
         "1-based matched_start_line",
-        "candidate_count for match_source at its own selected tier (null for append)",
+        "candidate_count",
+        "strict_match=true only when every positioning match was exact and unique",
     ] {
         assert!(
             patch_files_description.contains(contract),

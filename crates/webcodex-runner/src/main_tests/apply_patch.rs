@@ -93,6 +93,7 @@ fn file_apply_patch_dry_run_reports_plan_without_writing() {
     assert_eq!(edit["match_source"], "old_lines");
     assert_eq!(edit["matched_start_line"], 1);
     assert_eq!(edit["candidate_count"], 1);
+    assert_eq!(edit["strict_match"], true);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
         "old\n"
@@ -118,18 +119,21 @@ fn file_apply_patch_reports_fuzzy_and_append_match_metadata() {
     assert_eq!(trim_end["match_source"], "old_lines");
     assert_eq!(trim_end["matched_start_line"], 1);
     assert_eq!(trim_end["candidate_count"], 1);
+    assert_eq!(trim_end["strict_match"], false);
 
     let trim = &out["files"][1]["edits"][0];
     assert_eq!(trim["match_mode"], "trim");
     assert_eq!(trim["match_source"], "old_lines");
     assert_eq!(trim["matched_start_line"], 1);
     assert_eq!(trim["candidate_count"], 1);
+    assert_eq!(trim["strict_match"], false);
 
     let append = &out["files"][2]["edits"][0];
     assert!(append["match_mode"].is_null());
     assert_eq!(append["match_source"], "append");
     assert_eq!(append["matched_start_line"], 2);
     assert!(append["candidate_count"].is_null());
+    assert_eq!(append["strict_match"], true);
 }
 
 #[test]
@@ -149,6 +153,7 @@ fn file_apply_patch_reports_ambiguous_candidate_count_without_changing_selection
     assert_eq!(edit["match_source"], "old_lines");
     assert_eq!(edit["matched_start_line"], 1);
     assert_eq!(edit["candidate_count"], 2);
+    assert_eq!(edit["strict_match"], false);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
         "dup\nmiddle\ndup\n"

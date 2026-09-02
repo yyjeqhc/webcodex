@@ -91,6 +91,41 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         );
     }
 
+    for name in [
+        "apply_patch",
+        "apply_text_edits",
+        "apply_unified_diff",
+        "write_project_file",
+        "workspace_checkpoint_restore",
+        "save_project_artifact",
+        "import_conversation_files_to_project",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+        assert!(metadata.destructive, "{name}");
+        assert_eq!(
+            spec_named(&specs, name).annotations["destructiveHint"],
+            true,
+            "{name} may replace, restore, delete, or discard existing state"
+        );
+    }
+
+    for name in [
+        "workspace_checkpoint_create",
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "computer_save_snapshot",
+    ] {
+        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+        assert!(!metadata.destructive, "{name}");
+        assert_eq!(
+            spec_named(&specs, name).annotations["destructiveHint"],
+            false,
+            "{name} is intentionally additive-only"
+        );
+    }
+
     let close = crate::tool_runtime::metadata::lookup_tool_metadata("close_session").unwrap();
     assert_eq!(close.approval, ToolApprovalPolicy::None);
     assert_eq!(close.risk, ToolRisk::SessionCollaborate);

@@ -711,6 +711,62 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
 }
 
 #[tokio::test]
+async fn full_operator_tools_list_projects_destructive_hints_for_project_mutations() {
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(721)),
+            mcp_2026_params(json!({})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = listed else {
+        panic!("full operator tools/list must succeed");
+    };
+    let tools = value["result"]["tools"].as_array().unwrap();
+
+    for name in [
+        "apply_patch",
+        "apply_text_edits",
+        "apply_unified_diff",
+        "write_project_file",
+        "workspace_checkpoint_restore",
+        "save_project_artifact",
+        "import_conversation_files_to_project",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name} from full operator tools/list"));
+        assert_eq!(
+            tool["annotations"]["destructiveHint"], true,
+            "{name} may replace, restore, delete, or discard existing state"
+        );
+    }
+
+    for name in [
+        "workspace_checkpoint_create",
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "computer_save_snapshot",
+    ] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name} from full operator tools/list"));
+        assert_eq!(
+            tool["annotations"]["destructiveHint"], false,
+            "{name} is intentionally additive-only"
+        );
+    }
+}
+
+#[tokio::test]
 async fn explicit_local_coding_v1_selects_local_coding() {
     let runtime = test_runtime_from_model_surface_env(Some(
         crate::model_surface::MCP_MODEL_SURFACE_LOCAL_CODING_V1,

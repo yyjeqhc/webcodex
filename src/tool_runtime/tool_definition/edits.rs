@@ -1,6 +1,9 @@
 use super::AgentCapability::FileWrite;
 use super::ToolVisibility::ModelVisible;
-use super::{adaptive_runtime_direct, def, model_spec, ToolDefinition, TOOL_CATEGORY_EDIT};
+use super::{
+    adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_EDIT,
+};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{PathList, SinglePath},
     ToolRisk::ProjectWrite,
@@ -11,8 +14,9 @@ use crate::tool_runtime::registry::input_schemas::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "write_project_file",
             ModelVisible,
             TOOL_CATEGORY_EDIT,
@@ -27,15 +31,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             SinglePath,
+            true,
             false,
-            false,
+            ),
+            "Create new files or intentional whole-file rewrites. Existing-file overwrite requires the exact current expected_sha256. Prefer apply_patch for model-generated changes and apply_text_edits for small exact guarded edits; inspect current content and worktree changes before replacing a file.",
+            write_project_file_input_schema,
         ),
-        "Create new files or intentional whole-file rewrites. Existing-file overwrite requires the exact current expected_sha256. Prefer apply_patch for model-generated changes and apply_text_edits for small exact guarded edits; inspect current content and worktree changes before replacing a file.",
-        write_project_file_input_schema,
+        PERMISSION_RISK_WRITE,
     ),
     adaptive_runtime_direct(
-        model_spec(
-            def(
+        permission_risk(
+            model_spec(
+                def(
                 "apply_text_edits",
                 ModelVisible,
                 TOOL_CATEGORY_EDIT,
@@ -50,11 +57,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(PROJECT_WRITE),
                 true,
                 PathList,
+                true,
                 false,
-                false,
+                ),
+                "Precision fallback for small exact guarded file changes on the current worktree. Transactional and SHA-guarded; exact matches are unique by default, occurrence remains global source order, and optional line_scope fences matches. Prefer apply_patch for contextual, multi-hunk, or multi-file model changes.",
+                apply_text_edits_input_schema,
             ),
-            "Precision fallback for small exact guarded file changes on the current worktree. Transactional and SHA-guarded; exact matches are unique by default, occurrence remains global source order, and optional line_scope fences matches. Prefer apply_patch for contextual, multi-hunk, or multi-file model changes.",
-            apply_text_edits_input_schema,
+            PERMISSION_RISK_WRITE,
         ),
         65,
     ),

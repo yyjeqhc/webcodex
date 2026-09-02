@@ -1,7 +1,8 @@
 use super::AgentCapability::{FileRead, FileWrite};
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, model_spec, requires_artifact_upload_path_binding, ToolDefinition, TOOL_CATEGORY_ARTIFACT,
+    def, model_spec, permission_risk, requires_artifact_upload_path_binding, ToolDefinition,
+    PERMISSION_RISK_ARTIFACT_WRITE, TOOL_CATEGORY_ARTIFACT,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::Artifact,
@@ -17,8 +18,9 @@ use crate::tool_runtime::registry::input_schemas::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "save_project_artifact",
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -33,14 +35,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             Artifact,
+            true,
             false,
-            false,
+            ),
+            "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, ZIP archives, and DOCX/PPTX/XLSX Office artifacts; not for UTF-8 source edits.",
+            save_project_artifact_input_schema,
         ),
-        "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, ZIP archives, and DOCX/PPTX/XLSX Office artifacts; not for UTF-8 source edits.",
-        save_project_artifact_input_schema,
+        PERMISSION_RISK_ARTIFACT_WRITE,
     ),
-    model_spec(
-        def(
+    permission_risk(
+        model_spec(
+            def(
             "import_conversation_files_to_project",
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -55,11 +60,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             Artifact,
+            true,
             false,
-            false,
+            ),
+            "Import 1..10 current ChatGPT attachments into an agent project using openaiFileIdRefs from the host file-reference mechanism. Do not base64-transfer files, construct download URLs, or use local /mnt/data paths; Control downloads and saves them as project artifacts.",
+            import_conversation_files_to_project_input_schema,
         ),
-        "Import 1..10 current ChatGPT attachments into an agent project using openaiFileIdRefs from the host file-reference mechanism. Do not base64-transfer files, construct download URLs, or use local /mnt/data paths; Control downloads and saves them as project artifacts.",
-        import_conversation_files_to_project_input_schema,
+        PERMISSION_RISK_ARTIFACT_WRITE,
     ),
     model_spec(
         def(
@@ -171,8 +178,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Append one base64 chunk up to 1 MiB decoded to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.",
         artifact_upload_chunk_input_schema,
     )),
-    requires_artifact_upload_path_binding(model_spec(
-        def(
+    requires_artifact_upload_path_binding(permission_risk(
+        model_spec(
+            def(
             "artifact_upload_finish",
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -187,14 +195,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             Artifact,
+            true,
             false,
-            false,
+            ),
+            "Finish an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before atomic commit.",
+            artifact_upload_finish_input_schema,
         ),
-        "Finish an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before atomic commit.",
-        artifact_upload_finish_input_schema,
+        PERMISSION_RISK_ARTIFACT_WRITE,
     )),
-    requires_artifact_upload_path_binding(model_spec(
-        def(
+    requires_artifact_upload_path_binding(permission_risk(
+        model_spec(
+            def(
             "artifact_upload_abort",
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -209,10 +220,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             Artifact,
+            true,
             false,
-            false,
+            ),
+            "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup and reports final_file_exists without touching the final target.",
+            artifact_upload_abort_input_schema,
         ),
-        "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup and reports final_file_exists without touching the final target.",
-        artifact_upload_abort_input_schema,
+        PERMISSION_RISK_ARTIFACT_WRITE,
     )),
 ];

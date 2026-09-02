@@ -423,10 +423,18 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("close_session_shell", PERMISSION_RISK_JOB),
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
+        (
+            "import_conversation_files_to_project",
+            PERMISSION_RISK_ARTIFACT_WRITE,
+        ),
+        ("artifact_upload_finish", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("artifact_upload_abort", PERMISSION_RISK_ARTIFACT_WRITE),
         ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
         ("apply_patch", PERMISSION_RISK_PATCH),
         ("apply_unified_diff", PERMISSION_RISK_PATCH),
+        ("workspace_checkpoint_restore", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
+        ("apply_text_edits", PERMISSION_RISK_WRITE),
     ] {
         assert_eq!(runtime_tool_permission_risk(tool), risk, "{tool}");
     }

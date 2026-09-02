@@ -1,6 +1,9 @@
 use super::AgentCapability::{FileRead, FileWrite, OwnerOnly};
 use super::ToolVisibility::ModelVisible;
-use super::{def, git_like, model_spec, ToolDefinition, TOOL_CATEGORY_CHECKPOINT};
+use super::{
+    def, git_like, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_PATCH,
+    TOOL_CATEGORY_CHECKPOINT,
+};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, Patch},
     ToolRisk::{ProjectWrite, Read},
@@ -78,8 +81,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Show bounded checkpoint metadata, file list, skipped files, and optional diff stat. Does not return full diff/content by default.",
         checkpoint_show_input_schema,
     ),
-    git_like(model_spec(
-        def(
+    git_like(permission_risk(
+        model_spec(
+            def(
             "workspace_checkpoint_restore",
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
@@ -94,11 +98,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(PROJECT_WRITE),
             true,
             Patch,
+            true,
             false,
-            false,
+            ),
+            "Restore a checkpoint after confirm=true. Requires matching HEAD and refuses unsafe current state rather than half-restoring.",
+            checkpoint_restore_input_schema,
         ),
-        "Restore a checkpoint after confirm=true. Requires matching HEAD and refuses unsafe current state rather than half-restoring.",
-        checkpoint_restore_input_schema,
+        PERMISSION_RISK_PATCH,
     )),
     model_spec(
         def(

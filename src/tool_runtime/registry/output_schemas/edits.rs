@@ -3,6 +3,71 @@ use serde_json::Value;
 use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
 use serde_json::json;
 
+fn apply_patch_edit_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "chunk_index": {"type": "integer", "minimum": 0},
+            "change_context_present": {"type": "boolean"},
+            "old_line_count": {"type": "integer", "minimum": 0},
+            "new_line_count": {"type": "integer", "minimum": 0},
+            "end_of_file": {"type": "boolean"},
+            "match_mode": {"anyOf": [
+                {"type": "string", "enum": ["exact", "trim_end", "trim"]},
+                {"type": "null"}
+            ]},
+            "match_source": {"type": "string", "enum": ["old_lines", "change_context", "append"]},
+            "matched_start_line": {"type": "integer", "minimum": 1},
+            "candidate_count": {"anyOf": [
+                {"type": "integer", "minimum": 1},
+                {"type": "null"}
+            ]},
+            "strict_match": {"type": "boolean"}
+        },
+        "required": [
+            "chunk_index", "change_context_present", "old_line_count", "new_line_count",
+            "end_of_file", "match_mode", "match_source", "matched_start_line",
+            "candidate_count", "strict_match"
+        ]
+    })
+}
+
+fn apply_patch_file_summary_schema() -> Value {
+    json!({
+        "type": "array",
+        "maxItems": crate::apply_patch_shared::MAX_CODEX_PATCH_FILE_CHANGES,
+        "description": "Validated per-file patch-plan summaries. Update/rename edits expose bounded match metadata; never file content.",
+        "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "index": {"type": "integer", "minimum": 0},
+                "kind": {"type": "string", "enum": ["create", "edit", "delete", "rename"]},
+                "path": {"type": "string", "minLength": 1},
+                "to_path": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+                "old_sha256": {"anyOf": [
+                    {"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}
+                ]},
+                "new_sha256": {"anyOf": [
+                    {"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}
+                ]},
+                "changed": {"type": "boolean"},
+                "would_change": {"type": "boolean"},
+                "edits": {
+                    "type": "array",
+                    "maxItems": crate::apply_patch_shared::MAX_CODEX_PATCH_CHUNKS_PER_FILE,
+                    "items": apply_patch_edit_summary_schema()
+                }
+            },
+            "required": [
+                "index", "kind", "path", "to_path", "old_sha256", "new_sha256",
+                "changed", "would_change", "edits"
+            ]
+        }
+    })
+}
+
 fn edit_conflict_recovery_schema() -> Value {
     json!({
         "type": "object",
@@ -149,7 +214,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("applied_count", schema_type("integer", "Number of parsed file operations in the patch.")),
             ("changed", schema_type("boolean", "Whether the worktree was confirmed changed by this request.")),
             ("would_change", schema_type("boolean", "Whether the fully preflighted patch plan would change the worktree.")),
-            ("files", schema_type("array", "Per-file bounded summaries; update edits include match_mode exact|trim_end|trim|null (widest positioning tier used), match_source, 1-based matched_start_line, candidate_count, and strict_match=true only when every positioning match was exact and unique. Never includes file content.")),
+            ("files", apply_patch_file_summary_schema()),
             ("changed_paths", schema_type("array", "Validated project-relative source and destination paths touched by the patch plan.")),
             ("state_changed", nullable_schema("boolean", "True or false for a trustworthy patch effect; null when a dispatched mutation may have completed but its result is unavailable or invalid.")),
             ("execution_state", json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Transactional patch mutation effect state."})),

@@ -264,20 +264,46 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
             "apply_patch must keep field {field}"
         );
     }
-    let patch_files_description = spec_named(&specs, "apply_patch").output_schema["properties"]
-        ["output"]["properties"]["files"]["description"]
-        .as_str()
-        .expect("apply_patch files output description");
-    for contract in [
-        "match_mode exact|trim_end|trim|null (widest positioning tier used)",
-        "match_source",
-        "1-based matched_start_line",
-        "candidate_count",
-        "strict_match=true only when every positioning match was exact and unique",
+    let patch_spec = spec_named(&specs, "apply_patch");
+    let patch_files = &patch_spec.output_schema["properties"]["output"]["properties"]["files"];
+    assert_eq!(patch_files["type"], "array");
+    let file_properties = patch_files["items"]["properties"]
+        .as_object()
+        .expect("apply_patch file summary properties");
+    for field in [
+        "index",
+        "kind",
+        "path",
+        "to_path",
+        "old_sha256",
+        "new_sha256",
+        "changed",
+        "would_change",
+        "edits",
     ] {
         assert!(
-            patch_files_description.contains(contract),
-            "apply_patch files output must describe {contract}: {patch_files_description}"
+            file_properties.contains_key(field),
+            "apply_patch file summary must expose {field}"
+        );
+    }
+    let edit_properties = file_properties["edits"]["items"]["properties"]
+        .as_object()
+        .expect("apply_patch edit summary properties");
+    for field in [
+        "chunk_index",
+        "change_context_present",
+        "old_line_count",
+        "new_line_count",
+        "end_of_file",
+        "match_mode",
+        "match_source",
+        "matched_start_line",
+        "candidate_count",
+        "strict_match",
+    ] {
+        assert!(
+            edit_properties.contains_key(field),
+            "apply_patch edit summary must expose {field}"
         );
     }
     let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];

@@ -557,6 +557,303 @@ fn transactional_edit_agent_stdout_result(
     ToolResult::ok(obj)
 }
 
+fn apply_patch_sha256(value: &Value) -> bool {
+    value.as_str().is_some_and(|value| {
+        value.len() == 64
+            && value
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    })
+}
+
+fn apply_patch_nullable_sha256(value: Option<&Value>, required: bool) -> bool {
+    match (value, required) {
+        (Some(value), true) => apply_patch_sha256(value),
+        (Some(Value::Null), false) => true,
+        _ => false,
+    }
+}
+
+const APPLY_PATCH_SUCCESS_TOP_LEVEL_FIELDS: [&str; 8] = [
+    "dry_run",
+    "applied_count",
+    "changed",
+    "state_changed",
+    "execution_state",
+    "would_change",
+    "files",
+    "changed_paths",
+];
+
+const APPLY_PATCH_SUCCESS_FILE_FIELDS: [&str; 9] = [
+    "index",
+    "kind",
+    "path",
+    "to_path",
+    "old_sha256",
+    "new_sha256",
+    "changed",
+    "would_change",
+    "edits",
+];
+
+const APPLY_PATCH_SUCCESS_EDIT_FIELDS: [&str; 10] = [
+    "chunk_index",
+    "change_context_present",
+    "old_line_count",
+    "new_line_count",
+    "end_of_file",
+    "match_mode",
+    "match_source",
+    "matched_start_line",
+    "candidate_count",
+    "strict_match",
+];
+
+fn sanitize_apply_patch_success_metadata(output: &mut Value) {
+    let Some(top_level) = output.as_object_mut() else {
+        return;
+    };
+    top_level.retain(|key, _| APPLY_PATCH_SUCCESS_TOP_LEVEL_FIELDS.contains(&key.as_str()));
+    let Some(files) = top_level.get_mut("files").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for file in files {
+        let Some(file) = file.as_object_mut() else {
+            continue;
+        };
+        file.retain(|key, _| APPLY_PATCH_SUCCESS_FILE_FIELDS.contains(&key.as_str()));
+        let Some(edits) = file.get_mut("edits").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for edit in edits {
+            if let Some(edit) = edit.as_object_mut() {
+                edit.retain(|key, _| APPLY_PATCH_SUCCESS_EDIT_FIELDS.contains(&key.as_str()));
+            }
+        }
+    }
+}
+
+fn validate_apply_patch_edit_summary(
+    value: &Value,
+    chunk_index: usize,
+    chunk: &crate::apply_patch_shared::CodexPatchChunk,
+    strict_matching: bool,
+) -> bool {
+    let Some(edit) = value.as_object() else {
+        return false;
+    };
+    if edit.get("chunk_index").and_then(Value::as_u64) != Some(chunk_index as u64)
+        || edit.get("change_context_present").and_then(Value::as_bool)
+            != Some(chunk.change_context.is_some())
+        || edit.get("old_line_count").and_then(Value::as_u64) != Some(chunk.old_lines.len() as u64)
+        || edit.get("new_line_count").and_then(Value::as_u64) != Some(chunk.new_lines.len() as u64)
+        || edit.get("end_of_file").and_then(Value::as_bool) != Some(chunk.is_end_of_file)
+        || !edit
+            .get("matched_start_line")
+            .and_then(Value::as_u64)
+            .is_some_and(|line| line >= 1)
+    {
+        return false;
+    }
+
+    let expected_source = if !chunk.old_lines.is_empty() {
+        "old_lines"
+    } else if chunk.change_context.is_some() {
+        "change_context"
+    } else {
+        "append"
+    };
+    if edit.get("match_source").and_then(Value::as_str) != Some(expected_source) {
+        return false;
+    }
+
+    let match_mode = edit.get("match_mode");
+    let candidate_count = edit.get("candidate_count");
+    let positioning_shape_valid = if expected_source == "append" {
+        match_mode == Some(&Value::Null) && candidate_count == Some(&Value::Null)
+    } else {
+        match_mode
+            .and_then(Value::as_str)
+            .is_some_and(|mode| matches!(mode, "exact" | "trim_end" | "trim"))
+            && candidate_count
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count >= 1)
+    };
+    if !positioning_shape_valid {
+        return false;
+    }
+
+    let Some(strict_match) = edit.get("strict_match").and_then(Value::as_bool) else {
+        return false;
+    };
+    if expected_source == "append" && !strict_match {
+        return false;
+    }
+    if strict_matching && !strict_match {
+        return false;
+    }
+    if strict_match && expected_source != "append" {
+        return match_mode.and_then(Value::as_str) == Some("exact")
+            && candidate_count.and_then(Value::as_u64) == Some(1);
+    }
+    true
+}
+
+fn validate_apply_patch_success_metadata(
+    output: &Value,
+    patch: &crate::apply_patch_shared::CodexPatch,
+    expected_dry_run: bool,
+    expected_strict_matching: bool,
+) -> bool {
+    if !output.is_object() {
+        return false;
+    }
+    let Some(files) = output.get("files").and_then(Value::as_array) else {
+        return false;
+    };
+    if files.len() != patch.hunks.len() {
+        return false;
+    }
+
+    let mut expected_changed_paths = Vec::new();
+    let mut any_would_change = false;
+    for (index, (file, hunk)) in files.iter().zip(&patch.hunks).enumerate() {
+        let Some(file) = file.as_object() else {
+            return false;
+        };
+        let (expected_kind, expected_path, expected_to_path, expected_chunks, old_sha, new_sha) =
+            match hunk {
+                crate::apply_patch_shared::CodexPatchHunk::AddFile { path, .. } => {
+                    ("create", path.as_str(), None, None, false, true)
+                }
+                crate::apply_patch_shared::CodexPatchHunk::DeleteFile { path } => {
+                    ("delete", path.as_str(), None, None, true, false)
+                }
+                crate::apply_patch_shared::CodexPatchHunk::UpdateFile {
+                    path,
+                    move_path,
+                    chunks,
+                } => {
+                    let destination = move_path
+                        .as_deref()
+                        .filter(|destination| *destination != path.as_str());
+                    (
+                        if destination.is_some() {
+                            "rename"
+                        } else {
+                            "edit"
+                        },
+                        path.as_str(),
+                        destination,
+                        Some(chunks.as_slice()),
+                        true,
+                        true,
+                    )
+                }
+            };
+        if file.get("index").and_then(Value::as_u64) != Some(index as u64)
+            || file.get("kind").and_then(Value::as_str) != Some(expected_kind)
+            || file.get("path").and_then(Value::as_str) != Some(expected_path)
+            || match expected_to_path {
+                Some(path) => file.get("to_path").and_then(Value::as_str) != Some(path),
+                None => file.get("to_path") != Some(&Value::Null),
+            }
+            || !apply_patch_nullable_sha256(file.get("old_sha256"), old_sha)
+            || !apply_patch_nullable_sha256(file.get("new_sha256"), new_sha)
+        {
+            return false;
+        }
+
+        let Some(would_change) = file.get("would_change").and_then(Value::as_bool) else {
+            return false;
+        };
+        if expected_kind != "edit" && !would_change {
+            return false;
+        }
+        if file.get("changed").and_then(Value::as_bool) != Some(!expected_dry_run && would_change) {
+            return false;
+        }
+        any_would_change |= would_change;
+        if would_change {
+            expected_changed_paths.push(expected_path.to_string());
+            if let Some(destination) = expected_to_path {
+                expected_changed_paths.push(destination.to_string());
+            }
+        }
+
+        let Some(edits) = file.get("edits").and_then(Value::as_array) else {
+            return false;
+        };
+        match expected_chunks {
+            None if !edits.is_empty() => return false,
+            Some(chunks) => {
+                if edits.len() != chunks.len()
+                    || !edits
+                        .iter()
+                        .zip(chunks)
+                        .enumerate()
+                        .all(|(chunk_index, (edit, chunk))| {
+                            validate_apply_patch_edit_summary(
+                                edit,
+                                chunk_index,
+                                chunk,
+                                expected_strict_matching,
+                            )
+                        })
+                {
+                    return false;
+                }
+            }
+            None => {}
+        }
+    }
+
+    if output.get("would_change").and_then(Value::as_bool) != Some(any_would_change) {
+        return false;
+    }
+    let Some(changed_paths) = output.get("changed_paths").and_then(Value::as_array) else {
+        return false;
+    };
+    changed_paths.len() == expected_changed_paths.len()
+        && changed_paths
+            .iter()
+            .zip(expected_changed_paths)
+            .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
+}
+
+fn apply_patch_agent_stdout_result(
+    stdout: &str,
+    patch: &crate::apply_patch_shared::CodexPatch,
+    expected_dry_run: bool,
+    expected_strict_matching: bool,
+) -> ToolResult {
+    let mut result = transactional_edit_agent_stdout_result(
+        "apply_patch",
+        stdout,
+        patch.hunks.len(),
+        expected_dry_run,
+    );
+    if !result.success {
+        return result;
+    }
+    sanitize_apply_patch_success_metadata(&mut result.output);
+    if validate_apply_patch_success_metadata(
+        &result.output,
+        patch,
+        expected_dry_run,
+        expected_strict_matching,
+    ) {
+        return result;
+    }
+    structured_edit_outcome_unknown_result(
+        "apply_patch",
+        "the Runner success payload contained invalid or contradictory patch-plan metadata",
+        json!({}),
+    )
+}
+
 fn apply_text_edits_agent_stdout_result(
     stdout: &str,
     expected_change_count: usize,
@@ -1391,7 +1688,6 @@ impl ToolRuntime {
             }
         }
 
-        let expected_change_count = parsed.hunks.len();
         let expected_dry_run = dry_run.unwrap_or(false);
         let expected_strict_matching = strict_matching.unwrap_or(false);
         let mut payload = json!({
@@ -1509,11 +1805,11 @@ impl ToolRuntime {
             Ok(response) => response,
             Err(result) => return result,
         };
-        transactional_edit_agent_stdout_result(
-            "apply_patch",
+        apply_patch_agent_stdout_result(
             &response.stdout.unwrap_or_default(),
-            expected_change_count,
+            &parsed,
             expected_dry_run,
+            expected_strict_matching,
         )
     }
 
@@ -1764,6 +2060,51 @@ impl ToolRuntime {
 mod tests {
     use super::*;
 
+    fn apply_patch_success_payload(
+        match_mode: &str,
+        candidate_count: u64,
+        strict_match: bool,
+    ) -> Value {
+        json!({
+            "dry_run": true,
+            "applied_count": 1,
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "completed",
+            "would_change": true,
+            "files": [{
+                "index": 0,
+                "kind": "edit",
+                "path": "file.txt",
+                "to_path": null,
+                "old_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "new_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "changed": false,
+                "would_change": true,
+                "edits": [{
+                    "chunk_index": 0,
+                    "change_context_present": false,
+                    "old_line_count": 1,
+                    "new_line_count": 1,
+                    "end_of_file": false,
+                    "match_mode": match_mode,
+                    "match_source": "old_lines",
+                    "matched_start_line": 1,
+                    "candidate_count": candidate_count,
+                    "strict_match": strict_match,
+                }]
+            }],
+            "changed_paths": ["file.txt"]
+        })
+    }
+
+    fn one_update_patch() -> crate::apply_patch_shared::CodexPatch {
+        crate::apply_patch_shared::parse_codex_patch(
+            "*** Begin Patch\n*** Update File: file.txt\n-old\n+new\n*** End Patch",
+        )
+        .unwrap()
+    }
+
     #[test]
     fn apply_patch_strict_capability_rejection_names_exact_additive_capability() {
         let result = apply_patch_strict_matching_capability_rejection(
@@ -1783,6 +2124,172 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("never silently downgrade"));
+    }
+
+    #[test]
+    fn apply_patch_success_metadata_accepts_strict_exact_and_non_strict_fuzzy() {
+        let patch = one_update_patch();
+        for (mode, count, strict_match, strict_request) in [
+            ("exact", 1, true, true),
+            ("trim", 1, false, false),
+            ("exact", 2, false, false),
+        ] {
+            let payload = apply_patch_success_payload(mode, count, strict_match).to_string();
+            let result = apply_patch_agent_stdout_result(&payload, &patch, true, strict_request);
+            assert!(result.success, "{:?}", result.error);
+            assert_eq!(result.output["execution_state"], "completed");
+            assert_eq!(result.output["files"][0]["edits"][0]["match_mode"], mode);
+        }
+    }
+
+    #[test]
+    fn apply_patch_success_metadata_rejects_untrusted_match_summaries_and_sanitizes_them() {
+        let patch = one_update_patch();
+        let mut cases = Vec::new();
+
+        let mut strict_violation = apply_patch_success_payload("exact", 1, false);
+        cases.push(strict_violation.take());
+
+        let mut wrong_source = apply_patch_success_payload("exact", 1, true);
+        wrong_source["files"][0]["edits"][0]["match_source"] = json!("append");
+        cases.push(wrong_source);
+
+        let mut wrong_chunk = apply_patch_success_payload("exact", 1, true);
+        wrong_chunk["files"][0]["edits"][0]["chunk_index"] = json!(1);
+        cases.push(wrong_chunk);
+
+        let mut wrong_path = apply_patch_success_payload("exact", 1, true);
+        wrong_path["files"][0]["path"] = json!("other.txt");
+        cases.push(wrong_path);
+
+        let contradictory_strict = apply_patch_success_payload("trim", 1, true);
+        cases.push(contradictory_strict);
+
+        for payload in cases {
+            let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
+            assert!(!result.success);
+            assert_eq!(result.output["execution_state"], "outcome_unknown");
+            assert!(result.output["state_changed"].is_null());
+            assert!(result.output.get("files").is_none());
+            assert!(result.output.get("changed_paths").is_none());
+            assert!(!serde_json::to_string(&result.output)
+                .unwrap()
+                .contains("NEVER_SURVIVE_PATCH_METADATA"));
+            assert!(result
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("invalid or contradictory patch-plan metadata"));
+        }
+    }
+
+    #[test]
+    fn apply_patch_success_metadata_strips_unknown_fields_without_losing_known_result() {
+        let patch = one_update_patch();
+        let mut payload = apply_patch_success_payload("exact", 1, true);
+        payload["future_top_level"] = json!("NEVER_SURVIVE_PATCH_METADATA");
+        payload["files"][0]["future_file_field"] = json!("NEVER_SURVIVE_PATCH_METADATA");
+        payload["files"][0]["edits"][0]["future_edit_field"] =
+            json!("NEVER_SURVIVE_PATCH_METADATA");
+
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["execution_state"], "completed");
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        assert!(!serialized.contains("future_top_level"));
+        assert!(!serialized.contains("future_file_field"));
+        assert!(!serialized.contains("future_edit_field"));
+        assert!(!serialized.contains("NEVER_SURVIVE_PATCH_METADATA"));
+    }
+
+    #[test]
+    fn apply_patch_success_metadata_accepts_create_delete_rename_and_append_shapes() {
+        let patch = crate::apply_patch_shared::parse_codex_patch(
+            "*** Begin Patch\n*** Add File: new.txt\n+hello\n*** Delete File: old.txt\n*** Update File: move.txt\n*** Move to: moved.txt\n-old\n+new\n*** Update File: append.txt\n+tail\n*** End Patch",
+        )
+        .unwrap();
+        let payload = json!({
+            "dry_run": true,
+            "applied_count": 4,
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "completed",
+            "would_change": true,
+            "files": [
+                {
+                    "index": 0,
+                    "kind": "create",
+                    "path": "new.txt",
+                    "to_path": null,
+                    "old_sha256": null,
+                    "new_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "changed": false,
+                    "would_change": true,
+                    "edits": []
+                },
+                {
+                    "index": 1,
+                    "kind": "delete",
+                    "path": "old.txt",
+                    "to_path": null,
+                    "old_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "new_sha256": null,
+                    "changed": false,
+                    "would_change": true,
+                    "edits": []
+                },
+                {
+                    "index": 2,
+                    "kind": "rename",
+                    "path": "move.txt",
+                    "to_path": "moved.txt",
+                    "old_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "new_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "changed": false,
+                    "would_change": true,
+                    "edits": [{
+                        "chunk_index": 0,
+                        "change_context_present": false,
+                        "old_line_count": 1,
+                        "new_line_count": 1,
+                        "end_of_file": false,
+                        "match_mode": "exact",
+                        "match_source": "old_lines",
+                        "matched_start_line": 1,
+                        "candidate_count": 1,
+                        "strict_match": true
+                    }]
+                },
+                {
+                    "index": 3,
+                    "kind": "edit",
+                    "path": "append.txt",
+                    "to_path": null,
+                    "old_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "new_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "changed": false,
+                    "would_change": true,
+                    "edits": [{
+                        "chunk_index": 0,
+                        "change_context_present": false,
+                        "old_line_count": 0,
+                        "new_line_count": 1,
+                        "end_of_file": false,
+                        "match_mode": null,
+                        "match_source": "append",
+                        "matched_start_line": 2,
+                        "candidate_count": null,
+                        "strict_match": true
+                    }]
+                }
+            ],
+            "changed_paths": ["new.txt", "old.txt", "move.txt", "moved.txt", "append.txt"]
+        });
+
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, true, true);
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["files"].as_array().unwrap().len(), 4);
+        assert_eq!(result.output["changed_paths"].as_array().unwrap().len(), 5);
     }
 
     #[test]

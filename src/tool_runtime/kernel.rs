@@ -818,6 +818,9 @@ impl ToolRuntime {
             );
             super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
         }
+        // Final model-facing projection: the authoritative permission decision
+        // and recorder event have already been consumed by the Session ledger.
+        super::dispatch::sparsify_success_model_result_metadata(&mut result);
         ToolCallOutcome {
             success: result.success,
             result: Some(result),

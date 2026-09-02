@@ -91,6 +91,15 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
         "observation_token",
         "effective_timeout_secs",
         "sync_wait_secs",
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "exit_code",
+        "duration_ms",
+        "purpose",
+        "cwd",
+        "executor",
     ] {
         output.remove(key);
     }
@@ -137,6 +146,24 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     if canonical_source && canonical_summary {
         output.remove(summary_key);
         output.remove("execution_source");
+    }
+}
+
+/// Strip successful wrapper/telemetry facts only after every authority and
+/// Session recorder that needs them has consumed the canonical ToolResult.
+/// Failures keep the full decision/recovery envelope because those fields are
+/// actionable for retry, escalation, and reconciliation.
+pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    output.remove("permission");
+    if output.get("session_recorded").and_then(Value::as_bool) == Some(true) {
+        output.remove("session_recorded");
+        output.remove("session_event_id");
     }
 }
 
@@ -2028,10 +2055,21 @@ mod structured_execution_sparse_projection_tests {
     fn terminal_execution_only_omits_summary_and_source_for_exact_canonical_source() {
         let mut canonical = terminal_process_result("run_process");
         sparsify_terminal_structured_execution_success("run_process", &mut canonical);
-        assert!(canonical.output.get("process_summary").is_none());
-        assert!(canonical.output.get("execution_source").is_none());
-        assert_eq!(canonical.output["cwd"], ".");
-        assert_eq!(canonical.output["executor"], "agent");
+        for omitted in [
+            "process_summary",
+            "execution_source",
+            "execution_state",
+            "command_started",
+            "command_completed",
+            "command_ok",
+            "exit_code",
+            "duration_ms",
+            "purpose",
+            "cwd",
+            "executor",
+        ] {
+            assert!(canonical.output.get(omitted).is_none(), "{omitted}");
+        }
 
         let mut alternate = terminal_process_result("alternate_process_source");
         sparsify_terminal_structured_execution_success("run_process", &mut alternate);
@@ -2040,6 +2078,9 @@ mod structured_execution_sparse_projection_tests {
             alternate.output["execution_source"],
             "alternate_process_source"
         );
+        assert!(alternate.output.get("cwd").is_none());
+        assert!(alternate.output.get("executor").is_none());
+        assert!(alternate.output.get("execution_state").is_none());
     }
 }
 

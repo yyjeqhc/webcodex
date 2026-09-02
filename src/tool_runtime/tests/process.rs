@@ -361,18 +361,35 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
         .await;
         let result = task.await.unwrap();
         assert_eq!(result.success, expected_success);
-        assert_eq!(result.output["execution_state"], "completed");
-        assert_eq!(result.output["command_started"], true);
-        assert_eq!(result.output["command_completed"], true);
-        assert_eq!(result.output["exit_code"], exit_code);
         if expected_success {
-            assert!(result.output.get("execution_source").is_none());
-            assert!(result.output.get("process_summary").is_none());
+            for omitted in [
+                "execution_state",
+                "command_started",
+                "command_completed",
+                "command_ok",
+                "exit_code",
+                "duration_ms",
+                "purpose",
+                "cwd",
+                "executor",
+                "execution_source",
+                "process_summary",
+            ] {
+                assert!(
+                    result.output.get(omitted).is_none(),
+                    "{omitted}: {}",
+                    result.output
+                );
+            }
         } else {
+            assert_eq!(result.output["execution_state"], "completed");
+            assert_eq!(result.output["command_started"], true);
+            assert_eq!(result.output["command_completed"], true);
+            assert_eq!(result.output["exit_code"], exit_code);
             assert_eq!(result.output["execution_source"], "run_process");
             assert!(result.output["process_summary"].as_str().is_some());
+            assert_eq!(result.output["purpose"], "diagnostic");
         }
-        assert_eq!(result.output["purpose"], "diagnostic");
     }
 }
 
@@ -865,13 +882,17 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
 
         let result = task.await.unwrap();
         assert_eq!(result.success, expected_success);
-        assert_eq!(result.output["execution_state"], "completed");
-        assert_eq!(result.output["command_started"], true);
-        assert_eq!(result.output["command_completed"], true);
-        assert_eq!(result.output["exit_code"], exit_code);
         if expected_success {
-            assert_eq!(result.output["command_ok"], true);
             for omitted in [
+                "execution_state",
+                "command_started",
+                "command_completed",
+                "command_ok",
+                "exit_code",
+                "duration_ms",
+                "purpose",
+                "cwd",
+                "executor",
                 "promoted_to_job",
                 "terminal",
                 "job_id",
@@ -892,6 +913,10 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
                 );
             }
         } else {
+            assert_eq!(result.output["execution_state"], "completed");
+            assert_eq!(result.output["command_started"], true);
+            assert_eq!(result.output["command_completed"], true);
+            assert_eq!(result.output["exit_code"], exit_code);
             assert_eq!(result.output["promoted_to_job"], false);
             assert_eq!(result.output["terminal"], true);
             assert!(result.output["job_id"].is_null());
@@ -958,12 +983,16 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["execution_state"], "completed");
-    assert_eq!(result.output["command_started"], true);
-    assert_eq!(result.output["command_completed"], true);
-    assert_eq!(result.output["command_ok"], true);
-    assert_eq!(result.output["exit_code"], 0);
     for omitted in [
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "exit_code",
+        "duration_ms",
+        "purpose",
+        "cwd",
+        "executor",
         "promoted_to_job",
         "terminal",
         "job_id",
@@ -989,11 +1018,9 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
         );
     }
 
-    assert!(result.output["cwd"].as_str().is_some());
-    assert!(result.output["executor"].as_str().is_some());
     let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
     assert!(
-        sparse_bytes <= 620,
+        sparse_bytes <= 420,
         "boring run_process success regressed above the model-facing context budget: {sparse_bytes} bytes"
     );
     eprintln!("run_process_sparse_terminal_success_bytes={sparse_bytes}");
@@ -1347,7 +1374,7 @@ async fn run_process_short_timeout_stays_direct_without_job_headroom() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["execution_state"], "completed");
+    assert!(result.output.get("execution_state").is_none());
     assert!(result.output.get("promoted_to_job").is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
 }
@@ -1732,7 +1759,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["cwd"], "frontend");
+    assert!(result.output.get("cwd").is_none());
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))

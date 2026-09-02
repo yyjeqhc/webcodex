@@ -1384,7 +1384,8 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["output"]["session_id"], business_session_id);
     assert_eq!(body["output"]["title"], "business");
-    assert_eq!(body["output"]["session_recorded"], true);
+    assert!(body["output"].get("session_recorded").is_none());
+    assert!(body["output"].get("session_event_id").is_none());
     assert!(body["output"].get("session_context_revision").is_none());
     assert!(body["output"].get("session_continuity").is_none());
     assert!(body["output"].get("session_recovery").is_none());
@@ -1454,7 +1455,8 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
     assert!(body["output"]["message_id"]
         .as_str()
         .is_some_and(|id| id.starts_with("wc_msg_")));
-    assert_eq!(body["output"]["session_recorded"], true);
+    assert!(body["output"].get("session_recorded").is_none());
+    assert!(body["output"].get("session_event_id").is_none());
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")

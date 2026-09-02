@@ -251,15 +251,27 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert!(result.output.get("execution_source").is_none());
-    assert!(result.output.get("script_summary").is_none());
-    assert_eq!(result.output["execution_state"], "completed");
-    assert_eq!(result.output["command_started"], true);
-    assert_eq!(result.output["command_completed"], true);
     assert_eq!(result.output["language"], "bash");
-    assert_eq!(result.output["purpose"], "operation");
-    assert!(result.output["cwd"].as_str().is_some());
-    assert!(result.output["executor"].as_str().is_some());
+    assert_eq!(result.output["stdout_tail"], "done\n");
+    for omitted in [
+        "execution_source",
+        "script_summary",
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "exit_code",
+        "duration_ms",
+        "purpose",
+        "cwd",
+        "executor",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            result.output
+        );
+    }
 }
 
 #[tokio::test]
@@ -317,11 +329,16 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["execution_state"], "completed");
-    assert_eq!(result.output["command_started"], true);
-    assert_eq!(result.output["command_completed"], true);
-    assert_eq!(result.output["command_ok"], true);
     for omitted in [
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "exit_code",
+        "duration_ms",
+        "purpose",
+        "cwd",
+        "executor",
         "promoted_to_job",
         "terminal",
         "job_id",
@@ -345,11 +362,9 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
             result.output
         );
     }
-    assert!(result.output["cwd"].as_str().is_some());
-    assert!(result.output["executor"].as_str().is_some());
     let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
     assert!(
-        sparse_bytes <= 620,
+        sparse_bytes <= 460,
         "boring run_script success regressed above the model-facing context budget: {sparse_bytes} bytes"
     );
     eprintln!("run_script_sparse_terminal_success_bytes={sparse_bytes}");
@@ -432,8 +447,8 @@ async fn run_script_explicit_sync_wait_captures_terminal_after_old_ten_second_th
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["execution_state"], "completed");
-    assert_eq!(result.output["command_completed"], true);
+    assert!(result.output.get("execution_state").is_none());
+    assert!(result.output.get("command_completed").is_none());
     assert!(result.output.get("job_id").is_none());
     assert!(result.output.get("promoted_to_job").is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
@@ -910,7 +925,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success);
-    assert_eq!(result.output["cwd"], "frontend");
+    assert!(result.output.get("cwd").is_none());
 
     let summary = runtime
         .sessions

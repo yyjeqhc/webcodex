@@ -416,6 +416,14 @@ async fn http_project_connector_lists_and_dispatches_only_project_capabilities()
         .await;
     assert_eq!(effective_status(&started), StatusCode::OK);
     let started_body: Value = started.take_json().await.unwrap();
+    assert_eq!(
+        started_body["result"]["content"][0]["text"],
+        "WebCodex connector tool completed successfully."
+    );
+    assert!(!started_body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("task_id"));
     assert_eq!(started_body["result"]["structuredContent"]["ok"], true);
     assert!(started_body["result"]["structuredContent"]["task_id"]
         .as_str()

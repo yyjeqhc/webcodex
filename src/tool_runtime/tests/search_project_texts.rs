@@ -1801,7 +1801,8 @@ async fn search_project_texts_outer_recording_session_preserves_complete_sparse_
 
     let result = task.await.unwrap().result.expect("model-facing result");
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
     assert_eq!(result.output["session_context_revision"], 0);
     assert!(result.output.get("session_continuity").is_none());
     assert!(result.output.get("session_recovery").is_none());

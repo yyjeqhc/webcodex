@@ -1095,9 +1095,10 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         .await;
     let allowed_result = allowed.result.expect("memory_set result");
     assert!(allowed_result.success, "{}", allowed_result.output);
-    assert_eq!(
-        allowed_result.output["permission"]["status"],
-        "auto_approved"
+    assert!(
+        allowed_result.output.get("permission").is_none(),
+        "successful model-facing memory result should not repeat permission telemetry: {}",
+        allowed_result.output
     );
 
     let read_allowed = runtime

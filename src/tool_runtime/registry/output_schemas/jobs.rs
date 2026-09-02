@@ -30,7 +30,7 @@ fn process_execution_state_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "queued", "running"],
-        "description": "Canonical lifecycle: not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; completed and timed_out are terminal. queued/running appear only when the same execution has been exposed as a durable Job. Only not_started is structurally safe to retry without first inspecting target state."
+        "description": "Canonical lifecycle when explicit: not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; timed_out is terminal; queued/running appear only for durable Job handoff. Ordinary synchronous success omits this field because outer success already implies completed. Only explicit not_started is structurally safe to retry without first inspecting target state."
     })
 }
 
@@ -573,11 +573,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Process duration in milliseconds."),
+                    schema_type("integer", "Process duration in milliseconds; omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "exit_code",
-                    nullable_schema("integer", "Process exit code, when available."),
+                    nullable_schema("integer", "Process exit code when it must be explicit; omitted when outer success already implies 0."),
                 ),
                 (
                     "stdout_tail",
@@ -607,19 +607,19 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "command_started",
                     schema_type(
                         "boolean",
-                        "Whether callers must conservatively treat the process as started; true includes outcome_unknown because side effects may have occurred.",
+                        "Whether callers must conservatively treat the process as started; true includes outcome_unknown because side effects may have occurred. Omitted on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "command_completed",
                     schema_type(
                         "boolean",
-                        "Whether the process reached a terminal result before tool timeout.",
+                        "Whether the process reached a terminal result before tool timeout. Omitted on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "command_ok",
-                    schema_type("boolean", "Whether the process completed with exit code 0."),
+                    schema_type("boolean", "Whether the process completed with exit code 0; omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "failure_kind",
@@ -635,7 +635,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose.")),
+                ("purpose", schema_type("string", "Declared execution purpose; omitted on ordinary synchronous terminal success because it echoes the request.")),
                 (
                     "process_summary",
                     schema_type(
@@ -645,9 +645,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd."),
+                    schema_type("string", "Resolved project-relative cwd; omitted on ordinary synchronous terminal success."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent.")),
+                ("executor", schema_type("string", "Executor type: local or agent; omitted on ordinary synchronous terminal success.")),
                 (
                     "execution_source",
                     schema_type("string", "Canonical source is run_process. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),
@@ -669,11 +669,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Script duration in milliseconds."),
+                    schema_type("integer", "Script duration in milliseconds; omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "exit_code",
-                    nullable_schema("integer", "Interpreter exit code, when available."),
+                    nullable_schema("integer", "Interpreter exit code when it must be explicit; omitted when outer success already implies 0."),
                 ),
                 (
                     "stdout_tail",
@@ -703,21 +703,21 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "command_started",
                     schema_type(
                         "boolean",
-                        "Whether callers must conservatively treat the script as started; true includes outcome_unknown because side effects may have occurred.",
+                        "Whether callers must conservatively treat the script as started; true includes outcome_unknown because side effects may have occurred. Omitted on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "command_completed",
                     schema_type(
                         "boolean",
-                        "Whether the interpreter reached a known terminal result before tool timeout.",
+                        "Whether the interpreter reached a known terminal result before tool timeout. Omitted on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "command_ok",
                     schema_type(
                         "boolean",
-                        "Whether the interpreter completed with exit code 0.",
+                        "Whether the interpreter completed with exit code 0. Omitted on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
@@ -734,7 +734,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose.")),
+                ("purpose", schema_type("string", "Declared execution purpose; omitted on ordinary synchronous terminal success because it echoes the request.")),
                 (
                     "script_summary",
                     schema_type(
@@ -748,9 +748,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd."),
+                    schema_type("string", "Resolved project-relative cwd; omitted on ordinary synchronous terminal success."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent.")),
+                ("executor", schema_type("string", "Executor type: local or agent; omitted on ordinary synchronous terminal success.")),
                 (
                     "execution_source",
                     schema_type("string", "Canonical source is run_script. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),

@@ -175,13 +175,21 @@ async fn mcp_tools_call_runtime_status_returns_content() {
     // content blocks
     assert!(value["result"]["content"].is_array());
     assert_eq!(value["result"]["content"][0]["type"], "text");
-    assert!(value["result"]["content"][0]["text"].is_string());
-    // structuredContent carries the ToolResult shape
+    assert_eq!(
+        value["result"]["content"][0]["text"],
+        "WebCodex tool completed successfully."
+    );
+    // structuredContent carries the ToolResult shape exactly once; content.text
+    // must not serialize the structured payload again.
     assert!(value["result"]["structuredContent"].is_object());
     assert_eq!(value["result"]["structuredContent"]["success"], true);
     let out = &value["result"]["structuredContent"]["output"];
     assert_eq!(out["service"], "webcodex");
     assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+    assert!(!value["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(env!("CARGO_PKG_VERSION")));
     // runtime_status never errors on a failed-projects runtime — it
     // reports configured=false instead.
     assert_eq!(value["result"]["isError"], false);

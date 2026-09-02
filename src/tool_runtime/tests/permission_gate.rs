@@ -385,6 +385,51 @@ async fn coding_agent_cancel_inherits_start_approval_without_second_evaluator_de
 }
 
 #[tokio::test]
+async fn kernel_path_preserves_permission_denial_for_model_recovery() {
+    let client_id = "perm-kernel-denied";
+    let runtime = runtime_with_mode(client_id, AuthorityMode::Restricted);
+    register_write_agent(&runtime, client_id).await;
+    let project = agent_test_project_id(client_id);
+    let recording = runtime.sessions.start_session(Some(project.clone()), None);
+    let bootstrap = auth_context(None, true);
+    let recording_id = recording.session_id.clone();
+
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "write_project_file".to_string(),
+                arguments: json!({
+                    "project": project,
+                    "path": "src/kernel-denied.txt",
+                    "content": "nope\n",
+                    "session_id": recording_id,
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: Some(&recording_id),
+                auth: Some(&bootstrap),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+
+    assert!(!outcome.success);
+    let result = outcome.result.expect("permission denial tool result");
+    assert_eq!(result.output["error_kind"], "permission_denied");
+    assert_eq!(result.output["permission"]["status"], "denied");
+    assert_eq!(
+        result.output["permission"]["reason"],
+        "restricted_requires_human_authorization"
+    );
+    assert!(probe_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
 async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
     let counter = Arc::new(AtomicUsize::new(0));
     let client_id = "perm-kernel-once";
@@ -441,12 +486,13 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
     );
 
     let result = outcome.result.expect("tool result");
-    let request_id = result.output["permission"]["request_id"]
-        .as_str()
-        .expect("permission.request_id")
-        .to_string();
-    assert!(request_id.starts_with("wc_perm_"));
-    assert_eq!(result.output["permission"]["status"], "auto_approved");
+    assert!(
+        result.output.get("permission").is_none(),
+        "successful kernel result should not repeat permission metadata: {}",
+        result.output
+    );
+    assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_event_id").is_none());
 
     let summary = runtime
         .sessions
@@ -462,12 +508,7 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
         !seen_ids.is_empty(),
         "outer recording session should reuse attached decision"
     );
-    for id in &seen_ids {
-        assert_eq!(
-            id, &request_id,
-            "all ledger permission request ids must match the single decision"
-        );
-    }
+    assert!(seen_ids.iter().all(|id| id.starts_with("wc_perm_")));
     let unique: std::collections::BTreeSet<_> = seen_ids.iter().collect();
     assert_eq!(
         unique.len(),

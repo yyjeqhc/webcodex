@@ -34,7 +34,18 @@ pub(super) fn mcp_stateless_result(mut result: Value, cacheable: bool) -> Value 
 }
 
 pub(super) fn connector_call_tool_result(outcome: ConnectorCallOutcome) -> Value {
-    let text = serde_json::to_string(&outcome.body).unwrap_or_else(|_| "{}".to_string());
+    // Connector output follows the same MCP layering as Runtime tools: the body
+    // is canonical in structuredContent and content.text is only a tiny fallback.
+    let text = if outcome.ok {
+        "WebCodex connector tool completed successfully.".to_string()
+    } else {
+        outcome
+            .body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("WebCodex connector tool failed.")
+            .to_string()
+    };
     json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": outcome.body,
@@ -43,12 +54,17 @@ pub(super) fn connector_call_tool_result(outcome: ConnectorCallOutcome) -> Value
 }
 
 pub(super) fn mcp_runtime_tool_result_fallback(result: ToolResult) -> Value {
-    let text = serde_json::to_string(&json!({
-        "success": result.success,
-        "output": result.output.clone(),
-        "error": result.error.clone(),
-    }))
-    .unwrap_or_else(|_| "{}".to_string());
+    // `structuredContent` is the canonical machine-readable result. Repeating
+    // that full JSON object in `content.text` doubles model context and echoes
+    // metadata the caller already has. Keep text as a tiny fallback instead.
+    let text = if result.success {
+        "WebCodex tool completed successfully.".to_string()
+    } else {
+        result
+            .error
+            .clone()
+            .unwrap_or_else(|| "WebCodex tool failed.".to_string())
+    };
     json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": {

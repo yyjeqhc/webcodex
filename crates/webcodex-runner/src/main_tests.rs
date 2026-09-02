@@ -1112,10 +1112,7 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
     assert_eq!(body.agent_instance_id, id);
     assert!(!body.agent_instance_id.is_empty());
     assert_eq!(
-        body.capabilities
-            .as_ref()
-            .and_then(|capabilities| capabilities.agent_protocol_generation),
-        Some(AGENT_PROTOCOL_GENERATION_V2),
+        body.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2,
         "current Runner registration must explicitly declare protocol generation 2"
     );
 }

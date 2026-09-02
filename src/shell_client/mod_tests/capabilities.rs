@@ -233,9 +233,8 @@ fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
 async fn current_protocol_generation_never_infers_registration_required_host_features() {
     let registry = ShellClientRegistry::default();
     let mut registration = runner_registration("no-inference", "inst-a", Vec::new());
-    let mut capabilities = v2_baseline_capabilities();
-    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
-    registration.capabilities = Some(capabilities);
+    let capabilities = v2_baseline_capabilities();
+    registration.capabilities = capabilities;
     registry.register(registration).await.unwrap();
 
     for feature in [
@@ -267,10 +266,9 @@ async fn shell_client_view_preserves_capability_wire_projection() {
     advertised.computer_control = true;
 
     let mut registration = runner_registration("projection", "inst-a", Vec::new());
-    registration.capabilities = Some(advertised.clone());
+    registration.capabilities = advertised.clone();
     let view = registry.register(registration).await.unwrap();
 
-    advertised.agent_protocol_generation = None;
     assert_eq!(view.capabilities, advertised);
     let serialized = serde_json::to_value(&view.capabilities).unwrap();
     assert_eq!(serialized["shell"], false);
@@ -282,17 +280,16 @@ async fn shell_client_view_preserves_capability_wire_projection() {
 }
 
 #[tokio::test]
-async fn v2_generation_advertisement_never_enters_public_capability_projection() {
+async fn top_level_generation_stays_separate_from_public_capability_projection() {
     let registry = ShellClientRegistry::default();
     let mut capabilities = v2_baseline_capabilities();
-    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
     capabilities.computer_control = true;
 
     let mut registration = runner_registration("v2-projection", "inst-v2", Vec::new());
-    registration.capabilities = Some(capabilities);
+    registration.capabilities = capabilities;
     let view = registry.register(registration).await.unwrap();
 
-    assert!(view.capabilities.agent_protocol_generation.is_none());
+    assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
     assert!(view.capabilities.computer_control);
     let serialized = serde_json::to_value(&view.capabilities).unwrap();
     assert!(serialized.get("agent_protocol_generation").is_none());
@@ -306,7 +303,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
     let mut first_capabilities = v2_baseline_capabilities();
     first_capabilities.computer_observe = true;
     let mut first = runner_registration("semantic-snapshot", "inst-a", Vec::new());
-    first.capabilities = Some(first_capabilities);
+    first.capabilities = first_capabilities;
     registry.register(first).await.unwrap();
 
     let first_snapshot = registry
@@ -331,7 +328,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
     let mut replacement_capabilities = v2_baseline_capabilities();
     replacement_capabilities.computer_text_input = true;
     let mut replacement = runner_registration("semantic-snapshot", "inst-b", Vec::new());
-    replacement.capabilities = Some(replacement_capabilities);
+    replacement.capabilities = replacement_capabilities;
     registry.register(replacement).await.unwrap();
 
     let replacement_snapshot = registry
@@ -377,7 +374,7 @@ async fn generation_baseline_project_features_cannot_downgrade_on_reregistration
     let mut downgraded = runner_registration("project-feature-fence", "inst-a", Vec::new());
     let mut capabilities = v2_baseline_capabilities();
     capabilities.project_path_registration = false;
-    downgraded.capabilities = Some(capabilities);
+    downgraded.capabilities = capabilities;
     let error = registry.register(downgraded).await.unwrap_err();
     assert_eq!(
         error,
@@ -397,7 +394,7 @@ async fn coding_agent_registration_consistency_uses_canonical_feature_semantics(
     let registry = ShellClientRegistry::default();
 
     let mut metadata_without_feature = runner_registration("coding-metadata", "inst-a", Vec::new());
-    metadata_without_feature.capabilities = Some(v2_baseline_capabilities());
+    metadata_without_feature.capabilities = v2_baseline_capabilities();
     metadata_without_feature.coding_agent_providers =
         Some(vec![webcodex_core::coding_agent::CodingAgentProvider {
             provider_id: "codex".to_string(),
@@ -416,11 +413,11 @@ async fn coding_agent_registration_consistency_uses_canonical_feature_semantics(
     );
 
     let mut feature_without_metadata = runner_registration("coding-feature", "inst-a", Vec::new());
-    feature_without_metadata.capabilities = Some(with_wire_feature(
+    feature_without_metadata.capabilities = with_wire_feature(
         &v2_baseline_capabilities(),
         RunnerFeature::CodingAgentRuns,
         true,
-    ));
+    );
     let error = registry
         .register(feature_without_metadata)
         .await
@@ -440,7 +437,7 @@ async fn register_sticky_feature_state(
 ) -> Result<(), String> {
     let capabilities = with_wire_feature(&v2_baseline_capabilities(), feature, enabled);
     let mut registration = runner_registration(client_id, instance_id, Vec::new());
-    registration.capabilities = Some(capabilities);
+    registration.capabilities = capabilities;
 
     if feature == RunnerFeature::JobStateReconciliation && enabled {
         registration.job_inventory = Some(crate::shell_protocol::ShellJobInventory {
@@ -478,11 +475,7 @@ async fn generation_baseline_features_reject_reregistration_downgrade() {
             .await
             .unwrap();
         let mut downgraded = runner_registration(&client_id, "inst-a", Vec::new());
-        downgraded.capabilities = Some(with_wire_feature(
-            &v2_baseline_capabilities(),
-            feature,
-            false,
-        ));
+        downgraded.capabilities = with_wire_feature(&v2_baseline_capabilities(), feature, false);
         let error = registry.register(downgraded).await.unwrap_err();
         assert_eq!(
             error,

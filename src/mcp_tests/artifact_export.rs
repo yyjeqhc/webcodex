@@ -22,11 +22,12 @@ async fn mcp_export_runtime(
                 coding_agent_inventory: None,
                 client_id: "exporter".to_string(),
                 agent_instance_id: "inst-export".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: owner.map(str::to_string),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities::default()),
+                capabilities: ShellClientCapabilities::default(),
                 policy: None,
             },
         ))

@@ -13,11 +13,12 @@ async fn touch_client_refreshes_stale_client_back_to_online() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         }))
         .await

@@ -61,11 +61,12 @@ async fn register_agent_with_lsp_capabilities(
                 coding_agent_inventory: None,
                 client_id: "hosted".to_string(),
                 agent_instance_id: "instance".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         file_read: true,
@@ -116,9 +117,8 @@ async fn register_agent_with_lsp_capabilities(
                         computer_text_input: false,
                         job_state_reconciliation: false,
                         coding_agent_runs: false,
-                        agent_protocol_generation: None,
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&auth("u1")),

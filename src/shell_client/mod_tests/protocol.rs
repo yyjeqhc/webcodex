@@ -2,20 +2,13 @@ use super::*;
 
 #[test]
 fn accepted_runner_protocol_requires_exact_generation_two() {
-    let accepted =
-        AcceptedRunnerProtocol::try_from_registration(Some(AGENT_PROTOCOL_GENERATION_V2))
-            .expect("generation 2");
+    let accepted = AcceptedRunnerProtocol::try_from_registration(AGENT_PROTOCOL_GENERATION_V2)
+        .expect("generation 2");
     assert_eq!(accepted.generation(), AGENT_PROTOCOL_GENERATION_V2);
-    assert_eq!(
-        AcceptedRunnerProtocol::try_from_registration(None).unwrap_err(),
-        "agent_protocol_generation is required"
-    );
     for raw in [0, 1, 3, u16::MAX] {
         assert_eq!(
-            AcceptedRunnerProtocol::try_from_registration(Some(
-                AgentProtocolGenerationNumber::new(raw)
-            ))
-            .unwrap_err(),
+            AcceptedRunnerProtocol::try_from_registration(AgentProtocolGenerationNumber::new(raw))
+                .unwrap_err(),
             "agent_protocol_generation is unsupported"
         );
     }
@@ -24,29 +17,19 @@ fn accepted_runner_protocol_requires_exact_generation_two() {
 fn generation_registration(
     client_id: &str,
     instance_id: &str,
-    generation: Option<AgentProtocolGenerationNumber>,
+    generation: AgentProtocolGenerationNumber,
 ) -> ShellClientRegisterRequest {
     let mut registration = runner_registration(client_id, instance_id, Vec::new());
-    let mut capabilities = v2_baseline_capabilities();
-    capabilities.agent_protocol_generation = generation;
-    registration.capabilities = Some(capabilities);
+    registration.agent_protocol_generation = generation;
+    registration.capabilities = v2_baseline_capabilities();
     registration
 }
 
 #[tokio::test]
 async fn registration_rejects_non_v2_generation_before_creating_a_record() {
-    for (suffix, generation, expected) in [
-        ("missing", None, "agent_protocol_generation is required"),
-        (
-            "generation-one",
-            Some(AgentProtocolGenerationNumber::new(1)),
-            "agent_protocol_generation is unsupported",
-        ),
-        (
-            "future",
-            Some(AgentProtocolGenerationNumber::new(3)),
-            "agent_protocol_generation is unsupported",
-        ),
+    for (suffix, generation) in [
+        ("generation-one", AgentProtocolGenerationNumber::new(1)),
+        ("future", AgentProtocolGenerationNumber::new(3)),
     ] {
         let registry = ShellClientRegistry::default();
         let client_id = format!("non-v2-{suffix}");
@@ -54,7 +37,7 @@ async fn registration_rejects_non_v2_generation_before_creating_a_record() {
             .register(generation_registration(&client_id, "inst-a", generation))
             .await
             .unwrap_err();
-        assert_eq!(error, expected);
+        assert_eq!(error, "agent_protocol_generation is unsupported");
         assert!(registry.get_client_view(&client_id).await.is_none());
     }
 }
@@ -62,16 +45,9 @@ async fn registration_rejects_non_v2_generation_before_creating_a_record() {
 #[tokio::test]
 async fn registration_rejects_v2_baseline_contradiction_before_creating_a_record() {
     let registry = ShellClientRegistry::default();
-    let mut registration = generation_registration(
-        "v2-contradiction",
-        "inst-a",
-        Some(AGENT_PROTOCOL_GENERATION_V2),
-    );
-    registration
-        .capabilities
-        .as_mut()
-        .unwrap()
-        .structured_process_argv = false;
+    let mut registration =
+        generation_registration("v2-contradiction", "inst-a", AGENT_PROTOCOL_GENERATION_V2);
+    registration.capabilities.structured_process_argv = false;
     let error = registry.register(registration).await.unwrap_err();
     assert_eq!(
         error,
@@ -88,7 +64,7 @@ async fn same_instance_generation_two_reconnects_remain_valid() {
             .register(generation_registration(
                 "v2-stable",
                 "inst-a",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
             ))
             .await
             .unwrap();
@@ -112,7 +88,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
         .register(generation_registration(
             "replacement-v2",
             "inst-a",
-            Some(AGENT_PROTOCOL_GENERATION_V2),
+            AGENT_PROTOCOL_GENERATION_V2,
         ))
         .await
         .unwrap();
@@ -121,10 +97,14 @@ async fn replacement_cannot_bypass_generation_two_admission() {
         .await;
 
     let error = registry
-        .register(generation_registration("replacement-v2", "inst-b", None))
+        .register(generation_registration(
+            "replacement-v2",
+            "inst-b",
+            AgentProtocolGenerationNumber::new(3),
+        ))
         .await
         .unwrap_err();
-    assert_eq!(error, "agent_protocol_generation is required");
+    assert_eq!(error, "agent_protocol_generation is unsupported");
     assert_eq!(
         registry
             .get_client_view("replacement-v2")
@@ -138,7 +118,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
         .register(generation_registration(
             "replacement-v2",
             "inst-b",
-            Some(AGENT_PROTOCOL_GENERATION_V2),
+            AGENT_PROTOCOL_GENERATION_V2,
         ))
         .await
         .unwrap();
@@ -153,7 +133,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
 }
 
 #[test]
-fn protocol_capability_defaults_remain_fail_closed() {
+fn registration_wire_requires_generation_capabilities_and_explicit_shell() {
     let capabilities = ShellClientCapabilities::default();
     assert!(!capabilities.async_jobs);
     assert!(!capabilities.async_shell_jobs);
@@ -162,45 +142,36 @@ fn protocol_capability_defaults_remain_fail_closed() {
     assert!(!capabilities.structured_go_test_tool);
     assert!(!capabilities.structured_go_test_packages);
 
+    let missing_generation = serde_json::from_str::<ShellClientRegisterRequest>(
+        r#"{"client_id":"oe","agent_instance_id":"inst-1","capabilities":{"shell":true}}"#,
+    )
+    .unwrap_err();
+    assert!(missing_generation
+        .to_string()
+        .contains("agent_protocol_generation"));
+
+    let missing_capabilities = serde_json::from_str::<ShellClientRegisterRequest>(
+        r#"{"client_id":"oe","agent_instance_id":"inst-1","agent_protocol_generation":2}"#,
+    )
+    .unwrap_err();
+    assert!(missing_capabilities.to_string().contains("capabilities"));
+
+    let missing_shell = serde_json::from_str::<ShellClientRegisterRequest>(
+        r#"{"client_id":"oe","agent_instance_id":"inst-1","agent_protocol_generation":2,"capabilities":{}}"#,
+    )
+    .unwrap_err();
+    assert!(missing_shell.to_string().contains("shell"));
+
     let request: ShellClientRegisterRequest = serde_json::from_str(
-        r#"{
-            "client_id": "oe",
-            "agent_instance_id": "inst-1",
-            "capabilities": {"shell": true}
-        }"#,
+        r#"{"client_id":"oe","agent_instance_id":"inst-1","agent_protocol_generation":2,"capabilities":{"shell":true}}"#,
     )
     .unwrap();
-    let capabilities = request.capabilities.unwrap();
-    assert!(!capabilities.async_jobs);
-    assert!(capabilities.agent_protocol_generation.is_none());
-}
-
-#[tokio::test]
-async fn missing_generation_is_rejected_across_all_runner_transports() {
-    for (transport, transport_label) in [
-        (AgentTransport::Polling, TRANSPORT_POLLING),
-        (AgentTransport::WebSocket, TRANSPORT_WEBSOCKET),
-        (AgentTransport::Quic, TRANSPORT_QUIC),
-    ] {
-        let registry = ShellClientRegistry::default();
-        let client_id = format!("missing-generation-{transport_label}");
-        let registration = generation_registration(&client_id, "inst-a", None);
-        let error = match transport {
-            AgentTransport::Polling => registry.register(registration).await.unwrap_err(),
-            AgentTransport::WebSocket | AgentTransport::Quic => registry
-                .register_streaming_session(
-                    registration,
-                    None,
-                    &format!("connection-{transport_label}"),
-                    transport,
-                    Arc::new(Notify::new()),
-                )
-                .await
-                .unwrap_err(),
-        };
-        assert_eq!(error, "agent_protocol_generation is required");
-        assert!(registry.get_client_view(&client_id).await.is_none());
-    }
+    assert_eq!(
+        request.agent_protocol_generation,
+        AGENT_PROTOCOL_GENERATION_V2
+    );
+    assert!(request.capabilities.shell);
+    assert!(!request.capabilities.async_jobs);
 }
 
 #[tokio::test]
@@ -219,7 +190,7 @@ async fn polling_http_register_requires_generation() {
         .json(&json!({
             "client_id": "polling-missing-generation",
             "agent_instance_id": "inst",
-            "capabilities": {}
+            "capabilities": {"shell": true}
         }))
         .send(&service)
         .await;
@@ -229,7 +200,12 @@ async fn polling_http_register_requires_generation() {
     );
     let body: serde_json::Value = response.take_json().await.unwrap();
     assert_eq!(body["success"], false);
-    assert_eq!(body["error"], "agent_protocol_generation is required");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("agent_protocol_generation")),
+        "{body:?}"
+    );
     assert!(registry.list_clients().await.is_empty());
 }
 
@@ -249,6 +225,7 @@ async fn polling_http_register_accepts_generation_two() {
         .json(&json!({
             "client_id": "polling-generation-two",
             "agent_instance_id": "inst",
+            "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
             "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default())
         }))
         .send(&service)
@@ -297,11 +274,12 @@ async fn client_supports_reflects_registered_capabilities() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(caps),
+            capabilities: caps,
             policy: None,
         })
         .await
@@ -404,15 +382,16 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
                 ),
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst_{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some({
+                capabilities: {
                     let mut capabilities = v2_baseline_capabilities();
                     capabilities.coding_agent_runs = true;
                     capabilities
-                }),
+                },
                 policy: None,
             })
             .await
@@ -450,15 +429,16 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
             }),
             client_id: "test".to_string(),
             agent_instance_id: "inst_test".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some({
+            capabilities: {
                 let mut capabilities = v2_baseline_capabilities();
                 capabilities.coding_agent_runs = true;
                 capabilities
-            }),
+            },
             policy: None,
         };
     let base = webcodex_core::coding_agent::CodingAgentRunSnapshot {
@@ -537,11 +517,12 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
             ),
             client_id: "all".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 file_write: true,
@@ -591,8 +572,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 computer_text_input: true,
                 job_state_reconciliation: true,
                 coding_agent_runs: true,
-                agent_protocol_generation: Some(AGENT_PROTOCOL_GENERATION_V2),
-            }),
+            },
             policy: None,
         })
         .await

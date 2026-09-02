@@ -2621,10 +2621,16 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     // still prove the original timeout is not reset at handoff.
     assert!(wait_until(Duration::from_secs(30), || marker.exists()));
 
-    // Once the marker proves the child started, the JobManager has no further
-    // sync-grace state transition to wait for: ToolRuntime handoff only exposes
-    // this same execution. Inventory observation is deliberately read-only and
-    // cannot replace the process or reset its original deadline.
+    // The child can write its marker before the parent task is rescheduled to
+    // publish the post-spawn `running` state. That race is visible under a
+    // heavily parallel test load, so wait only for that state publication;
+    // inventory observation remains read-only and cannot replace the process
+    // or reset its original deadline.
+    assert!(wait_until(Duration::from_secs(2), || {
+        manager.inventory().jobs.into_iter().any(|snapshot| {
+            snapshot.job_id == "structured-original-timeout" && snapshot.status == "running"
+        })
+    }));
     let handoff = manager
         .inventory()
         .jobs

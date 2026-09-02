@@ -717,13 +717,12 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
             coding_agent_inventory: None,
             client_id: "detached-restart-recovery".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
-                capabilities,
-            )),
+            capabilities: crate::test_support::current_runner_capabilities(capabilities),
             policy: None,
         })
         .await

@@ -881,17 +881,18 @@ mod tests {
                 ShellClientRegisterRequest {
                     client_id: "owned-runner".to_string(),
                     agent_instance_id: "instance-owned".to_string(),
+                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: Some("alice".to_string()),
                     hostname: None,
                     host_context: None,
-                    capabilities: Some(ShellClientCapabilities {
+                    capabilities: ShellClientCapabilities {
                         jobs: true,
                         async_jobs: true,
                         async_shell_jobs: true,
                         project_lifecycle: true,
                         ..Default::default()
-                    }),
+                    },
                     policy: None,
                     process_started_at: None,
                     build: None,

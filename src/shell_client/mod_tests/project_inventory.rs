@@ -201,11 +201,7 @@ async fn unsupported_protocol_registration_does_not_publish_project_inventory() 
         instance_id,
         vec![project_summary("untrusted", "/tmp/untrusted")],
     );
-    registration
-        .capabilities
-        .as_mut()
-        .unwrap()
-        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
+    registration.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
 
     let error = registry.register(registration).await.unwrap_err();
     assert_eq!(error, "agent_protocol_generation is unsupported");

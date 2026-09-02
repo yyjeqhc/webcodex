@@ -354,18 +354,19 @@ async fn register_lsp_agent_capabilities(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
+                capabilities: ShellClientCapabilities {
                     shell: true,
                     file_read: true,
                     file_write: true,
                     lsp_read_only_navigation: lsp_capable,
                     lsp_call_hierarchy: call_hierarchy_capable,
                     ..Default::default()
-                }),
+                },
                 policy: None,
             },
         ))

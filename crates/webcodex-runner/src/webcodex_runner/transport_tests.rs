@@ -4318,9 +4318,10 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
                 assert!(payload.get("projects").is_none());
                 assert!(payload.get("agent_protocol_version").is_none());
                 assert_eq!(
-                    payload["capabilities"]["agent_protocol_generation"],
+                    payload["agent_protocol_generation"],
                     AGENT_PROTOCOL_GENERATION_V2.get()
                 );
+                assert!(payload["capabilities"]["shell"].is_boolean());
                 register_inventory_support_response()
             }
             "/api/shell/agent/poll" => {
@@ -5275,11 +5276,11 @@ async fn websocket_disconnect_loop_reregisters_identity_generation_and_capabilit
     for register in [first, second] {
         assert_eq!(register.client_id, "oe");
         assert_eq!(register.agent_instance_id, "inst-reconnect");
-        let caps = register.capabilities.expect("capabilities");
         assert_eq!(
-            caps.agent_protocol_generation,
-            Some(AGENT_PROTOCOL_GENERATION_V2)
+            register.agent_protocol_generation,
+            AGENT_PROTOCOL_GENERATION_V2
         );
+        let caps = register.capabilities;
         assert!(caps.shell);
         assert!(caps.file_read);
         assert!(caps.file_write);

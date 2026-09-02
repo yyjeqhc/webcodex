@@ -36,16 +36,15 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
         agent_instance_id: instance_id.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
         host_context: None,
-        capabilities: Some(crate::test_support::current_runner_capabilities(
-            ShellClientCapabilities {
-                shell: true,
-                ..Default::default()
-            },
-        )),
+        capabilities: crate::test_support::current_runner_capabilities(ShellClientCapabilities {
+            shell: true,
+            ..Default::default()
+        }),
         policy: None,
     };
 

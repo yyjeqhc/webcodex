@@ -38,11 +38,12 @@ async fn lease_different_online_instance_rejected() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst-b".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         }))
         .await
@@ -516,11 +517,14 @@ async fn lease_register_rejects_empty_instance_id() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -555,11 +559,12 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst-a".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities()),
+            capabilities: capabilities(),
             policy: None,
         }))
         .await
@@ -680,11 +685,12 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst-b".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities()),
+            capabilities: capabilities(),
             policy: None,
         }))
         .await

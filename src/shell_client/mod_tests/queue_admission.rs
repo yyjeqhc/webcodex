@@ -13,11 +13,14 @@ async fn registry_rejects_enqueue_when_queue_full() {
             coding_agent_inventory: None,
             client_id: "full".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -77,11 +80,14 @@ async fn registry_rejects_enqueue_when_client_offline() {
             coding_agent_inventory: None,
             client_id: "stale".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await

@@ -110,11 +110,12 @@ fn runner_registration(
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
         agent_instance_id: agent_instance_id.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: Some(async_job_capabilities()),
+        capabilities: async_job_capabilities(),
         policy: None,
     }
 }
@@ -127,19 +128,13 @@ fn v2_baseline_capabilities() -> ShellClientCapabilities {
     for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         value.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
-    let mut capabilities: ShellClientCapabilities =
-        serde_json::from_value(serde_json::Value::Object(value)).unwrap();
-    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
-    capabilities
+    serde_json::from_value(serde_json::Value::Object(value)).unwrap()
 }
 
 fn current_runner_registration(
-    mut registration: ShellClientRegisterRequest,
+    registration: ShellClientRegisterRequest,
 ) -> ShellClientRegisterRequest {
-    registration.capabilities = Some(crate::test_support::current_runner_capabilities(
-        registration.capabilities.take().unwrap_or_default(),
-    ));
-    registration
+    crate::test_support::current_runner_registration(registration)
 }
 
 fn async_job_capabilities() -> ShellClientCapabilities {
@@ -262,11 +257,12 @@ async fn register_computer_test_client(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "computer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some(owner.to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: observe_capable,
@@ -275,7 +271,7 @@ async fn register_computer_test_client(
                 computer_window_activate: false,
                 computer_text_input: text_input_capable,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -296,11 +292,12 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await
@@ -336,11 +333,12 @@ async fn register_instance_with_capabilities(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities),
+            capabilities: capabilities,
             policy: None,
         }))
         .await
@@ -405,11 +403,12 @@ async fn register_with_instance(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await

@@ -240,16 +240,17 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 coding_agent_inventory: None,
                 client_id: config.executor_client_id.clone(),
                 agent_instance_id: "project-agent-instance".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some("configured project Agent".to_string()),
                 owner: Some("local-owner".to_string()),
                 hostname: Some("private-host".to_string()),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&agent_auth),
@@ -395,6 +396,7 @@ fn agent_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value);
             serde_json::json!({
                 "client_id": client_id,
                 "agent_instance_id": PROJECT_AGENT_INSTANCE,
+                "agent_protocol_generation": 2,
                 "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
                 "owner": "local-owner"
             }),
@@ -470,6 +472,7 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
         serde_json::json!({
             "client_id": "bootstrap-client",
             "agent_instance_id": "bootstrap-instance",
+            "agent_protocol_generation": 2,
             "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
             "owner": "local-owner"
         }),

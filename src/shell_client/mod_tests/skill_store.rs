@@ -13,14 +13,15 @@ fn skill_store_registration(
     current_runner_registration(ShellClientRegisterRequest {
         client_id: "skill-store-runner".to_string(),
         agent_instance_id: instance.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
-        capabilities: Some(ShellClientCapabilities {
+        capabilities: ShellClientCapabilities {
             skill_store_read: read,
             skill_store_manage: manage,
             ..Default::default()
-        }),
+        },
         host_context: None,
         policy: None,
         process_started_at: None,

@@ -53,11 +53,14 @@ async fn registry_registers_and_lists_client() {
             coding_agent_inventory: None,
             client_id: "xrh".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: Some("XRH".to_string()),
             owner: Some("yyjeqhc".to_string()),
             hostname: Some("fineserver".to_string()),
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await

@@ -41,14 +41,9 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));
     let body = build_register_request(&cfg, "baseline-instance", 0);
-    assert_eq!(
-        body.capabilities
-            .as_ref()
-            .and_then(|capabilities| capabilities.agent_protocol_generation),
-        Some(AGENT_PROTOCOL_GENERATION_V2)
-    );
+    assert_eq!(body.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
 
-    let capabilities = serde_json::to_value(body.capabilities.as_ref().unwrap()).unwrap();
+    let capabilities = serde_json::to_value(&body.capabilities).unwrap();
     assert_eq!(
         AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len(),
         22
@@ -98,14 +93,9 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
     });
     let body = build_register_request(&cfg, "inst-1", 0);
     assert_eq!(body.agent_instance_id, "inst-1");
-    assert_eq!(
-        body.capabilities
-            .as_ref()
-            .and_then(|capabilities| capabilities.agent_protocol_generation),
-        Some(AGENT_PROTOCOL_GENERATION_V2)
-    );
+    assert_eq!(body.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
     // Verify all effective capabilities are advertised from the real host probe.
-    let caps = body.capabilities.expect("agent registers capabilities");
+    let caps = body.capabilities;
     assert!(caps.shell);
     assert!(caps.file_read);
     assert!(caps.file_write);

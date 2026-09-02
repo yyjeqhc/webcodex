@@ -22,12 +22,13 @@ async fn register_bridge_runner(registry: &ShellClientRegistry) {
         .register(ShellClientRegisterRequest {
             client_id: "bridge-runner".to_string(),
             agent_instance_id: "bridge-instance".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
-            )),
+            ),
             host_context: None,
             policy: Some(AgentPolicySummary {
                 mcp_gateway_providers: Some(vec![bridge_provider("provider-instance")]),
@@ -59,10 +60,11 @@ fn bridge_registration(
     current_runner_registration(ShellClientRegisterRequest {
         client_id: client_id.to_string(),
         agent_instance_id: agent_instance_id.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
-        capabilities: Some(ShellClientCapabilities::default()),
+        capabilities: ShellClientCapabilities::default(),
         host_context: None,
         policy: providers.map(|providers| AgentPolicySummary {
             mcp_gateway_providers: Some(providers),

@@ -845,17 +845,18 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: false,
                         async_shell_jobs: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&auth),
@@ -2260,11 +2261,12 @@ async fn register_job_agent_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(caps),
+                capabilities: caps,
                 policy: None,
             },
             Some(auth),
@@ -2310,16 +2312,17 @@ async fn register_managed_job_agent(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some(owner.to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities {
                     async_shell_jobs: true,
                     ..Default::default()
                 },
-            )),
+            ),
             policy: None,
         })
         .await

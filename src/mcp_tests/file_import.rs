@@ -268,14 +268,15 @@ async fn mcp_import_runtime(
                 coding_agent_inventory: None,
                 client_id: "importer".to_string(),
                 agent_instance_id: "inst-import".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: owner.map(str::to_string),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
+                capabilities: ShellClientCapabilities {
                     file_write: true,
                     ..Default::default()
-                }),
+                },
                 policy: None,
             },
         ))

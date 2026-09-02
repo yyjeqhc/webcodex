@@ -9,12 +9,14 @@ pub(crate) struct AcceptedRunnerProtocol {
 
 impl AcceptedRunnerProtocol {
     pub(crate) fn try_from_registration(
-        generation_number: Option<AgentProtocolGenerationNumber>,
+        generation_number: AgentProtocolGenerationNumber,
     ) -> Result<Self, String> {
-        match generation_number {
-            Some(value) if value == AGENT_PROTOCOL_GENERATION_V2 => Ok(Self { generation: value }),
-            None => Err("agent_protocol_generation is required".to_string()),
-            Some(_) => Err("agent_protocol_generation is unsupported".to_string()),
+        if generation_number == AGENT_PROTOCOL_GENERATION_V2 {
+            Ok(Self {
+                generation: generation_number,
+            })
+        } else {
+            Err("agent_protocol_generation is unsupported".to_string())
         }
     }
 

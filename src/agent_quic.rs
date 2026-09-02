@@ -556,21 +556,16 @@ mod tests {
     }
 
     fn register_envelope(client_id: &str, instance: &str) -> QuicRegisterFrame {
-        register_envelope_with_generation(
-            client_id,
-            instance,
-            Some(AGENT_PROTOCOL_GENERATION_V2),
-            None,
-        )
+        register_envelope_with_generation(client_id, instance, AGENT_PROTOCOL_GENERATION_V2, None)
     }
 
     fn register_envelope_with_generation(
         client_id: &str,
         instance: &str,
-        generation: Option<AgentProtocolGenerationNumber>,
+        generation: AgentProtocolGenerationNumber,
         auth_token: Option<String>,
     ) -> QuicRegisterFrame {
-        let mut capabilities =
+        let capabilities =
             crate::test_support::current_runner_capabilities(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -621,9 +616,7 @@ mod tests {
                 computer_text_input: false,
                 job_state_reconciliation: false,
                 coding_agent_runs: false,
-                agent_protocol_generation: None,
             });
-        capabilities.agent_protocol_generation = generation;
         QuicRegisterFrame::new(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -634,11 +627,12 @@ mod tests {
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: instance.to_string(),
+                agent_protocol_generation: generation,
                 display_name: Some("quic-test".to_string()),
                 owner: Some("tester".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(capabilities),
+                capabilities: capabilities,
                 policy: None,
             },
             auth_token,
@@ -752,15 +746,17 @@ mod tests {
         .await;
         let (client_endpoint, conn, mut send, mut recv) =
             connect_quic_client(&cert_der, addr).await;
-        let register = register_envelope_with_generation(
-            "quic-missing-generation",
-            "inst-missing-generation",
-            None,
-            None,
-        );
-        write_quic_register_frame(&mut send, &register)
+        let register = register_envelope("quic-missing-generation", "inst-missing-generation");
+        let mut register = serde_json::to_value(&register).unwrap();
+        register
+            .as_object_mut()
+            .unwrap()
+            .remove("agent_protocol_generation");
+        let json = serde_json::to_vec(&register).unwrap();
+        send.write_all(&(json.len() as u32).to_be_bytes())
             .await
-            .expect("write register");
+            .expect("write register length");
+        send.write_all(&json).await.expect("write register body");
 
         let error = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
             .await
@@ -768,8 +764,8 @@ mod tests {
             .expect("read register error");
         match error {
             AgentEnvelope::Error { code, message } => {
-                assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_generation is required");
+                assert_eq!(code, "expected_register");
+                assert!(message.contains("agent_protocol_generation"), "{message}");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }
@@ -797,7 +793,7 @@ mod tests {
         let register = register_envelope_with_generation(
             "quic-unsupported-generation",
             "inst-unsupported",
-            Some(AgentProtocolGenerationNumber::new(3)),
+            AgentProtocolGenerationNumber::new(3),
             None,
         );
         write_quic_register_frame(&mut send, &register)
@@ -957,7 +953,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-gen2-rt",
                 "inst-v2",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1077,7 +1073,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-job",
                 "inst-job",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1180,7 +1176,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-disc",
                 "inst-disc",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1289,7 +1285,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-goodbye",
                 "inst-a",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1331,7 +1327,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-goodbye",
                 "inst-b",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1380,7 +1376,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-auth-ok",
                 "inst-auth-ok",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 Some("bootstrap-secret".to_string()),
             ),
         )
@@ -1405,7 +1401,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-auth-missing",
                 "inst-auth-missing",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 None,
             ),
         )
@@ -1434,7 +1430,7 @@ mod tests {
             &register_envelope_with_generation(
                 "quic-auth-bad",
                 "inst-auth-bad",
-                Some(AGENT_PROTOCOL_GENERATION_V2),
+                AGENT_PROTOCOL_GENERATION_V2,
                 Some("wrong-secret".to_string()),
             ),
         )

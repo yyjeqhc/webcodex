@@ -58,17 +58,18 @@ async fn register_target_agent(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: format!("inst-{client_id}"),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: Some(format!("Runner {client_id}")),
             owner: None,
             hostname: Some(format!("host-{client_id}")),
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities {
                     git: true,
                     async_shell_jobs: true,
                     ..Default::default()
                 },
-            )),
+            ),
             policy: None,
         })
         .await
@@ -100,13 +101,14 @@ async fn register_target_agent_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities::default(),
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -152,13 +154,14 @@ async fn register_managed_target_agent(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: format!("inst-{client_id}"),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: Some(format!("{owner} private runner")),
             owner: Some(owner.to_string()),
             hostname: Some(format!("{owner}-private-host")),
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
-            )),
+            ),
             policy: None,
         })
         .await

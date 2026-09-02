@@ -360,11 +360,12 @@ mod tests {
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: instance_id.to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some("ws-test".to_string()),
                 owner: Some("tester".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         file_read: true,
@@ -415,9 +416,8 @@ mod tests {
                         computer_text_input: false,
                         job_state_reconciliation: false,
                         coding_agent_runs: false,
-                        agent_protocol_generation: None,
                     },
-                )),
+                ),
                 policy: Some(AgentPolicySummary::default()),
             },
         }
@@ -694,23 +694,19 @@ mod tests {
         let addr = start_server(registry.clone()).await;
         let url = format!("ws://{}/api/agents/ws", addr);
         let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
-        let mut register = register_envelope("ws-missing-protocol");
-        let AgentEnvelope::Register { payload, .. } = &mut register else {
-            unreachable!("register helper must return Register")
-        };
-        payload
-            .capabilities
-            .as_mut()
+        let mut register = serde_json::to_value(register_envelope("ws-missing-protocol")).unwrap();
+        register
+            .as_object_mut()
             .unwrap()
-            .agent_protocol_generation = None;
-        ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
+            .remove("agent_protocol_generation");
+        ws.send(TungsteniteMessage::Text(register.to_string().into()))
             .await
             .unwrap();
 
         match recv_envelope(&mut ws).await {
             AgentEnvelope::Error { code, message } => {
-                assert_eq!(code, "register_failed");
-                assert_eq!(message, "agent_protocol_generation is required");
+                assert_eq!(code, "expected_register");
+                assert!(message.contains("agent_protocol_generation"), "{message}");
             }
             other => panic!("expected register_failed, got {:?}", other.kind()),
         }
@@ -730,11 +726,7 @@ mod tests {
         let AgentEnvelope::Register { payload, .. } = &mut register else {
             unreachable!("register helper must return Register")
         };
-        payload
-            .capabilities
-            .as_mut()
-            .unwrap()
-            .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
+        payload.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
         ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
             .await
             .unwrap();

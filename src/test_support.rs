@@ -113,11 +113,6 @@ pub(crate) fn current_runner_capabilities(
     {
         object.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
-    object.insert(
-        "agent_protocol_generation".to_string(),
-        serde_json::to_value(crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2)
-            .expect("serialize Runner protocol generation"),
-    );
     serde_json::from_value(value).expect("deserialize canonical Runner test capabilities")
 }
 
@@ -127,9 +122,8 @@ pub(crate) fn current_runner_capabilities(
 pub(crate) fn current_runner_registration(
     mut registration: crate::shell_protocol::ShellClientRegisterRequest,
 ) -> crate::shell_protocol::ShellClientRegisterRequest {
-    registration.capabilities = Some(current_runner_capabilities(
-        registration.capabilities.take().unwrap_or_default(),
-    ));
+    registration.agent_protocol_generation = crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2;
+    registration.capabilities = current_runner_capabilities(registration.capabilities);
     registration
 }
 

@@ -3,9 +3,9 @@ use super::{AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeature
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
-    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities, ShellClientView,
-    ShellCommandExecutionState, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
-    ShellJobValidationProgress, ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
+    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientView, ShellCommandExecutionState,
+    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
+    ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -54,12 +54,9 @@ pub(super) struct ShellClientRecord {
     /// Bounded Runner-configured planning metadata. This is not policy or live
     /// state and is replaced by each successful registration.
     pub(super) host_context: Option<AgentHostContext>,
-    /// Accepted legacy wire snapshot retained only for wire-compatible public
-    /// projection and diagnostics. Server capability authority lives in
-    /// `runner_features` below.
-    pub(super) capabilities: ShellClientCapabilities,
-    /// Canonical Server capability truth normalized once from `capabilities`
-    /// during registration. This set has no independent mutation path.
+    /// Canonical Server capability truth normalized once from the required
+    /// registration snapshot. It also owns the public wire projection, so the
+    /// record has no second independently stored capability copy.
     pub(super) runner_features: RunnerFeatureSet,
     pub(super) projects: Vec<ShellAgentProjectSummary>,
     /// Authoritative project snapshot plus bounded in-progress staging. A

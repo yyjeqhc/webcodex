@@ -114,11 +114,12 @@ fn metadata_agent_registration(client_id: &str) -> ShellClientRegisterRequest {
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
         agent_instance_id: format!("inst-{client_id}"),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: None,
+        capabilities: ShellClientCapabilities::default(),
         policy: None,
     })
 }
@@ -144,18 +145,19 @@ async fn register_computer_target_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         computer_observe,
                         computer_snapshot_region,
                         computer_accessibility_observe,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -184,17 +186,18 @@ async fn register_application_target_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         computer_application_discovery,
                         computer_application_launch,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -221,16 +224,17 @@ async fn register_display_target_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         computer_display_observe: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -257,16 +261,17 @@ async fn register_pointer_target_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         computer_pointer_control: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -294,17 +299,18 @@ async fn register_clipboard_target_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
                 owner: None,
                 hostname: Some(format!("host-{client_id}")),
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         computer_clipboard_read: read,
                         computer_clipboard_write: write,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -331,11 +337,12 @@ async fn register_agent_projects_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{}", client_id),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         file_read: true,
@@ -386,9 +393,8 @@ async fn register_agent_projects_for_auth(
                         computer_text_input: false,
                         job_state_reconciliation: false,
                         coding_agent_runs: false,
-                        agent_protocol_generation: None,
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -839,13 +845,12 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: new_instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
-                capabilities,
-            )),
+            capabilities: crate::test_support::current_runner_capabilities(capabilities),
             policy: None,
         })
         .await
@@ -1010,13 +1015,12 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: new_instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
-                capabilities,
-            )),
+            capabilities: crate::test_support::current_runner_capabilities(capabilities),
             policy: None,
         })
         .await
@@ -1223,13 +1227,14 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
             coding_agent_inventory: None,
             client_id: "profile-agent".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
-            )),
+            ),
             policy: Some(AgentPolicySummary {
                 allow_raw_shell: true,
                 allow_cwd_anywhere: false,

@@ -296,9 +296,6 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // ACP autonomous coding is a runtime-only capability and must not be
             // silently enabled by generated legacy agent config.
             coding_agent_runs: false,
-            // Protocol generation is a live Runner registration fact, never a
-            // static generated-config capability.
-            agent_protocol_generation: None,
         },
         policy: GeneratedRunnerPolicy {
             allow_raw_shell: true,

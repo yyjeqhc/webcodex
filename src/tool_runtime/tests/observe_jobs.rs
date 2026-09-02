@@ -816,11 +816,12 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
                 coding_agent_inventory: None,
                 client_id: "observe-recovering".to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(recovering_caps),
+                capabilities: recovering_caps,
                 policy: None,
             },
         ))

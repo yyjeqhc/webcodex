@@ -11,11 +11,12 @@ async fn register_structured_delete_client(registry: &ShellClientRegistry, clien
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities::default()),
+            capabilities: ShellClientCapabilities::default(),
             policy: None,
         }))
         .await

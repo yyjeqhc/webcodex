@@ -2365,13 +2365,14 @@ mod tests {
                     coding_agent_inventory: None,
                     client_id: client_id.to_string(),
                     agent_instance_id: agent_instance_id.clone(),
+                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                     display_name: Some(format!("Device {client_id}")),
                     owner: auth.and_then(|auth| auth.username.clone()),
                     hostname: Some(format!("private-host-{client_id}")),
                     host_context: None,
-                    capabilities: Some(crate::test_support::current_runner_capabilities(
+                    capabilities: crate::test_support::current_runner_capabilities(
                         ShellClientCapabilities::default(),
-                    )),
+                    ),
                     policy: None,
                 },
                 auth,

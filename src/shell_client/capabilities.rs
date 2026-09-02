@@ -1,12 +1,11 @@
 use crate::shell_protocol::{self as wire, ShellClientCapabilities};
-use std::collections::BTreeSet;
 
 /// Canonical Server-side identity for one Runner-advertised wire capability.
 ///
 /// These identities never infer support from protocol generation, transport,
 /// host OS, or any other Server-side observation. A feature enters
-/// [`RunnerFeatureSet`] only through the accepted registration's effective wire
-/// semantics, including the historical `shell` missing-field default.
+/// [`RunnerFeatureSet`] only through the accepted registration's explicit wire
+/// capability snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum RunnerFeature {
     Shell,
@@ -415,7 +414,7 @@ impl RunnerFeature {
 /// semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunnerFeatureSet {
-    effective_features: BTreeSet<RunnerFeature>,
+    capabilities: ShellClientCapabilities,
 }
 
 impl RunnerFeatureSet {
@@ -428,44 +427,37 @@ impl RunnerFeatureSet {
     pub(crate) fn try_from_registration(
         capabilities: &ShellClientCapabilities,
     ) -> Result<Self, String> {
-        let mut effective_features = BTreeSet::new();
         for feature in RunnerFeature::all().iter().copied() {
-            let advertised = feature.advertised_by(capabilities);
-            match feature.inference() {
-                RunnerFeatureInference::GenerationEligible => {
-                    if !advertised {
-                        return Err(format!(
-                            "runner generation baseline capability mismatch: {}",
-                            feature.as_wire_name()
-                        ));
-                    }
-                    effective_features.insert(feature);
-                }
-                RunnerFeatureInference::RegistrationRequired => {
-                    if advertised {
-                        effective_features.insert(feature);
-                    }
-                }
+            if feature.inference() == RunnerFeatureInference::GenerationEligible
+                && !feature.advertised_by(capabilities)
+            {
+                return Err(format!(
+                    "runner generation baseline capability mismatch: {}",
+                    feature.as_wire_name()
+                ));
             }
         }
-        Ok(Self { effective_features })
+        Ok(Self {
+            capabilities: capabilities.clone(),
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn from_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
-        let effective_features = RunnerFeature::all()
-            .iter()
-            .copied()
-            .filter(|feature| feature.advertised_by(capabilities))
-            .collect();
-        Self { effective_features }
+        Self {
+            capabilities: capabilities.clone(),
+        }
     }
 
     pub(crate) fn supports(&self, feature: RunnerFeature) -> bool {
-        self.effective_features.contains(&feature)
+        feature.advertised_by(&self.capabilities)
     }
 
     pub(crate) fn supports_wire_name(&self, capability: &str) -> bool {
         RunnerFeature::from_wire_name(capability).is_some_and(|feature| self.supports(feature))
+    }
+
+    pub(crate) fn wire_capabilities(&self) -> &ShellClientCapabilities {
+        &self.capabilities
     }
 }

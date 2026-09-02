@@ -32,15 +32,16 @@ async fn register_lsp_test_client_capabilities(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 lsp_read_only_navigation: lsp_capable,
                 lsp_call_hierarchy: call_hierarchy_capable,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -74,12 +75,11 @@ async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
     let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
     let auth = crate::auth::shared_key::shared_key_context("ttl-lsp");
     let mut registration = runner_registration("ttl-lsp", "inst", Vec::new());
-    registration.capabilities = Some(crate::test_support::current_runner_capabilities(
-        ShellClientCapabilities {
+    registration.capabilities =
+        crate::test_support::current_runner_capabilities(ShellClientCapabilities {
             lsp_call_hierarchy: true,
             ..Default::default()
-        },
-    ));
+        });
     registry
         .register_with_auth(registration, Some(&auth))
         .await

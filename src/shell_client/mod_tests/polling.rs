@@ -13,11 +13,14 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
             coding_agent_inventory: None,
             client_id: "xrh".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -78,11 +81,14 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
             coding_agent_inventory: None,
             client_id: "ordered".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await

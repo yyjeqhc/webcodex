@@ -65,11 +65,14 @@ Server 与 Runner。只有当前合同明确保留的兼容面才属于受支持
 不兼容。patch release 不扩大 generation-2 baseline-required capability set；新增要求使用
 additive `RegistrationRequired` capability。这一承诺不向 pre-0.4 二进制提供滚动兼容保证。
 
-当前 first-party Runner 注册只接受 protocol generation 2：
-`capabilities.agent_protocol_generation` 必须精确为 `2`。缺失、generation `1` 或未知
-值都会在创建 Runner record 前 fail closed。generation 2 的 22 个 baseline capability
-bool 是协议事实；缺失或与 baseline 矛盾时直接拒绝注册，而不是降级成 unavailable。
-RegistrationRequired 的增量 capability 仍保持显式声明，省略时按不可用处理。
+当前 first-party Runner 注册只接受 protocol generation 2。顶层
+`agent_protocol_generation` 字段是必填项且必须精确为 `2`；它属于协议 identity，
+不是 capability bit。`capabilities` 也必须显式存在，其中 `shell` 必须明确提供，不能再
+继承 pre-0.4“字段缺失即 `true`”的注册语义。缺失 generation/capabilities/shell、
+generation `1` 或未知值都会在创建 Runner record 前 fail closed。generation 2 的 22 个
+baseline capability bool 是协议事实；缺失或与 baseline 矛盾时直接拒绝注册，而不是
+降级成 unavailable。RegistrationRequired 的增量 capability 仍保持显式声明，省略时按
+不可用处理。
 
 在 `v0.4` 中，protocol generation 是 Runner 唯一的协议版本 identity。transport
 作为独立 ingress 事实（`polling`、`websocket` 或 `quic`）存在；项目清单在注册后统一

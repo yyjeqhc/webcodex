@@ -71,11 +71,12 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
     crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         client_id: CLIENT_ID.to_string(),
         agent_instance_id: instance.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: Some("reconciliation test runner".to_string()),
         owner: Some("tester".to_string()),
         hostname: None,
         host_context: None,
-        capabilities: Some(reconciliation_capabilities()),
+        capabilities: reconciliation_capabilities(),
         policy: None,
         process_started_at: Some(1_700_000_000),
         build: None,
@@ -2454,9 +2455,8 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .unwrap_err()
         .contains("requires job_inventory"));
     let mut unexpected_inventory = register_request(INSTANCE_A, empty_inventory());
-    unexpected_inventory.capabilities = Some(crate::test_support::current_runner_capabilities(
-        ShellClientCapabilities::default(),
-    ));
+    unexpected_inventory.capabilities =
+        crate::test_support::current_runner_capabilities(ShellClientCapabilities::default());
     assert!(mismatch_registry
         .register(unexpected_inventory)
         .await
@@ -2465,9 +2465,8 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
     let downgrade_registry = ShellClientRegistry::default();
     register(&downgrade_registry, INSTANCE_A, empty_inventory()).await;
     let mut downgraded = register_request(INSTANCE_A, empty_inventory());
-    downgraded.capabilities = Some(crate::test_support::current_runner_capabilities(
-        ShellClientCapabilities::default(),
-    ));
+    downgraded.capabilities =
+        crate::test_support::current_runner_capabilities(ShellClientCapabilities::default());
     downgraded.job_inventory = None;
     assert!(downgrade_registry
         .register(downgraded)
@@ -2477,14 +2476,13 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
 
     let registry = ShellClientRegistry::default();
     let mut request = register_request(INSTANCE_A, empty_inventory());
-    request.capabilities = Some(crate::test_support::current_runner_capabilities(
-        ShellClientCapabilities {
+    request.capabilities =
+        crate::test_support::current_runner_capabilities(ShellClientCapabilities {
             jobs: true,
             async_jobs: true,
             async_shell_jobs: true,
             ..Default::default()
-        },
-    ));
+        });
     request.job_inventory = None;
     registry.register(request).await.unwrap();
     let job = registry

@@ -275,11 +275,12 @@ async fn register_import_agent_with_capabilities(
                 coding_agent_inventory: None,
                 client_id: "importer".to_string(),
                 agent_instance_id: "inst-import".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities,
+                capabilities: capabilities.unwrap_or_default(),
                 policy: None,
             },
         ))

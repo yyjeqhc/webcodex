@@ -51,11 +51,12 @@ fn register_request(
     crate::test_support::current_runner_registration(ShellClientRegisterRequest {
         client_id: client_id.to_string(),
         agent_instance_id: instance.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: Some(ShellClientCapabilities {
+        capabilities: ShellClientCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -64,7 +65,7 @@ fn register_request(
             async_jobs: true,
             async_shell_jobs: true,
             ..Default::default()
-        }),
+        },
         policy: None,
         process_started_at,
         build,
@@ -621,11 +622,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     // Unsupported protocol generations fail registration and therefore never
     // become a diagnostic-but-operational runtime client.
     let mut unsupported = register_request("future-generation", "inst-3", None, None);
-    unsupported
-        .capabilities
-        .as_mut()
-        .unwrap()
-        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
+    unsupported.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
     let unsupported = runtime
         .shell_clients
         .register(unsupported)

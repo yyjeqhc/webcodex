@@ -31,11 +31,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities {
                     shell: true,
                     git: true,
@@ -44,7 +45,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
                     internal_posix_script: true,
                     ..Default::default()
                 },
-            )),
+            ),
             policy: None,
         })
         .await
@@ -85,11 +86,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         git: true,
@@ -98,7 +100,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                         internal_posix_script: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(auth),
@@ -620,11 +622,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
+            capabilities: crate::test_support::current_runner_capabilities(caps),
             policy: None,
         })
         .await
@@ -663,11 +666,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: agent_instance_id.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
+            capabilities: crate::test_support::current_runner_capabilities(caps),
             policy: None,
         })
         .await
@@ -762,11 +766,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: agent_instance_id.clone(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
+            capabilities: crate::test_support::current_runner_capabilities(caps),
             policy: None,
         })
         .await
@@ -800,11 +805,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.clone(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
+                capabilities: crate::test_support::current_runner_capabilities(caps),
                 policy: None,
             },
             Some(auth),
@@ -1076,11 +1082,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(caps)),
+            capabilities: crate::test_support::current_runner_capabilities(caps),
             policy: None,
         })
         .await
@@ -1114,13 +1121,14 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities::default(),
-            )),
+            ),
             policy,
         })
         .await

@@ -68,16 +68,17 @@ async fn register_coding_agent_task_runner(
             coding_agent_inventory: Some(inventory),
             client_id: client_id.to_string(),
             agent_instance_id: instance_id.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: Some("A4a test runner".to_string()),
             owner: Some(owner.to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(crate::test_support::current_runner_capabilities(
+            capabilities: crate::test_support::current_runner_capabilities(
                 ShellClientCapabilities {
                     coding_agent_runs: true,
                     ..Default::default()
                 },
-            )),
+            ),
             policy: None,
         })
         .await

@@ -64,11 +64,12 @@ async fn register_sequenced(registry: &ShellClientRegistry, instance: &str) {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(sequenced_job_capabilities()),
+            capabilities: sequenced_job_capabilities(),
             policy: None,
         }))
         .await
@@ -455,11 +456,12 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
             coding_agent_inventory: None,
             client_id: "legacy".to_string(),
             agent_instance_id: "legacy-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(capabilities),
+            capabilities: capabilities,
             policy: None,
         }))
         .await

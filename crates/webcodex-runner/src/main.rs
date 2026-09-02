@@ -2015,7 +2015,6 @@ fn build_register_request_with_provider_status(
 ) {
     let hot = runtime.snapshot();
     let mut capabilities = runner_register_capabilities(cfg);
-    capabilities.agent_protocol_generation = Some(AGENT_PROTOCOL_GENERATION_V2);
     let coding_agent_providers = runtime
         .coding_agents()
         .map(|manager| manager.providers())
@@ -2028,11 +2027,12 @@ fn build_register_request_with_provider_status(
         ShellClientRegisterRequest {
             client_id: cfg.client_id.clone(),
             agent_instance_id: agent_instance_id.to_string(),
+            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
             display_name: cfg.display_name.clone(),
             owner: cfg.owner.clone(),
             hostname: cfg.hostname.clone().or_else(hostname),
             host_context: cfg.host_context.clone(),
-            capabilities: Some(capabilities),
+            capabilities,
             policy: Some(register_policy_summary(
                 &hot,
                 prepared_cache_count,

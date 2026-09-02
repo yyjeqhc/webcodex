@@ -622,12 +622,6 @@ pub struct ShellClientCapabilities {
     /// Optional and never inferred from shell/MCP.
     #[serde(default, skip_serializing_if = "is_false")]
     pub coding_agent_runs: bool,
-    /// Registration-only explicit protocol generation marker.
-    ///
-    /// Current Server ingress requires generation 2 and removes this marker before
-    /// retaining the ordinary capability projection. It is not a RunnerFeature.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_protocol_generation: Option<AgentProtocolGenerationNumber>,
 }
 
 /// Bounded, non-secret status for the agent's active configuration generation.
@@ -706,7 +700,6 @@ impl Default for ShellClientCapabilities {
             computer_text_input: false,
             job_state_reconciliation: false,
             coding_agent_runs: false,
-            agent_protocol_generation: None,
         }
     }
 }
@@ -940,6 +933,24 @@ fn default_policy_max_output_bytes() -> usize {
     256 * 1024
 }
 
+fn deserialize_registration_capabilities<'de, D>(
+    deserializer: D,
+) -> Result<ShellClientCapabilities, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(object) = value.as_object() else {
+        return Err(serde::de::Error::custom(
+            "registration capabilities must be an object",
+        ));
+    };
+    if !object.contains_key("shell") {
+        return Err(serde::de::Error::missing_field("shell"));
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientRegisterRequest {
     pub client_id: String,
@@ -951,14 +962,20 @@ pub struct ShellClientRegisterRequest {
     /// first is online, and a stale/replaced instance can no longer poll or
     /// submit results. It is not a secret.
     pub agent_instance_id: String,
+    /// Canonical Runner protocol generation. This is registration identity, not a
+    /// capability bit, and is required at every 0.4 registration ingress.
+    pub agent_protocol_generation: AgentProtocolGenerationNumber,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
     pub owner: Option<String>,
     #[serde(default)]
     pub hostname: Option<String>,
-    #[serde(default)]
-    pub capabilities: Option<ShellClientCapabilities>,
+    /// Complete Runner capability snapshot for this registration. The field is
+    /// required, and `shell` must be explicitly present so 0.4 registration never
+    /// inherits the pre-0.4 missing-field=true behavior.
+    #[serde(deserialize_with = "deserialize_registration_capabilities")]
+    pub capabilities: ShellClientCapabilities,
     /// Optional bounded planning context declared by the Runner configuration.
     /// This is descriptive metadata only: it never grants authority or proves
     /// current host/service/network state.
@@ -2788,9 +2805,8 @@ impl AgentEnvelope {
 }
 
 /// QUIC-v1 transport registration wire. Authentication remains transport-owned
-/// while retaining the byte-compatible first-frame JSON shape expected by
-/// rolling-old Servers and Runners: `type=register`, flattened registration
-/// payload fields, and an optional `auth_token`.
+/// while the first frame carries `type=register`, the complete canonical 0.4
+/// registration payload, and an optional `auth_token`.
 ///
 /// Deliberately does not implement `Debug`: the credential must not become
 /// printable through routine transport diagnostics.
@@ -3171,11 +3187,12 @@ mod envelope_tests {
             build: None,
             client_id: "ws-1".to_string(),
             agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
             display_name: Some("WS Agent".to_string()),
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 file_write: false,
@@ -3225,8 +3242,7 @@ mod envelope_tests {
                 computer_text_input: false,
                 job_state_reconciliation: false,
                 coding_agent_runs: false,
-                agent_protocol_generation: Some(AGENT_PROTOCOL_GENERATION_V2),
-            }),
+            },
             policy: None,
             job_concurrency_limit: Some(4),
             job_inventory: None,
@@ -3269,11 +3285,11 @@ mod envelope_tests {
             AgentEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.client_id, "ws-1");
                 assert_eq!(payload.job_concurrency_limit, Some(4));
-                let caps = payload.capabilities.expect("capabilities");
                 assert_eq!(
-                    caps.agent_protocol_generation,
-                    Some(AGENT_PROTOCOL_GENERATION_V2)
+                    payload.agent_protocol_generation,
+                    AGENT_PROTOCOL_GENERATION_V2
                 );
+                let caps = payload.capabilities;
                 assert!(caps.shell);
                 assert!(!caps.file_write);
                 assert!(caps.persistent_shell);
@@ -3285,22 +3301,10 @@ mod envelope_tests {
     #[test]
     fn raw_protocol_generation_number_preserves_future_wire_values_for_ingress_rejection() {
         let mut payload = sample_register();
-        payload
-            .capabilities
-            .as_mut()
-            .unwrap()
-            .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(u16::MAX));
+        payload.agent_protocol_generation = AgentProtocolGenerationNumber::new(u16::MAX);
         let json = serde_json::to_string(&payload).unwrap();
         let decoded: ShellClientRegisterRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            decoded
-                .capabilities
-                .unwrap()
-                .agent_protocol_generation
-                .unwrap()
-                .get(),
-            u16::MAX
-        );
+        assert_eq!(decoded.agent_protocol_generation.get(), u16::MAX);
     }
 
     #[test]
@@ -3601,11 +3605,7 @@ mod envelope_tests {
     async fn job_reconciliation_inventory_round_trips_across_all_register_transports() {
         let inventory = reconciliation_inventory();
         let mut polling = sample_register();
-        polling
-            .capabilities
-            .as_mut()
-            .unwrap()
-            .job_state_reconciliation = true;
+        polling.capabilities.job_state_reconciliation = true;
         polling.job_inventory = Some(inventory.clone());
         let polling_json = serde_json::to_vec(&polling).unwrap();
         let polling_back: ShellClientRegisterRequest =
@@ -4328,10 +4328,11 @@ mod envelope_tests {
     }
 
     #[test]
-    fn older_register_request_without_job_concurrency_limit_deserializes_as_unknown() {
+    fn register_request_without_job_concurrency_limit_deserializes_as_unknown() {
         let json = r#"{
-            "client_id": "legacy-runner",
-            "agent_instance_id": "legacy-instance",
+            "client_id": "current-runner",
+            "agent_instance_id": "current-instance",
+            "agent_protocol_generation": 2,
             "capabilities": {"shell": true}
         }"#;
         let request: ShellClientRegisterRequest = serde_json::from_str(json).unwrap();
@@ -4496,16 +4497,17 @@ mod envelope_tests {
     }
 
     #[tokio::test]
-    async fn quic_register_codec_preserves_legacy_wire_shape_and_round_trips() {
+    async fn quic_register_codec_round_trips_current_wire_shape() {
         let payload = ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
             client_id: "q-1".to_string(),
             agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
-            capabilities: None,
+            capabilities: ShellClientCapabilities::default(),
             host_context: None,
             policy: None,
             job_concurrency_limit: None,
@@ -4519,42 +4521,30 @@ mod envelope_tests {
         assert!(json.contains(r#""type":"register""#), "json was: {json}");
         assert!(json.contains(r#""client_id":"q-1""#), "json was: {json}");
         assert!(
+            json.contains(r#""agent_protocol_generation":2"#),
+            "json was: {json}"
+        );
+        assert!(
+            json.contains(r#""capabilities":{"shell":true"#),
+            "json was: {json}"
+        );
+        assert!(
             json.contains(r#""auth_token":"wc_agent_secret""#),
             "json was: {json}"
         );
 
-        #[derive(Deserialize)]
-        #[serde(tag = "type", rename_all = "snake_case")]
-        enum LegacyQuicRegisterEnvelope {
-            Register {
-                #[serde(flatten)]
-                payload: ShellClientRegisterRequest,
-                #[serde(default)]
-                auth_token: Option<String>,
-            },
-        }
-        match serde_json::from_str::<LegacyQuicRegisterEnvelope>(json).unwrap() {
-            LegacyQuicRegisterEnvelope::Register {
-                payload,
-                auth_token,
-            } => {
-                assert_eq!(payload.client_id, "q-1");
-                assert_eq!(auth_token.as_deref(), Some("wc_agent_secret"));
-            }
-        }
-
-        let legacy_json = format!(
-            r#"{{"type":"register","client_id":"q-legacy","agent_instance_id":"11111111-1111-1111-1111-111111111112","agent_protocol_version":"quic-v1","auth_token":"legacy-secret"}}"#
-        );
-        let mut legacy_wire = Vec::new();
-        legacy_wire.extend_from_slice(&(legacy_json.len() as u32).to_be_bytes());
-        legacy_wire.extend_from_slice(legacy_json.as_bytes());
-        let (legacy_payload, legacy_token) = read_quic_register_frame(&mut legacy_wire.as_slice())
+        let mut reader = encoded.as_slice();
+        let (decoded, token) = read_quic_register_frame(&mut reader)
             .await
             .unwrap()
             .into_parts();
-        assert_eq!(legacy_payload.client_id, "q-legacy");
-        assert_eq!(legacy_token.as_deref(), Some("legacy-secret"));
+        assert_eq!(decoded.client_id, "q-1");
+        assert_eq!(
+            decoded.agent_protocol_generation,
+            AGENT_PROTOCOL_GENERATION_V2
+        );
+        assert!(decoded.capabilities.shell);
+        assert_eq!(token.as_deref(), Some("wc_agent_secret"));
     }
 }
 

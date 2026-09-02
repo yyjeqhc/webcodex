@@ -171,11 +171,12 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
             coding_agent_inventory: None,
             client_id: "quic-stop".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         }))
         .await

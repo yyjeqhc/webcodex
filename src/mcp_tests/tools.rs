@@ -1196,14 +1196,15 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
             ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
+                capabilities: ShellClientCapabilities {
                     file_read: true,
                     ..Default::default()
-                }),
+                },
                 policy: None,
                 process_started_at: None,
                 build: None,
@@ -1979,16 +1980,17 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
                 coding_agent_inventory: None,
                 client_id: "mcp-client".to_string(),
                 agent_instance_id: "inst".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities {
+                capabilities: ShellClientCapabilities {
                     shell: true,
                     git: true,
                     internal_posix_script: true,
                     ..Default::default()
-                }),
+                },
                 policy: None,
             },
         ))

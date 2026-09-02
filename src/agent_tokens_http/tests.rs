@@ -538,6 +538,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
         .json(&json!({
             "client_id": "alice-laptop",
             "agent_instance_id": "inst-1",
+            "agent_protocol_generation": 2,
             "capabilities": crate::test_support::current_runner_capabilities(crate::shell_protocol::ShellClientCapabilities::default()),
             "owner": "alice",
         }))
@@ -554,6 +555,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
         .json(&json!({
             "client_id": "other-laptop",
             "agent_instance_id": "inst-2",
+            "agent_protocol_generation": 2,
             "capabilities": crate::test_support::current_runner_capabilities(crate::shell_protocol::ShellClientCapabilities::default()),
             "owner": "alice",
         }))

@@ -21,11 +21,12 @@ async fn register_with_connection(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: instance.to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(async_job_capabilities()),
+                capabilities: async_job_capabilities(),
                 policy: None,
             },
             None,
@@ -118,11 +119,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
 
     let notify_b = Arc::new(Notify::new());
     let mut rejected = runner_registration("atomic-preserve", "atomic-instance", Vec::new());
-    rejected
-        .capabilities
-        .as_mut()
-        .unwrap()
-        .agent_protocol_generation = Some(AgentProtocolGenerationNumber::new(3));
+    rejected.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
     let error = registry
         .register_streaming_session_with_cancel(
             rejected,
@@ -355,11 +352,12 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                     coding_agent_inventory: None,
                     client_id: "oe".to_string(),
                     agent_instance_id: "inst-x".to_string(),
+                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: Some("alice".to_string()),
                     hostname: None,
                     host_context: None,
-                    capabilities: Some(async_job_capabilities()),
+                    capabilities: async_job_capabilities(),
                     policy: Some(AgentPolicySummary::default()),
                 },
                 None,

@@ -265,12 +265,11 @@ async fn register_shared_key_runner_with_capabilities(
             crate::shell_protocol::ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: instance_id.to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
-                    capabilities,
-                )),
+                capabilities: crate::test_support::current_runner_capabilities(capabilities),
                 host_context: None,
                 policy: None,
                 process_started_at: None,

@@ -144,11 +144,14 @@ async fn registry_inventory_snapshot_saves_projects() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -182,11 +185,14 @@ async fn registry_inventory_snapshot_updates_projects() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -228,11 +234,14 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -273,11 +282,14 @@ async fn registry_project_owner_check_enforces_boundary() {
             coding_agent_inventory: None,
             client_id: "alice-client".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await
@@ -292,11 +304,14 @@ async fn registry_project_owner_check_enforces_boundary() {
             coding_agent_inventory: None,
             client_id: "bob-client".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("bob".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: crate::test_support::current_runner_capabilities(
+                ShellClientCapabilities::default(),
+            ),
             policy: None,
         }))
         .await

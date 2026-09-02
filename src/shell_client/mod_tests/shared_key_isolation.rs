@@ -47,11 +47,12 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                     coding_agent_inventory: None,
                     client_id: client_id.to_string(),
                     agent_instance_id: format!("inst-{}", client_id),
+                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: None,
                     hostname: None,
                     host_context: None,
-                    capabilities: Some(async_job_capabilities()),
+                    capabilities: async_job_capabilities(),
                     policy: None,
                 },
                 Some(auth),
@@ -74,11 +75,12 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some(owner.to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(async_job_capabilities()),
+                capabilities: async_job_capabilities(),
                 policy: None,
             })
             .await
@@ -241,16 +243,17 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
                 ),
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some(owner.to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         coding_agent_runs: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             })
             .await
@@ -295,11 +298,12 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
         coding_agent_inventory: None,
         client_id: "same-project-agent".to_string(),
         agent_instance_id: "same-instance-id".to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: Some(hostname.to_string()),
         host_context: None,
-        capabilities: Some(async_job_capabilities()),
+        capabilities: async_job_capabilities(),
         policy: None,
     };
     registry
@@ -357,11 +361,12 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: instance.to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: Some(hostname.to_string()),
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         }
     };

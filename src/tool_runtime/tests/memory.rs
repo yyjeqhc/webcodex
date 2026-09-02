@@ -1550,11 +1550,12 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{client_id}"),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities::default()),
+                capabilities: ShellClientCapabilities::default(),
                 policy: None,
             },
         ))

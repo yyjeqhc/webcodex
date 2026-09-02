@@ -103,15 +103,16 @@ async fn computer_scroll_to_element_requires_independent_capability() {
             coding_agent_inventory: None,
             client_id: "computer-scroll-capable".to_string(),
             agent_instance_id: "computer-scroll-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_control: true,
                 computer_scroll_to_element: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -180,15 +181,16 @@ async fn computer_key_input_requires_independent_capability() {
             coding_agent_inventory: None,
             client_id: "computer-key-capable".to_string(),
             agent_instance_id: "computer-key-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_control: true,
                 computer_key_input: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -235,15 +237,16 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             coding_agent_inventory: None,
             client_id: "computer-pointer-old".to_string(),
             agent_instance_id: "pointer-old-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_control: true,
                 computer_display_observe: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -276,14 +279,15 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             coding_agent_inventory: None,
             client_id: "computer-pointer-capable".to_string(),
             agent_instance_id: "pointer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_pointer_control: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -330,16 +334,17 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_inventory: None,
             client_id: "computer-clipboard-old".to_string(),
             agent_instance_id: "clipboard-old-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_observe: true,
                 computer_control: true,
                 computer_text_input: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -379,14 +384,15 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_inventory: None,
             client_id: "computer-clipboard-read".to_string(),
             agent_instance_id: "clipboard-read-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_clipboard_read: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -440,14 +446,15 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_inventory: None,
             client_id: "computer-clipboard-write".to_string(),
             agent_instance_id: "clipboard-write-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_clipboard_write: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -530,11 +537,12 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
             coding_agent_inventory: None,
             client_id: "computer-activate".to_string(),
             agent_instance_id: "computer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
@@ -542,7 +550,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
                 computer_control: true,
                 computer_window_activate: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await

@@ -115,17 +115,18 @@ async fn computer_snapshot_region_requires_additive_capability() {
             coding_agent_inventory: None,
             client_id: "computer-region-only".to_string(),
             agent_instance_id: "computer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: false,
                 computer_snapshot_region: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -153,17 +154,18 @@ async fn computer_snapshot_region_requires_additive_capability() {
             coding_agent_inventory: None,
             client_id: "computer-region-new".to_string(),
             agent_instance_id: "computer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
                 computer_snapshot_region: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await
@@ -206,14 +208,15 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
             coding_agent_inventory: None,
             client_id: "computer-display-large".to_string(),
             agent_instance_id: "display-large-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 computer_display_observe: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await

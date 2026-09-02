@@ -99,11 +99,12 @@ async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::Shell
                 coding_agent_inventory: None,
                 client_id: "mcp-observation-agent".to_string(),
                 agent_instance_id: "inst-mcp-observation".to_string(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: Some(ShellClientCapabilities::default()),
+                capabilities: ShellClientCapabilities::default(),
                 policy: None,
             },
         ))

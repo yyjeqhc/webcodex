@@ -112,13 +112,14 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
                 coding_agent_inventory: None,
                 client_id: "laptop".into(),
                 agent_instance_id: "instance-b".into(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities::default(),
-                )),
+                ),
                 policy: None,
             },
             Some(&grant_b),
@@ -172,17 +173,18 @@ async fn fixture_built(
                 coding_agent_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         internal_posix_script: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&owner),
@@ -3915,11 +3917,12 @@ async fn read_only_commands_run_is_denied_even_when_agent_supports_shell() {
                 coding_agent_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         project_lifecycle: false,
@@ -3927,7 +3930,7 @@ async fn read_only_commands_run_is_denied_even_when_agent_supports_shell() {
                         internal_posix_script: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&fixture.owner),
@@ -4292,11 +4295,12 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                 coding_agent_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
+                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
-                capabilities: Some(crate::test_support::current_runner_capabilities(
+                capabilities: crate::test_support::current_runner_capabilities(
                     ShellClientCapabilities {
                         shell: true,
                         file_read: true,
@@ -4307,7 +4311,7 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                         structured_validation_argv: true,
                         ..Default::default()
                     },
-                )),
+                ),
                 policy: None,
             },
             Some(&owner),

@@ -78,13 +78,16 @@ enlarge the generation-2 baseline-required capability set; new requirements use
 additive `RegistrationRequired` capabilities. This promise does not extend rolling
 compatibility back to pre-0.4 binaries.
 
-Current first-party Runner registration is generation-2-only:
-`capabilities.agent_protocol_generation` must be exactly `2`. A missing value,
-generation `1`, or an unknown generation fails closed before the Runner record is
-accepted. The 22 generation-2 baseline capability booleans are protocol facts;
-omitting or contradicting one rejects registration rather than degrading it to
-unavailable. RegistrationRequired additive capabilities remain explicit and
-fail closed as unavailable when omitted.
+Current first-party Runner registration is generation-2-only. The top-level
+`agent_protocol_generation` field is required and must be exactly `2`; it is
+protocol identity, not a capability bit. `capabilities` is also required, and its
+`shell` field must be explicit rather than inheriting the pre-0.4 missing-field
+`true` default. Missing generation/capabilities/shell, generation `1`, or an
+unknown generation fails closed before the Runner record is accepted. The 22
+generation-2 baseline capability booleans are protocol facts; omitting or
+contradicting one rejects registration rather than degrading it to unavailable.
+RegistrationRequired additive capabilities remain explicit and fail closed as
+unavailable when omitted.
 
 In `v0.4`, protocol generation is the only Runner protocol-version identity.
 Transport is an independent ingress fact (`polling`, `websocket`, or `quic`), and

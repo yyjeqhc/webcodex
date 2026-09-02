@@ -30,11 +30,12 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
         agent_instance_id: agent_instance_id.to_string(),
+        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: Some(capabilities),
+        capabilities: capabilities,
         policy: None,
     })
 }

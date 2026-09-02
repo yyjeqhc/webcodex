@@ -82,18 +82,19 @@ async fn computer_element_state_requires_its_own_additive_capability() {
             coding_agent_inventory: None,
             client_id: "computer-state-capable".to_string(),
             agent_instance_id: "computer-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: Some(ShellClientCapabilities {
+            capabilities: ShellClientCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
                 computer_accessibility_observe: true,
                 computer_element_state: true,
                 ..Default::default()
-            }),
+            },
             policy: None,
         }))
         .await

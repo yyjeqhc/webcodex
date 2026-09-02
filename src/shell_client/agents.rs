@@ -246,11 +246,9 @@ impl ShellClientRegistry {
 
         let client_id = body.client_id.trim().to_string();
         let agent_instance_id = body.agent_instance_id.trim().to_string();
-        let mut capabilities = body.capabilities.clone().unwrap_or_default();
-        let announced_generation = capabilities.agent_protocol_generation.take();
         let accepted_protocol =
-            AcceptedRunnerProtocol::try_from_registration(announced_generation)?;
-        let runner_features = RunnerFeatureSet::try_from_registration(&capabilities)?;
+            AcceptedRunnerProtocol::try_from_registration(body.agent_protocol_generation)?;
+        let runner_features = RunnerFeatureSet::try_from_registration(&body.capabilities)?;
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();
@@ -290,7 +288,6 @@ impl ShellClientRegistry {
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),
             host_context,
-            capabilities: capabilities.clone(),
             runner_features: runner_features.clone(),
             projects,
             project_inventory,
@@ -1413,7 +1410,7 @@ impl ShellClientRegistry {
             status: if connected { "online" } else { "stale" }.to_string(),
             connected,
             last_seen: client.last_seen,
-            capabilities: client.capabilities.clone(),
+            capabilities: client.runner_features.wire_capabilities().clone(),
             coding_agent_providers: (!client.coding_agent_providers.is_empty())
                 .then(|| client.coding_agent_providers.clone()),
             pending_requests,

@@ -13,11 +13,12 @@ async fn terminal_observed_poll_complete_and_log() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await
@@ -129,11 +130,12 @@ async fn terminal_observed_queued_stop_records_server_time() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await
@@ -191,11 +193,12 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await
@@ -259,11 +262,12 @@ async fn registry_marks_running_job_lost_when_client_stale() {
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: Some(async_job_capabilities()),
+            capabilities: async_job_capabilities(),
             policy: None,
         })
         .await

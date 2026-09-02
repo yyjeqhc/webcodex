@@ -331,7 +331,9 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
-use crate::apply_patch_shared::{derive_codex_patch_update, parse_codex_patch, CodexPatchHunk};
+use crate::apply_patch_shared::{
+    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchHunk,
+};
 
 #[derive(Debug, Deserialize)]
 struct ApplyTextEditsPayload {
@@ -1355,11 +1357,11 @@ pub(crate) fn handle_apply_patch_file_request(
                         )
                     }
                 };
-                let replacement = if chunks.is_empty() {
-                    original.clone()
+                let (replacement, chunk_matches) = if chunks.is_empty() {
+                    (original.clone(), Vec::new())
                 } else {
-                    match derive_codex_patch_update(&original, path, chunks) {
-                        Ok(content) => content,
+                    match derive_codex_patch_update_with_matches(&original, path, chunks) {
+                        Ok(update) => (update.content, update.chunk_matches),
                         Err(error) => {
                             return apply_patch_conflict(
                                 index,
@@ -1384,14 +1386,18 @@ pub(crate) fn handle_apply_patch_file_request(
                 }
                 let edit_summaries = chunks
                     .iter()
+                    .zip(chunk_matches.iter())
                     .enumerate()
-                    .map(|(chunk_index, chunk)| {
+                    .map(|(chunk_index, (chunk, chunk_match))| {
                         serde_json::json!({
                             "chunk_index": chunk_index,
                             "change_context_present": chunk.change_context.is_some(),
                             "old_line_count": chunk.old_lines.len(),
                             "new_line_count": chunk.new_lines.len(),
                             "end_of_file": chunk.is_end_of_file,
+                            "match_mode": chunk_match.match_mode.map(|mode| mode.as_str()),
+                            "match_source": chunk_match.match_source.as_str(),
+                            "matched_start_line": chunk_match.matched_start_line,
                         })
                     })
                     .collect::<Vec<_>>();

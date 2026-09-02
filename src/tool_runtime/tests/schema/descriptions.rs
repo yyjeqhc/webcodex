@@ -264,6 +264,20 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
             "apply_patch must keep field {field}"
         );
     }
+    let patch_files_description = spec_named(&specs, "apply_patch").output_schema["properties"]
+        ["output"]["properties"]["files"]["description"]
+        .as_str()
+        .expect("apply_patch files output description");
+    for contract in [
+        "match_mode exact|trim_end|trim|null",
+        "match_source old_lines|change_context|append",
+        "1-based matched_start_line",
+    ] {
+        assert!(
+            patch_files_description.contains(contract),
+            "apply_patch files output must describe {contract}: {patch_files_description}"
+        );
+    }
     let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];
     for field in ["project", "diff", "deny_sensitive_paths"] {
         assert!(

@@ -88,10 +88,44 @@ fn file_apply_patch_dry_run_reports_plan_without_writing() {
     assert_eq!(out["changed"], false);
     assert_eq!(out["state_changed"], false);
     assert_eq!(out["would_change"], true);
+    let edit = &out["files"][0]["edits"][0];
+    assert_eq!(edit["match_mode"], "exact");
+    assert_eq!(edit["match_source"], "old_lines");
+    assert_eq!(edit["matched_start_line"], 1);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
         "old\n"
     );
+}
+
+#[test]
+fn file_apply_patch_reports_fuzzy_and_append_match_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    std::fs::write(tmp.path().join("trim-end.txt"), "alpha  \n").unwrap();
+    std::fs::write(tmp.path().join("trim.txt"), "  beta  \n").unwrap();
+    std::fs::write(tmp.path().join("append.txt"), "head\n").unwrap();
+    let patch = "*** Begin Patch\n*** Update File: trim-end.txt\n-alpha\n+ALPHA\n*** Update File: trim.txt\n-beta\n+BETA\n*** Update File: append.txt\n+tail\n*** End Patch";
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_patch_request(tmp.path(), patch, true),
+    ));
+
+    let trim_end = &out["files"][0]["edits"][0];
+    assert_eq!(trim_end["match_mode"], "trim_end");
+    assert_eq!(trim_end["match_source"], "old_lines");
+    assert_eq!(trim_end["matched_start_line"], 1);
+
+    let trim = &out["files"][1]["edits"][0];
+    assert_eq!(trim["match_mode"], "trim");
+    assert_eq!(trim["match_source"], "old_lines");
+    assert_eq!(trim["matched_start_line"], 1);
+
+    let append = &out["files"][2]["edits"][0];
+    assert!(append["match_mode"].is_null());
+    assert_eq!(append["match_source"], "append");
+    assert_eq!(append["matched_start_line"], 2);
 }
 
 #[test]

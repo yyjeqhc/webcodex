@@ -75,6 +75,55 @@ pub struct CodexPatchChunk {
     pub is_end_of_file: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CodexPatchMatchMode {
+    Exact,
+    TrimEnd,
+    Trim,
+}
+
+impl CodexPatchMatchMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::TrimEnd => "trim_end",
+            Self::Trim => "trim",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexPatchMatchSource {
+    OldLines,
+    ChangeContext,
+    Append,
+}
+
+impl CodexPatchMatchSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OldLines => "old_lines",
+            Self::ChangeContext => "change_context",
+            Self::Append => "append",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexPatchChunkMatch {
+    pub chunk_index: usize,
+    pub match_mode: Option<CodexPatchMatchMode>,
+    pub match_source: CodexPatchMatchSource,
+    /// One-based source line where the replacement or insertion starts.
+    pub matched_start_line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexPatchUpdate {
+    pub content: String,
+    pub chunk_matches: Vec<CodexPatchChunkMatch>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexPatchError {
     pub kind: &'static str,
@@ -398,9 +447,23 @@ pub fn parse_codex_patch(patch: &str) -> Result<CodexPatch, CodexPatchError> {
     Ok(CodexPatch { hunks })
 }
 
-fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SequenceMatch {
+    index: usize,
+    mode: CodexPatchMatchMode,
+}
+
+fn seek_sequence(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    eof: bool,
+) -> Option<SequenceMatch> {
     if pattern.is_empty() {
-        return Some(start.min(lines.len()));
+        return Some(SequenceMatch {
+            index: start.min(lines.len()),
+            mode: CodexPatchMatchMode::Exact,
+        });
     }
     if pattern.len() > lines.len() {
         return None;
@@ -408,24 +471,31 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
     let last_start = lines.len() - pattern.len();
     let start = start.min(last_start);
 
-    let matches_at = |index: usize, mode: u8| {
+    let matches_at = |index: usize, mode: CodexPatchMatchMode| {
         lines[index..index + pattern.len()]
             .iter()
             .zip(pattern)
             .all(|(candidate, expected)| match mode {
-                0 => candidate == expected,
-                1 => candidate.trim_end() == expected.trim_end(),
-                _ => candidate.trim() == expected.trim(),
+                CodexPatchMatchMode::Exact => candidate == expected,
+                CodexPatchMatchMode::TrimEnd => candidate.trim_end() == expected.trim_end(),
+                CodexPatchMatchMode::Trim => candidate.trim() == expected.trim(),
             })
     };
 
-    for mode in 0..=2 {
+    for mode in [
+        CodexPatchMatchMode::Exact,
+        CodexPatchMatchMode::TrimEnd,
+        CodexPatchMatchMode::Trim,
+    ] {
         if eof && matches_at(last_start, mode) {
-            return Some(last_start);
+            return Some(SequenceMatch {
+                index: last_start,
+                mode,
+            });
         }
         for index in start..=last_start {
             if matches_at(index, mode) {
-                return Some(index);
+                return Some(SequenceMatch { index, mode });
             }
         }
     }
@@ -437,6 +507,14 @@ pub fn derive_codex_patch_update(
     path: &str,
     chunks: &[CodexPatchChunk],
 ) -> Result<String, CodexPatchError> {
+    derive_codex_patch_update_with_matches(original, path, chunks).map(|update| update.content)
+}
+
+pub fn derive_codex_patch_update_with_matches(
+    original: &str,
+    path: &str,
+    chunks: &[CodexPatchChunk],
+) -> Result<CodexPatchUpdate, CodexPatchError> {
     let line_ending = detect_apply_text_line_ending(original).map_err(|message| {
         CodexPatchError::new("unsupported_file", None, format!("{path}: {message}"))
     })?;
@@ -453,10 +531,12 @@ pub fn derive_codex_patch_update(
     }
 
     let mut replacements: Vec<(usize, usize, Vec<String>)> = Vec::new();
+    let mut chunk_matches = Vec::with_capacity(chunks.len());
     let mut line_index = 0usize;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let mut context_match_mode = None;
         if let Some(context) = chunk.change_context.as_ref() {
-            let Some(index) = seek_sequence(
+            let Some(context_match) = seek_sequence(
                 &original_lines,
                 std::slice::from_ref(context),
                 line_index,
@@ -470,7 +550,8 @@ pub fn derive_codex_patch_update(
                     ),
                 ));
             };
-            line_index = index + 1;
+            context_match_mode = Some(context_match.mode);
+            line_index = context_match.index + 1;
         }
 
         if chunk.old_lines.is_empty() {
@@ -480,6 +561,16 @@ pub fn derive_codex_patch_update(
                 original_lines.len()
             };
             replacements.push((insertion_index, 0, chunk.new_lines.clone()));
+            chunk_matches.push(CodexPatchChunkMatch {
+                chunk_index,
+                match_mode: context_match_mode,
+                match_source: if chunk.change_context.is_some() {
+                    CodexPatchMatchSource::ChangeContext
+                } else {
+                    CodexPatchMatchSource::Append
+                },
+                matched_start_line: insertion_index + 1,
+            });
             continue;
         }
 
@@ -493,14 +584,25 @@ pub fn derive_codex_patch_update(
             }
             found = seek_sequence(&original_lines, pattern, line_index, chunk.is_end_of_file);
         }
-        let Some(start) = found else {
+        let Some(found) = found else {
             return Err(CodexPatchError::new(
                 "context_mismatch",
                 None,
                 format!("{path}: chunk {chunk_index} could not find its expected old lines"),
             ));
         };
+        let start = found.index;
         replacements.push((start, pattern.len(), replacement.to_vec()));
+        chunk_matches.push(CodexPatchChunkMatch {
+            chunk_index,
+            match_mode: Some(
+                context_match_mode
+                    .map(|context_mode| context_mode.max(found.mode))
+                    .unwrap_or(found.mode),
+            ),
+            match_source: CodexPatchMatchSource::OldLines,
+            matched_start_line: start + 1,
+        });
         line_index = start + pattern.len();
     }
 
@@ -510,10 +612,10 @@ pub fn derive_codex_patch_update(
         new_lines.splice(start..start + old_len, replacement);
     }
     new_lines.push(String::new());
-    Ok(restore_apply_text_line_endings(
-        new_lines.join("\n"),
-        line_ending,
-    ))
+    Ok(CodexPatchUpdate {
+        content: restore_apply_text_line_endings(new_lines.join("\n"), line_ending),
+        chunk_matches,
+    })
 }
 
 #[cfg(test)]
@@ -560,8 +662,68 @@ mod tests {
             ..Default::default()
         }];
         let updated =
-            derive_codex_patch_update("  alpha  \r\n beta\t\r\n", "file.txt", &chunks).unwrap();
-        assert_eq!(updated, "alpha\r\nchanged\r\n");
+            derive_codex_patch_update_with_matches("  alpha  \r\n beta\t\r\n", "file.txt", &chunks)
+                .unwrap();
+        assert_eq!(updated.content, "alpha\r\nchanged\r\n");
+        assert_eq!(
+            updated.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Trim)
+        );
+        assert_eq!(
+            updated.chunk_matches[0].match_source,
+            CodexPatchMatchSource::OldLines
+        );
+        assert_eq!(updated.chunk_matches[0].matched_start_line, 1);
+    }
+
+    #[test]
+    fn update_matching_reports_exact_and_trim_end_modes() {
+        let exact = vec![CodexPatchChunk {
+            old_lines: vec!["alpha".into()],
+            new_lines: vec!["ALPHA".into()],
+            ..Default::default()
+        }];
+        let exact_update =
+            derive_codex_patch_update_with_matches("alpha\n", "file.txt", &exact).unwrap();
+        assert_eq!(
+            exact_update.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Exact)
+        );
+
+        let trim_end = vec![CodexPatchChunk {
+            old_lines: vec!["beta".into()],
+            new_lines: vec!["BETA".into()],
+            ..Default::default()
+        }];
+        let trim_end_update =
+            derive_codex_patch_update_with_matches("beta  \n", "file.txt", &trim_end).unwrap();
+        assert_eq!(
+            trim_end_update.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::TrimEnd)
+        );
+    }
+
+    #[test]
+    fn update_matching_reports_widest_mode_used_by_change_context_and_old_lines() {
+        let chunks = vec![CodexPatchChunk {
+            change_context: Some("section".into()),
+            old_lines: vec!["old".into()],
+            new_lines: vec!["new".into()],
+            ..Default::default()
+        }];
+        let update =
+            derive_codex_patch_update_with_matches("  section  \nold\n", "file.txt", &chunks)
+                .unwrap();
+        assert_eq!(update.content, "  section  \nnew\n");
+        assert_eq!(
+            update.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Trim)
+        );
+        assert_eq!(
+            update.chunk_matches[0].match_source,
+            CodexPatchMatchSource::OldLines
+        );
+        assert_eq!(update.chunk_matches[0].matched_start_line, 2);
     }
 
     #[test]
@@ -573,16 +735,25 @@ mod tests {
         let CodexPatchHunk::UpdateFile { chunks, .. } = &patch.hunks[0] else {
             panic!("expected update")
         };
-        let updated = derive_codex_patch_update(
+        let updated = derive_codex_patch_update_with_matches(
             "class Alpha:\n    existing = True\n\nclass Beta:\n    existing = True\n",
             "file.py",
             chunks,
         )
         .unwrap();
         assert_eq!(
-            updated,
+            updated.content,
             "class Alpha:\n    inserted = True\n    existing = True\n\nclass Beta:\n    existing = True\n"
         );
+        assert_eq!(
+            updated.chunk_matches[0].match_source,
+            CodexPatchMatchSource::ChangeContext
+        );
+        assert_eq!(
+            updated.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Exact)
+        );
+        assert_eq!(updated.chunk_matches[0].matched_start_line, 2);
     }
 
     #[test]
@@ -593,8 +764,15 @@ mod tests {
         let CodexPatchHunk::UpdateFile { chunks, .. } = &patch.hunks[0] else {
             panic!("expected update")
         };
-        let updated = derive_codex_patch_update("alpha\nbeta\n", "file.txt", chunks).unwrap();
-        assert_eq!(updated, "alpha\nbeta\ntail\n");
+        let updated =
+            derive_codex_patch_update_with_matches("alpha\nbeta\n", "file.txt", chunks).unwrap();
+        assert_eq!(updated.content, "alpha\nbeta\ntail\n");
+        assert_eq!(
+            updated.chunk_matches[0].match_source,
+            CodexPatchMatchSource::Append
+        );
+        assert_eq!(updated.chunk_matches[0].match_mode, None);
+        assert_eq!(updated.chunk_matches[0].matched_start_line, 3);
     }
 
     #[test]
@@ -605,8 +783,24 @@ mod tests {
             is_end_of_file: true,
             ..Default::default()
         }];
-        let updated = derive_codex_patch_update("same\nmid\nsame\n", "file.txt", &chunks).unwrap();
-        assert_eq!(updated, "same\nmid\nlast\n");
+        let updated =
+            derive_codex_patch_update_with_matches("same\nmid\nsame\n", "file.txt", &chunks)
+                .unwrap();
+        assert_eq!(updated.content, "same\nmid\nlast\n");
+        assert_eq!(updated.chunk_matches[0].matched_start_line, 3);
+    }
+
+    #[test]
+    fn update_content_only_api_keeps_string_return_contract() {
+        let chunks = vec![CodexPatchChunk {
+            old_lines: vec!["old".into()],
+            new_lines: vec!["new".into()],
+            ..Default::default()
+        }];
+        assert_eq!(
+            derive_codex_patch_update("old\n", "file.txt", &chunks).unwrap(),
+            "new\n"
+        );
     }
 
     #[test]

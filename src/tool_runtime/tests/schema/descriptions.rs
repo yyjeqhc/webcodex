@@ -269,9 +269,10 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         .as_str()
         .expect("apply_patch files output description");
     for contract in [
-        "match_mode exact|trim_end|trim|null",
+        "match_mode exact|trim_end|trim|null (widest positioning tier used)",
         "match_source old_lines|change_context|append",
         "1-based matched_start_line",
+        "candidate_count for match_source at its own selected tier (null for append)",
     ] {
         assert!(
             patch_files_description.contains(contract),

@@ -1398,6 +1398,7 @@ pub(crate) fn handle_apply_patch_file_request(
                             "match_mode": chunk_match.match_mode.map(|mode| mode.as_str()),
                             "match_source": chunk_match.match_source.as_str(),
                             "matched_start_line": chunk_match.matched_start_line,
+                            "candidate_count": chunk_match.candidate_count,
                         })
                     })
                     .collect::<Vec<_>>();

@@ -350,7 +350,10 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
     .collect();
     assert_eq!(actual, expected);
 
-    for removed in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+    assert!(is_known_tool_name("apply_patch"));
+    assert!(specs.iter().any(|spec| spec.name == "apply_patch"));
+
+    for removed in ["apply_patch_checked", "validate_patch"] {
         assert!(!is_known_tool_name(removed), "{removed} must be removed");
         assert!(specs.iter().all(|spec| spec.name != removed));
     }

@@ -2020,7 +2020,8 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         .cloned()
         .unwrap_or_default();
     assert!(edit_tools.iter().any(|tool| tool == "apply_unified_diff"));
-    for removed in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+    assert!(edit_tools.iter().any(|tool| tool == "apply_patch"));
+    for removed in ["apply_patch_checked", "validate_patch"] {
         assert!(
             !edit_tools.iter().any(|tool| tool == removed),
             "recommended edit flow must not rank retired patch tool {removed}: {edit_tools:?}"

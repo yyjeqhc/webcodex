@@ -474,7 +474,12 @@ pub fn derive_codex_patch_update(
         }
 
         if chunk.old_lines.is_empty() {
-            replacements.push((original_lines.len(), 0, chunk.new_lines.clone()));
+            let insertion_index = if chunk.change_context.is_some() {
+                line_index
+            } else {
+                original_lines.len()
+            };
+            replacements.push((insertion_index, 0, chunk.new_lines.clone()));
             continue;
         }
 
@@ -557,6 +562,39 @@ mod tests {
         let updated =
             derive_codex_patch_update("  alpha  \r\n beta\t\r\n", "file.txt", &chunks).unwrap();
         assert_eq!(updated, "alpha\r\nchanged\r\n");
+    }
+
+    #[test]
+    fn anchored_pure_addition_inserts_after_change_context() {
+        let patch = parse_codex_patch(
+            "*** Begin Patch\n*** Update File: file.py\n@@ class Alpha:\n+    inserted = True\n*** End Patch",
+        )
+        .unwrap();
+        let CodexPatchHunk::UpdateFile { chunks, .. } = &patch.hunks[0] else {
+            panic!("expected update")
+        };
+        let updated = derive_codex_patch_update(
+            "class Alpha:\n    existing = True\n\nclass Beta:\n    existing = True\n",
+            "file.py",
+            chunks,
+        )
+        .unwrap();
+        assert_eq!(
+            updated,
+            "class Alpha:\n    inserted = True\n    existing = True\n\nclass Beta:\n    existing = True\n"
+        );
+    }
+
+    #[test]
+    fn anchorless_pure_addition_appends_at_end_of_file() {
+        let patch =
+            parse_codex_patch("*** Begin Patch\n*** Update File: file.txt\n+tail\n*** End Patch")
+                .unwrap();
+        let CodexPatchHunk::UpdateFile { chunks, .. } = &patch.hunks[0] else {
+            panic!("expected update")
+        };
+        let updated = derive_codex_patch_update("alpha\nbeta\n", "file.txt", chunks).unwrap();
+        assert_eq!(updated, "alpha\nbeta\ntail\n");
     }
 
     #[test]

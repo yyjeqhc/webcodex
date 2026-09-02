@@ -1149,10 +1149,26 @@ fn from_tool_name_parses_unified_diff_and_cleanup_tools() {
 }
 
 #[test]
-fn from_tool_name_rejects_removed_patch_triplet() {
-    for removed in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+fn from_tool_name_parses_apply_patch_and_rejects_retired_patch_helpers() {
+    let patch = ToolCall::from_tool_name(
+        "apply_patch",
+        json!({
+            "project": "agent:c:p",
+            "patch": "*** Begin Patch\n*** Add File: new.txt\n+hello\n*** End Patch"
+        }),
+    )
+    .expect("current apply_patch DSL tool must parse");
+    assert!(matches!(
+        patch,
+        ToolCall::ApplyPatch { project, patch, dry_run, .. }
+            if project == "agent:c:p"
+                && patch.contains("*** Add File: new.txt")
+                && dry_run.is_none()
+    ));
+
+    for removed in ["apply_patch_checked", "validate_patch"] {
         let error = ToolCall::from_tool_name(removed, json!({"project":"agent:c:p"}))
-            .expect_err("removed patch tool names must not parse");
+            .expect_err("retired patch helper names must not parse");
         assert!(error.contains(removed), "{error}");
     }
 }

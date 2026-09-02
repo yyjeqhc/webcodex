@@ -370,10 +370,7 @@ impl ToolRuntime {
             .resolve_project_for_auth(project, auth)
             .await
             .map_err(|error| error.to_message())?;
-        if !resolved.is_agent() {
-            return Err("artifact export chunks require an agent-registered project".to_string());
-        }
-        let client_id = resolved.agent_client_id()?.to_string();
+        let client_id = resolved.client_id.clone();
         let payload = json!({
             "path": path,
             "expected_file_bytes": expected_file_bytes,
@@ -473,13 +470,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err("save_project_artifact requires an agent-registered project");
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
 
         let payload = json!({
             "path": path.clone(),
@@ -529,15 +520,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err(
-                "read_project_artifact_metadata requires an agent-registered project",
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
         let payload = json!({
             "path": path.clone(),
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
@@ -580,13 +563,7 @@ impl ToolRuntime {
         if let Err(error) = validate_artifact_file_path(&path) {
             return artifact_policy_rejected_result(&path, error);
         }
-        if !resolved.config.is_agent() {
-            return ToolResult::err("export_project_artifact requires an agent-registered project");
-        }
-        let client_id = match resolved.config.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => return ToolResult::err(error),
-        };
+        let client_id = resolved.config.client_id.clone();
         let streaming_payload = json!({
             "path": path.clone(),
             "max_bytes": MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
@@ -697,13 +674,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err("read_project_artifact requires an agent-registered project");
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
         let mut payload = json!({
             "path": path.clone(),
             "offset": offset,
@@ -768,13 +739,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err(format!("{tool_name} requires an agent-registered project"));
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
         let obj = match self
             .run_agent_json_file_op(client_id, proj.path.clone(), path, op, payload, tool_name)
             .await

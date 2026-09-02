@@ -9,49 +9,7 @@ use crate::shell_protocol::{
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-
-struct ProcessArgvHelper {
-    _temp: tempfile::TempDir,
-    path: PathBuf,
-}
-
-static PROCESS_ARGV_HELPER: OnceLock<Arc<ProcessArgvHelper>> = OnceLock::new();
-
-fn process_argv_helper() -> PathBuf {
-    PROCESS_ARGV_HELPER
-        .get_or_init(|| {
-            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/process_argv_helper.rs");
-            let temp = tempfile::tempdir().unwrap();
-            let output = temp.path().join(format!(
-                "process-argv-helper{}",
-                std::env::consts::EXE_SUFFIX
-            ));
-            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-            let result = std::process::Command::new(rustc)
-                .arg("--edition=2021")
-                .arg("--crate-name=webcodex_process_argv_helper")
-                .arg(source)
-                .arg("-o")
-                .arg(&output)
-                .output()
-                .expect("run rustc for process argv helper");
-            assert!(
-                result.status.success(),
-                "process argv helper compilation failed: {}",
-                String::from_utf8_lossy(&result.stderr)
-            );
-            Arc::new(ProcessArgvHelper {
-                _temp: temp,
-                path: output,
-            })
-        })
-        .path
-        .clone()
-}
 
 fn process_call(project: String, session_id: Option<String>) -> ToolCall {
     ToolCall::RunProcess {
@@ -268,55 +226,6 @@ async fn dispatch_process_until_request(
     });
     let request = wait_for_patch_agent_request(runtime, client_id).await;
     (task, request)
-}
-
-#[tokio::test]
-async fn run_process_local_direct_executor_preserves_argv_and_stdin_without_a_shell() {
-    let cwd = tempfile::tempdir().unwrap();
-    let marker = cwd.path().join("marker");
-    let values = vec![
-        String::new(),
-        "two words".to_string(),
-        "\"quotes\"".to_string(),
-        "$(touch marker)".to_string(),
-        "; touch marker".to_string(),
-        "a&b|c".to_string(),
-        r"C:\path with spaces\trailing\\".to_string(),
-        "雪だるま☃".to_string(),
-    ];
-    let mut args = vec!["argv".to_string()];
-    args.extend(values.clone());
-    let (exit_code, stdout, stderr, _) = super::super::helpers::run_process_sync_bounded(
-        process_argv_helper().to_string_lossy().into_owned(),
-        args,
-        None,
-        cwd.path().to_path_buf(),
-        10,
-    )
-    .await
-    .unwrap_or_else(|_| panic!("local direct argv helper should complete"));
-    assert_eq!(exit_code, 0);
-    assert_eq!(stderr, "");
-    assert!(!marker.exists());
-    let expected = values
-        .iter()
-        .map(|value| format!("{}:{value}\n", value.len()))
-        .collect::<String>();
-    assert_eq!(stdout, expected);
-
-    let stdin = "line one\nUnicode 雪\n";
-    let (exit_code, stdout, stderr, _) = super::super::helpers::run_process_sync_bounded(
-        process_argv_helper().to_string_lossy().into_owned(),
-        vec!["stdin".to_string()],
-        Some(stdin.to_string()),
-        cwd.path().to_path_buf(),
-        10,
-    )
-    .await
-    .unwrap_or_else(|_| panic!("local direct stdin helper should complete"));
-    assert_eq!(exit_code, 0);
-    assert_eq!(stdout, stdin);
-    assert_eq!(stderr, "");
 }
 
 #[tokio::test]

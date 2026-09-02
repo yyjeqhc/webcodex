@@ -108,6 +108,7 @@ fn validate_read_file_path(path: &str) -> Option<ToolResult> {
     None
 }
 
+#[cfg(test)]
 fn io_error_reason(error: &std::io::Error) -> ReadFileReason {
     match error.kind() {
         std::io::ErrorKind::NotFound => ReadFileReason::NotFound,
@@ -543,110 +544,77 @@ impl ToolRuntime {
         with_line_numbers: bool,
         deadline: Option<Instant>,
     ) -> ToolResult {
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let wait_timeout = 30;
-            let (eff_start, _eff_limit, eff_end) = effective_read_file_range(start_line, limit);
-            let (request_id, rx) = match self
-                .shell_clients
-                .enqueue_file_op(
-                    ShellFileOpRequest {
-                        op: "read".to_string(),
-                        client_id,
-                        path: path.clone(),
-                        cwd: Some(proj.path.clone()),
-                        content: None,
-                        // The shared scanner bounds raw content. The Runner
-                        // preflights the complete v1 envelope against this cap,
-                        // and ToolRuntime separately checks the final model
-                        // output after numbering and JSON escaping.
-                        max_bytes: Some(512 * 1024),
-                        old_text: None,
-                        pattern: None,
-                        expected_sha256: None,
-                        expected_prefix: None,
-                        start_line: Some(eff_start),
-                        end_line: Some(eff_end),
-                        line: None,
-                        create_dirs: false,
-                        wait_timeout_secs: wait_timeout,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(_) => return read_file_failure(ReadFileReason::AgentUnavailable, Some(&path)),
-            };
-            let response = match deadline {
-                Some(deadline) => tokio::time::timeout_at(deadline, rx).await,
-                None => tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await,
-            };
-            return match response {
-                Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    let mut result = read_file_agent_stdout_result_with_options(
-                        resp.stdout.unwrap_or_default(),
-                        start_line,
-                        limit,
-                        with_line_numbers,
-                    );
-                    if result.success {
-                        result.output["path"] = json!(path);
-                        result
-                    } else {
-                        // The agent response failed validation; surface a stable
-                        // structured error using the project-relative path.
-                        result.output["path"] = json!(path);
-                        result
-                    }
-                }
-                // Map agent execution failures to stable reason codes. The
-                // raw `resp.error`/`resp.stderr` (which may carry the runner's
-                // absolute path) is never forwarded to the model.
-                Ok(Ok(resp)) => {
-                    let reason = map_agent_read_error(&resp);
-                    read_file_failure(reason, Some(&path))
-                }
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    read_file_failure(ReadFileReason::AgentUnavailable, Some(&path))
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    read_file_failure(ReadFileReason::Timeout, Some(&path))
-                }
-            };
-        }
-        // Local branch: stream the file through the shared range reader instead
-        // of `std::fs::read_to_string`. The canonicalize/starts_with checks
-        // stay as the project-boundary guard; failures map to stable reason
-        // codes rather than OS error text.
-        let file_path = proj.root().join(&path);
-        let canonical_root = match proj.root().canonicalize() {
-            Ok(p) => p,
-            Err(error) => {
-                return read_file_failure(io_error_reason(&error), Some(&path));
-            }
+        let client_id = proj.client_id.clone();
+        let wait_timeout = 30;
+        let (eff_start, _eff_limit, eff_end) = effective_read_file_range(start_line, limit);
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "read".to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content: None,
+                    // The shared scanner bounds raw content. The Runner
+                    // preflights the complete v1 envelope against this cap,
+                    // and ToolRuntime separately checks the final model
+                    // output after numbering and JSON escaping.
+                    max_bytes: Some(512 * 1024),
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: Some(eff_start),
+                    end_line: Some(eff_end),
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return read_file_failure(ReadFileReason::AgentUnavailable, Some(&path)),
         };
-        let canonical = match file_path.canonicalize() {
-            Ok(p) => p,
-            Err(error) => {
-                return read_file_failure(io_error_reason(&error), Some(&path));
-            }
+        let response = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, rx).await,
+            None => tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await,
         };
-        if !canonical.starts_with(&canonical_root) {
-            return read_file_failure(ReadFileReason::InvalidPath, Some(&path));
-        }
-        if !canonical.is_file() {
-            return read_file_failure(ReadFileReason::NotFile, Some(&path));
-        }
-        let range = EffectiveRange::new(start_line, limit);
-        match file_read_range::read_range(&canonical, range) {
-            Ok(result) => build_read_file_success(&result, with_line_numbers, Some(&path)),
-            Err(error) => read_file_failure(error.reason, Some(&path)),
+        match response {
+            Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
+                let mut result = read_file_agent_stdout_result_with_options(
+                    resp.stdout.unwrap_or_default(),
+                    start_line,
+                    limit,
+                    with_line_numbers,
+                );
+                if result.success {
+                    result.output["path"] = json!(path);
+                    result
+                } else {
+                    // The agent response failed validation; surface a stable
+                    // structured error using the project-relative path.
+                    result.output["path"] = json!(path);
+                    result
+                }
+            }
+            // Map agent execution failures to stable reason codes. The
+            // raw `resp.error`/`resp.stderr` (which may carry the runner's
+            // absolute path) is never forwarded to the model.
+            Ok(Ok(resp)) => {
+                let reason = map_agent_read_error(&resp);
+                read_file_failure(reason, Some(&path))
+            }
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                read_file_failure(ReadFileReason::AgentUnavailable, Some(&path))
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                read_file_failure(ReadFileReason::Timeout, Some(&path))
+            }
         }
     }
 
@@ -760,7 +728,7 @@ impl ToolRuntime {
         config: &ProjectConfig,
     ) -> Option<InstructionAgentsAliasResolution> {
         const WAIT_TIMEOUT: u64 = 6;
-        let client_id = config.agent_client_id().ok()?;
+        let client_id = config.client_id.as_str();
         let (request_id, rx) = self
             .shell_clients
             .enqueue_file_op(
@@ -812,10 +780,7 @@ impl ToolRuntime {
         let read_limit = MAX_LINES_PER_FILE + 1;
         const WAIT_TIMEOUT: u64 = 6;
 
-        let client_id = match config.agent_client_id() {
-            Ok(client_id) => client_id,
-            Err(_) => return InstructionCandidateRead::Unavailable,
-        };
+        let client_id = config.client_id.as_str();
         let (request_id, rx) = match self
             .shell_clients
             .enqueue_file_op(
@@ -894,114 +859,60 @@ impl ToolRuntime {
             return ToolResult::err(e);
         }
         let max_entries = limit.unwrap_or(200).clamp(1, 500);
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let wait_timeout = 30;
-            let (request_id, rx) = match self
-                .shell_clients
-                .enqueue_file_op(
-                    ShellFileOpRequest {
-                        op: "list".to_string(),
-                        client_id,
-                        path: rel_path.clone(),
-                        cwd: Some(proj.path.clone()),
-                        content: None,
-                        max_bytes: None,
-                        old_text: None,
-                        pattern: None,
-                        expected_sha256: None,
-                        expected_prefix: None,
-                        start_line: None,
-                        end_line: None,
-                        line: None,
-                        create_dirs: false,
-                        wait_timeout_secs: wait_timeout,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            return match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
-                Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    let stdout = resp.stdout.unwrap_or_default();
-                    let (entries, truncated) =
-                        parse_file_list_entries(&stdout, &rel_path, max_entries);
-                    ToolResult::ok(json!({
-                        "project": project,
-                        "path": rel_path,
-                        "entries": entries,
-                        "truncated": truncated,
-                    }))
-                }
-                Ok(Ok(resp)) => ToolResult::err(
-                    resp.error
-                        .or(resp.stderr)
-                        .unwrap_or_else(|| "agent list_project_files failed".to_string()),
-                ),
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    ToolResult::err("agent list_project_files waiter was dropped")
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    ToolResult::err("timed out waiting for agent list_project_files")
-                }
-            };
-        }
-        // Local-executor parity path (the runtime surface is agent-first; this
-        // branch mirrors read_file/git_status for structural consistency).
-        let root = proj.root();
-        let dir = if rel_path == "." {
-            root.to_path_buf()
-        } else {
-            root.join(&rel_path)
+        let client_id = proj.client_id.clone();
+        let wait_timeout = 30;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "list".to_string(),
+                    client_id,
+                    path: rel_path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content: None,
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
         };
-        let canonical_root = match root.canonicalize() {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(format!("Project root does not exist: {}", e)),
-        };
-        let canonical_dir = match dir.canonicalize() {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(format!("Path does not exist: {}", e)),
-        };
-        if !canonical_dir.starts_with(&canonical_root) {
-            return ToolResult::err("Path is outside project directory");
-        }
-        let (entries, truncated) = match std::fs::read_dir(&canonical_dir) {
-            Ok(rd) => {
-                let mut all = Vec::new();
-                for entry in rd.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    all.push(json!({
-                        "path": relative_entry_path(&rel_path, &name),
-                        "kind": if is_dir { "dir" } else { "file" },
-                    }));
-                }
-                all.sort_by(|a, b| {
-                    a["path"]
-                        .as_str()
-                        .unwrap_or("")
-                        .cmp(b["path"].as_str().unwrap_or(""))
-                });
-                let truncated = all.len() > max_entries;
-                all.truncate(max_entries);
-                (all, truncated)
+        match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
+            Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
+                let stdout = resp.stdout.unwrap_or_default();
+                let (entries, truncated) = parse_file_list_entries(&stdout, &rel_path, max_entries);
+                ToolResult::ok(json!({
+                    "project": project,
+                    "path": rel_path,
+                    "entries": entries,
+                    "truncated": truncated,
+                }))
             }
-            Err(e) => return ToolResult::err(format!("Failed to list directory: {}", e)),
-        };
-        ToolResult::ok(json!({
-            "project": project,
-            "path": rel_path,
-            "entries": entries,
-            "truncated": truncated,
-        }))
+            Ok(Ok(resp)) => ToolResult::err(
+                resp.error
+                    .or(resp.stderr)
+                    .unwrap_or_else(|| "agent list_project_files failed".to_string()),
+            ),
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                ToolResult::err("agent list_project_files waiter was dropped")
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                ToolResult::err("timed out waiting for agent list_project_files")
+            }
+        }
     }
 
     /// `list_project_tracked_files`: enumerate what the project actually
@@ -1057,11 +968,8 @@ impl ToolRuntime {
             Err(error) => return ToolResult::err(error),
         };
         let command = list_tracked_files_command(&scope);
-        let (raw, exit_code, stderr) = if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(client_id) => client_id.to_string(),
-                Err(error) => return ToolResult::err(error),
-            };
+        let client_id = proj.client_id.clone();
+        let (raw, exit_code, stderr) = {
             let (request_id, rx) = match self
                 .shell_clients
                 .enqueue_run(
@@ -1101,19 +1009,6 @@ impl ToolRuntime {
                         "list_timeout",
                         "timed out waiting for the project file listing".to_string(),
                     );
-                }
-            }
-        } else {
-            match run_command_sync_bounded(command, proj.root(), LIST_TRACKED_TIMEOUT_SECS).await {
-                Ok((exit_code, stdout, stderr, _)) => (stdout, Some(exit_code), stderr),
-                Err(LocalRunFailure::HardTimeout { bound_secs: _ }) => {
-                    return list_tracked_error(
-                        "list_timeout",
-                        "timed out waiting for the project file listing".to_string(),
-                    )
-                }
-                Err(LocalRunFailure::Join(error)) => {
-                    return ToolResult::err(format!("task join error: {error}"))
                 }
             }
         };
@@ -1171,13 +1066,7 @@ impl ToolRuntime {
             Ok(project) => project,
             Err(error) => return ToolResult::err(error),
         };
-        if !proj.is_agent() {
-            return ToolResult::err("project_overview requires a full agent runtime project id");
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => return ToolResult::err(error),
-        };
+        let client_id = proj.client_id.clone();
         let wait_timeout = 30;
         let agent_path = if rel_path.is_empty() {
             ".".to_string()

@@ -1,4 +1,3 @@
-use super::runtime::runtime_with_project;
 use crate::tool_runtime::git::{
     collect_show_changes_untracked_previews_for_root, git_log_command, parse_porcelain_summary,
     parse_show_changes_output, show_changes_command, split_show_changes_stdout,
@@ -6,13 +5,10 @@ use crate::tool_runtime::git::{
 use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
 use crate::tool_runtime::{
     ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
-    LocalJobRecord, ToolRuntime,
 };
-use crate::tool_runtime::{LocalJobKiller, TerminateOutcome};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
 pub(in crate::tool_runtime::tests) fn init_git_repo(root: &Path) {
     for cmd in [
@@ -91,133 +87,6 @@ pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
         output["untracked_previews_truncated"] = json!(truncated);
     }
     output
-}
-
-/// Write a fake on-disk local job simulating a job that survived a restart.
-pub(in crate::tool_runtime::tests) fn write_fake_job(
-    root: &Path,
-    job_id: &str,
-    project: &str,
-    path: &str,
-    status: &str,
-    stdout: &str,
-    stderr: &str,
-    meta_extra: Value,
-) -> PathBuf {
-    let dir = root.join(format!(".codex/jobs/{}", job_id));
-    fs::create_dir_all(&dir).unwrap();
-    let mut meta = json!({
-        "job_id": job_id,
-        "project": project,
-        "path": path,
-        "command": "echo test",
-        "status": "running",
-        "created_at": 1000,
-        "started_at": 1000,
-        "max_runtime_secs": 3600,
-        "executor": "local",
-        "kind": "shell",
-    });
-    if let (Value::Object(ref mut m), Value::Object(extra)) = (&mut meta, meta_extra) {
-        for (k, v) in extra {
-            m.insert(k, v);
-        }
-    }
-    fs::write(
-        dir.join("metadata.json"),
-        serde_json::to_string_pretty(&meta).unwrap(),
-    )
-    .unwrap();
-    fs::write(dir.join("status"), status).unwrap();
-    fs::write(dir.join("stdout.log"), stdout).unwrap();
-    fs::write(dir.join("stderr.log"), stderr).unwrap();
-    dir
-}
-
-/// Seed one session-scoped local Job directly into the runtime for model-facing
-/// handoff/finish projection tests. Execution/transport semantics belong to the
-/// Job/process suites; projection tests only need durable lifecycle metadata.
-pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
-    runtime: &ToolRuntime,
-    root: &Path,
-    job_id: &str,
-    project: &str,
-    session_id: &str,
-    status: &str,
-    stdout: &str,
-) {
-    let now = chrono::Utc::now().timestamp();
-    let dir = write_fake_job(
-        root,
-        job_id,
-        project,
-        &root.to_string_lossy(),
-        status,
-        stdout,
-        "",
-        json!({
-            "created_at": now,
-            "started_at": now,
-            "max_runtime_secs": 3600,
-            "session_id": session_id,
-            "purpose": "test",
-        }),
-    );
-    let (record, _) = LocalJobRecord::initialize(project.to_string(), dir).unwrap();
-    runtime
-        .local_jobs
-        .lock()
-        .await
-        .insert(job_id.to_string(), record);
-}
-
-/// A deterministic fake process-killer for testing timeout/stop invariants.
-/// Records which (pid, pgid) pairs it was asked to terminate and reports
-/// AlreadyGone so the runtime persists a terminal status without touching
-/// any real process.
-#[derive(Default, Clone)]
-pub(in crate::tool_runtime::tests) struct FakeJobKiller {
-    calls: Arc<std::sync::Mutex<Vec<(i64, i64)>>>,
-}
-
-impl FakeJobKiller {
-    pub(in crate::tool_runtime::tests) fn calls(&self) -> Vec<(i64, i64)> {
-        self.calls.lock().unwrap().clone()
-    }
-}
-
-impl LocalJobKiller for FakeJobKiller {
-    fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome {
-        self.calls.lock().unwrap().push((pid, pgid));
-        TerminateOutcome::AlreadyGone
-    }
-}
-
-pub(in crate::tool_runtime::tests) fn runtime_with_fake_killer(
-    root: &Path,
-    project_id: &str,
-) -> (ToolRuntime, FakeJobKiller) {
-    let mut runtime = runtime_with_project(root, project_id);
-    let killer = FakeJobKiller::default();
-    let killer_dyn: Arc<dyn LocalJobKiller> = Arc::new(killer.clone());
-    runtime.job_killer = killer_dyn;
-    (runtime, killer)
-}
-
-/// Write a fake on-disk local job plus a `pid` file and `process_group_id`
-/// metadata field, simulating a job spawned by the current code.
-pub(in crate::tool_runtime::tests) fn write_fake_job_with_pgid(
-    root: &Path,
-    job_id: &str,
-    project: &str,
-    path: &str,
-    status: &str,
-    pid: i64,
-    meta_extra: Value,
-) -> PathBuf {
-    let dir = write_fake_job(root, job_id, project, path, status, "", "", meta_extra);
-    fs::write(dir.join("pid"), pid.to_string()).unwrap();
-    dir
 }
 
 /// A small patch carrying a distinctive marker line so tests can prove the

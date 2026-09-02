@@ -38,7 +38,6 @@ mod hygiene_tools;
 mod job_tools;
 mod jobs;
 pub(crate) mod kernel;
-mod local_jobs;
 mod lsp_tools;
 pub(crate) mod memory;
 pub(crate) mod metadata;
@@ -100,9 +99,7 @@ pub(crate) use files::{
     validate_project_artifact_export_snapshot, ProjectArtifactExportSnapshot,
     MAX_PROJECT_ARTIFACT_EXPORT_BYTES, MAX_READ_PROJECT_ARTIFACT_LENGTH,
 };
-pub(crate) use local_jobs::ACTIVE_JOB_STATUSES;
-#[cfg(test)]
-pub(crate) use local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome};
+pub(crate) use jobs::ACTIVE_JOB_STATUSES;
 pub(crate) use patch::MAX_UNIFIED_DIFF_BYTES;
 pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;

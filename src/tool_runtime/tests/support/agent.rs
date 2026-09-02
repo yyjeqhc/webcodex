@@ -2,9 +2,10 @@ use super::auth::auth_context;
 use super::runtime::test_runtime;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellProfileSummaryEntry, EXTERNAL_SEARCH_REQUEST_PREFIX,
+    AgentPolicySummary, ShellAgentJobUpdateRequest, ShellAgentPollRequest,
+    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentShellRequest,
+    ShellClientCapabilities, ShellClientRegisterRequest, ShellProfileSummaryEntry,
+    EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolResult, ToolRuntime};
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
@@ -887,6 +888,111 @@ pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_client(
     client_id: &str,
 ) -> ShellAgentShellRequest {
     wait_for_agent_request_for_instance(runtime, client_id, &format!("inst-{client_id}")).await
+}
+
+/// Start one real Runner-owned session Job and drive it to the requested
+/// nonterminal projection state. This keeps handoff/finish projection tests on
+/// the current Runner Job topology instead of seeding the retired Server-local
+/// Job registry.
+pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    session_id: &str,
+    status: &str,
+    stdout: &str,
+    auth: &crate::auth::AuthContext,
+) -> String {
+    assert!(matches!(status, "running" | "stop_requested"));
+    let started = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.to_string(),
+                command: "echo projection-job".to_string(),
+                session_id: Some(session_id.to_string()),
+                timeout_secs: Some(60),
+                cwd: None,
+                purpose: Some(crate::tool_runtime::tool_inputs::ExecutionPurpose::Test),
+                shell: None,
+            },
+            Some(auth),
+        )
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let job_id = started.output["job_id"].as_str().unwrap().to_string();
+    let request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
+    assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
+    runtime
+        .shell_clients
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            job_id: job_id.clone(),
+            request_id: Some(request.request_id),
+            update_seq: None,
+            status: "running".to_string(),
+            stdout_chunk: (!stdout.is_empty()).then(|| stdout.to_string()),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .unwrap();
+    if status == "stop_requested" {
+        let stopped = runtime
+            .shell_clients
+            .stop_job(&job_id, "projection-test".to_string())
+            .await
+            .unwrap();
+        assert_eq!(stopped.status, "stop_requested");
+        let stop_request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
+        assert_eq!(stop_request.kind, "stop_job");
+        assert_eq!(stop_request.job_id.as_deref(), Some(job_id.as_str()));
+    }
+    job_id
+}
+
+pub(in crate::tool_runtime::tests) async fn finish_session_projection_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    job_id: &str,
+    status: &str,
+) {
+    assert!(matches!(
+        status,
+        "completed" | "failed" | "stopped" | "timeout" | "cancelled"
+    ));
+    let current = runtime.shell_clients.get_job(job_id).await.unwrap();
+    runtime
+        .shell_clients
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            job_id: job_id.to_string(),
+            request_id: current.request_id,
+            update_seq: None,
+            status: status.to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: (status == "completed").then_some(0),
+            duration_ms: Some(1),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
 }
 
 pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> ToolRuntime {

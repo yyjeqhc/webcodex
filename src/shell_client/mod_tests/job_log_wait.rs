@@ -175,7 +175,6 @@ async fn job_log_wait_epoch_mismatch_refreshes_immediately() {
     )
     .unwrap();
     let stale = crate::job_observation::JobObservationToken::new(
-        crate::job_observation::JobObservationExecutor::Agent,
         job.job_id.clone(),
         "ffffffffffffffffffffffffffffffff",
         parsed.revision,

@@ -156,11 +156,7 @@ impl ToolRuntime {
         operation: SkillStoreRequest,
         optional_if_unsupported: bool,
     ) -> Result<Option<ShellRunResponse>, String> {
-        let client_id = project
-            .config
-            .agent_client_id()
-            .map_err(|_| "skill_store_capability_unavailable".to_string())?
-            .to_string();
+        let client_id = project.config.client_id.clone();
         let view = self
             .shell_clients
             .get_client_semantic_view_checked_for_auth(&client_id, auth)
@@ -1179,11 +1175,7 @@ impl ToolRuntime {
         &self,
         project: &ResolvedProject,
     ) -> Result<AgentSkillPackageList, &'static str> {
-        let client_id = project
-            .config
-            .agent_client_id()
-            .map_err(|_| "skills_catalog_unavailable")?
-            .to_string();
+        let client_id = project.config.client_id.clone();
         let payload = json!({"limit": MAX_SKILL_DISCOVERY_PACKAGES + 1}).to_string();
         let wait_timeout = 20_u64;
         let (request_id, rx) = self
@@ -1248,11 +1240,7 @@ impl ToolRuntime {
         max_file_bytes: usize,
         text_budget: usize,
     ) -> Result<AgentSkillFileRead, SkillIoError> {
-        let client_id = project
-            .config
-            .agent_client_id()
-            .map_err(|_| SkillIoError::Unavailable)?
-            .to_string();
+        let client_id = project.config.client_id.clone();
         let payload = json!({
             "package_root": package_root,
             "max_file_bytes": max_file_bytes,

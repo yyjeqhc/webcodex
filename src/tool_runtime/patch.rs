@@ -593,14 +593,6 @@ impl ToolRuntime {
                 return pre_apply_rejection(error, &analysis, "project_unavailable", "fix_project")
             }
         };
-        if !proj.is_agent() {
-            return pre_apply_rejection(
-                "apply_unified_diff requires an agent-registered project; server-configured projects are not supported",
-                &analysis,
-                "project_not_agent_registered",
-                "fix_project",
-            );
-        }
         if !proj.allow_patch() {
             return pre_apply_rejection(
                 "Unified diff mutation is not allowed for this project",
@@ -624,12 +616,7 @@ impl ToolRuntime {
             ));
         }
 
-        let client_id = match proj.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => {
-                return pre_apply_rejection(error, &analysis, "project_unavailable", "fix_project")
-            }
-        };
+        let client_id = proj.client_id.clone();
 
         let check_response = match self
             .run_unified_diff_command(

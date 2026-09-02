@@ -195,16 +195,7 @@ impl ToolRuntime {
             Err(e) => return e.into_tool_result(),
         };
         let proj = &resolved.config;
-        if !proj.is_agent() {
-            return ToolResult::err(format!(
-                "{}: LSP tools require an agent-backed project",
-                error_codes::AGENT_CAPABILITY_UNAVAILABLE
-            ));
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
         let Some(client) = self
             .shell_clients
             .get_client_semantic_view(&client_id)

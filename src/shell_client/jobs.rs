@@ -332,7 +332,6 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         // cursor-less legacy token. `job_log_for_auth` replaces this with a
         // cursor-aware v2 token for its frozen returned log snapshot.
         observation_token: crate::job_observation::JobObservationToken::new_legacy(
-            crate::job_observation::JobObservationExecutor::Agent,
             job.job_id.clone(),
             job.observation_epoch.to_string(),
             job.public_revision

@@ -12,7 +12,7 @@ async fn project_resolver_resolves_full_id() {
         .await
         .unwrap();
     assert_eq!(resolved.resolved_id, "agent:workstation:my-repo");
-    assert_eq!(resolved.config.agent_client_id().unwrap(), "workstation");
+    assert_eq!(resolved.config.client_id, "workstation");
     assert_eq!(resolved.config.path, "/root/git/workstation-my-repo");
 }
 

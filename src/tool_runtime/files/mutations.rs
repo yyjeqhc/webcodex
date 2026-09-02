@@ -1234,17 +1234,8 @@ impl ToolRuntime {
             Err(error) => return ToolResult::err(error),
         };
 
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(client_id) => client_id.to_string(),
-                Err(error) => return ToolResult::err(error),
-            };
-            return self
-                .delete_project_files_structured_agent(&proj, client_id, paths, 30)
-                .await;
-        }
-
-        self.delete_project_files_local(&proj, paths)
+        self.delete_project_files_structured_agent(&proj, proj.client_id.clone(), paths, 30)
+            .await
     }
 
     /// Bounded structured-delete failure result. Projects the shared
@@ -1435,79 +1426,6 @@ impl ToolRuntime {
         }))
     }
 
-    fn delete_project_files_local(&self, proj: &ProjectConfig, paths: Vec<String>) -> ToolResult {
-        let canonical_root = match proj.root().canonicalize() {
-            Ok(root) => root,
-            Err(_) => return ToolResult::err("project root is unavailable"),
-        };
-        let mut state_changed = false;
-        for path in &paths {
-            let target = canonical_root.join(path);
-            match std::fs::symlink_metadata(&target) {
-                Ok(metadata) => {
-                    if metadata.file_type().is_dir() {
-                        return ToolResult::err("delete_project_files refuses directory targets");
-                    }
-                    let containment = if metadata.file_type().is_symlink() {
-                        target
-                            .parent()
-                            .and_then(|parent| parent.canonicalize().ok())
-                    } else {
-                        target.canonicalize().ok()
-                    };
-                    if !containment.as_ref().is_some_and(|candidate| {
-                        webcodex_runner_config::paths::path_is_within(candidate, &canonical_root)
-                    }) {
-                        return ToolResult::err(
-                            "delete_project_files target is outside the project",
-                        );
-                    }
-                    match std::fs::remove_file(&target) {
-                        Ok(()) => state_changed = true,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(_) => return ToolResult::err("delete_project_files failed"),
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    let mut ancestor = target.parent();
-                    let mut contained = false;
-                    while let Some(candidate) = ancestor {
-                        match candidate.canonicalize() {
-                            Ok(candidate) => {
-                                contained = webcodex_runner_config::paths::path_is_within(
-                                    &candidate,
-                                    &canonical_root,
-                                );
-                                break;
-                            }
-                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                ancestor = candidate.parent();
-                            }
-                            Err(_) => {
-                                return ToolResult::err(
-                                    "delete_project_files parent is unavailable",
-                                )
-                            }
-                        }
-                    }
-                    if !contained {
-                        return ToolResult::err(
-                            "delete_project_files target is outside the project",
-                        );
-                    }
-                }
-                Err(_) => return ToolResult::err("delete_project_files failed"),
-            }
-        }
-        ToolResult::ok(json!({
-            "ok": true,
-            "state_changed": state_changed,
-            "deleted_paths": paths,
-            "stdout_present": false,
-            "stderr_present": false,
-        }))
-    }
-
     // -------------------------------------------------------------------------
     pub(crate) async fn write_project_file(
         &self,
@@ -1568,16 +1486,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err(
-                "write_project_file requires an agent-registered project; \
-                 server-configured projects are not supported",
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
 
         let payload = json!({
             "path": path.clone(),
@@ -1732,15 +1641,7 @@ impl ToolRuntime {
             Ok(project) => project,
             Err(error) => return ToolResult::err(error),
         };
-        if !proj.is_agent() {
-            return ToolResult::err(
-                "apply_patch requires an agent-registered project; server-configured projects are not supported",
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => return ToolResult::err(error),
-        };
+        let client_id = proj.client_id.clone();
         let routing_path = parsed
             .hunks
             .first()
@@ -1978,16 +1879,7 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if !proj.is_agent() {
-            return ToolResult::err(
-                "apply_text_edits requires an agent-registered project; \
-                 server-configured projects are not supported",
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
-        };
+        let client_id = proj.client_id.clone();
 
         let wait_timeout = 60_u64;
         let routing_path = changes

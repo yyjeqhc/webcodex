@@ -1,49 +1,10 @@
 use std::fmt;
 
 const LEGACY_TOKEN_PREFIX: &str = "wjob1";
-const TOKEN_V2_AGENT_PREFIX: &str = "wj2a";
-const TOKEN_V2_LOCAL_PREFIX: &str = "wj2l";
+const TOKEN_V2_PREFIX: &str = "wj2a";
 pub(crate) const MAX_JOB_OBSERVATION_TOKEN_LEN: usize = 192;
 const MAX_JOB_ID_LEN: usize = 80;
 const MAX_EPOCH_LEN: usize = 64;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JobObservationExecutor {
-    Agent,
-    Local,
-}
-
-impl JobObservationExecutor {
-    fn legacy_code(self) -> &'static str {
-        match self {
-            Self::Agent => "a",
-            Self::Local => "l",
-        }
-    }
-
-    fn v2_prefix(self) -> &'static str {
-        match self {
-            Self::Agent => TOKEN_V2_AGENT_PREFIX,
-            Self::Local => TOKEN_V2_LOCAL_PREFIX,
-        }
-    }
-
-    fn parse_legacy(value: &str) -> Result<Self, JobObservationTokenError> {
-        match value {
-            "a" => Ok(Self::Agent),
-            "l" => Ok(Self::Local),
-            _ => Err(JobObservationTokenError::Malformed),
-        }
-    }
-
-    fn parse_v2_prefix(value: &str) -> Result<Self, JobObservationTokenError> {
-        match value {
-            TOKEN_V2_AGENT_PREFIX => Ok(Self::Agent),
-            TOKEN_V2_LOCAL_PREFIX => Ok(Self::Local),
-            _ => Err(JobObservationTokenError::Malformed),
-        }
-    }
-}
 
 /// Opaque, Job-bound model observation state.
 ///
@@ -53,7 +14,6 @@ impl JobObservationExecutor {
 /// execution identity, authority, idempotency, or Runner protocol sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JobObservationToken {
-    pub(crate) executor: JobObservationExecutor,
     pub(crate) job_id: String,
     pub(crate) epoch: String,
     pub(crate) revision: u64,
@@ -63,7 +23,6 @@ pub(crate) struct JobObservationToken {
 
 impl JobObservationToken {
     pub(crate) fn new(
-        executor: JobObservationExecutor,
         job_id: impl Into<String>,
         epoch: impl Into<String>,
         revision: u64,
@@ -71,7 +30,6 @@ impl JobObservationToken {
         stderr_cursor: u64,
     ) -> Result<Self, JobObservationTokenError> {
         Self::build(
-            executor,
             job_id.into(),
             epoch.into(),
             revision,
@@ -81,16 +39,14 @@ impl JobObservationToken {
     }
 
     pub(crate) fn new_legacy(
-        executor: JobObservationExecutor,
         job_id: impl Into<String>,
         epoch: impl Into<String>,
         revision: u64,
     ) -> Result<Self, JobObservationTokenError> {
-        Self::build(executor, job_id.into(), epoch.into(), revision, None, None)
+        Self::build(job_id.into(), epoch.into(), revision, None, None)
     }
 
     fn build(
-        executor: JobObservationExecutor,
         job_id: String,
         epoch: String,
         revision: u64,
@@ -106,7 +62,6 @@ impl JobObservationToken {
             return Err(JobObservationTokenError::Malformed);
         }
         let token = Self {
-            executor,
             job_id,
             epoch,
             revision,
@@ -140,9 +95,9 @@ impl JobObservationToken {
         if parts.next() != Some(LEGACY_TOKEN_PREFIX) {
             return Err(JobObservationTokenError::Malformed);
         }
-        let executor = JobObservationExecutor::parse_legacy(
-            parts.next().ok_or(JobObservationTokenError::Malformed)?,
-        )?;
+        if parts.next() != Some("a") {
+            return Err(JobObservationTokenError::Malformed);
+        }
         let job_id = parts
             .next()
             .ok_or(JobObservationTokenError::Malformed)?
@@ -155,7 +110,7 @@ impl JobObservationToken {
         if parts.next().is_some() {
             return Err(JobObservationTokenError::Malformed);
         }
-        let token = Self::build(executor, job_id, epoch, revision, None, None)?;
+        let token = Self::build(job_id, epoch, revision, None, None)?;
         if token.encode() != value {
             return Err(JobObservationTokenError::Malformed);
         }
@@ -164,9 +119,9 @@ impl JobObservationToken {
 
     fn parse_v2(value: &str) -> Result<Self, JobObservationTokenError> {
         let mut parts = value.split(':');
-        let executor = JobObservationExecutor::parse_v2_prefix(
-            parts.next().ok_or(JobObservationTokenError::Malformed)?,
-        )?;
+        if parts.next() != Some(TOKEN_V2_PREFIX) {
+            return Err(JobObservationTokenError::Malformed);
+        }
         let job_id = parts
             .next()
             .ok_or(JobObservationTokenError::Malformed)?
@@ -182,7 +137,6 @@ impl JobObservationToken {
             return Err(JobObservationTokenError::Malformed);
         }
         let token = Self::build(
-            executor,
             job_id,
             epoch,
             revision,
@@ -195,15 +149,8 @@ impl JobObservationToken {
         Ok(token)
     }
 
-    pub(crate) fn parse_bound(
-        value: &str,
-        executor: JobObservationExecutor,
-        job_id: &str,
-    ) -> Result<Self, JobObservationTokenError> {
+    pub(crate) fn parse_bound(value: &str, job_id: &str) -> Result<Self, JobObservationTokenError> {
         let token = Self::parse(value)?;
-        if token.executor != executor {
-            return Err(JobObservationTokenError::WrongExecutor);
-        }
         if token.job_id != job_id {
             return Err(JobObservationTokenError::WrongJob);
         }
@@ -218,7 +165,7 @@ impl JobObservationToken {
         match (self.stdout_cursor, self.stderr_cursor) {
             (Some(stdout_cursor), Some(stderr_cursor)) => format!(
                 "{}:{}:{}:{}:{}:{}",
-                self.executor.v2_prefix(),
+                TOKEN_V2_PREFIX,
                 self.job_id,
                 self.epoch,
                 encode_base36(self.revision),
@@ -226,11 +173,8 @@ impl JobObservationToken {
                 encode_base36(stderr_cursor),
             ),
             (None, None) => format!(
-                "{LEGACY_TOKEN_PREFIX}:{}:{}:{}:{}",
-                self.executor.legacy_code(),
-                self.job_id,
-                self.epoch,
-                self.revision
+                "{LEGACY_TOKEN_PREFIX}:a:{}:{}:{}",
+                self.job_id, self.epoch, self.revision
             ),
             _ => unreachable!("Job observation cursors are both present or both absent"),
         }
@@ -436,7 +380,6 @@ pub(crate) fn combined_delta_status(
 pub(crate) enum JobObservationTokenError {
     Malformed,
     Oversized,
-    WrongExecutor,
     WrongJob,
 }
 
@@ -445,9 +388,6 @@ impl fmt::Display for JobObservationTokenError {
         formatter.write_str(match self {
             Self::Malformed => "invalid after_observation_token: malformed opaque Job token",
             Self::Oversized => "invalid after_observation_token: token exceeds 192 bytes",
-            Self::WrongExecutor => {
-                "invalid after_observation_token: token belongs to a different executor"
-            }
             Self::WrongJob => "invalid after_observation_token: token belongs to a different Job",
         })
     }
@@ -464,7 +404,6 @@ mod tests {
     #[test]
     fn observation_token_v2_round_trips_canonically_with_independent_cursors() {
         let token = JobObservationToken::new(
-            JobObservationExecutor::Agent,
             "11111111-2222-3333-4444-555555555555",
             "0123456789abcdef0123456789abcdef",
             42,
@@ -487,7 +426,6 @@ mod tests {
     #[test]
     fn observation_token_v2_maximum_components_fit_exact_existing_bound() {
         let token = JobObservationToken::new(
-            JobObservationExecutor::Local,
             "j".repeat(MAX_JOB_ID_LEN),
             "e".repeat(MAX_EPOCH_LEN),
             u64::MAX,
@@ -501,34 +439,24 @@ mod tests {
 
     #[test]
     fn observation_token_v2_rejects_wrong_binding_and_noncanonical_integers() {
-        let encoded = JobObservationToken::new(
-            JobObservationExecutor::Local,
-            "job-one",
-            "0123456789abcdef",
-            36,
-            101,
-            21,
-        )
-        .unwrap()
-        .encode();
+        let encoded = JobObservationToken::new("job-one", "0123456789abcdef", 36, 101, 21)
+            .unwrap()
+            .encode();
         assert_eq!(
-            JobObservationToken::parse_bound(&encoded, JobObservationExecutor::Agent, "job-one"),
-            Err(JobObservationTokenError::WrongExecutor)
-        );
-        assert_eq!(
-            JobObservationToken::parse_bound(&encoded, JobObservationExecutor::Local, "job-two"),
+            JobObservationToken::parse_bound(&encoded, "job-two"),
             Err(JobObservationTokenError::WrongJob)
         );
         for malformed in [
-            "wj2l:job:epoch:01:1:1",
-            "wj2l:job:epoch:1:01:1",
-            "wj2l:job:epoch:1:1:01",
-            "wj2l:job:epoch:A:1:1",
-            "wj2l:job:epoch:1:1",
-            "wj2l:job:epoch:1:1:1:extra",
+            "wj2a:job:epoch:01:1:1",
+            "wj2a:job:epoch:1:01:1",
+            "wj2a:job:epoch:1:1:01",
+            "wj2a:job:epoch:A:1:1",
+            "wj2a:job:epoch:1:1",
+            "wj2a:job:epoch:1:1:1:extra",
             "wj2x:job:epoch:1:1:1",
-            "wj2l:job:epoch:1:0:1",
-            "wj2l:job:epoch:1:1:0",
+            "wj2l:job:epoch:1:1:1",
+            "wj2a:job:epoch:1:0:1",
+            "wj2a:job:epoch:1:1:0",
         ] {
             assert_eq!(
                 JobObservationToken::parse(malformed),
@@ -544,15 +472,9 @@ mod tests {
 
     #[test]
     fn legacy_observation_token_remains_canonical_and_has_no_cursor_proof() {
-        let legacy = JobObservationToken::new_legacy(
-            JobObservationExecutor::Local,
-            "job-one",
-            "0123456789abcdef",
-            1,
-        )
-        .unwrap();
+        let legacy = JobObservationToken::new_legacy("job-one", "0123456789abcdef", 1).unwrap();
         let encoded = legacy.encode();
-        assert_eq!(encoded, "wjob1:l:job-one:0123456789abcdef:1");
+        assert_eq!(encoded, "wjob1:a:job-one:0123456789abcdef:1");
         let parsed = JobObservationToken::parse(&encoded).unwrap();
         assert!(parsed.is_legacy());
         assert_eq!(parsed.stdout_cursor, None);

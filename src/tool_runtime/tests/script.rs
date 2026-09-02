@@ -168,40 +168,6 @@ async fn complete_script_lifecycle(
         .unwrap();
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn server_local_compatibility_executes_a_temporary_script_file_directly() {
-    let cwd = tempfile::tempdir().unwrap();
-    let observed_path = cwd.path().join("observed-script-path");
-    let marker = cwd.path().join("marker");
-    let payload = crate::shell_protocol::ShellScriptPayload {
-        language: ShellScriptLanguage::Sh,
-        script: "printf '%s' \"$0\" > \"$1\"\nprintf '%s\\n' \"$0\" \"$2\"\n".to_string(),
-        args: vec![
-            observed_path.to_string_lossy().into_owned(),
-            "; touch marker".to_string(),
-        ],
-    };
-    let (exit_code, stdout, stderr, _) =
-        super::super::helpers::run_script_sync_bounded(payload, None, cwd.path().to_path_buf(), 10)
-            .await
-            .unwrap_or_else(|_| panic!("local compatibility script execution should return"));
-
-    assert_eq!(exit_code, 0, "{stderr}");
-    assert_eq!(stdout, "<temporary-script>\n; touch marker\n");
-    assert!(
-        !marker.exists(),
-        "script arguments must remain literal argv"
-    );
-    let temporary_path = std::path::PathBuf::from(std::fs::read_to_string(observed_path).unwrap());
-    assert_eq!(
-        temporary_path.extension().and_then(|value| value.to_str()),
-        Some("sh")
-    );
-    assert!(!temporary_path.starts_with(cwd.path()));
-    assert!(!temporary_path.exists());
-}
-
 #[tokio::test]
 async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_kib() {
     let temp = tempfile::tempdir().unwrap();

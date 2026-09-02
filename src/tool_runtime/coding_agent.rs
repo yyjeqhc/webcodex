@@ -389,15 +389,7 @@ impl ToolRuntime {
         if !resolved.config.allow_patch {
             return Err(coding_agent_project_not_writable_result(&run_id));
         }
-        let client_id = resolved.config.agent_client_id().map_err(|error| {
-            coding_agent_error(
-                "invalid_project",
-                error,
-                "not_started",
-                RecoveryKind::FixInput,
-                Some(&run_id),
-            )
-        })?;
+        let client_id = resolved.config.client_id.as_str();
         let client = match self
             .shell_clients
             .get_client_semantic_view_for_auth(client_id, auth)

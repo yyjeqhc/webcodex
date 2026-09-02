@@ -1,18 +1,14 @@
 //! Runtime observability metadata injected into `ToolRuntime`.
 
-use super::helpers::normalize_local_status;
-use super::jobs::local_jobs_visible_to_auth;
-use super::local_jobs::ACTIVE_JOB_STATUSES;
+use super::jobs::ACTIVE_JOB_STATUSES;
 use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{ShellClientView, ShellJobInfo};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
 const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
 const AGENT_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
-const LOCAL_QUEUED_JOB_STATUSES: &[&str] = &["queued"];
 const LIST_AGENTS_MAX_CLIENT_IDS: usize = 8;
 const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
 
@@ -368,23 +364,10 @@ impl ToolRuntime {
         let version_compatibility = version_compatibility(&clients);
 
         // -- jobs summary -----------------------------------------------------
-        // Agent-known jobs come from the registry; local jobs come from the
-        // in-memory map. Active includes same-runner `recovering` jobs.
+        // Registered Project jobs are Runner-owned. Active includes same-runner
+        // `recovering` jobs during restart/reconnect reconciliation.
         let agent_known_count = agent_jobs.len();
-        let local_job_dirs: Vec<PathBuf> = if local_jobs_visible_to_auth(auth) {
-            let local_jobs_map = self.local_jobs.lock().await;
-            local_jobs_map
-                .values()
-                .map(|record| record.dir.clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let local_known_count = local_job_dirs.len();
-        // Avoid double-counting: agent jobs are tracked separately from local
-        // jobs (local jobs are only in the in-memory map; agent jobs are only
-        // in the registry). Count active across both.
-        let agent_active = agent_jobs
+        let active_count = agent_jobs
             .iter()
             .filter(|j| ACTIVE_JOB_STATUSES.contains(&j.status.as_str()))
             .count();
@@ -392,11 +375,11 @@ impl ToolRuntime {
             .iter()
             .filter(|job| job.status == "recovering")
             .count();
-        let agent_running = agent_jobs
+        let running_count = agent_jobs
             .iter()
             .filter(|job| job_status_is_running(&job.status))
             .count();
-        let agent_queued = agent_jobs
+        let queued_count = agent_jobs
             .iter()
             .filter(|job| job_status_is_agent_queued(&job.status))
             .count();
@@ -418,28 +401,8 @@ impl ToolRuntime {
                     )
             })
             .count();
-        let mut local_active = 0usize;
-        let mut local_running = 0usize;
-        let mut local_queued = 0usize;
-        for dir in local_job_dirs {
-            if let Some(status) = std::fs::read_to_string(dir.join("status"))
-                .ok()
-                .map(|s| s.trim().to_string())
-            {
-                let normalized = normalize_local_status(&status);
-                if ACTIVE_JOB_STATUSES.contains(&normalized.as_str()) {
-                    local_active += 1;
-                }
-                local_running += usize::from(job_status_is_running(&normalized));
-                local_queued += usize::from(job_status_is_local_queued(&normalized));
-            }
-        }
-        let active_count = agent_active + local_active;
-        let running_count = agent_running + local_running;
-        let queued_count = agent_queued + local_queued;
         let jobs = json!({
             "agent_known_count": agent_known_count,
-            "local_known_count": local_known_count,
             "active_count": active_count,
             "running_count": running_count,
             "queued_count": queued_count,
@@ -645,7 +608,6 @@ impl ToolRuntime {
         });
         let jobs = json!({
             "agent_known_count": selected_jobs.len(),
-            "local_known_count": 0,
             "active_count": agent_active,
             "running_count": running_count,
             "queued_count": queued_count,
@@ -1344,10 +1306,6 @@ fn job_status_is_agent_queued(status: &str) -> bool {
     AGENT_QUEUED_JOB_STATUSES.contains(&status)
 }
 
-fn job_status_is_local_queued(status: &str) -> bool {
-    LOCAL_QUEUED_JOB_STATUSES.contains(&status)
-}
-
 fn job_concurrency_for_client(client: &ShellClientView, agent_jobs: &[ShellJobInfo]) -> Value {
     let mut running = 0usize;
     let mut queued = 0usize;
@@ -1495,8 +1453,6 @@ mod phase_e2_status_tests {
             assert!(job_status_is_agent_queued(status), "{status}");
             assert!(!job_status_is_running(status), "{status}");
         }
-        assert!(job_status_is_local_queued("queued"));
-        assert!(!job_status_is_local_queued("agent_queued"));
         for status in [
             "stop_requested",
             "recovering",
@@ -1510,7 +1466,6 @@ mod phase_e2_status_tests {
         ] {
             assert!(!job_status_is_running(status), "{status}");
             assert!(!job_status_is_agent_queued(status), "{status}");
-            assert!(!job_status_is_local_queued(status), "{status}");
         }
     }
 

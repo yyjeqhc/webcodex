@@ -15,16 +15,4 @@ impl ProjectConfig {
     pub fn allow_patch(&self) -> bool {
         self.allow_patch
     }
-
-    pub fn is_agent(&self) -> bool {
-        true
-    }
-
-    pub fn agent_client_id(&self) -> Result<&str, String> {
-        let client_id = self.client_id.trim();
-        if client_id.is_empty() {
-            return Err("agent project requires client_id".to_string());
-        }
-        Ok(client_id)
-    }
 }

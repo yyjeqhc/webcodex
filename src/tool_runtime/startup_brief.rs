@@ -984,7 +984,7 @@ fn startup_issues(
     if blocking_jobs > 0 {
         push_unique(&mut blockers, "active_jobs_blocking");
     }
-    if input.resolved.config.is_agent() && input.owning_runner_available == Some(false) {
+    if input.owning_runner_available == Some(false) {
         push_unique(&mut blockers, "runner_unavailable");
     }
     if input.runtime_status_call_failed {

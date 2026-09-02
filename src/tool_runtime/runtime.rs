@@ -1,6 +1,5 @@
 use super::activity::{ActivityRecorder, NoopActivityRecorder};
 use super::checkpoint;
-use super::local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller};
 use super::observations::RuntimeObservations;
 use super::permissions::PermissionEvaluator;
 use super::runtime_info::RuntimeInfo;
@@ -8,7 +7,6 @@ use super::sessions;
 use super::SessionShellRegistry;
 use crate::shell_client::ShellClientRegistry;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -113,8 +111,6 @@ pub struct ToolRuntime {
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
     pub(crate) session_shells: SessionShellRegistry,
-    pub(crate) local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
-    pub(crate) job_killer: Arc<dyn LocalJobKiller>,
     pub(crate) semantic_navigation_probe_timeout: Duration,
     pub(crate) repository_overview_probe_timeout: Duration,
     /// One deadline shared by every item in a `read_files` batch.
@@ -180,8 +176,6 @@ impl ToolRuntime {
             checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
             session_shells: SessionShellRegistry::default(),
-            local_jobs: Arc::new(Mutex::new(HashMap::new())),
-            job_killer: Arc::new(SystemJobKiller),
             semantic_navigation_probe_timeout:
                 super::semantic_navigation::DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT,
             repository_overview_probe_timeout:

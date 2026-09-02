@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
 use std::path::Path;
 use std::time::Duration;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
@@ -12,8 +13,8 @@ use super::git_committed::{
     CommittedGitScope,
 };
 use super::helpers::{
-    decode_git_quoted_path, run_command_sync_bounded, shell_escape_simple,
-    validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
+    decode_git_quoted_path, shell_escape_simple, validate_limited_cleanup_paths,
+    validate_project_relative_path,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -1679,6 +1680,7 @@ fn untracked_preview_from_bytes(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn collect_show_changes_untracked_previews_for_root(
     root: &Path,
     untracked_paths: &[String],
@@ -3205,12 +3207,8 @@ impl ToolRuntime {
         untracked_paths: &[String],
     ) -> (Vec<Value>, bool) {
         let truncated = untracked_paths.len() > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES;
-        let proj = match self.resolve_project(project).await {
-            Ok(proj) => proj,
-            Err(_) => return (Vec::new(), truncated),
-        };
-        if !proj.is_agent() {
-            return collect_show_changes_untracked_previews_for_root(&proj.root(), untracked_paths);
+        if self.resolve_project(project).await.is_err() {
+            return (Vec::new(), truncated);
         }
         let mut previews = Vec::new();
         for path in untracked_paths
@@ -3294,57 +3292,38 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let (req_id, rx) = match self
-                .shell_clients
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id,
-                        cwd: Some(proj.path.clone()),
-                        command: "git status --porcelain".to_string(),
-                        stdin: None,
-                        timeout_secs: 30,
-                        wait_timeout_secs: 32,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            match tokio::time::timeout(Duration::from_secs(34), rx).await {
-                Ok(Ok(resp)) => ToolResult::ok(json!({
-                    "stdout": resp.stdout,
-                    "stderr": resp.stderr,
-                    "exit_code": resp.exit_code,
-                })),
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("request dropped")
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("timed out")
-                }
+        let client_id = proj.client_id.clone();
+        let (req_id, rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id,
+                    cwd: Some(proj.path.clone()),
+                    command: "git status --porcelain".to_string(),
+                    stdin: None,
+                    timeout_secs: 30,
+                    wait_timeout_secs: 32,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        match tokio::time::timeout(Duration::from_secs(34), rx).await {
+            Ok(Ok(resp)) => ToolResult::ok(json!({
+                "stdout": resp.stdout,
+                "stderr": resp.stderr,
+                "exit_code": resp.exit_code,
+            })),
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("request dropped")
             }
-        } else {
-            let root = proj.root();
-            match run_command_sync_bounded("git status --porcelain".to_string(), root, 30).await {
-                Ok((exit_code, stdout, stderr, _)) => ToolResult::ok(json!({
-                    "stdout": stdout,
-                    "stderr": stderr,
-                    "exit_code": exit_code,
-                })),
-                Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
-                    "local git status did not return within {} seconds (hard bound)",
-                    bound_secs
-                )),
-                Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
+            Err(_) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("timed out")
             }
         }
     }
@@ -3361,57 +3340,38 @@ impl ToolRuntime {
             let escaped: Vec<String> = diff_args.iter().map(|a| shell_escape_simple(a)).collect();
             format!("git diff -- {}", escaped.join(" "))
         };
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let (req_id, rx) = match self
-                .shell_clients
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id,
-                        cwd: Some(proj.path.clone()),
-                        command: cmd,
-                        stdin: None,
-                        timeout_secs: 30,
-                        wait_timeout_secs: 32,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            match tokio::time::timeout(Duration::from_secs(34), rx).await {
-                Ok(Ok(resp)) => ToolResult::ok(json!({
-                    "stdout": resp.stdout,
-                    "stderr": resp.stderr,
-                    "exit_code": resp.exit_code,
-                })),
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("request dropped")
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("timed out")
-                }
+        let client_id = proj.client_id.clone();
+        let (req_id, rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id,
+                    cwd: Some(proj.path.clone()),
+                    command: cmd,
+                    stdin: None,
+                    timeout_secs: 30,
+                    wait_timeout_secs: 32,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        match tokio::time::timeout(Duration::from_secs(34), rx).await {
+            Ok(Ok(resp)) => ToolResult::ok(json!({
+                "stdout": resp.stdout,
+                "stderr": resp.stderr,
+                "exit_code": resp.exit_code,
+            })),
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("request dropped")
             }
-        } else {
-            let root = proj.root();
-            match run_command_sync_bounded(cmd, root, 30).await {
-                Ok((exit_code, stdout, stderr, _)) => ToolResult::ok(json!({
-                    "stdout": stdout,
-                    "stderr": stderr,
-                    "exit_code": exit_code,
-                })),
-                Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
-                    "local git diff did not return within {} seconds (hard bound)",
-                    bound_secs
-                )),
-                Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
+            Err(_) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("timed out")
             }
         }
     }
@@ -3889,55 +3849,25 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
         let cmd = git_diff_summary_command();
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let (req_id, rx) = match self
-                .shell_clients
-                .enqueue_internal_posix_script(
-                    client_id,
-                    Some(proj.path.clone()),
-                    cmd,
-                    30,
-                    32,
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            return match tokio::time::timeout(Duration::from_secs(34), rx).await {
-                Ok(Ok(resp)) => {
-                    let stdout = resp.stdout.unwrap_or_default();
-                    let (porcelain, diff_stat) = split_diff_summary(&stdout);
-                    let porcelain_summary = parse_porcelain_summary(&porcelain);
-                    ToolResult::ok(json!({
-                        "porcelain": porcelain,
-                        "diff_stat": diff_stat,
-                        "changed_files": porcelain_summary.changed_files,
-                        "changed_files_count": porcelain_summary.changed_files_count,
-                        "tracked_changed_files": porcelain_summary.tracked_changed_files,
-                        "untracked_files": porcelain_summary.untracked_files,
-                        "ignored_files": porcelain_summary.ignored_files,
-                        "exit_code": resp.exit_code,
-                    }))
-                }
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("request dropped")
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("timed out")
-                }
-            };
-        }
-        let root = proj.root();
-        match run_command_sync_bounded(cmd, root, 30).await {
-            Ok((exit_code, stdout, _stderr, _)) => {
+        let client_id = proj.client_id.clone();
+        let (req_id, rx) = match self
+            .shell_clients
+            .enqueue_internal_posix_script(
+                client_id,
+                Some(proj.path.clone()),
+                cmd,
+                30,
+                32,
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        match tokio::time::timeout(Duration::from_secs(34), rx).await {
+            Ok(Ok(resp)) => {
+                let stdout = resp.stdout.unwrap_or_default();
                 let (porcelain, diff_stat) = split_diff_summary(&stdout);
                 let porcelain_summary = parse_porcelain_summary(&porcelain);
                 ToolResult::ok(json!({
@@ -3948,14 +3878,17 @@ impl ToolRuntime {
                     "tracked_changed_files": porcelain_summary.tracked_changed_files,
                     "untracked_files": porcelain_summary.untracked_files,
                     "ignored_files": porcelain_summary.ignored_files,
-                    "exit_code": exit_code,
+                    "exit_code": resp.exit_code,
                 }))
             }
-            Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
-                "local git diff summary did not return within {} seconds (hard bound)",
-                bound_secs
-            )),
-            Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("request dropped")
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&req_id).await;
+                ToolResult::err("timed out")
+            }
         }
     }
 

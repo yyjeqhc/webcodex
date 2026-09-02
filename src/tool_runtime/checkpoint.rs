@@ -12,7 +12,6 @@ use super::tool_result::ToolResult;
 use super::{ToolCall, ToolRuntime};
 use crate::action_audit_sessions::secret_like_value;
 use crate::projects::ProjectConfig;
-use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
 
 const CHECKPOINT_VERSION: u32 = 1;
 const CHECKPOINT_ID_PREFIX: &str = "wc_ckpt_";
@@ -460,26 +459,15 @@ impl ToolRuntime {
         config: &ProjectConfig,
         include_untracked: bool,
     ) -> Result<Value, String> {
-        if config.is_agent() {
-            let client_id = config.agent_client_id()?.to_string();
-            return self
-                .run_agent_json_file_op(
-                    client_id,
-                    config.path.clone(),
-                    ".".to_string(),
-                    "checkpoint_create",
-                    json!({ "include_untracked": include_untracked }),
-                    "checkpoint_create",
-                )
-                .await;
-        }
-        let root = config
-            .root()
-            .canonicalize()
-            .map_err(|err| format!("Project root does not exist: {err}"))?;
-        tokio::task::spawn_blocking(move || create_workspace_checkpoint(&root, include_untracked))
-            .await
-            .map_err(|err| format!("task join error: {err}"))
+        self.run_agent_json_file_op(
+            config.client_id.clone(),
+            config.path.clone(),
+            ".".to_string(),
+            "checkpoint_create",
+            json!({ "include_untracked": include_untracked }),
+            "checkpoint_create",
+        )
+        .await
     }
 
     async fn run_checkpoint_restore(
@@ -487,26 +475,15 @@ impl ToolRuntime {
         config: &ProjectConfig,
         checkpoint: Value,
     ) -> Result<Value, String> {
-        if config.is_agent() {
-            let client_id = config.agent_client_id()?.to_string();
-            return self
-                .run_agent_json_file_op(
-                    client_id,
-                    config.path.clone(),
-                    ".".to_string(),
-                    "checkpoint_restore",
-                    json!({ "checkpoint": checkpoint }),
-                    "checkpoint_restore",
-                )
-                .await;
-        }
-        let root = config
-            .root()
-            .canonicalize()
-            .map_err(|err| format!("Project root does not exist: {err}"))?;
-        tokio::task::spawn_blocking(move || restore_workspace_checkpoint(&root, &checkpoint))
-            .await
-            .map_err(|err| format!("task join error: {err}"))
+        self.run_agent_json_file_op(
+            config.client_id.clone(),
+            config.path.clone(),
+            ".".to_string(),
+            "checkpoint_restore",
+            json!({ "checkpoint": checkpoint }),
+            "checkpoint_restore",
+        )
+        .await
     }
 }
 

@@ -1,14 +1,8 @@
 use serde_json::{json, Value};
-use std::path::Path;
 
 use super::helpers::{
     command_rejected_message, explicit_shell_dispatch_command, is_safe_job_id,
-    normalize_local_status, project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd,
-    resolve_local_cwd, shell_escape_simple, validate_raw_shell_command_length, MAX_LOCAL_LOG_LINES,
-};
-use super::local_jobs::{
-    LocalJobKiller, LocalJobLogSnapshot, LocalJobRecord, TerminateOutcome, ACTIVE_JOB_STATUSES,
-    ACTIVE_LOCAL_STATUSES,
+    project_relative_agent_cwd, resolve_agent_cwd, validate_raw_shell_command_length,
 };
 use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -35,6 +29,18 @@ pub(crate) fn is_terminal_job_status(status: &str) -> bool {
         "completed" | "failed" | "stopped" | "lost" | "timeout" | "timed_out" | "cancelled"
     )
 }
+
+/// Statuses counted as broadly active by runtime observability and bounded
+/// summaries. `stop_requested` remains active for compatibility, but lifecycle
+/// summaries classify it as nonblocking terminal-pending state.
+pub(crate) const ACTIVE_JOB_STATUSES: &[&str] = &[
+    "running",
+    "queued",
+    "started",
+    "agent_queued",
+    "stop_requested",
+    "recovering",
+];
 
 pub(crate) fn detected_job_summary(
     command_summary: Option<&str>,
@@ -275,13 +281,6 @@ pub(crate) fn validation_job_projection(
     Some(value)
 }
 
-fn local_validation_identity(meta: &Value) -> (Option<&str>, Option<&str>) {
-    (
-        meta.get("validation_tool").and_then(Value::as_str),
-        meta.get("validation_kind").and_then(Value::as_str),
-    )
-}
-
 fn is_lifecycle_active_status(status: &str) -> bool {
     is_blocking_active_job_status(status) || is_stop_pending_job_status(status)
 }
@@ -364,55 +363,6 @@ fn add_command_preview_metadata(output: &mut Value, preview: String) {
     output["command_preview"] = Value::String(preview);
 }
 
-fn job_id_for_log(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("<unknown>")
-        .to_string()
-}
-
-fn local_read_trim(record: &LocalJobRecord, name: &str) -> Option<String> {
-    record
-        .read_text(name)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-async fn local_read_log_pair(
-    record: LocalJobRecord,
-    offset: Option<usize>,
-    stdout_len: u64,
-    stderr_len: u64,
-) -> (LocalJobLogSnapshot, LocalJobLogSnapshot) {
-    tokio::task::spawn_blocking(move || {
-        (
-            record.read_log_snapshot_at("stdout.log", offset, stdout_len),
-            record.read_log_snapshot_at("stderr.log", offset, stderr_len),
-        )
-    })
-    .await
-    .ok()
-    .and_then(|(stdout, stderr)| Some((stdout?, stderr?)))
-    .unwrap_or_else(|| {
-        let empty = || LocalJobLogSnapshot {
-            retained_text: String::new(),
-            total_lines: 0,
-            first_retained_line: 1,
-            truncated: false,
-        };
-        (empty(), empty())
-    })
-}
-
-fn local_runtime_deadline(meta: &Value) -> Option<tokio::time::Instant> {
-    let started_at = meta.get("started_at").and_then(Value::as_i64)?;
-    let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64)?;
-    let remaining = started_at
-        .saturating_add(max_runtime_secs)
-        .saturating_sub(chrono::Utc::now().timestamp());
-    Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(remaining.max(0) as u64))
-}
-
 fn agent_log_stream_incomplete(
     runner_truncated: bool,
     retained_from_line: Option<usize>,
@@ -469,613 +419,6 @@ pub(crate) fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
             job.recovery_reason_code.as_deref(),
         ),
     })
-}
-
-/// Build a bounded job summary `Value` for a local on-disk job by reading
-/// lightweight metadata/status files. Returns `None` when a status filter is
-/// set and the job does not match. Never includes stdout/stderr bodies.
-pub(crate) fn local_job_summary_value(
-    job_id: &str,
-    record: &LocalJobRecord,
-    status_filter: &Option<String>,
-) -> Option<Value> {
-    let meta = record.read_json("metadata.json");
-    let raw_status = local_read_trim(record, "status").unwrap_or_default();
-    let status = normalize_local_status(&raw_status);
-    if let Some(filter) = status_filter {
-        if &status != filter {
-            return None;
-        }
-    }
-    let exit_code = local_read_trim(record, "exit_code").and_then(|v| v.parse::<i32>().ok());
-    let created_at = meta
-        .get("created_at")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let started_at = meta.get("started_at").and_then(Value::as_i64);
-    let ended_at = local_read_trim(record, "finished_at").and_then(|v| v.parse::<i64>().ok());
-    let kind = meta
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("shell")
-        .to_string();
-    Some(json!({
-        "job_id": job_id,
-        "kind": kind,
-        "status": status,
-        "project": record.project,
-        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
-        "executor": "local",
-        "created_at": created_at,
-        "started_at": started_at,
-        "ended_at": ended_at,
-        "exit_code": exit_code,
-    }))
-}
-
-pub(crate) fn local_job_status(
-    job_id: &str,
-    record: &LocalJobRecord,
-    killer: &dyn LocalJobKiller,
-    include_command_preview: bool,
-) -> ToolResult {
-    // Reclaim overtime jobs before reading status: this persists a terminal
-    // `lost` status (and terminates the process group) so callers see a
-    // consistent terminal state and we don't leak processes.
-    let timeout_note = enforce_local_job_timeout(record, killer);
-    let observation = match record.observe() {
-        Ok(observation) => observation,
-        Err(error) => return ToolResult::err(error),
-    };
-    let observation_token = match observation.token(job_id) {
-        Ok(token) => token,
-        Err(error) => return ToolResult::err(error),
-    };
-    let meta = record.read_json("metadata.json");
-    let status = normalize_local_status(&observation.status);
-    let exit_code = if observation.terminal() {
-        local_read_trim(record, "exit_code").and_then(|value| value.parse::<i32>().ok())
-    } else {
-        None
-    };
-    let created_at = meta
-        .get("created_at")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let started_at = meta.get("started_at").and_then(Value::as_i64);
-    let finished_at = if observation.terminal() {
-        local_read_trim(record, "finished_at").and_then(|value| value.parse::<i64>().ok())
-    } else {
-        None
-    };
-    let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64);
-    let elapsed_secs = started_at.map(|started| {
-        finished_at
-            .unwrap_or_else(|| chrono::Utc::now().timestamp())
-            .saturating_sub(started) as u64
-    });
-    let mut output = json!({
-        "job_id": job_id,
-        "project": record.project,
-        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
-        "status": status,
-        "exit_code": exit_code,
-        "created_at": created_at,
-        "started_at": started_at,
-        "ended_at": finished_at,
-        "elapsed_secs": elapsed_secs,
-        "max_runtime_secs": max_runtime_secs,
-        "executor": "local",
-        "observation_token": observation_token,
-        "kind": meta.get("kind").cloned().unwrap_or_else(|| Value::String("shell".to_string())),
-        "command_preview_included": include_command_preview,
-    });
-    let (validation_tool, validation_kind) = local_validation_identity(&meta);
-    let stdout = record.read_log_lines("stdout.log", None, Some(MAX_LOCAL_LOG_LINES));
-    let stderr = record.read_log_lines("stderr.log", None, Some(MAX_LOCAL_LOG_LINES));
-    if let Some(mut validation) = validation_job_projection(
-        validation_tool,
-        validation_kind,
-        &status,
-        exit_code.map(i64::from),
-        &stdout.0,
-        &stderr.0,
-        stdout.3 || stderr.3,
-        meta.get("minimum_tests").and_then(Value::as_u64),
-    ) {
-        if let Some(target_id) = meta.get("validation_target_id").and_then(Value::as_str) {
-            validation["validation_target_id"] = json!(target_id);
-        }
-        output["validation"] = validation;
-    }
-    add_job_lifecycle_fields(&mut output, &status, None, None);
-    if let Some(note) = timeout_note {
-        output["note"] = Value::String(note);
-    }
-    if include_command_preview {
-        if let Some(command) = meta.get("command").and_then(Value::as_str) {
-            add_command_preview_metadata(&mut output, command_preview(command));
-        }
-    }
-    ToolResult::ok(output)
-}
-
-pub(crate) async fn local_job_log(
-    job_id: &str,
-    record: &LocalJobRecord,
-    killer: &dyn LocalJobKiller,
-    offset: Option<usize>,
-    tail_lines: Option<usize>,
-    after_observation_token: Option<String>,
-    wait_secs: Option<u64>,
-) -> ToolResult {
-    let after = match after_observation_token
-        .as_deref()
-        .map(|value| {
-            crate::job_observation::JobObservationToken::parse_bound(
-                value,
-                crate::job_observation::JobObservationExecutor::Local,
-                job_id,
-            )
-            .map_err(|error| error.to_string())
-        })
-        .transpose()
-    {
-        Ok(token) => token,
-        Err(error) => return invalid_job_observation_result("invalid_observation_token", error),
-    };
-    let mut timeout_note = enforce_local_job_timeout(record, killer);
-    let meta = record.read_json("metadata.json");
-    let mut observation = match record.observe() {
-        Ok(observation) => observation,
-        Err(error) => return ToolResult::err(error),
-    };
-    let wait_deadline =
-        wait_secs.map(|secs| tokio::time::Instant::now() + tokio::time::Duration::from_secs(secs));
-    let runtime_deadline = local_runtime_deadline(&meta);
-    let changed_now = after.as_ref().is_some_and(|token| {
-        token.epoch != observation.epoch || token.revision != observation.revision
-    });
-    let mut wait_outcome = if changed_now {
-        "immediate"
-    } else if observation.terminal() {
-        "terminal"
-    } else {
-        "immediate"
-    };
-    let mut changed = changed_now;
-    let mut waited_ms = 0u64;
-
-    if wait_secs.is_some() && after.is_some() && !observation.terminal() && !changed {
-        loop {
-            let now = tokio::time::Instant::now();
-            let poll_deadline = now + tokio::time::Duration::from_millis(200);
-            let next_deadline = [wait_deadline, runtime_deadline, Some(poll_deadline)]
-                .into_iter()
-                .flatten()
-                .min()
-                .unwrap();
-            let wait_started = tokio::time::Instant::now();
-            tokio::time::sleep_until(next_deadline).await;
-            waited_ms = waited_ms.saturating_add(wait_started.elapsed().as_millis() as u64);
-            let now = tokio::time::Instant::now();
-            if runtime_deadline.is_some_and(|deadline| now >= deadline) {
-                timeout_note = enforce_local_job_timeout(record, killer).or(timeout_note);
-            }
-            observation = match record.observe() {
-                Ok(observation) => observation,
-                Err(error) => return ToolResult::err(error),
-            };
-            changed = after.as_ref().is_some_and(|token| {
-                token.epoch != observation.epoch || token.revision != observation.revision
-            });
-            if observation.terminal() {
-                wait_outcome = "terminal";
-                break;
-            }
-            if changed {
-                wait_outcome = "updated";
-                break;
-            }
-            if wait_deadline.is_some_and(|deadline| now >= deadline) {
-                wait_outcome = "timeout";
-                break;
-            }
-        }
-    }
-    let final_status = normalize_local_status(&observation.status);
-    let final_terminal = observation.terminal();
-    if final_terminal && !changed_now && wait_outcome != "updated" {
-        wait_outcome = "terminal";
-    }
-    if wait_outcome == "timeout" {
-        changed = false;
-    }
-    let frozen_stdout_len = observation.stdout_len;
-    let frozen_stderr_len = observation.stderr_len;
-    let final_exit_code = if final_terminal {
-        local_read_trim(record, "exit_code").and_then(|value| value.parse::<i32>().ok())
-    } else {
-        None
-    };
-    let explicit_paging = offset.is_some();
-    let (stdout_snapshot, stderr_snapshot) = local_read_log_pair(
-        record.clone(),
-        if explicit_paging { offset } else { None },
-        frozen_stdout_len,
-        frozen_stderr_len,
-    )
-    .await;
-    let (analysis_stdout_snapshot, analysis_stderr_snapshot) = if explicit_paging {
-        local_read_log_pair(record.clone(), None, frozen_stdout_len, frozen_stderr_len).await
-    } else {
-        (stdout_snapshot.clone(), stderr_snapshot.clone())
-    };
-    let analysis_stdout = crate::job_observation::project_log_stream(
-        &analysis_stdout_snapshot.retained_text,
-        analysis_stdout_snapshot.first_retained_line,
-        analysis_stdout_snapshot.total_lines.saturating_add(1),
-        analysis_stdout_snapshot.truncated,
-        Some(MAX_LOCAL_LOG_LINES),
-        crate::job_observation::JobLogSelectionMode::Baseline,
-        false,
-    );
-    let analysis_stderr = crate::job_observation::project_log_stream(
-        &analysis_stderr_snapshot.retained_text,
-        analysis_stderr_snapshot.first_retained_line,
-        analysis_stderr_snapshot.total_lines.saturating_add(1),
-        analysis_stderr_snapshot.truncated,
-        Some(MAX_LOCAL_LOG_LINES),
-        crate::job_observation::JobLogSelectionMode::Baseline,
-        false,
-    );
-    let (
-        stdout,
-        stderr,
-        log_delta_status,
-        observation_token,
-        stdout_delta_reset,
-        stderr_delta_reset,
-    ) = if explicit_paging {
-        let stdout = stdout_snapshot.read_lines(offset, tail_lines);
-        let stderr = stderr_snapshot.read_lines(offset, tail_lines);
-        let stdout = crate::job_observation::JobLogStreamProjection {
-            returned_lines: stdout.0.lines().count(),
-            text: stdout.0,
-            next_line: stdout.1,
-            total_lines: stdout.2,
-            first_retained_line: stdout_snapshot.first_retained_line,
-            truncated: stdout.3,
-            delta_reset: false,
-        };
-        let stderr = crate::job_observation::JobLogStreamProjection {
-            returned_lines: stderr.0.lines().count(),
-            text: stderr.0,
-            next_line: stderr.1,
-            total_lines: stderr.2,
-            first_retained_line: stderr_snapshot.first_retained_line,
-            truncated: stderr.3,
-            delta_reset: false,
-        };
-        let observation_token = match observation.token(job_id) {
-            Ok(token) => token,
-            Err(error) => return ToolResult::err(error),
-        };
-        (
-            stdout,
-            stderr,
-            crate::job_observation::JobLogDeltaStatus::Baseline,
-            observation_token,
-            false,
-            false,
-        )
-    } else {
-        let automatic_tail_lines = tail_lines.or(Some(super::helpers::DEFAULT_JOB_LOG_TAIL_LINES));
-        let epoch_matches = after
-            .as_ref()
-            .is_none_or(|token| token.epoch == observation.epoch);
-        let stdout_mode = match after.as_ref() {
-            None => crate::job_observation::JobLogSelectionMode::Baseline,
-            Some(token) if token.is_legacy() || !epoch_matches => {
-                crate::job_observation::JobLogSelectionMode::Reset
-            }
-            Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
-                cursor: token
-                    .stdout_cursor
-                    .expect("cursor-aware token has stdout cursor"),
-            },
-        };
-        let stderr_mode = match after.as_ref() {
-            None => crate::job_observation::JobLogSelectionMode::Baseline,
-            Some(token) if token.is_legacy() || !epoch_matches => {
-                crate::job_observation::JobLogSelectionMode::Reset
-            }
-            Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
-                cursor: token
-                    .stderr_cursor
-                    .expect("cursor-aware token has stderr cursor"),
-            },
-        };
-        let stdout = crate::job_observation::project_log_stream(
-            &stdout_snapshot.retained_text,
-            stdout_snapshot.first_retained_line,
-            stdout_snapshot.total_lines.saturating_add(1),
-            stdout_snapshot.truncated,
-            automatic_tail_lines,
-            stdout_mode,
-            false,
-        );
-        let stderr = crate::job_observation::project_log_stream(
-            &stderr_snapshot.retained_text,
-            stderr_snapshot.first_retained_line,
-            stderr_snapshot.total_lines.saturating_add(1),
-            stderr_snapshot.truncated,
-            automatic_tail_lines,
-            stderr_mode,
-            false,
-        );
-        let log_delta_status =
-            crate::job_observation::combined_delta_status(stdout_mode, &stdout, &stderr);
-        let observation_token =
-            match observation.token_with_cursors(job_id, stdout.next_line, stderr.next_line) {
-                Ok(token) => token,
-                Err(error) => return ToolResult::err(error),
-            };
-        let stdout_delta_reset = stdout.delta_reset;
-        let stderr_delta_reset = stderr.delta_reset;
-        (
-            stdout,
-            stderr,
-            log_delta_status,
-            observation_token,
-            stdout_delta_reset,
-            stderr_delta_reset,
-        )
-    };
-    let purpose = meta
-        .get("purpose")
-        .and_then(Value::as_str)
-        .unwrap_or("other");
-    let command_summary = meta
-        .get("command")
-        .and_then(Value::as_str)
-        .map(command_preview)
-        .unwrap_or_default();
-    let detected_summary = detected_job_summary(
-        Some(&command_summary),
-        Some(purpose),
-        &final_status,
-        final_exit_code.map(i64::from),
-        &analysis_stdout.text,
-        &analysis_stderr.text,
-    );
-    let (validation_tool, validation_kind) = local_validation_identity(&meta);
-    let mut validation = validation_job_projection(
-        validation_tool,
-        validation_kind,
-        &final_status,
-        final_exit_code.map(i64::from),
-        &analysis_stdout.text,
-        &analysis_stderr.text,
-        analysis_stdout.truncated || analysis_stderr.truncated,
-        meta.get("minimum_tests").and_then(Value::as_u64),
-    );
-    if let (Some(validation), Some(target_id)) = (
-        validation.as_mut(),
-        meta.get("validation_target_id").and_then(Value::as_str),
-    ) {
-        validation["validation_target_id"] = json!(target_id);
-    }
-    let mut output = json!({
-        "job_id": job_id, "status": final_status, "exit_code": final_exit_code,
-        "session_id": meta.get("session_id").cloned().unwrap_or(Value::Null),
-        "stdout_tail": stdout.text, "stderr_tail": stderr.text,
-        "stdout_lines": stdout.total_lines, "stderr_lines": stderr.total_lines,
-        "stdout_returned_lines": stdout.returned_lines,
-        "stderr_returned_lines": stderr.returned_lines,
-        "stdout_truncated": stdout.truncated, "stderr_truncated": stderr.truncated,
-        "stdout_retained_from_line": stdout.first_retained_line,
-        "stderr_retained_from_line": stderr.first_retained_line,
-        "earlier_stdout_unavailable": stdout_snapshot.first_retained_line > 1
-            || stdout_snapshot.truncated,
-        "earlier_stderr_unavailable": stderr_snapshot.first_retained_line > 1
-            || stderr_snapshot.truncated,
-        "cursor": { "stdout": stdout.next_line, "stderr": stderr.next_line },
-        "observation_token": observation_token,
-        "log_delta_status": log_delta_status.as_str(),
-        "stdout_delta_reset": stdout_delta_reset,
-        "stderr_delta_reset": stderr_delta_reset,
-        "wait_outcome": wait_outcome, "waited_ms": waited_ms,
-        "changed": changed, "terminal": final_terminal, "executor": "local",
-        "cwd": meta.get("cwd").cloned().unwrap_or_else(|| json!(".")),
-        "shell": meta.get("shell").cloned().unwrap_or_else(|| json!("bash")),
-        "purpose": purpose,
-        "command_summary": command_summary,
-        "detected_summary": detected_summary,
-        "validation": validation,
-    });
-    if let Some(note) = timeout_note {
-        output["note"] = Value::String(note);
-    }
-    ToolResult::ok(output)
-}
-
-/// Resolve the process-group id to signal for a local job. Prefers an explicit
-/// `process_group_id` in metadata (written by current spawn code); falls back
-/// to the `pid` file, which under `setsid` is equal to the pgid. Returns
-/// `None` when neither is recorded (e.g. very old metadata predating pid
-/// tracking) — in that case we never guess at a pid to kill.
-pub(crate) fn resolve_job_pgid(meta: &Value, record: &LocalJobRecord) -> Option<i64> {
-    meta.get("process_group_id")
-        .and_then(Value::as_i64)
-        .or_else(|| local_read_trim(record, "pid").and_then(|s| s.parse::<i64>().ok()))
-}
-
-/// If a local job is still `running` but has exceeded `max_runtime_secs`,
-/// terminate its process group and persist a terminal `lost` status. Returns a
-/// short human-readable note when a timeout was enforced, or `None` if the job
-/// is not running or not over time.
-///
-/// Safety: the pid/pgid come only from this job's own on-disk files (written by
-/// us at spawn time via `setsid`). We never kill based on caller-supplied pids.
-/// If no pid/pgid is recorded, we only mark the job `lost` — never guess. Kill
-/// failures never panic; a conservative `lost` status is persisted regardless.
-pub(crate) fn enforce_local_job_timeout(
-    record: &LocalJobRecord,
-    killer: &dyn LocalJobKiller,
-) -> Option<String> {
-    let meta = record.read_json("metadata.json");
-    let raw_status = local_read_trim(record, "status").unwrap_or_default();
-    if normalize_local_status(&raw_status) != "running" {
-        return None;
-    }
-    let started_at = meta.get("started_at").and_then(Value::as_i64)?;
-    let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64)?;
-    // The wrapper writes `finished_at` before `status`. If it exists, the job
-    // just finished (or was already reclaimed) — do not double-reclaim.
-    if local_read_trim(record, "finished_at").is_some() {
-        return None;
-    }
-    let now = chrono::Utc::now().timestamp();
-    if now < started_at.saturating_add(max_runtime_secs) {
-        return None;
-    }
-    // Over time. Reclaim the process group if we recorded one.
-    let pgid = resolve_job_pgid(&meta, record);
-    let note = match pgid {
-        Some(pgid) => {
-            let pid = local_read_trim(record, "pid")
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(pgid);
-            let outcome = killer.terminate_group(pid, pgid);
-            match outcome {
-                TerminateOutcome::Terminated {
-                    pgid,
-                    escalated_to_kill,
-                } => {
-                    let sig = if escalated_to_kill {
-                        "SIGKILL"
-                    } else {
-                        "SIGTERM"
-                    };
-                    format!(
-                        "timed out after {}s; process group {} terminated ({})",
-                        max_runtime_secs, pgid, sig
-                    )
-                }
-                TerminateOutcome::AlreadyGone => format!(
-                    "timed out after {}s; process group {} already exited; marked lost",
-                    max_runtime_secs, pgid
-                ),
-            }
-        }
-        None => format!(
-            "timed out after {}s; no pid/process_group_id on record; marked lost",
-            max_runtime_secs
-        ),
-    };
-    // Persist terminal state so subsequent reads are consistent and we don't
-    // repeatedly attempt to kill. The wrapper shell was part of the group and
-    // is now gone, so it will not write its own status/finished_at.
-    if let Err(e) = std::fs::write(record.dir.join("finished_at"), now.to_string()) {
-        tracing::warn!(
-            job_id = %job_id_for_log(&record.dir),
-            error = %e,
-            "failed to write timed-out local job finished_at"
-        );
-    }
-    if let Err(e) = std::fs::write(record.dir.join("status"), "lost") {
-        tracing::warn!(
-            job_id = %job_id_for_log(&record.dir),
-            error = %e,
-            "failed to write timed-out local job status"
-        );
-    }
-    Some(note)
-}
-
-/// Stop a local job by terminating its process group and persisting a
-/// `stopped` status. Only acts on active jobs; terminal jobs are left alone.
-/// Like `enforce_local_job_timeout`, the pid/pgid come only from the job's own
-/// on-disk files, and missing pid/pgid yields a conservative `stopped` marker
-/// without guessing. Kill failures never panic.
-pub(crate) fn stop_local_job(
-    job_id: &str,
-    record: &LocalJobRecord,
-    killer: &dyn LocalJobKiller,
-) -> ToolResult {
-    let meta = record.read_json("metadata.json");
-    let raw_status = local_read_trim(record, "status").unwrap_or_default();
-    let status = normalize_local_status(&raw_status);
-    if !ACTIVE_LOCAL_STATUSES.contains(&status.as_str()) {
-        return ToolResult::ok(json!({
-            "job_id": job_id,
-            "project": record.project,
-            "status": status,
-            "note": "job already terminal; not stopped again",
-        }));
-    }
-    let now = chrono::Utc::now().timestamp();
-    let note = match resolve_job_pgid(&meta, record) {
-        Some(pgid) => {
-            let pid = local_read_trim(record, "pid")
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(pgid);
-            let outcome = killer.terminate_group(pid, pgid);
-            match outcome {
-                TerminateOutcome::Terminated {
-                    pgid,
-                    escalated_to_kill,
-                } => {
-                    let sig = if escalated_to_kill {
-                        "SIGKILL"
-                    } else {
-                        "SIGTERM"
-                    };
-                    format!("stopped; process group {} terminated ({})", pgid, sig)
-                }
-                TerminateOutcome::AlreadyGone => {
-                    format!("stopped; process group {} already exited", pgid)
-                }
-            }
-        }
-        None => "stopped; no pid/process_group_id on record; marked stopped".to_string(),
-    };
-    if let Err(e) = std::fs::write(record.dir.join("finished_at"), now.to_string()) {
-        tracing::warn!(
-            job_id,
-            error = %e,
-            "failed to write stopped local job finished_at"
-        );
-    }
-    if let Err(e) = std::fs::write(record.dir.join("status"), "stopped") {
-        tracing::warn!(
-            job_id,
-            error = %e,
-            "failed to write stopped local job status"
-        );
-    }
-    ToolResult::ok(json!({
-        "job_id": job_id,
-        "project": record.project,
-        "status": "stopped",
-        "note": note,
-    }))
-}
-
-fn local_job_status_string(record: &LocalJobRecord) -> String {
-    let raw_status = local_read_trim(record, "status").unwrap_or_default();
-    normalize_local_status(&raw_status)
-}
-
-fn local_job_session_id(record: &LocalJobRecord) -> Option<String> {
-    record
-        .read_json("metadata.json")
-        .get("session_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn invalid_job_observation_result(error_kind: &str, message: String) -> ToolResult {
@@ -1341,12 +684,6 @@ fn active_job_brief(summary: &Value) -> Value {
     })
 }
 
-pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
-    !auth
-        .map(|auth| auth.is_lightweight() || auth.is_oauth_shared_key_subject())
-        .unwrap_or(false)
-}
-
 impl ToolRuntime {
     pub(crate) async fn run_job_for_auth(
         &self,
@@ -1429,57 +766,42 @@ impl ToolRuntime {
         };
         let project_id = resolved.resolved_id.clone();
         let proj = resolved.config;
-        if ssh_resource.is_some() && !proj.is_agent() {
-            return ToolResult::err(
-                "ssh_resource_requires_agent_project: SSH resources require a project owned by a connected Runner"
-                    .to_string(),
-            );
-        }
         let max_runtime = timeout_secs.unwrap_or(3600).clamp(1, 604800);
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => {
-                    return ToolResult::err(command_rejected_message(
-                        e,
-                        "refresh the agent project registry with list_projects, then retry.",
-                    ))
-                }
-            };
-            let remote = ssh_resource.is_some();
-            if remote && !validation_steps.is_empty() {
-                return ToolResult::err(
+        let client_id = proj.client_id.clone();
+        let remote = ssh_resource.is_some();
+        if remote && !validation_steps.is_empty() {
+            return ToolResult::err(
                     "ssh_resource_unsupported_for_request: SSH resources do not support structured validation jobs"
                         .to_string(),
                 );
-            }
-            if remote && session_id.is_none() {
-                return ToolResult::err(
+        }
+        if remote && session_id.is_none() {
+            return ToolResult::err(
                     "ssh_session_required: an SSH resource requires a Workflow Session id; command was not started"
                         .to_string(),
                 );
-            }
-            let (effective_cwd, resolved_cwd) = if remote {
-                let remote_cwd = cwd
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|cwd| !cwd.is_empty())
-                    .map(str::to_string);
-                if remote_cwd
-                    .as_deref()
-                    .is_some_and(|cwd| cwd.len() > 4096 || cwd.chars().any(char::is_control))
-                {
-                    return ToolResult::err(command_rejected_message(
+        }
+        let (effective_cwd, resolved_cwd) = if remote {
+            let remote_cwd = cwd
+                .as_deref()
+                .map(str::trim)
+                .filter(|cwd| !cwd.is_empty())
+                .map(str::to_string);
+            if remote_cwd
+                .as_deref()
+                .is_some_and(|cwd| cwd.len() > 4096 || cwd.chars().any(char::is_control))
+            {
+                return ToolResult::err(command_rejected_message(
                         "ssh_remote_cwd_invalid: cwd must be a bounded remote path without control characters",
                         "choose a valid remote path, or omit cwd to use the SSH resource default.",
                     ));
-                }
-                let display = remote_cwd.clone().unwrap_or_else(|| ".".to_string());
-                (remote_cwd, display)
-            } else {
-                let cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+            }
+            let display = remote_cwd.clone().unwrap_or_else(|| ".".to_string());
+            (remote_cwd, display)
+        } else {
+            let cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
                     Ok(cwd) => cwd,
                     Err(error) => {
                         return ToolResult::err(command_rejected_message(
@@ -1488,27 +810,28 @@ impl ToolRuntime {
                         ))
                     }
                 };
-                let display =
-                    project_relative_agent_cwd(&proj, &cwd).unwrap_or_else(|_| ".".to_string());
-                (Some(cwd), display)
-            };
-            let actual_shell = shell.map(ExecutionShell::as_str).unwrap_or(if remote {
-                "remote"
-            } else {
-                "configured"
-            });
-            let dispatched_command =
-                match shell {
-                    Some(shell) => match explicit_shell_dispatch_command(&command, shell.as_str()) {
-                        Ok(command) => command,
-                        Err(error) => return ToolResult::err(command_rejected_message(
-                            error,
-                            "use run_script for large or quote-dense explicit-shell program text.",
-                        )),
-                    },
-                    None => command.clone(),
-                };
-            match self
+            let display =
+                project_relative_agent_cwd(&proj, &cwd).unwrap_or_else(|_| ".".to_string());
+            (Some(cwd), display)
+        };
+        let actual_shell = shell.map(ExecutionShell::as_str).unwrap_or(if remote {
+            "remote"
+        } else {
+            "configured"
+        });
+        let dispatched_command = match shell {
+            Some(shell) => match explicit_shell_dispatch_command(&command, shell.as_str()) {
+                Ok(command) => command,
+                Err(error) => {
+                    return ToolResult::err(command_rejected_message(
+                        error,
+                        "use run_script for large or quote-dense explicit-shell program text.",
+                    ))
+                }
+            },
+            None => command.clone(),
+        };
+        match self
                 .shell_clients
                 .start_job_with_metadata_for_auth(
                     ShellJobOpRequest {
@@ -1574,145 +897,6 @@ impl ToolRuntime {
                     "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
                 )),
             }
-        } else {
-            if !validation_steps.is_empty() {
-                return ToolResult::err(
-                    "structured validation jobs require an agent-backed project".to_string(),
-                );
-            }
-            let root = proj.root();
-            let cwd_path = match resolve_local_cwd(&proj, cwd.as_deref()) {
-                Ok(path) => path,
-                Err(error) => {
-                    return ToolResult::err(command_rejected_message(
-                        error,
-                        "choose '.', an existing project-relative cwd, or a path inside the project root.",
-                    ))
-                }
-            };
-            let resolved_cwd =
-                project_relative_cwd(&proj, &cwd_path).unwrap_or_else(|_| ".".to_string());
-            // Preserve the existing local async-job command language (bash)
-            // when omitted; explicit sh/bash selects the requested language.
-            let actual_shell = shell.map(ExecutionShell::as_str).unwrap_or("bash");
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let dir = root.join(format!(".codex/jobs/{}", job_id));
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                return ToolResult::err(format!("Failed to create job dir: {}", e));
-            }
-            let now = chrono::Utc::now().timestamp();
-            let mut meta = json!({
-                "job_id": job_id,
-                "project": project_id.clone(),
-                "command": command,
-                "status": "running",
-                "created_at": now,
-                "started_at": now,
-                "max_runtime_secs": max_runtime,
-                "executor": "local",
-                "path": proj.path.clone(),
-                "kind": "shell",
-                "purpose": declared_purpose.as_str(),
-                "cwd": resolved_cwd,
-                "shell": actual_shell,
-            });
-            if let Some(session_id) = session_id.as_ref() {
-                meta["session_id"] = json!(session_id);
-            }
-            if let Err(e) = std::fs::write(
-                dir.join("metadata.json"),
-                serde_json::to_string_pretty(&meta).unwrap_or_default(),
-            ) {
-                return ToolResult::err(format!("Failed to write metadata: {}", e));
-            }
-            let cmd_content = format!("#!/usr/bin/env {actual_shell}\n{command}\n");
-            if let Err(e) = std::fs::write(dir.join("command.sh"), &cmd_content) {
-                return ToolResult::err(format!("Failed to write command.sh: {}", e));
-            }
-            if let Err(e) = std::fs::write(dir.join("status"), "running") {
-                return ToolResult::err(format!("Failed to write initial status: {e}"));
-            }
-            if let Err(e) = std::fs::write(dir.join("stdout.log"), b"") {
-                return ToolResult::err(format!("Failed to create stdout.log: {e}"));
-            }
-            if let Err(e) = std::fs::write(dir.join("stderr.log"), b"") {
-                return ToolResult::err(format!("Failed to create stderr.log: {e}"));
-            }
-            let (record, initial_observation) =
-                match LocalJobRecord::initialize(project_id.clone(), dir.clone()) {
-                    Ok(value) => value,
-                    Err(error) => return ToolResult::err(error),
-                };
-            let initial_observation_token = match initial_observation.token(&job_id) {
-                Ok(token) => token,
-                Err(error) => return ToolResult::err(error),
-            };
-            let dir_s = dir.to_string_lossy().to_string();
-            let wrapper = format!(
-                "{1} {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
-                shell_escape_simple(&dir_s),
-                actual_shell,
-            );
-            let mut job_command = std::process::Command::new("setsid");
-            job_command
-                .arg("sh")
-                .arg("-c")
-                .arg(wrapper)
-                .current_dir(&cwd_path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            match job_command.spawn() {
-                Ok(child) => {
-                    // `setsid` makes the child a session + process-group
-                    // leader, so child.id() is both the leader pid and the
-                    // process-group id. Record the pgid so timeout/stop can
-                    // signal the whole subtree (`kill -<pgid>`).
-                    let pgid = child.id() as i64;
-                    if let Err(e) = std::fs::write(dir.join("pid"), child.id().to_string()) {
-                        tracing::warn!(
-                            job_id = %job_id,
-                            error = %e,
-                            "failed to write local job pid"
-                        );
-                    }
-                    meta["process_group_id"] = json!(pgid);
-                    if let Err(e) = std::fs::write(
-                        dir.join("metadata.json"),
-                        serde_json::to_string_pretty(&meta).unwrap_or_default(),
-                    ) {
-                        tracing::warn!(
-                            job_id = %job_id,
-                            error = %e,
-                            "failed to update local job metadata with process group"
-                        );
-                    }
-                    self.local_jobs.lock().await.insert(job_id.clone(), record);
-                    ToolResult::ok(json!({
-                        "job_id": job_id,
-                        "kind": "shell",
-                        "status": "running",
-                        "project": project_id,
-                        "execution_source": "run_job",
-                        "purpose": declared_purpose.as_str(),
-                        "command_summary": command_summary,
-                        "cwd": resolved_cwd,
-                        "shell": actual_shell,
-                        "executor": "local",
-                        "execution_state": "started",
-                        "observation_token": initial_observation_token,
-                        "created_at": now,
-                        "stdout_tail": "",
-                        "stderr_tail": "",
-                        "stdout_lines": 0,
-                        "stderr_lines": 0,
-                        "stdout_truncated": false,
-                        "stderr_truncated": false,
-                    }))
-                }
-                Err(e) => ToolResult::err(format!("Failed to spawn job: {}", e)),
-            }
-        }
     }
 
     #[cfg(test)]
@@ -1726,30 +910,6 @@ impl ToolRuntime {
         include_command_preview: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let killer = self.job_killer.as_ref();
-        if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            if !record.is_public() || !local_jobs_visible_to_auth(auth) {
-                return unknown_job_observation_result(&job_id);
-            }
-            return local_job_status(&job_id, &record, killer, include_command_preview);
-        }
-        // Fall through to agent-backed jobs. If the agent registry does not
-        // know this job either, attempt local recovery from on-disk metadata
-        // so jobs started before a server restart remain queryable.
-        if self
-            .shell_clients
-            .get_job_for_auth(auth, &job_id)
-            .await
-            .is_err()
-        {
-            if let Some(record) = self.recover_local_job(&job_id).await {
-                if !local_jobs_visible_to_auth(auth) {
-                    return unknown_job_observation_result(&job_id);
-                }
-                return local_job_status(&job_id, &record, killer, include_command_preview);
-            }
-            return unknown_job_observation_result(&job_id);
-        }
         match self.shell_clients.get_job_for_auth(auth, &job_id).await {
             Ok(job) => {
                 let mut output = json!({
@@ -1883,45 +1043,6 @@ impl ToolRuntime {
         } else {
             tail_lines
         };
-        let killer = self.job_killer.as_ref();
-        if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            if !record.is_public() || !local_jobs_visible_to_auth(auth) {
-                return unknown_job_observation_result(&job_id);
-            }
-            return local_job_log(
-                &job_id,
-                &record,
-                killer,
-                offset,
-                tail_lines,
-                after_observation_token,
-                wait_secs,
-            )
-            .await;
-        }
-        if self
-            .shell_clients
-            .get_job_for_auth(auth, &job_id)
-            .await
-            .is_err()
-        {
-            if let Some(record) = self.recover_local_job(&job_id).await {
-                if !local_jobs_visible_to_auth(auth) {
-                    return unknown_job_observation_result(&job_id);
-                }
-                return local_job_log(
-                    &job_id,
-                    &record,
-                    killer,
-                    offset,
-                    tail_lines,
-                    after_observation_token,
-                    wait_secs,
-                )
-                .await;
-            }
-            return unknown_job_observation_result(&job_id);
-        }
         match self
             .shell_clients
             .job_log_for_auth(
@@ -2110,32 +1231,6 @@ impl ToolRuntime {
             .map(agent_job_summary_value)
             .collect();
 
-        let local_records: Vec<(String, LocalJobRecord)> = if local_jobs_visible_to_auth(auth) {
-            let local_jobs_map = self.local_jobs.lock().await;
-            local_jobs_map
-                .iter()
-                .filter(|(_, record)| record.is_public())
-                .filter(|(_, record)| {
-                    project_filter
-                        .as_deref()
-                        .map(|project| record.project == project)
-                        .unwrap_or(true)
-                })
-                .map(|(job_id, record)| (job_id.clone(), record.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        for (job_id, record) in &local_records {
-            if session_filter.as_deref().is_some_and(|session_id| {
-                local_job_session_id(record).as_deref() != Some(session_id)
-            }) {
-                continue;
-            }
-            if let Some(summary) = local_job_summary_value(job_id, record, &status_filter) {
-                summaries.push(summary);
-            }
-        }
         summaries.sort_by(|a, b| {
             b["created_at"]
                 .as_i64()
@@ -2207,25 +1302,6 @@ impl ToolRuntime {
                     .push(summary);
             }
         }
-        if local_jobs_visible_to_auth(auth) {
-            let local_jobs_map = self.local_jobs.lock().await;
-            for (job_id, record) in local_jobs_map
-                .iter()
-                .filter(|(_, record)| record.is_public() && record.project == project)
-            {
-                let Some(session_id) = local_job_session_id(record) else {
-                    continue;
-                };
-                if !requested.contains(session_id.as_str()) {
-                    continue;
-                }
-                if let Some(summary) = local_job_summary_value(job_id, record, &None) {
-                    if summary.get("validation").is_some_and(Value::is_object) {
-                        grouped.entry(session_id).or_default().push(summary);
-                    }
-                }
-            }
-        }
         for summaries in grouped.values_mut() {
             summaries.sort_by(|a, b| {
                 b["created_at"]
@@ -2278,82 +1354,6 @@ impl ToolRuntime {
         }
         if !is_safe_job_id(&job_id) {
             return job_not_found_result(&project, &job_id);
-        }
-
-        let cached = {
-            let jobs = self.local_jobs.lock().await;
-            jobs.get(&job_id).cloned()
-        };
-        if let Some(record) = match cached {
-            Some(record) => Some(record),
-            None => self.recover_local_job(&job_id).await,
-        } {
-            if !record.is_public() || !local_jobs_visible_to_auth(auth) {
-                return job_not_found_result(&project, &job_id);
-            }
-            let request_project = self
-                .resolve_project_input_for_auth(&project, auth)
-                .await
-                .map(|resolved| resolved.resolved_id)
-                .unwrap_or_else(|_| project.trim().to_string());
-            if record.project != request_project {
-                return job_project_mismatch_result(&request_project, &record.project, &job_id);
-            }
-            let job_session_id = local_job_session_id(&record);
-            let (ownership_basis, warnings) = match ownership_basis_for_stop(
-                &request_project,
-                &job_id,
-                session_id.as_deref(),
-                job_session_id.as_deref(),
-            ) {
-                Ok(value) => value,
-                Err(result) => return result,
-            };
-            let status_before = local_job_status_string(&record);
-            if is_stop_pending_job_status(&status_before) {
-                return ToolResult::ok(stop_job_output(
-                    &request_project,
-                    &job_id,
-                    &status_before,
-                    &status_before,
-                    true,
-                    false,
-                    ownership_basis,
-                    warnings,
-                ));
-            }
-            if !ACTIVE_LOCAL_STATUSES.contains(&status_before.as_str()) {
-                return ToolResult::ok(stop_job_output(
-                    &request_project,
-                    &job_id,
-                    &status_before,
-                    &status_before,
-                    false,
-                    true,
-                    ownership_basis,
-                    warnings,
-                ));
-            }
-            let stop_result = stop_local_job(&job_id, &record, self.job_killer.as_ref());
-            if !stop_result.success {
-                return stop_result;
-            }
-            let status_after = stop_result
-                .output
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("stopped")
-                .to_string();
-            return ToolResult::ok(stop_job_output(
-                &request_project,
-                &job_id,
-                &status_before,
-                &status_after,
-                true,
-                false,
-                ownership_basis,
-                warnings,
-            ));
         }
 
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
@@ -2468,30 +1468,6 @@ impl ToolRuntime {
             active.push(agent_job_summary_value(&job));
         }
 
-        if local_jobs_visible_to_auth(auth) {
-            let local_records: Vec<(String, LocalJobRecord)> = {
-                let local_jobs_map = self.local_jobs.lock().await;
-                local_jobs_map
-                    .iter()
-                    .map(|(job_id, record)| (job_id.clone(), record.clone()))
-                    .collect()
-            };
-            for (job_id, record) in local_records {
-                if let Some(project) = project {
-                    if record.project != project {
-                        continue;
-                    }
-                }
-                let status = local_job_status_string(&record);
-                if !ACTIVE_JOB_STATUSES.contains(&status.as_str()) {
-                    continue;
-                }
-                if let Some(summary) = local_job_summary_value(&job_id, &record, &None) {
-                    active.push(summary);
-                }
-            }
-        }
-
         active.sort_by(|a, b| {
             b["created_at"]
                 .as_i64()
@@ -2571,41 +1547,28 @@ impl ToolRuntime {
         })
     }
 
-    /// Stop a local job by terminating its process group and marking it
-    /// `stopped`.
-    ///
-    /// This is an internal lifecycle method intended as the implementation
-    /// backing a future explicit stop API; it is deliberately **not** exposed
-    /// as a GPT Actions / MCP write tool, to avoid surfacing an arbitrary kill
-    /// surface to remote callers. Only jobs we created and recorded (in-memory
-    /// or recoverable on disk) can be stopped, and the pid/pgid come
-    /// exclusively from the job's own on-disk files — never from caller input.
+    /// Hidden REST compatibility wrapper for stopping a runtime Job by id.
+    /// Registered Project Jobs are Runner-owned, so this delegates directly to
+    /// the Runner Job registry and never attempts Server-local process control.
     pub async fn stop_job(&self, job_id: String) -> ToolResult {
         if !is_safe_job_id(&job_id) {
             return ToolResult::err("invalid job id");
         }
-        let cached = {
-            let jobs = self.local_jobs.lock().await;
-            jobs.get(&job_id).cloned()
-        };
-        let record = match cached {
-            Some(r) => r,
-            None => match self.recover_local_job(&job_id).await {
-                Some(r) => r,
-                None => return ToolResult::err(format!("unknown job: {}", job_id)),
-            },
-        };
-        stop_local_job(&job_id, &record, self.job_killer.as_ref())
-    }
-
-    /// On-disk local job recovery used to scan server-configured project roots.
-    /// The runtime no longer has a server-side project map, so only in-memory
-    /// local jobs from the current process can be queried or stopped.
-    pub(crate) async fn recover_local_job(&self, job_id: &str) -> Option<LocalJobRecord> {
-        if !is_safe_job_id(job_id) {
-            return None;
+        match self
+            .shell_clients
+            .stop_job(&job_id, "runtime_http".to_string())
+            .await
+        {
+            Ok(job) => ToolResult::ok(json!({
+                "job_id": job.job_id,
+                "project": job.project_id,
+                "status": job.status,
+            })),
+            Err(error) if error.contains("unknown shell job") => {
+                ToolResult::err(format!("unknown job: {job_id}"))
+            }
+            Err(error) => ToolResult::err(error),
         }
-        None
     }
 }
 

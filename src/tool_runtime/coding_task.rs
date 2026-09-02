@@ -46,7 +46,6 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_SHELL,
 };
 use std::collections::HashSet;
-use std::path::Path;
 use std::time::Duration;
 
 const RULES_MAX_HEADINGS: usize = 8;
@@ -1771,7 +1770,7 @@ impl ToolRuntime {
     /// symlink following, no protected/sensitive/build/cache paths, and only
     /// project-relative paths are returned.
     ///
-    /// For agent-backed projects the overview is routed to the owning Runner
+    /// The overview is routed to the owning Runner
     /// via the `file_project_overview` op with a short startup probe timeout.
     /// On timeout the request is cancelled. An optional overview failure never
     /// fails the already-legal coding task: it returns a deterministic
@@ -1783,13 +1782,7 @@ impl ToolRuntime {
         resolved: &ResolvedProject,
         auth: Option<&AuthContext>,
     ) -> Value {
-        if !resolved.config.is_agent() {
-            return repository_overview_local(&resolved.config.path);
-        }
-        let client_id = match resolved.config.agent_client_id() {
-            Ok(client_id) => client_id,
-            Err(_) => return repository_overview_unavailable(),
-        };
+        let client_id = resolved.config.client_id.as_str();
         // The owning runner must support the structured file capability.
         if !self
             .shell_clients
@@ -1909,8 +1902,7 @@ const STARTUP_OVERVIEW_REQUEST_LIMIT: usize = 120;
 
 /// Validate a startup overview payload against the fixed request bounds using
 /// the shared contract entry. Returns the normalized formal-contract payload
-/// on success. Used for both agent-backed Runner responses and the local
-/// builder so the two paths cannot drift.
+/// on success.
 fn validate_project_overview_for_startup(payload: &Value) -> Result<Value, String> {
     crate::project_overview::validate_project_overview(
         payload,
@@ -1918,31 +1910,6 @@ fn validate_project_overview_for_startup(payload: &Value) -> Result<Value, Strin
         STARTUP_OVERVIEW_REQUEST_MAX_DEPTH,
         STARTUP_OVERVIEW_REQUEST_LIMIT,
     )
-}
-
-/// Build the repository overview locally for a non-agent project. Mirrors the
-/// `project_overview` bounds and safety contract without a shell. The output
-/// is normalized through the same shared contract entry used for Runner
-/// responses, so extra fields can never reach the startup brief.
-fn repository_overview_local(project_root: &str) -> Value {
-    match crate::project_overview::build_project_overview(
-        Path::new(project_root),
-        ".",
-        Some(STARTUP_OVERVIEW_REQUEST_MAX_DEPTH),
-        Some(STARTUP_OVERVIEW_REQUEST_LIMIT),
-    ) {
-        Ok(overview) => match validate_project_overview_for_startup(&overview) {
-            Ok(mut normalized) => {
-                if let Some(object) = normalized.as_object_mut() {
-                    object.insert("status".to_string(), json!("available"));
-                    object.insert("reason_code".to_string(), Value::Null);
-                }
-                normalized
-            }
-            Err(_) => repository_overview_unavailable(),
-        },
-        Err(_) => repository_overview_unavailable(),
-    }
 }
 
 #[derive(Deserialize)]
@@ -2372,7 +2339,6 @@ fn resolved_project_payload(resolved: &ResolvedProject) -> Value {
         "input": resolved.input.clone(),
         "id": resolved.resolved_id.clone(),
         "path": resolved.config.path.clone(),
-        "executor": if resolved.config.is_agent() { "agent" } else { "local" },
         "client_id": resolved.config.client_id.clone(),
         "allow_patch": resolved.config.allow_patch,
     })
@@ -2765,18 +2731,13 @@ fn startup_jobs_check(jobs: &Value) -> (&'static str, Option<&'static str>) {
 }
 
 fn startup_agent_check(
-    output: &Value,
+    _output: &Value,
     owning_runner_available: Option<bool>,
 ) -> (&'static str, Option<&'static str>) {
-    let executor = output
-        .pointer("/resolved_project/executor")
-        .and_then(Value::as_str);
-    match (executor, owning_runner_available) {
-        (Some("agent"), Some(false)) => ("fail", Some("agent_offline")),
-        (Some("agent"), Some(true)) => ("pass", None),
-        (Some("agent"), None) => ("warn", Some("agent_health_unknown")),
-        (Some("local"), _) => ("pass", None),
-        _ => ("warn", Some("agent_health_unknown")),
+    match owning_runner_available {
+        Some(false) => ("fail", Some("agent_offline")),
+        Some(true) => ("pass", None),
+        None => ("warn", Some("agent_health_unknown")),
     }
 }
 
@@ -2785,9 +2746,6 @@ fn owning_runner_available(
     runtime_status: &Value,
     runtime_status_call_failed: bool,
 ) -> Option<bool> {
-    if !resolved.config.is_agent() {
-        return Some(true);
-    }
     if runtime_status_call_failed {
         return None;
     }

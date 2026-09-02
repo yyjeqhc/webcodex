@@ -87,17 +87,7 @@ impl ToolRuntime {
             )
             .with_recovery(RecoveryKind::FixInput, None));
         }
-        if !proj.is_agent() {
-            if ssh_resource.is_some() {
-                return Err(ToolResult::err_with_output(
-                    "ssh_resource_requires_agent_project: SSH resources require a project owned by a connected Runner",
-                    json!({"error_kind": "ssh_resource_requires_agent_project"}),
-                )
-                .with_recovery(RecoveryKind::FixInput, None));
-            }
-            return Ok(());
-        }
-        let client_id = proj.agent_client_id().map_err(ToolResult::err)?.to_string();
+        let client_id = proj.client_id.clone();
         if self
             .shell_clients
             .get_client_view_for_auth(&client_id, auth)

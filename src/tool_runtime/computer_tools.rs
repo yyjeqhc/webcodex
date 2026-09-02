@@ -701,13 +701,7 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),
         };
-        if !resolved.config.is_agent() {
-            return ToolResult::err("computer_save_snapshot requires an agent-registered project");
-        }
-        let target_client_id = match resolved.config.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => return ToolResult::err(error),
-        };
+        let target_client_id = resolved.config.client_id.clone();
         let target_cwd = resolved.config.path.clone();
         let project_id = resolved.resolved_id;
         let expected_project_prefix = format!("agent:{target_client_id}:");

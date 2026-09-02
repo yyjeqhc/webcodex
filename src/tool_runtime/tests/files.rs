@@ -411,7 +411,7 @@ async fn delete_project_files_timeout_before_dispatch_reports_not_started() {
     .await;
     let project = agent_test_project_id("cleanup-delete-timeout-early");
     let proj = runtime.resolve_project(&project).await.unwrap();
-    let client_id = proj.agent_client_id().unwrap().to_string();
+    let client_id = proj.client_id.clone();
 
     // Short wait bound: the request is never polled, so the wait timeout fires
     // and the dispatch-aware cancellation proves the request was never
@@ -453,7 +453,7 @@ async fn delete_project_files_timeout_after_dispatch_reports_outcome_unknown() {
     .await;
     let project = agent_test_project_id("cleanup-delete-timeout-late");
     let proj = runtime.resolve_project(&project).await.unwrap();
-    let client_id = proj.agent_client_id().unwrap().to_string();
+    let client_id = proj.client_id.clone();
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let client_id = client_id.clone();
@@ -509,7 +509,7 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
     .await;
     let project = agent_test_project_id("cleanup-delete-waiter");
     let proj = runtime.resolve_project(&project).await.unwrap();
-    let client_id = proj.agent_client_id().unwrap().to_string();
+    let client_id = proj.client_id.clone();
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let client_id = client_id.clone();

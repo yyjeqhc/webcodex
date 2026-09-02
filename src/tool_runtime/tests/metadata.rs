@@ -13,7 +13,6 @@ use crate::tool_runtime::sessions::{
 use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -3195,94 +3194,6 @@ async fn runtime_status_reflects_websocket_transport_label() {
         entry["agent_protocol_generation"],
         AGENT_PROTOCOL_GENERATION_V2.get()
     );
-}
-
-#[tokio::test]
-async fn runtime_status_counts_local_jobs() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
-    let runtime = runtime_with_project(root, "demo");
-    // Write a fake local job in "running" state and register it in the
-    // in-memory map so runtime_status counts it.
-    let job_dir = root.join(".codex/jobs/job-active");
-    fs::create_dir_all(&job_dir).unwrap();
-    fs::write(job_dir.join("status"), "running").unwrap();
-    let meta_json = json!({
-        "job_id": "job-active",
-        "project": "demo",
-        "command": "sleep 10",
-        "status": "running",
-        "created_at": 1,
-        "started_at": 1,
-        "max_runtime_secs": 600,
-        "executor": "local",
-        "path": root.to_string_lossy(),
-        "kind": "shell",
-    });
-    fs::write(
-        job_dir.join("metadata.json"),
-        serde_json::to_string_pretty(&meta_json).unwrap(),
-    )
-    .unwrap();
-    runtime.local_jobs.lock().await.insert(
-        "job-active".to_string(),
-        LocalJobRecord::new("demo".to_string(), job_dir),
-    );
-    // Also write a completed job to verify it's not counted as active.
-    let done_dir = root.join(".codex/jobs/job-done");
-    fs::create_dir_all(&done_dir).unwrap();
-    fs::write(done_dir.join("status"), "completed").unwrap();
-    fs::write(
-        done_dir.join("metadata.json"),
-        serde_json::to_string(&json!({
-            "job_id": "job-done",
-            "project": "demo",
-            "command": "true",
-            "status": "completed",
-            "created_at": 1,
-            "started_at": 1,
-            "executor": "local",
-            "path": root.to_string_lossy(),
-            "kind": "shell",
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    runtime.local_jobs.lock().await.insert(
-        "job-done".to_string(),
-        LocalJobRecord::new("demo".to_string(), done_dir),
-    );
-    let queued_dir = root.join(".codex/jobs/job-queued");
-    fs::create_dir_all(&queued_dir).unwrap();
-    fs::write(queued_dir.join("status"), "queued").unwrap();
-    fs::write(
-        queued_dir.join("metadata.json"),
-        serde_json::to_string(&json!({
-            "job_id": "job-queued",
-            "project": "demo",
-            "command": "sleep 10",
-            "status": "queued",
-            "created_at": 2,
-            "executor": "local",
-            "path": root.to_string_lossy(),
-            "kind": "shell",
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    runtime.local_jobs.lock().await.insert(
-        "job-queued".to_string(),
-        LocalJobRecord::new("demo".to_string(), queued_dir),
-    );
-
-    let result = runtime.dispatch(runtime_status_call()).await;
-    assert!(result.success, "{:?}", result.error);
-    let jobs = &result.output["jobs"];
-    assert_eq!(jobs["local_known_count"], 3);
-    assert_eq!(jobs["active_count"], 2);
-    assert_eq!(jobs["running_count"], 1);
-    assert_eq!(jobs["queued_count"], 1);
-    assert_eq!(jobs["agent_known_count"], 0);
 }
 
 #[tokio::test]

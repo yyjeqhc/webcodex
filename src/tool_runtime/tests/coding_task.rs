@@ -2992,14 +2992,14 @@ async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_a
 #[tokio::test]
 async fn finish_coding_task_summary_only_keeps_active_blocking_job_decision_complete() {
     let fixture = finish_summary_fixture("coding-finish-compact-jobs").await;
-    seed_session_projection_job(
+    let _job_id = seed_session_projection_job(
         &fixture.runtime,
-        fixture._tmp.path(),
-        "22222222-3333-4444-5555-666666666671",
+        fixture.client_id,
         &fixture.project,
         &fixture.session_id,
         "running",
         "compact-secret-job-output\n",
+        &fixture.auth,
     )
     .await;
 
@@ -3146,15 +3146,14 @@ async fn finish_coding_task_summary_only_has_bounded_clear_size_reduction() {
 #[tokio::test]
 async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     let fixture = finish_summary_fixture("coding-finish-jobs").await;
-    let job_id = "22222222-3333-4444-5555-666666666661";
-    seed_session_projection_job(
+    let job_id = seed_session_projection_job(
         &fixture.runtime,
-        fixture._tmp.path(),
-        job_id,
+        fixture.client_id,
         &fixture.project,
         &fixture.session_id,
         "running",
         "secret-job-output\n",
+        &fixture.auth,
     )
     .await;
 
@@ -3182,15 +3181,14 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
 #[tokio::test]
 async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
     let fixture = finish_summary_fixture("coding-finish-stop-pending").await;
-    let job_id = "22222222-3333-4444-5555-666666666662";
-    seed_session_projection_job(
+    let job_id = seed_session_projection_job(
         &fixture.runtime,
-        fixture._tmp.path(),
-        job_id,
+        fixture.client_id,
         &fixture.project,
         &fixture.session_id,
         "stop_requested",
         "stop-pending-secret-output\n",
+        &fixture.auth,
     )
     .await;
 
@@ -3433,7 +3431,10 @@ async fn finish_summary_fixture(client_id: &'static str) -> FinishSummaryFixture
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let project =
+        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
+            .await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some(client_id.to_string()));
@@ -3442,7 +3443,7 @@ async fn finish_summary_fixture(client_id: &'static str) -> FinishSummaryFixture
         runtime,
         project,
         session_id: session.session_id,
-        auth: auth_context(None, true),
+        auth,
         client_id,
     }
 }

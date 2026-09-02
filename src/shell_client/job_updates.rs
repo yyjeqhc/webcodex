@@ -165,7 +165,6 @@ fn frozen_shell_job_log_projection(
             select_log_lines(&job.stderr, since_stderr_line, tail_lines);
         let mut view = job_view(job);
         view.observation_token = crate::job_observation::JobObservationToken::new_legacy(
-            crate::job_observation::JobObservationExecutor::Agent,
             job.job_id.clone(),
             job.observation_epoch.to_string(),
             job.public_revision.load(Ordering::Relaxed),
@@ -238,7 +237,6 @@ fn frozen_shell_job_log_projection(
     );
     let mut view = job_view(job);
     view.observation_token = crate::job_observation::JobObservationToken::new(
-        crate::job_observation::JobObservationExecutor::Agent,
         job.job_id.clone(),
         job.observation_epoch.to_string(),
         job.public_revision.load(Ordering::Relaxed),
@@ -1574,12 +1572,8 @@ impl ShellClientRegistry {
         validate_id(job_id, "job_id")?;
         let after = after_observation_token
             .map(|value| {
-                crate::job_observation::JobObservationToken::parse_bound(
-                    value,
-                    crate::job_observation::JobObservationExecutor::Agent,
-                    job_id,
-                )
-                .map_err(|error| error.to_string())
+                crate::job_observation::JobObservationToken::parse_bound(value, job_id)
+                    .map_err(|error| error.to_string())
             })
             .transpose()?;
         let deadline = wait_secs

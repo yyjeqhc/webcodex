@@ -3,9 +3,8 @@ use std::time::Duration;
 
 use super::helpers::{
     bounded_tail, command_failed_message, command_outcome_unknown_message,
-    command_rejected_message, command_timeout_message, looks_like_command_timeout,
-    project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
-    run_process_sync_bounded, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
+    command_rejected_message, command_timeout_message, project_relative_agent_cwd,
+    resolve_agent_cwd, COMMAND_STDIO_TAIL_CHARS,
 };
 use super::shell::{
     agent_command_lifecycle, command_execution_state_name, dispatch_uncertainty_lifecycle,
@@ -277,30 +276,6 @@ fn validate_process_input(
     Ok(())
 }
 
-pub(crate) fn local_error_state(
-    exit_code: i32,
-    stderr: &str,
-) -> Option<ShellCommandExecutionState> {
-    if exit_code != -1 {
-        return None;
-    }
-    let lower = stderr.to_ascii_lowercase();
-    if lower.starts_with("failed to execute process:")
-        || lower.starts_with("failed to configure inspect sandbox:")
-        || lower.starts_with("interpreter_unavailable:")
-        || lower.starts_with("script_setup_failed:")
-    {
-        Some(ShellCommandExecutionState::NotStarted)
-    } else if lower.starts_with("failed to wait for process:")
-        || lower.starts_with("failed to collect process output:")
-        || lower.starts_with("failed to write process stdin:")
-    {
-        Some(ShellCommandExecutionState::OutcomeUnknown)
-    } else {
-        None
-    }
-}
-
 fn decorate(
     output: &mut serde_json::Value,
     purpose: ExecutionPurpose,
@@ -418,29 +393,7 @@ impl ToolRuntime {
                 )
             }
         };
-        if !proj.is_agent() {
-            return process_tool_failure_result(
-                command_rejected_message(
-                    "detached process Jobs require a Runner-owned project",
-                    "choose an Agent-owned project that advertises detached_process_jobs.",
-                ),
-                "capability_unavailable",
-                ShellCommandExecutionState::NotStarted,
-            );
-        }
-        let client_id = match proj.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        error,
-                        "refresh the agent project registry with list_projects, then retry.",
-                    ),
-                    "agent_offline",
-                    ShellCommandExecutionState::NotStarted,
-                )
-            }
-        };
+        let client_id = proj.client_id.clone();
         let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => {
@@ -679,20 +632,8 @@ impl ToolRuntime {
                 )
             }
         };
-        if proj.is_agent() {
-            let client_id =
-                match proj.agent_client_id() {
-                    Ok(client_id) => client_id.to_string(),
-                    Err(error) => return process_tool_failure_result(
-                        command_rejected_message(
-                            error,
-                            "refresh the agent project registry with list_projects, then retry.",
-                        ),
-                        "agent_offline",
-                        ShellCommandExecutionState::NotStarted,
-                    ),
-                };
-            let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+        let client_id = proj.client_id.clone();
+        let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     return process_tool_failure_result(
@@ -705,84 +646,82 @@ impl ToolRuntime {
                     )
                 }
             };
-            let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
-                .unwrap_or_else(|_| ".".to_string());
-            // Generation-2 admission guarantees the complete typed structured
-            // execution baseline. Only server-owned internal mutations may opt
-            // out of model-facing durable Job handoff.
-            let async_handoff_available = allow_async_handoff;
-            if !async_handoff_available
-                && timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS
-            {
-                let mut result = process_tool_failure_result(
-                    command_rejected_message(
-                        "internal synchronous structured execution cannot hand off to a durable Job",
-                        "keep this internal operation at timeout_secs <= 120.",
-                    ),
-                    "capability_unavailable",
-                    ShellCommandExecutionState::NotStarted,
-                );
-                decorate(
-                    &mut result.output,
-                    declared_purpose,
-                    &summary,
-                    &resolved_cwd,
-                    "agent",
-                );
-                add_structured_continuation_facts(
-                    &mut result,
-                    timeout,
-                    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
-                    false,
-                );
-                return result;
-            }
-            if async_handoff_available && timeout > budget.sync_wait_secs {
-                let job = self
-                    .shell_clients
-                    .start_job_with_metadata_for_auth(
-                        ShellJobOpRequest {
-                            op: "start".to_string(),
-                            client_id: Some(client_id),
-                            cwd: Some(effective_cwd),
-                            command: Some(String::new()),
-                            timeout_secs: Some(timeout),
-                            job_id: None,
-                            since_stdout_line: None,
-                            since_stderr_line: None,
-                            tail_lines: None,
-                            limit: None,
-                            codex: None,
-                        },
-                        "tool_runtime".to_string(),
-                        ShellJobStartMetadata {
-                            project_id: Some(project.clone()),
-                            session_id,
-                            project_cwd: Some(resolved_cwd.clone()),
-                            purpose: Some(declared_purpose.as_str().to_string()),
-                            shell: Some("direct_argv".to_string()),
-                            visibility: ShellJobVisibility::HiddenUntilHandoff,
-                            structured_execution: Some(StructuredJobExecution::Process(process)),
-                            validation_identity: validation_identity
-                                .as_ref()
-                                .map(|identity| identity.identity.clone()),
-                            validation_tool: validation_identity
-                                .as_ref()
-                                .and_then(|identity| identity.validation_tool.map(str::to_string)),
-                            assertion_name: validation_identity
-                                .as_ref()
-                                .filter(|identity| identity.identity.starts_with("assertion:"))
-                                .and_then(|_| validation_assertion_name.map(str::to_string)),
-                            stdin,
-                            ..Default::default()
-                        },
-                        auth,
-                    )
-                    .await;
-                let job = match job {
-                    Ok(job) => job,
-                    Err(error) => {
-                        let mut result = process_tool_failure_result(
+        let resolved_cwd =
+            project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
+        // Generation-2 admission guarantees the complete typed structured
+        // execution baseline. Only server-owned internal mutations may opt
+        // out of model-facing durable Job handoff.
+        let async_handoff_available = allow_async_handoff;
+        if !async_handoff_available && timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
+            let mut result = process_tool_failure_result(
+                command_rejected_message(
+                    "internal synchronous structured execution cannot hand off to a durable Job",
+                    "keep this internal operation at timeout_secs <= 120.",
+                ),
+                "capability_unavailable",
+                ShellCommandExecutionState::NotStarted,
+            );
+            decorate(
+                &mut result.output,
+                declared_purpose,
+                &summary,
+                &resolved_cwd,
+                "agent",
+            );
+            add_structured_continuation_facts(
+                &mut result,
+                timeout,
+                STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
+                false,
+            );
+            return result;
+        }
+        if async_handoff_available && timeout > budget.sync_wait_secs {
+            let job = self
+                .shell_clients
+                .start_job_with_metadata_for_auth(
+                    ShellJobOpRequest {
+                        op: "start".to_string(),
+                        client_id: Some(client_id),
+                        cwd: Some(effective_cwd),
+                        command: Some(String::new()),
+                        timeout_secs: Some(timeout),
+                        job_id: None,
+                        since_stdout_line: None,
+                        since_stderr_line: None,
+                        tail_lines: None,
+                        limit: None,
+                        codex: None,
+                    },
+                    "tool_runtime".to_string(),
+                    ShellJobStartMetadata {
+                        project_id: Some(project.clone()),
+                        session_id,
+                        project_cwd: Some(resolved_cwd.clone()),
+                        purpose: Some(declared_purpose.as_str().to_string()),
+                        shell: Some("direct_argv".to_string()),
+                        visibility: ShellJobVisibility::HiddenUntilHandoff,
+                        structured_execution: Some(StructuredJobExecution::Process(process)),
+                        validation_identity: validation_identity
+                            .as_ref()
+                            .map(|identity| identity.identity.clone()),
+                        validation_tool: validation_identity
+                            .as_ref()
+                            .and_then(|identity| identity.validation_tool.map(str::to_string)),
+                        assertion_name: validation_identity
+                            .as_ref()
+                            .filter(|identity| identity.identity.starts_with("assertion:"))
+                            .and_then(|_| validation_assertion_name.map(str::to_string)),
+                        stdin,
+                        ..Default::default()
+                    },
+                    auth,
+                )
+                .await;
+            let job = match job {
+                Ok(job) => job,
+                Err(error) => {
+                    let mut result = process_tool_failure_result(
                             command_rejected_message(
                                 &error,
                                 "confirm the Runner is connected and advertises structured_execution_jobs, then retry only if target state proves no process started.",
@@ -790,94 +729,94 @@ impl ToolRuntime {
                             classify_process_failure(&error),
                             ShellCommandExecutionState::NotStarted,
                         );
-                        decorate(
-                            &mut result.output,
-                            declared_purpose,
-                            &summary,
-                            &resolved_cwd,
-                            "agent",
-                        );
-                        add_structured_continuation_facts(
-                            &mut result,
-                            timeout,
-                            budget.sync_wait_secs,
-                            true,
-                        );
-                        return result;
-                    }
-                };
-                let wait = self
-                    .structured_execution_sync_wait
-                    .min(Duration::from_secs(budget.sync_wait_secs));
-                let handoff = await_hidden_structured_job(
-                    self.shell_clients.clone(),
-                    job.job_id.clone(),
-                    wait,
-                    auth.cloned(),
-                )
-                .await;
-                let mut result = match handoff {
-                    Ok(HiddenStructuredJobWait::Terminal {
-                        job,
-                        stdout,
-                        stderr,
-                    }) => {
-                        let result = terminal_structured_job_result(&job, stdout, stderr, timeout);
-                        self.shell_clients
-                            .remove_projected_hidden_structured_job_record(&job.job_id)
-                            .await;
-                        result
-                    }
-                    Ok(HiddenStructuredJobWait::Continued {
-                        job,
-                        execution_state,
-                        command_started,
-                    }) => ToolResult::ok(json!({
-                        "execution_state": execution_state,
-                        "command_started": command_started,
-                        "command_completed": false,
-                        "command_ok": false,
-                        "exit_code": null,
-                        "failure_kind": null,
-                        "tool_failure": false,
-                        "promoted_to_job": true,
-                        "terminal": false,
-                        "job_id": job.job_id,
-                        "job_status": job.status,
-                        "observation_token": job.observation_token,
-                        "effective_timeout_secs": timeout,
-                        "sync_wait_secs": budget.sync_wait_secs,
-                        "async_handoff_available": true,
-                        "stdout_tail": "",
-                        "stderr_tail": "",
-                        "stdout_lines": 0,
-                        "stderr_lines": 0,
-                        "stdout_truncated": false,
-                        "stderr_truncated": false,
-                    })),
-                    Err(error) => outcome_unknown_result(format!(
-                        "the durable process Job could not be observed during handoff: {error}"
-                    )),
-                };
-                if result.output["promoted_to_job"] != json!(true) {
+                    decorate(
+                        &mut result.output,
+                        declared_purpose,
+                        &summary,
+                        &resolved_cwd,
+                        "agent",
+                    );
                     add_structured_continuation_facts(
                         &mut result,
                         timeout,
                         budget.sync_wait_secs,
                         true,
                     );
+                    return result;
                 }
-                decorate(
-                    &mut result.output,
-                    declared_purpose,
-                    &summary,
-                    &resolved_cwd,
-                    "agent",
+            };
+            let wait = self
+                .structured_execution_sync_wait
+                .min(Duration::from_secs(budget.sync_wait_secs));
+            let handoff = await_hidden_structured_job(
+                self.shell_clients.clone(),
+                job.job_id.clone(),
+                wait,
+                auth.cloned(),
+            )
+            .await;
+            let mut result = match handoff {
+                Ok(HiddenStructuredJobWait::Terminal {
+                    job,
+                    stdout,
+                    stderr,
+                }) => {
+                    let result = terminal_structured_job_result(&job, stdout, stderr, timeout);
+                    self.shell_clients
+                        .remove_projected_hidden_structured_job_record(&job.job_id)
+                        .await;
+                    result
+                }
+                Ok(HiddenStructuredJobWait::Continued {
+                    job,
+                    execution_state,
+                    command_started,
+                }) => ToolResult::ok(json!({
+                    "execution_state": execution_state,
+                    "command_started": command_started,
+                    "command_completed": false,
+                    "command_ok": false,
+                    "exit_code": null,
+                    "failure_kind": null,
+                    "tool_failure": false,
+                    "promoted_to_job": true,
+                    "terminal": false,
+                    "job_id": job.job_id,
+                    "job_status": job.status,
+                    "observation_token": job.observation_token,
+                    "effective_timeout_secs": timeout,
+                    "sync_wait_secs": budget.sync_wait_secs,
+                    "async_handoff_available": true,
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "stdout_lines": 0,
+                    "stderr_lines": 0,
+                    "stdout_truncated": false,
+                    "stderr_truncated": false,
+                })),
+                Err(error) => outcome_unknown_result(format!(
+                    "the durable process Job could not be observed during handoff: {error}"
+                )),
+            };
+            if result.output["promoted_to_job"] != json!(true) {
+                add_structured_continuation_facts(
+                    &mut result,
+                    timeout,
+                    budget.sync_wait_secs,
+                    true,
                 );
-                return result;
             }
-            let wait_timeout = timeout;
-            let (request_id, receiver) = match self
+            decorate(
+                &mut result.output,
+                declared_purpose,
+                &summary,
+                &resolved_cwd,
+                "agent",
+            );
+            return result;
+        }
+        let wait_timeout = timeout;
+        let (request_id, receiver) = match self
                 .shell_clients
                 .enqueue_process(
                     client_id,
@@ -902,12 +841,8 @@ impl ToolRuntime {
                     )
                 }
             };
-            let mut result = match tokio::time::timeout(
-                Duration::from_secs(wait_timeout + 2),
-                receiver,
-            )
-            .await
-            {
+        let mut result =
+            match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), receiver).await {
                 Ok(Ok(response)) => {
                     let state = agent_command_lifecycle(&response, timeout);
                     let exit_code = response.exit_code;
@@ -920,13 +855,13 @@ impl ToolRuntime {
                                 .as_deref()
                                 .unwrap_or("Runner rejected the process before spawn");
                             process_tool_failure_result(
-                                    command_rejected_message(
-                                        reason,
-                                        "inspect the rejection, correct executable/argv/cwd, then retry.",
-                                    ),
-                                    classify_process_failure(reason),
-                                    state,
-                                )
+                            command_rejected_message(
+                                reason,
+                                "inspect the rejection, correct executable/argv/cwd, then retry.",
+                            ),
+                            classify_process_failure(reason),
+                            state,
+                        )
                         }
                         ShellCommandExecutionState::OutcomeUnknown => {
                             outcome_unknown_result(response.error.as_deref().unwrap_or(
@@ -984,140 +919,39 @@ impl ToolRuntime {
                     let state = dispatch_uncertainty_lifecycle(dispatch);
                     if state == ShellCommandExecutionState::NotStarted {
                         process_tool_failure_result(
-                                command_rejected_message(
-                                    format!(
-                                        "timed out waiting {wait_timeout} seconds before Runner dispatch"
-                                    ),
-                                    "check Runner connectivity and availability, then retry.",
-                                ),
-                                "timeout",
-                                state,
-                            )
+                            command_rejected_message(
+                                format!(
+                                "timed out waiting {wait_timeout} seconds before Runner dispatch"
+                            ),
+                                "check Runner connectivity and availability, then retry.",
+                            ),
+                            "timeout",
+                            state,
+                        )
                     } else {
                         outcome_unknown_result(format!(
-                                "timed out waiting {wait_timeout} seconds for the Runner process result"
-                            ))
+                        "timed out waiting {wait_timeout} seconds for the Runner process result"
+                    ))
                     }
                 }
             };
-            decorate(
-                &mut result.output,
-                declared_purpose,
-                &summary,
-                &resolved_cwd,
-                "agent",
-            );
-            add_structured_continuation_facts(
-                &mut result,
-                timeout,
-                if async_handoff_available {
-                    budget.sync_wait_secs
-                } else {
-                    timeout
-                },
-                async_handoff_available,
-            );
-            result
-        } else {
-            if timeout > STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS {
-                let mut result = process_tool_failure_result(
-                    command_rejected_message(
-                        "capability_unavailable: the server-local compatibility executor has no durable typed Job handoff",
-                        "use an Agent-owned project with structured_execution_jobs, or request timeout_secs at most 120 seconds.",
-                    ),
-                    "capability_unavailable",
-                    ShellCommandExecutionState::NotStarted,
-                );
-                decorate(&mut result.output, declared_purpose, &summary, ".", "local");
-                add_structured_continuation_facts(
-                    &mut result,
-                    timeout,
-                    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
-                    false,
-                );
-                return result;
-            }
-            let cwd_path = match resolve_local_cwd(&proj, cwd.as_deref()) {
-                Ok(cwd) => cwd,
-                Err(error) => {
-                    return process_tool_failure_result(
-                        command_rejected_message(
-                            error,
-                            "choose an existing project-relative cwd inside the project.",
-                        ),
-                        "permission_denied",
-                        ShellCommandExecutionState::NotStarted,
-                    )
-                }
-            };
-            let resolved_cwd =
-                project_relative_cwd(&proj, &cwd_path).unwrap_or_else(|_| ".".to_string());
-            let mut result = match run_process_sync_bounded(
-                process.executable,
-                process.args,
-                stdin,
-                cwd_path,
-                timeout,
-            )
-            .await
-            {
-                Ok((exit_code, stdout, stderr, duration_ms)) => {
-                    match local_error_state(exit_code, &stderr) {
-                        Some(ShellCommandExecutionState::NotStarted) => {
-                            process_tool_failure_result(
-                                command_rejected_message(
-                                    &stderr,
-                                    "correct the executable or cwd, then retry.",
-                                ),
-                                classify_process_failure(&stderr),
-                                ShellCommandExecutionState::NotStarted,
-                            )
-                        }
-                        Some(ShellCommandExecutionState::OutcomeUnknown) => {
-                            outcome_unknown_result(&stderr)
-                        }
-                        _ if exit_code == 0 => ToolResult::ok(success_output(
-                            exit_code,
-                            stdout,
-                            stderr,
-                            Some(duration_ms),
-                        )),
-                        _ => {
-                            let state =
-                                if looks_like_command_timeout(Some(exit_code), &stderr, timeout) {
-                                    ShellCommandExecutionState::TimedOut
-                                } else {
-                                    ShellCommandExecutionState::Completed
-                                };
-                            command_failure_result(
-                                Some(exit_code),
-                                stdout,
-                                stderr,
-                                Some(duration_ms),
-                                timeout,
-                                state,
-                            )
-                        }
-                    }
-                }
-                Err(LocalRunFailure::HardTimeout { bound_secs }) => {
-                    outcome_unknown_result(format!(
-                    "the local process did not return within the {bound_secs}-second hard bound"
-                ))
-                }
-                Err(LocalRunFailure::Join(error)) => outcome_unknown_result(format!(
-                    "the local process worker ended without returning a result: {error}"
-                )),
-            };
-            decorate(
-                &mut result.output,
-                declared_purpose,
-                &summary,
-                &resolved_cwd,
-                "local",
-            );
-            add_structured_continuation_facts(&mut result, timeout, timeout, false);
-            result
-        }
+        decorate(
+            &mut result.output,
+            declared_purpose,
+            &summary,
+            &resolved_cwd,
+            "agent",
+        );
+        add_structured_continuation_facts(
+            &mut result,
+            timeout,
+            if async_handoff_available {
+                budget.sync_wait_secs
+            } else {
+                timeout
+            },
+            async_handoff_available,
+        );
+        result
     }
 }

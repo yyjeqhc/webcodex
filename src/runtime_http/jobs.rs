@@ -128,11 +128,11 @@ pub async fn job_log(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     render_result(res, &audit, "job_log", None, result);
 }
 
-/// Stop a local runtime job by terminating its process group and marking it
-/// `stopped`. This is a thin wrapper over `ToolRuntime::stop_job`; it is
+/// Stop a runtime Job through its owning Runner. This is a thin wrapper over
+/// `ToolRuntime::stop_job`; it is
 /// intentionally NOT exposed as a GPT Action (absent from openapi.json) so
-/// remote ChatGPT callers cannot drive an explicit kill. Only jobs the
-/// runtime created and recorded can be stopped.
+/// remote ChatGPT callers cannot drive an explicit stop. Only Jobs the
+/// runtime registry owns can be stopped.
 #[handler]
 pub async fn job_stop(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/jobs/stop", "jobStop");

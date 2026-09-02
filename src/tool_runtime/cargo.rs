@@ -2,14 +2,12 @@ use serde_json::{json, Value};
 
 use super::helpers::{
     bounded_tail, command_outcome_unknown_message, command_rejected_message,
-    command_timeout_message, looks_like_command_timeout, normalize_local_status,
-    project_relative_cwd, resolve_local_cwd, resolve_sync_timeout_secs,
+    command_timeout_message, looks_like_command_timeout, resolve_sync_timeout_secs,
     sync_timeout_out_of_range_result, validate_project_relative_path,
     DEFAULT_CARGO_CHECK_TIMEOUT_SECS, DEFAULT_CARGO_FMT_TIMEOUT_SECS,
-    DEFAULT_CARGO_TEST_TIMEOUT_SECS, MAX_LOCAL_LOG_LINES, MAX_VALIDATION_TIMEOUT_SECS,
-    MIN_VALIDATION_TIMEOUT_SECS, SYNC_VALIDATION_WAIT_SECS,
+    DEFAULT_CARGO_TEST_TIMEOUT_SECS, MAX_VALIDATION_TIMEOUT_SECS, MIN_VALIDATION_TIMEOUT_SECS,
+    SYNC_VALIDATION_WAIT_SECS,
 };
-use super::local_jobs::LocalJobRecord;
 use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::tool_result::ToolResult;
 use super::validation_parser::parse_complete_cargo_test_summary_counts;
@@ -757,44 +755,42 @@ impl ToolRuntime {
         let session_id = request.session_id.clone();
         let ssh_resource = request.ssh_resource.map(str::to_string);
 
-        if resolved.is_agent() {
-            // Structured validation tools never execute through a named SSH resource.
-            // Reject at the shared Agent entry so direct sync, short sync, and
-            // long Job handoff paths cannot silently fall back to the project root.
-            if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource.as_deref())
-            {
-                return result;
-            }
-            if tool_name == "go_test" || timeout_secs > SYNC_VALIDATION_WAIT_SECS {
-                // The budget exceeds the internal sync window, so there is
-                // headroom to promote the same execution to a Job. The agent
-                // path enqueues exactly one structured validation Job, waits
-                // up to `sync_wait_secs`, and hands off if still running.
-                self.run_readonly_validation_agent(
-                    tool_name,
-                    &request.project,
-                    &resolved,
-                    cwd.as_deref(),
-                    &command,
-                    adapter,
-                    options,
-                    purpose,
-                    timeout_secs,
-                    sync_wait_secs,
-                    session_id,
-                    validation_target_id,
-                    request.minimum_tests,
-                    ssh_resource.as_deref(),
-                    request.auth,
-                )
-                .await
-            } else {
-                // No handoff headroom: the requested budget is at most the
-                // sync window, so there is no remaining runtime for a Job to
-                // continue. Run synchronously through the existing capture
-                // path and report a real terminal timeout at the budget
-                // boundary. The command still starts exactly once.
-                let output = match self
+        // Structured validation tools never execute through a named SSH resource.
+        // Reject at the shared Agent entry so direct sync, short sync, and
+        // long Job handoff paths cannot silently fall back to the project root.
+        if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource.as_deref()) {
+            return result;
+        }
+        if tool_name == "go_test" || timeout_secs > SYNC_VALIDATION_WAIT_SECS {
+            // The budget exceeds the internal sync window, so there is
+            // headroom to promote the same execution to a Job. The agent
+            // path enqueues exactly one structured validation Job, waits
+            // up to `sync_wait_secs`, and hands off if still running.
+            self.run_readonly_validation_agent(
+                tool_name,
+                &request.project,
+                &resolved,
+                cwd.as_deref(),
+                &command,
+                adapter,
+                options,
+                purpose,
+                timeout_secs,
+                sync_wait_secs,
+                session_id,
+                validation_target_id,
+                request.minimum_tests,
+                ssh_resource.as_deref(),
+                request.auth,
+            )
+            .await
+        } else {
+            // No handoff headroom: the requested budget is at most the
+            // sync window, so there is no remaining runtime for a Job to
+            // continue. Run synchronously through the existing capture
+            // path and report a real terminal timeout at the budget
+            // boundary. The command still starts exactly once.
+            let output = match self
                     .run_project_command_capture(
                         &request.project,
                         command.clone(),
@@ -811,36 +807,18 @@ impl ToolRuntime {
                         ))
                     }
                 };
-                self.build_cargo_result(
-                    &request.project,
-                    &command,
-                    cwd.as_deref(),
-                    &resolved,
-                    adapter,
-                    output,
-                    timeout_secs,
-                    sync_wait_secs,
-                    false,
-                    false,
-                    false,
-                    request.minimum_tests,
-                )
-                .await
-            }
-        } else {
-            self.run_readonly_validation_local(
-                tool_name,
+            self.build_cargo_result(
                 &request.project,
-                &resolved,
-                cwd.as_deref(),
                 &command,
+                cwd.as_deref(),
+                &resolved,
                 adapter,
-                options,
-                purpose,
+                output,
                 timeout_secs,
                 sync_wait_secs,
-                session_id,
-                validation_target_id,
+                false,
+                false,
+                false,
                 request.minimum_tests,
             )
             .await
@@ -870,15 +848,7 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let client_id = match config.agent_client_id() {
-            Ok(id) => id.to_string(),
-            Err(e) => {
-                return ToolResult::err(command_rejected_message(
-                    e,
-                    "refresh the agent project registry with list_projects, then retry.",
-                ))
-            }
-        };
+        let client_id = config.client_id.clone();
         let effective_cwd = match super::helpers::resolve_agent_cwd(config, cwd) {
             Ok(cwd) => cwd,
             Err(error) => {
@@ -985,537 +955,6 @@ impl ToolRuntime {
         };
         self.await_validation_job(job_id, sync_wait_secs, adapter, handoff)
             .await
-    }
-
-    /// Local-backed read-only validation. Long validations may hand off to the
-    /// existing local Job path; the command still executes exactly once.
-    #[allow(clippy::too_many_arguments)]
-    async fn run_readonly_validation_local(
-        &self,
-        _tool_name: &str,
-        project: &str,
-        config: &crate::projects::ProjectConfig,
-        cwd: Option<&str>,
-        command: &str,
-        adapter: &'static dyn ValidationAdapter,
-        options: ValidationCommandOptions,
-        purpose: ExecutionPurpose,
-        timeout_secs: u64,
-        sync_wait_secs: u64,
-        session_id: Option<String>,
-        validation_target_id: Option<String>,
-        minimum_tests: Option<u64>,
-    ) -> ToolResult {
-        if local_validation_should_handoff(timeout_secs, sync_wait_secs) {
-            return self
-                .run_readonly_validation_local_job_with_context(
-                    _tool_name,
-                    project,
-                    config,
-                    cwd,
-                    command,
-                    adapter,
-                    options,
-                    purpose,
-                    timeout_secs,
-                    sync_wait_secs,
-                    session_id,
-                    validation_target_id,
-                    minimum_tests,
-                )
-                .await;
-        }
-        let _cwd_path = match resolve_local_cwd(config, cwd) {
-            Ok(path) => path,
-            Err(error) => return ToolResult::err(command_rejected_message(
-                error,
-                "choose '.', an existing project-relative cwd, or a path inside the project root.",
-            )),
-        };
-        let output = match self
-            .run_project_command_capture(
-                project,
-                command.to_string(),
-                timeout_secs,
-                cwd.map(str::to_string),
-            )
-            .await
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return ToolResult::err(command_rejected_message(
-                    e,
-                    "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
-                ))
-            }
-        };
-        self.build_cargo_result(
-            project,
-            command,
-            cwd,
-            config,
-            adapter,
-            output,
-            timeout_secs,
-            sync_wait_secs,
-            false,
-            false,
-            false,
-            minimum_tests,
-        )
-        .await
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn run_readonly_validation_local_job(
-        &self,
-        tool_name: &str,
-        project: &str,
-        config: &crate::projects::ProjectConfig,
-        cwd: Option<&str>,
-        command: &str,
-        adapter: &'static dyn ValidationAdapter,
-        options: ValidationCommandOptions,
-        purpose: ExecutionPurpose,
-        timeout_secs: u64,
-        sync_wait_secs: u64,
-        minimum_tests: Option<u64>,
-    ) -> ToolResult {
-        self.run_readonly_validation_local_job_with_context(
-            tool_name,
-            project,
-            config,
-            cwd,
-            command,
-            adapter,
-            options,
-            purpose,
-            timeout_secs,
-            sync_wait_secs,
-            None,
-            None,
-            minimum_tests,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn run_readonly_validation_local_job_with_context(
-        &self,
-        tool_name: &str,
-        project: &str,
-        config: &crate::projects::ProjectConfig,
-        cwd: Option<&str>,
-        command: &str,
-        adapter: &'static dyn ValidationAdapter,
-        options: ValidationCommandOptions,
-        purpose: ExecutionPurpose,
-        timeout_secs: u64,
-        sync_wait_secs: u64,
-        session_id: Option<String>,
-        validation_target_id: Option<String>,
-        minimum_tests: Option<u64>,
-    ) -> ToolResult {
-        let cwd_path = match resolve_local_cwd(config, cwd) {
-            Ok(path) => path,
-            Err(error) => {
-                return ToolResult::err(command_rejected_message(
-                    error,
-                    "choose '.', an existing project-relative cwd, or a path inside the project root.",
-                ));
-            }
-        };
-        let resolved_cwd =
-            project_relative_cwd(config, &cwd_path).unwrap_or_else(|_| ".".to_string());
-        let step = match validation_step(tool_name, &options) {
-            Ok(step) => step,
-            Err(error) => {
-                return ToolResult::err(command_rejected_message(
-                    error,
-                    "fix the cargo argument format, then retry.",
-                ));
-            }
-        };
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let dir = config.root().join(format!(".codex/jobs/{job_id}"));
-        if let Err(error) = std::fs::create_dir_all(&dir) {
-            return ToolResult::err(format!("Failed to create job dir: {error}"));
-        }
-        let now = chrono::Utc::now().timestamp();
-        let stdout_file = match std::fs::File::create(dir.join("stdout.log")) {
-            Ok(file) => file,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(format!("Failed to create validation stdout log: {error}"));
-            }
-        };
-        let stderr_file = match std::fs::File::create(dir.join("stderr.log")) {
-            Ok(file) => file,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(format!("Failed to create validation stderr log: {error}"));
-            }
-        };
-        #[cfg(unix)]
-        let mut process = {
-            use std::os::unix::process::CommandExt;
-            let mut process = std::process::Command::new(&step.program);
-            process.args(&step.args).process_group(0);
-            process
-        };
-        #[cfg(not(unix))]
-        let mut process = {
-            let mut process = std::process::Command::new("setsid");
-            process
-                .arg("timeout")
-                .arg("--signal=TERM")
-                .arg("--kill-after=2s")
-                .arg(format!("{timeout_secs}s"))
-                .arg(&step.program)
-                .args(&step.args);
-            process
-        };
-        process
-            .current_dir(&cwd_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::from(stdout_file))
-            .stderr(std::process::Stdio::from(stderr_file));
-        for (key, value) in &step.env {
-            process.env(key, value);
-        }
-        #[cfg(unix)]
-        let spawn_time = std::time::Instant::now();
-        let child = match process.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(format!("Failed to spawn validation job: {error}"));
-            }
-        };
-        #[cfg(unix)]
-        let validation_deadline = spawn_time + std::time::Duration::from_secs(timeout_secs);
-        let pid = child.id();
-        let pgid = i64::from(pid);
-        // No await occurs between successful spawn and this guard taking the
-        // Child, so cancellation cannot leave either the process group or its
-        // reap responsibility unowned.
-        let mut spawned_guard = SpawnedValidationGuard::new(child, self.job_killer.clone(), pgid)
-            .with_job_dir(dir.clone());
-        let metadata = json!({
-            "job_id": job_id,
-            "project": project,
-            "command": command,
-            "status": "running",
-            "created_at": now,
-            "started_at": now,
-            // Validation execution enforces the exact budget. The local Job
-            // watchdog gets a small publication grace so it does not race the
-            // terminal publication and misclassify a real timeout as lost.
-            "max_runtime_secs": timeout_secs.saturating_add(3),
-            "executor": "local",
-            "path": config.path,
-            "kind": "validation",
-            "purpose": purpose.as_str(),
-            "cwd": resolved_cwd,
-            "shell": "direct_argv",
-            "process_group_id": pgid,
-            "validation_tool": tool_name,
-            "validation_kind": adapter.validation_kind(),
-            "validation_steps": [step],
-            "effective_timeout_secs": timeout_secs,
-            "sync_wait_secs": sync_wait_secs,
-            "validation_adapter": adapter.tool_identity(),
-            "session_id": session_id,
-            "validation_target_id": validation_target_id,
-            "minimum_tests": minimum_tests,
-            "visibility": "hidden_until_handoff",
-        });
-        if let Err(error) = std::fs::write(
-            dir.join("metadata.json"),
-            serde_json::to_string_pretty(&metadata).unwrap_or_default(),
-        ) {
-            spawned_guard.cleanup_now();
-            let _ = std::fs::remove_dir_all(&dir);
-            return ToolResult::err(format!("Failed to write validation job metadata: {error}"));
-        }
-        if let Err(error) = std::fs::write(dir.join("pid"), pid.to_string()) {
-            spawned_guard.cleanup_now();
-            let _ = std::fs::remove_dir_all(&dir);
-            return ToolResult::err(format!("Failed to write validation job pid: {error}"));
-        }
-        if let Err(error) = std::fs::write(dir.join("status"), "running") {
-            spawned_guard.cleanup_now();
-            let _ = std::fs::remove_dir_all(&dir);
-            return ToolResult::err(format!("Failed to write validation job status: {error}"));
-        }
-        let (record, _) = match LocalJobRecord::initialize_hidden(project.to_string(), dir.clone())
-        {
-            Ok(value) => value,
-            Err(error) => {
-                spawned_guard.cleanup_now();
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(error);
-            }
-        };
-        self.local_jobs
-            .lock()
-            .await
-            .insert(job_id.clone(), record.clone());
-        let watcher_record = record.clone();
-        let watcher_jobs = self.local_jobs.clone();
-        let watcher_job_id = job_id.clone();
-        let watcher_dir = dir.clone();
-        #[cfg(unix)]
-        let watcher_killer = self.job_killer.clone();
-        let watcher_handle = tokio::runtime::Handle::current();
-        let (child_sender, child_receiver) =
-            std::sync::mpsc::sync_channel::<std::process::Child>(0);
-        let watcher = std::thread::Builder::new()
-            .name("webcodex-local-validation".to_string())
-            .spawn(move || {
-                let mut child = match child_receiver.recv() {
-                    Ok(child) => child,
-                    Err(_) => return,
-                };
-                #[cfg(unix)]
-                let (exit_code, timed_out) = {
-                    let mut timed_out = false;
-                    let exit = loop {
-                        match child.try_wait() {
-                            Ok(Some(status)) => break Some(status),
-                            Ok(None) if std::time::Instant::now() >= validation_deadline => {
-                                timed_out = true;
-                                let _ = watcher_killer.terminate_group(pgid, pgid);
-                                break child.wait().ok();
-                            }
-                            Ok(None) => {
-                                std::thread::sleep(std::time::Duration::from_millis(25));
-                            }
-                            Err(_) => {
-                                let _ = watcher_killer.terminate_group(pgid, pgid);
-                                break child.wait().ok();
-                            }
-                        }
-                    };
-                    if !timed_out {
-                        let _ = watcher_killer.terminate_group(pgid, pgid);
-                    }
-                    (
-                        exit.and_then(|status| status.code()).unwrap_or(-1),
-                        timed_out,
-                    )
-                };
-                #[cfg(not(unix))]
-                let (exit_code, timed_out) = {
-                    let exit_code = child
-                        .wait()
-                        .ok()
-                        .and_then(|status| status.code())
-                        .unwrap_or(-1);
-                    (exit_code, matches!(exit_code, 124 | 137))
-                };
-                let cleanup_pending_at_exit = watcher_record.cleanup_pending();
-                let recorded_status = normalize_local_status(
-                    &watcher_record
-                        .read_text("status")
-                        .unwrap_or_else(|| "running".to_string()),
-                );
-                let terminal_status =
-                    if crate::tool_runtime::jobs::is_terminal_job_status(&recorded_status) {
-                        recorded_status
-                    } else if cleanup_pending_at_exit {
-                        "stopped".to_string()
-                    } else if timed_out {
-                        "timeout".to_string()
-                    } else if exit_code == 0 {
-                        "completed".to_string()
-                    } else {
-                        "failed".to_string()
-                    };
-                let _ = std::fs::write(watcher_dir.join("exit_code"), exit_code.to_string());
-                let _ = std::fs::write(
-                    watcher_dir.join("finished_at"),
-                    chrono::Utc::now().timestamp().to_string(),
-                );
-                let _ = std::fs::write(watcher_dir.join("status"), &terminal_status);
-                if let Err(error) = watcher_record.observe() {
-                    tracing::error!(
-                        job_id = %watcher_job_id,
-                        error = %error,
-                        "failed to persist local validation terminal observation"
-                    );
-                }
-                watcher_record.mark_terminal();
-                if watcher_record.cleanup_pending() {
-                    watcher_handle.spawn(async move {
-                        watcher_jobs.lock().await.remove(&watcher_job_id);
-                        let _ = std::fs::remove_dir_all(&watcher_dir);
-                    });
-                }
-            });
-        let _watcher = match watcher {
-            Ok(handle) => handle,
-            Err(error) => {
-                spawned_guard.cleanup_now();
-                self.local_jobs.lock().await.remove(&job_id);
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(format!("Failed to start validation job watcher: {error}"));
-            }
-        };
-        let child = match spawned_guard.take_child_for_handoff() {
-            Some(child) => child,
-            None => {
-                drop(child_sender);
-                self.local_jobs.lock().await.remove(&job_id);
-                let _ = std::fs::remove_dir_all(&dir);
-                return ToolResult::err(
-                    "validation child ownership was lost before watcher handoff".to_string(),
-                );
-            }
-        };
-        if let Err(error) = child_sender.send(child) {
-            let child = error.0;
-            if let Err(child) = spawned_guard.restore_child_after_failed_handoff(child) {
-                let mut fallback_guard =
-                    SpawnedValidationGuard::new(child, self.job_killer.clone(), pgid);
-                fallback_guard.cleanup_now();
-            }
-            spawned_guard.cleanup_now();
-            self.local_jobs.lock().await.remove(&job_id);
-            let _ = std::fs::remove_dir_all(&dir);
-            return ToolResult::err("Failed to hand off validation child to watcher".to_string());
-        }
-        // sync_channel(0) is a rendezvous: successful send means the watcher has
-        // received the Child. No await occurs before the hidden-job cancellation
-        // guard is established.
-        spawned_guard.disarm_after_handoff();
-        let mut guard = LocalValidationCleanupGuard::new(
-            self.local_jobs.clone(),
-            record.clone(),
-            self.job_killer.clone(),
-            job_id.clone(),
-        );
-        let wait = self
-            .validation_sync_wait
-            .min(std::time::Duration::from_secs(sync_wait_secs));
-        let deadline = std::time::Instant::now() + wait;
-        let promoted_observation = loop {
-            let status = normalize_local_status(
-                &record
-                    .read_text("status")
-                    .unwrap_or_else(|| "running".to_string()),
-            );
-            if crate::tool_runtime::jobs::is_terminal_job_status(&status) {
-                let (stdout, _, _, stdout_source_truncated) =
-                    record.read_log_lines("stdout.log", None, Some(MAX_LOCAL_LOG_LINES));
-                let (stderr, _, _, stderr_source_truncated) =
-                    record.read_log_lines("stderr.log", None, Some(MAX_LOCAL_LOG_LINES));
-                let exit_code = record
-                    .read_text("exit_code")
-                    .and_then(|value| value.trim().parse::<i32>().ok());
-                let ended_at = record
-                    .read_text("finished_at")
-                    .and_then(|value| value.trim().parse::<i64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp());
-                let output = ProjectCommandOutput {
-                    exit_code,
-                    stdout,
-                    stderr,
-                    duration_ms: ended_at.saturating_sub(now) as u64 * 1000,
-                    error: None,
-                    execution_state: ShellCommandExecutionState::Completed,
-                };
-                self.local_jobs.lock().await.remove(&job_id);
-                let _ = std::fs::remove_dir_all(&dir);
-                guard.disarm();
-                let mut result = self
-                    .build_cargo_result(
-                        project,
-                        command,
-                        cwd,
-                        config,
-                        adapter,
-                        output,
-                        timeout_secs,
-                        sync_wait_secs,
-                        false,
-                        stdout_source_truncated,
-                        stderr_source_truncated,
-                        minimum_tests,
-                    )
-                    .await;
-                result.output["cwd"] = json!(resolved_cwd.clone());
-                result.output["shell"] = json!("direct_argv");
-                result.output["executor"] = json!("local");
-                return result;
-            }
-            if std::time::Instant::now() >= deadline {
-                let promoted = {
-                    let jobs = self.local_jobs.lock().await;
-                    let Some(record) = jobs.get(&job_id) else {
-                        return ToolResult::err(
-                            "local validation job disappeared before handoff".to_string(),
-                        );
-                    };
-                    record.promote_if_active()
-                };
-                match promoted {
-                    Ok(Some(observation)) => break observation,
-                    Ok(None) => {}
-                    Err(error) => {
-                        return ToolResult::err(format!(
-                            "local validation job observation failed before handoff: {error}"
-                        ));
-                    }
-                }
-                // The watcher linearized terminal publication before promotion.
-                // Re-enter the loop and return the structured terminal result.
-                continue;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        };
-        let observation_token = match promoted_observation.token(&job_id) {
-            Ok(token) => token,
-            Err(error) => {
-                return ToolResult::err(format!(
-                    "local validation job has no canonical observation token: {error}"
-                ));
-            }
-        };
-        let job_status = normalize_local_status(&promoted_observation.status);
-        let mut public_metadata = metadata;
-        public_metadata["visibility"] = json!("public");
-        let _ = std::fs::write(
-            dir.join("metadata.json"),
-            serde_json::to_string_pretty(&public_metadata).unwrap_or_default(),
-        );
-        guard.disarm();
-        ToolResult::ok(json!({
-            "execution_source": tool_name,
-            "purpose": purpose.as_str(),
-            "execution_state": "running",
-            "job_id": job_id,
-            "job_status": job_status,
-            "observation_token": observation_token,
-            "promoted_to_job": true,
-            "command_started": true,
-            "command_completed": false,
-            "effective_timeout_secs": timeout_secs,
-            "sync_wait_secs": sync_wait_secs,
-            "project": project,
-            "cwd": resolved_cwd,
-            "shell": "direct_argv",
-            "executor": "local",
-            "command_summary": crate::shell_client::command_preview(command),
-            "stdout_tail": "",
-            "stderr_tail": "",
-            "stdout_lines": 0,
-            "stderr_lines": 0,
-            "stdout_truncated": false,
-            "stderr_truncated": false,
-            "terminal": false,
-        }))
     }
 
     /// Wait up to `sync_wait_secs` for a structured validation Job to reach a
@@ -1784,17 +1223,11 @@ impl ToolRuntime {
         let process_passed =
             execution_state == ShellCommandExecutionState::Completed && output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
-        let (resolved_cwd, shell, executor) = if config.is_agent() {
-            let resolved = super::helpers::resolve_agent_cwd(config, cwd)
-                .and_then(|path| super::helpers::project_relative_agent_cwd(config, &path))
-                .unwrap_or_else(|_| ".".to_string());
-            (resolved, "configured", "agent")
-        } else {
-            let resolved = super::helpers::resolve_local_cwd(config, cwd)
-                .and_then(|path| super::helpers::project_relative_cwd(config, &path))
-                .unwrap_or_else(|_| ".".to_string());
-            (resolved, "sh", "local")
-        };
+        let resolved_cwd = super::helpers::resolve_agent_cwd(config, cwd)
+            .and_then(|path| super::helpers::project_relative_agent_cwd(config, &path))
+            .unwrap_or_else(|_| ".".to_string());
+        let shell = "configured";
+        let executor = "agent";
         let purpose = match adapter.validation_kind() {
             "test" => "test",
             "format" => "format",
@@ -1968,10 +1401,6 @@ impl ToolRuntime {
     }
 }
 
-pub(crate) fn local_validation_should_handoff(timeout_secs: u64, sync_wait_secs: u64) -> bool {
-    timeout_secs > sync_wait_secs
-}
-
 /// Structured validation request carried through the read-only tool path.
 struct ValidationRunRequest<'a> {
     project: String,
@@ -2126,172 +1555,6 @@ fn apply_validation_projection_fields(payload: &mut Value, projection: &Value) {
     }
 }
 
-struct SpawnedValidationGuard {
-    child: Option<std::process::Child>,
-    killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
-    pid: i64,
-    pgid: i64,
-    job_dir: Option<std::path::PathBuf>,
-    armed: bool,
-}
-
-impl SpawnedValidationGuard {
-    fn new(
-        child: std::process::Child,
-        killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
-        pgid: i64,
-    ) -> Self {
-        let pid = i64::from(child.id());
-        Self {
-            child: Some(child),
-            killer,
-            pid,
-            pgid,
-            job_dir: None,
-            armed: true,
-        }
-    }
-
-    fn with_job_dir(mut self, job_dir: std::path::PathBuf) -> Self {
-        self.job_dir = Some(job_dir);
-        self
-    }
-
-    fn cleanup_now(&mut self) {
-        if !self.armed {
-            return;
-        }
-        if let Some(mut child) = self.child.take() {
-            let _ = self.killer.terminate_group(self.pid, self.pgid);
-            match child.try_wait() {
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => {
-                    // The group killer is best-effort and may not prove the
-                    // leader exited. Kill the direct child as a final fallback,
-                    // then explicitly wait so this owner never drops a zombie.
-                    let _ = child.kill();
-                    loop {
-                        match child.wait() {
-                            Ok(_) => break,
-                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                            Err(_) => break,
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(job_dir) = self.job_dir.take() {
-            let _ = std::fs::remove_dir_all(job_dir);
-        }
-        self.armed = false;
-    }
-
-    fn take_child_for_handoff(&mut self) -> Option<std::process::Child> {
-        if self.armed {
-            self.child.take()
-        } else {
-            None
-        }
-    }
-
-    fn restore_child_after_failed_handoff(
-        &mut self,
-        child: std::process::Child,
-    ) -> Result<(), std::process::Child> {
-        if self.armed && self.child.is_none() {
-            self.child = Some(child);
-            Ok(())
-        } else {
-            Err(child)
-        }
-    }
-
-    fn disarm_after_handoff(&mut self) {
-        debug_assert!(self.child.is_none());
-        self.job_dir = None;
-        self.armed = false;
-    }
-}
-
-impl Drop for SpawnedValidationGuard {
-    fn drop(&mut self) {
-        self.cleanup_now();
-    }
-}
-
-struct LocalValidationCleanupGuard {
-    jobs: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, LocalJobRecord>>>,
-    record: LocalJobRecord,
-    killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
-    job_id: String,
-    armed: bool,
-}
-
-impl LocalValidationCleanupGuard {
-    fn new(
-        jobs: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, LocalJobRecord>>>,
-        record: LocalJobRecord,
-        killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
-        job_id: String,
-    ) -> Self {
-        Self {
-            jobs,
-            record,
-            killer,
-            job_id,
-            armed: true,
-        }
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for LocalValidationCleanupGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        // Record cleanup intent and synchronously terminate the process group.
-        // The watcher owns terminal publication and only then removes the
-        // hidden record, so cancellation never relies on a detached Tokio task
-        // as its sole process-safety guarantee.
-        self.record.mark_cleanup_pending();
-        let metadata = self.record.read_json("metadata.json");
-        let pid = self
-            .record
-            .read_text("pid")
-            .and_then(|value| value.trim().parse::<i64>().ok());
-        let pgid = metadata
-            .get("process_group_id")
-            .and_then(serde_json::Value::as_i64);
-        if let (Some(pid), Some(pgid)) = (pid, pgid) {
-            let _ = self.killer.terminate_group(pid, pgid);
-        }
-        // Cleanup of the registry entry is secondary to the synchronous stop.
-        // If the runtime remains alive, remove the hidden record only after the
-        // watcher has published a terminal state. If this task cannot run during
-        // shutdown, the record remains available for tracking rather than being
-        // deleted prematurely.
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let jobs = self.jobs.clone();
-            let record = self.record.clone();
-            let job_id = self.job_id.clone();
-            handle.spawn(async move {
-                loop {
-                    if record.is_terminal() {
-                        jobs.lock().await.remove(&job_id);
-                        let _ = std::fs::remove_dir_all(&record.dir);
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-                }
-            });
-        }
-    }
-}
-
 /// Cancellation guard for a hidden structured validation Job during its
 /// synchronous wait window.
 ///
@@ -2387,135 +1650,6 @@ mod structured_cargo_arg_parity_tests {
             assert_eq!(rejection.output["command_started"], false);
             assert_eq!(rejection.output["failure_kind"], "invalid_arguments");
         }
-    }
-
-    #[derive(Default)]
-    struct RecordingJobKiller {
-        calls: std::sync::Mutex<Vec<(i64, i64)>>,
-    }
-
-    impl super::super::local_jobs::LocalJobKiller for RecordingJobKiller {
-        fn terminate_group(
-            &self,
-            pid: i64,
-            pgid: i64,
-        ) -> super::super::local_jobs::TerminateOutcome {
-            self.calls.lock().unwrap().push((pid, pgid));
-            super::super::local_jobs::TerminateOutcome::AlreadyGone
-        }
-    }
-
-    #[cfg(unix)]
-    fn spawn_owned_validation_test_child() -> std::process::Child {
-        use std::os::unix::process::CommandExt;
-
-        let mut command = std::process::Command::new("sleep");
-        command
-            .arg("30")
-            .process_group(0)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        command.spawn().expect("spawn validation guard test child")
-    }
-
-    #[cfg(unix)]
-    fn unix_process_is_alive(pid: u32) -> bool {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn spawned_validation_guard_cancellation_drop_terminates_owned_group() {
-        let killer = std::sync::Arc::new(RecordingJobKiller::default());
-        let child = spawn_owned_validation_test_child();
-        let pid = child.id();
-        {
-            let _guard = SpawnedValidationGuard::new(child, killer.clone(), i64::from(pid));
-        }
-        assert_eq!(
-            killer.calls.lock().unwrap().as_slice(),
-            &[(i64::from(pid), i64::from(pid))]
-        );
-        assert!(
-            !unix_process_is_alive(pid),
-            "guard Drop must terminate and reap its owned Child"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn spawned_validation_guard_disarm_transfers_cleanup_ownership() {
-        let killer = std::sync::Arc::new(RecordingJobKiller::default());
-        let child = spawn_owned_validation_test_child();
-        let pid = child.id();
-        let mut guard = SpawnedValidationGuard::new(child, killer.clone(), i64::from(pid));
-        let (sender, receiver) = std::sync::mpsc::sync_channel::<std::process::Child>(0);
-        let watcher = std::thread::spawn(move || {
-            let mut child = receiver.recv().expect("receive handed-off Child");
-            assert_eq!(child.id(), pid);
-            let _ = child.kill();
-            child.wait().expect("watcher reaps handed-off Child");
-        });
-
-        let child = guard
-            .take_child_for_handoff()
-            .expect("temporary owner holds Child before handoff");
-        sender.send(child).expect("rendezvous Child handoff");
-        guard.disarm_after_handoff();
-        drop(guard);
-        watcher.join().expect("watcher joins");
-
-        assert!(killer.calls.lock().unwrap().is_empty());
-        assert!(
-            !unix_process_is_alive(pid),
-            "watcher must reap the Child after acknowledged handoff"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn spawned_validation_guard_recovers_failed_handoff_and_reaps_child() {
-        let killer = std::sync::Arc::new(RecordingJobKiller::default());
-        let child = spawn_owned_validation_test_child();
-        let pid = child.id();
-        let mut guard = SpawnedValidationGuard::new(child, killer.clone(), i64::from(pid));
-        let (sender, receiver) = std::sync::mpsc::sync_channel::<std::process::Child>(0);
-        drop(receiver);
-
-        let child = guard
-            .take_child_for_handoff()
-            .expect("temporary owner holds Child before failed handoff");
-        let child = sender
-            .send(child)
-            .expect_err("disconnected receiver returns Child ownership")
-            .0;
-        match guard.restore_child_after_failed_handoff(child) {
-            Ok(()) => {}
-            Err(mut child) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("temporary owner must accept recovered Child");
-            }
-        }
-        guard.cleanup_now();
-        drop(guard);
-
-        assert_eq!(
-            killer.calls.lock().unwrap().as_slice(),
-            &[(i64::from(pid), i64::from(pid))]
-        );
-        assert!(
-            !unix_process_is_alive(pid),
-            "failed handoff must terminate and reap the recovered Child"
-        );
     }
 
     /// The structured Job argv builder must normalize a value-taking Cargo

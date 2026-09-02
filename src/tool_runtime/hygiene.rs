@@ -644,42 +644,6 @@ fn parse_hygiene_diagnostic_stdout(stdout: &str) -> (bool, Vec<Value>) {
     (true, entries)
 }
 
-fn collect_local_untracked_sizes(
-    root: &std::path::Path,
-    entries: &[Value],
-) -> HashMap<String, u64> {
-    let canonical_root = match root.canonicalize() {
-        Ok(root) => root,
-        Err(_) => return HashMap::new(),
-    };
-    let mut sizes = HashMap::new();
-    for entry in entries {
-        if entry.get("tracked_status").and_then(Value::as_str) != Some("untracked") {
-            continue;
-        }
-        let Some(path) = entry.get("path").and_then(Value::as_str) else {
-            continue;
-        };
-        if !hygiene_path_is_metadata_safe(path) {
-            continue;
-        }
-        let full_path = root.join(path);
-        let Ok(metadata) = std::fs::symlink_metadata(&full_path) else {
-            continue;
-        };
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            continue;
-        }
-        let Ok(canonical) = full_path.canonicalize() else {
-            continue;
-        };
-        if canonical.starts_with(&canonical_root) {
-            sizes.insert(path.to_string(), metadata.len());
-        }
-    }
-    sizes
-}
-
 fn hygiene_size_probe_command(paths: &[String]) -> String {
     let mut command = String::new();
     for path in paths {
@@ -787,28 +751,22 @@ impl ToolRuntime {
 
         let (git_available, entries) = parse_hygiene_diagnostic_stdout(&output.stdout);
         let size_bytes_by_path = if git_available {
-            match self.resolve_project(&project).await {
-                Ok(proj) if proj.is_agent() => {
-                    let mut sizes = HashMap::new();
-                    for batch in hygiene_size_probe_batches(&entries) {
-                        let command = hygiene_size_probe_command(&batch);
-                        if let Ok(output) = self
-                            .run_project_internal_posix_script_capture(
-                                &project,
-                                command,
-                                HYGIENE_SCRIPT_TIMEOUT_SECS,
-                                None,
-                            )
-                            .await
-                        {
-                            sizes.extend(parse_hygiene_size_probe_stdout(&output.stdout));
-                        }
-                    }
-                    sizes
+            let mut sizes = HashMap::new();
+            for batch in hygiene_size_probe_batches(&entries) {
+                let command = hygiene_size_probe_command(&batch);
+                if let Ok(output) = self
+                    .run_project_internal_posix_script_capture(
+                        &project,
+                        command,
+                        HYGIENE_SCRIPT_TIMEOUT_SECS,
+                        None,
+                    )
+                    .await
+                {
+                    sizes.extend(parse_hygiene_size_probe_stdout(&output.stdout));
                 }
-                Ok(proj) => collect_local_untracked_sizes(&proj.root(), &entries),
-                Err(_) => HashMap::new(),
             }
+            sizes
         } else {
             HashMap::new()
         };

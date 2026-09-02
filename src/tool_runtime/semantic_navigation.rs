@@ -72,7 +72,6 @@ pub(crate) enum SemanticNavigationStartupStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SemanticNavigationReasonCode {
-    ProjectNotAgentBacked,
     RustNotDetected,
     AgentNotConnected,
     LspCapabilityNotAdvertised,
@@ -291,21 +290,7 @@ impl ToolRuntime {
         &self,
         resolved: &ResolvedProject,
     ) -> SemanticNavigationStartupSummary {
-        if !resolved.config.is_agent() {
-            return SemanticNavigationStartupSummary::unsupported(
-                SemanticNavigationStartupStatus::NotApplicable,
-                SemanticNavigationReasonCode::ProjectNotAgentBacked,
-            );
-        }
-        let client_id = match resolved.config.agent_client_id() {
-            Ok(client_id) => client_id.to_string(),
-            Err(_) => {
-                return SemanticNavigationStartupSummary::unsupported(
-                    SemanticNavigationStartupStatus::AgentUnavailable,
-                    SemanticNavigationReasonCode::AgentNotConnected,
-                )
-            }
-        };
+        let client_id = resolved.config.client_id.clone();
         let Some(client) = self
             .shell_clients
             .get_client_semantic_view(&client_id)
@@ -531,20 +516,6 @@ mod tests {
         let value = serde_json::to_value(summary).unwrap();
         assert_eq!(value["language"], "rust");
         assert_eq!(value["server"], "rust-analyzer");
-    }
-
-    #[test]
-    fn non_agent_summary_is_bounded_and_not_applicable() {
-        let summary = SemanticNavigationStartupSummary::unsupported(
-            SemanticNavigationStartupStatus::NotApplicable,
-            SemanticNavigationReasonCode::ProjectNotAgentBacked,
-        );
-        let value = serde_json::to_value(summary).unwrap();
-        assert_eq!(value["status"], "not_applicable");
-        assert_eq!(value["reason_code"], "project_not_agent_backed");
-        assert_eq!(value["tools"], serde_json::json!([]));
-        assert_eq!(value["preferred_flow"], serde_json::json!([]));
-        assert_eq!(value["limitations"], serde_json::json!([]));
     }
 
     #[test]

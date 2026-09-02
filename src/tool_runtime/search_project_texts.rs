@@ -558,7 +558,7 @@ impl ToolRuntime {
                     let (request, pattern_mode) = search_request_and_pattern_mode(query);
                     let result =
                         match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
-                            Ok(options) if project.is_agent() => {
+                            Ok(options) => {
                                 let first = self
                                     .search_one_resolved_project_text(
                                         project,
@@ -580,15 +580,6 @@ impl ToolRuntime {
                                 } else {
                                     first
                                 }
-                            }
-                            Ok(options) => {
-                                self.search_one_resolved_project_text(
-                                    project,
-                                    output_project,
-                                    options,
-                                    Some(deadline),
-                                )
-                                .await
                             }
                             Err(error) => error.into_tool_result(),
                         };

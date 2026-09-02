@@ -1627,20 +1627,23 @@ async fn handoff_jobs_projection(runtime: &ToolRuntime, session_id: &str) -> Too
 #[tokio::test]
 async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     let temp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_project(temp.path(), "demo");
-    let project = "demo";
+    let runtime = test_runtime();
+    let client_id = "handoff-jobs";
+    let auth = auth_context(None, true);
+    let project =
+        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
+            .await;
     let session = runtime
         .sessions
-        .start_session(Some(project.to_string()), Some("handoff jobs".to_string()));
-    let job_id = "11111111-2222-3333-4444-555555555551";
-    seed_session_projection_job(
+        .start_session(Some(project.clone()), Some("handoff jobs".to_string()));
+    let job_id = seed_session_projection_job(
         &runtime,
-        temp.path(),
-        job_id,
-        project,
+        client_id,
+        &project,
         &session.session_id,
         "running",
         "handoff-secret-output\n",
+        &auth,
     )
     .await;
 
@@ -1664,11 +1667,7 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     let serialized = serde_json::to_string(&active.output["jobs"]).unwrap();
     assert!(!serialized.contains("handoff-secret-output"));
 
-    std::fs::write(
-        temp.path().join(format!(".codex/jobs/{job_id}/status")),
-        "stopped",
-    )
-    .unwrap();
+    finish_session_projection_job(&runtime, client_id, &job_id, "stopped").await;
     let stopped = handoff_jobs_projection(&runtime, &session.session_id).await;
     assert!(stopped.success, "{:?}", stopped.error);
     assert_eq!(stopped.output["jobs"]["active_count"], 0);
@@ -1684,21 +1683,24 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
 #[tokio::test]
 async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
     let temp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_project(temp.path(), "demo");
-    let project = "demo";
+    let runtime = test_runtime();
+    let client_id = "handoff-stop-pending";
+    let auth = auth_context(None, true);
+    let project =
+        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
+            .await;
     let session = runtime.sessions.start_session(
-        Some(project.to_string()),
+        Some(project.clone()),
         Some("handoff stop pending".to_string()),
     );
-    let job_id = "11111111-2222-3333-4444-555555555552";
-    seed_session_projection_job(
+    let job_id = seed_session_projection_job(
         &runtime,
-        temp.path(),
-        job_id,
-        project,
+        client_id,
+        &project,
         &session.session_id,
         "stop_requested",
         "handoff-stop-pending-secret\n",
+        &auth,
     )
     .await;
 

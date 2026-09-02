@@ -59,6 +59,11 @@ fn full_operator_runtime_specs_for_auth(
                 .chain(crate::tool_runtime::memory_management_tool_specs())
                 .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok()),
         );
+        specs.extend(
+            crate::tool_runtime::operator_diagnostic_tool_specs()
+                .into_iter()
+                .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok()),
+        );
     }
     specs
 }
@@ -77,6 +82,7 @@ fn adaptive_runtime_gateway_target_specs(stateless_2026: bool) -> Vec<ToolSpec> 
         specs.extend(crate::tool_runtime::skill_management_tool_specs());
         specs.extend(crate::tool_runtime::memory_runtime_tool_specs());
         specs.extend(crate::tool_runtime::memory_management_tool_specs());
+        specs.extend(crate::tool_runtime::operator_diagnostic_tool_specs());
     }
     specs
 }
@@ -1351,6 +1357,7 @@ pub(super) async fn handle_call(
     let skill_runtime_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let skill_management_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let memory_surface_capable = stateless_2026 && model_surface.supports_operator_extensions();
+    let trace_diagnostics_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let context_request = if context_sidecar_capable {
         match strip_stateless_context_request(&mut params.arguments) {
             Ok(keys) => keys,
@@ -1430,6 +1437,7 @@ pub(super) async fn handle_call(
                 skill_runtime: skill_runtime_capable,
                 skill_management: skill_management_capable,
                 memory_surface: memory_surface_capable,
+                trace_diagnostics: trace_diagnostics_capable,
             },
         )
         .await;

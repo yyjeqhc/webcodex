@@ -14,6 +14,16 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
     resolve_tool_specs(model_visible_tool_definitions())
 }
 
+/// Fixed admin-only forensic trace reader. It remains globally ModelHidden and
+/// is projected only by capable Stateless MCP 2026 operator adapters.
+pub(crate) fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {
+    vec![tool_spec(
+        "read_tool_trace",
+        "Admin-only bounded reader for Server-hosted full tool-request traces. Omit payload_index to list safe payload metadata first; then read one bounded JSON payload by index. Available only when full trace mode is enabled. Trace payloads may contain sensitive tool data and never grant execution authority.",
+        super::input_schemas::read_tool_trace_input_schema(),
+    )]
+}
+
 /// Fixed read-only project Memory runtime contract. Definitions remain hidden
 /// from generic/GPT Action registries and are projected only by capable
 /// Stateless MCP Full Operator adapters.

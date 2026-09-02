@@ -372,6 +372,76 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
 }
 
 #[test]
+fn trace_reader_is_stateless_operator_only_admin_scoped_and_schema_static() {
+    let render =
+        |surface: ModelSurface, stateless_2026: bool, auth: Option<&crate::auth::AuthContext>| {
+            mcp_tools_list_payload_with_features_for_auth(
+                surface,
+                false,
+                false,
+                true,
+                stateless_2026,
+                auth,
+            )
+        };
+    let names = |payload: &Value| {
+        payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let admin = crate::auth::AuthContext {
+        role: Some("admin".to_string()),
+        scopes: vec![crate::auth::SCOPE_ADMIN.to_string()],
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
+    let ordinary = crate::auth::AuthContext {
+        scopes: vec![crate::auth::SCOPE_PROJECT_READ.to_string()],
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token)
+    };
+
+    assert!(
+        !names(&render(ModelSurface::FullOperatorRuntime, true, None))
+            .contains(&"read_tool_trace".to_string())
+    );
+    assert!(!names(&render(
+        ModelSurface::FullOperatorRuntime,
+        true,
+        Some(&ordinary)
+    ))
+    .contains(&"read_tool_trace".to_string()));
+    assert!(!names(&render(
+        ModelSurface::FullOperatorRuntime,
+        false,
+        Some(&admin)
+    ))
+    .contains(&"read_tool_trace".to_string()));
+    assert!(
+        !names(&render(ModelSurface::LocalCoding, true, Some(&admin)))
+            .contains(&"read_tool_trace".to_string())
+    );
+
+    let full = render(ModelSurface::FullOperatorRuntime, true, Some(&admin));
+    let tool = full["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "read_tool_trace")
+        .expect("admin Stateless Full Operator trace reader");
+    assert_eq!(tool["inputSchema"]["required"], json!(["trace_ref"]));
+    assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+    assert!(tool["inputSchema"]["properties"]["payload_index"].is_object());
+    assert!(tool["outputSchema"]["properties"]["output"]["properties"]["payload"].is_object());
+
+    let adaptive = render(ModelSurface::AdaptiveRuntime, true, Some(&admin));
+    let adaptive_names = names(&adaptive);
+    assert!(!adaptive_names.contains(&"read_tool_trace".to_string()));
+}
+
+#[test]
 fn skill_runtime_tools_are_stateless_full_operator_only_and_schema_static() {
     let generic_names = registered_tool_specs()
         .into_iter()

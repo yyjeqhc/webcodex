@@ -345,6 +345,7 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
         "session_hint",
         "session_id",
         "session_recorded",
+        "trace_ref",
     ]
     .into_iter()
     .collect();

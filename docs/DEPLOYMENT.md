@@ -206,6 +206,20 @@ mode. Trace I/O, compression, pruning, or correlation failures are fail-open for
 the tool itself and are reported as `tool_trace_capture_failed` rather than
 changing execution correctness.
 
+With `full` mode enabled, eligible failed model calls may expose an opaque
+`trace_ref` only to an `admin` caller on a Stateless MCP 2026 operator-capable
+surface. The ModelHidden `read_tool_trace` tool reads that Server-hosted store;
+Full Operator Runtime projects it directly, while Adaptive Runtime invokes it
+through `call_runtime_tool`. The tool is unavailable to ordinary runtime scopes,
+Local Coding, legacy MCP protocol eras, and HTTP runtime calls. It lists bounded
+payload metadata before raw content is requested, never accepts or returns native
+trace paths, verifies the owned trace directory/index plus payload size and
+SHA-256, and reads at most 256 KiB of uncompressed JSON for one selected payload
+(with a 512 KiB compressed-file safety ceiling). Larger retained payloads remain
+operator-visible as metadata but are not returned to the model. `read_tool_trace`
+does not recursively persist its own raw payload, and its Workflow Session audit
+record contains only trace metadata rather than the selected body.
+
 When a tool dispatches to a Runner, the Server records the mapping from
 `server_trace_id` to the existing `runner_request_id`, Runner client/instance,
 transport, and advertised build version/commit; the full store also captures the

@@ -182,6 +182,16 @@ patch、script/stdin、命令输出、user message 或其他 tool payload，应�
 trace 写盘、压缩、清理或 correlation 失败只产生 `tool_trace_capture_failed`，不会改变
 tool execution correctness。
 
+开启 `full` 后，只有 Stateless MCP 2026 operator-capable surface 上的 `admin` caller，
+才可能在符合条件的失败结果中收到 opaque `trace_ref`。ModelHidden `read_tool_trace`
+读取对应的 Server-hosted store：Full Operator Runtime 直接投影该工具，Adaptive Runtime
+则通过 `call_runtime_tool` 调用；普通 runtime scope、Local Coding、旧 MCP protocol era 与
+HTTP runtime call 都不能使用。reader 会先返回有界 payload metadata，再按 index 读取单个
+raw payload；它不接受或返回 native trace path，会重新检查 owned trace directory/index、
+payload size 与 SHA-256。一次最多向模型返回 256 KiB 的未压缩 JSON，并额外限制压缩文件
+不超过 512 KiB；更大的已保留 payload 只返回 metadata，不返回 body。`read_tool_trace`
+不会递归持久化自己读取出的 raw payload，其 Workflow Session audit 也只记录 trace metadata。
+
 当 tool 派发到 Runner 时，Server 会记录 `server_trace_id` 到现有
 `runner_request_id` 的映射，以及 Runner client/instance、transport 和注册时报告的
 build version/commit；full store 还会把 exact typed Runner request 记录为

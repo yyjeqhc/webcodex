@@ -332,6 +332,13 @@ pub(crate) fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Va
     let mut output_properties = output_properties;
     output_properties.extend([
         (
+            "trace_ref",
+            schema_type(
+                "string",
+                "Opaque operator diagnostic reference emitted only on eligible failed calls while full tracing is enabled. Read with read_tool_trace; on Adaptive Runtime invoke that target through call_runtime_tool. Never a native path.",
+            ),
+        ),
+        (
             "session_recorded",
             schema_type(
                 "boolean",

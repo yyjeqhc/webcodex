@@ -105,6 +105,22 @@ authoritative machine-readable result。普通 text content 只保留简短的�
 `structuredContent`。需要读取 tool data 的 client 必须消费 `structuredContent`，不能依赖
 解析 `content.text`。
 
+默认 failure projection 也遵循同一分层原则：会保留真正影响下一步安全动作的事实，例如
+failure/recovery kind、`not_started` / `outcome_unknown`、exit state 与有界 process output、
+Job handoff identifier、permission denial 和 reconciliation hint。已经完成审计用途的 recorder /
+diagnostic telemetry 不再默认回给模型，例如 auto-approved permission envelope、Session recorder
+id，以及 `run_process` / `run_script` 的 executor、cwd、duration、declared purpose 与
+command/script summary。
+
+当 Server 显式开启 full tool-request trace 时，Stateless MCP 2026 operator-capable surface
+上的 `admin` caller 在符合条件的失败结果中还可能收到一个 opaque `trace_ref`。
+`read_tool_trace` 是 ModelHidden、admin-only、强制有界的 Server-hosted forensic reader；
+`full_operator_runtime` 会直接投影它，`adaptive_runtime` 则把它作为
+`call_runtime_tool` 后面的 long-tail target。Local Coding、旧 MCP protocol era 与普通 HTTP
+runtime call 都不能使用它。调用方应先读取 payload index，再按需选择单个 payload；reader
+不会返回 native trace path，不会递归 capture 自己的 raw result，raw payload body 也不会被
+复制到 durable Workflow Session ledger。
+
 这是一次有意的 `0.3.x -> 0.4.0` cleanup boundary，并同时适用于 WebCodex 支持的
 `2025-06-18`、`2025-11-25` 与 `2026-07-28` MCP protocol era。继续支持这些 protocol
 version 不代表继续保留 0.4 之前“在 text 中重复整份 JSON”的 result representation。

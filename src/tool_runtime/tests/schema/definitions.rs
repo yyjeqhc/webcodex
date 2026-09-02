@@ -234,6 +234,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "start_session",
         "start_coding_task",
         "job_tail",
+        "read_tool_trace",
         "skill_list",
         "skill_read_file",
         "skill_versions",

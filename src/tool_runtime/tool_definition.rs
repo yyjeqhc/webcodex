@@ -11,6 +11,7 @@ mod checkpoints;
 mod coding_agents;
 mod communication;
 mod computer;
+mod diagnostics;
 mod discovery;
 mod edits;
 mod files;
@@ -583,6 +584,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     checkpoints::DEFINITIONS,
     coding_agents::DEFINITIONS,
     computer::DEFINITIONS,
+    diagnostics::DEFINITIONS,
     discovery::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,

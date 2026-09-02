@@ -2070,6 +2070,17 @@ pub enum ToolCall {
         client_id: Option<String>,
     },
 
+    /// Admin-only bounded read of one Server-hosted full tool-request trace.
+    ReadToolTrace {
+        trace_ref: String,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        payload_index: Option<usize>,
+    },
+
     /// Return a compact, bounded tool manifest with categories, risk summary,
     /// recommended flows, and optional intent-shaped tool views. Intent views
     /// only filter and rank discovery output; they do not change tool behavior,
@@ -2641,6 +2652,7 @@ impl ToolCall {
             Self::CreateProject { .. } => "create_project",
             Self::ListAgents { .. } => "list_agents",
             Self::RuntimeStatus { .. } => "runtime_status",
+            Self::ReadToolTrace { .. } => "read_tool_trace",
             Self::ToolManifest { .. } => "tool_manifest",
         }
     }

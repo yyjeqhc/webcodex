@@ -423,6 +423,37 @@ async fn adaptive_runtime_requires_gateway_for_long_tail_and_preserves_dispatch(
         value["result"]["structuredContent"]["output"]["returned_count"],
         1
     );
+
+    let admin = crate::auth::AuthContext {
+        role: Some("admin".to_string()),
+        scopes: vec![crate::auth::SCOPE_ADMIN.to_string()],
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
+    let trace_gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(723)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "read_tool_trace",
+                    "arguments": {"trace_ref": "not-a-trace-ref"}
+                }
+            })),
+        ),
+        Some(&admin),
+    )
+    .await;
+    let McpOutcome::Ok(value) = trace_gateway else {
+        panic!("adaptive gateway must admit the admin-only trace reader target");
+    };
+    assert_eq!(value["result"]["structuredContent"]["success"], false);
+    assert!(matches!(
+        value["result"]["structuredContent"]["output"]["error_kind"].as_str(),
+        Some("trace_mode_not_full" | "invalid_trace_ref")
+    ));
 }
 
 #[tokio::test]

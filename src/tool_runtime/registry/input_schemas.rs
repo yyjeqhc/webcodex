@@ -78,7 +78,8 @@ pub(crate) use discovery::{
 };
 pub(crate) use discovery::{
     empty_input_schema, list_agents_input_schema, list_projects_input_schema,
-    list_tools_input_schema, runtime_status_input_schema, tool_manifest_input_schema,
+    list_tools_input_schema, read_tool_trace_input_schema, runtime_status_input_schema,
+    tool_manifest_input_schema,
 };
 pub(crate) use files::{
     list_project_files_input_schema, list_project_tracked_files_input_schema,

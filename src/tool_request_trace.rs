@@ -27,9 +27,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::future::Future;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -98,8 +98,29 @@ enum TraceWrite {
         event: Value,
         config: TraceStoreConfig,
     },
-    #[cfg(test)]
     Flush(mpsc::Sender<()>),
+}
+
+const MAX_MODEL_TRACE_PAYLOAD_BYTES: usize = 256 * 1024;
+const MAX_MODEL_TRACE_COMPRESSED_BYTES: usize = 512 * 1024;
+const MAX_TRACE_EVENTS_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TRACE_PAYLOAD_ENTRIES: usize = 4096;
+const DEFAULT_TRACE_INDEX_LIMIT: usize = 20;
+const MAX_TRACE_INDEX_LIMIT: usize = 64;
+
+#[derive(Debug, Clone)]
+pub(crate) struct TraceReadError {
+    pub(crate) kind: &'static str,
+    pub(crate) message: String,
+}
+
+impl TraceReadError {
+    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -167,6 +188,13 @@ where
 
 fn current_active_trace_id() -> Option<String> {
     ACTIVE_TOOL_TRACE_ID.try_with(Clone::clone).ok()
+}
+
+/// Opaque reference for the currently executing inbound request, but only when
+/// the Server is actually retaining full payload traces. This never exposes the
+/// native trace root or a filesystem path.
+pub(crate) fn current_full_trace_ref() -> Option<String> {
+    full_trace_enabled().then(current_active_trace_id).flatten()
 }
 
 /// Safe JSON-RPC id summary: type + length + short digest. Never the raw string.
@@ -361,12 +389,342 @@ fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
                     "tool_trace_capture_failed"
                 ),
             },
-            #[cfg(test)]
             TraceWrite::Flush(done) => {
                 let _ = done.send(());
             }
         }
     }
+}
+
+fn flush_trace_writer_for_read() -> Result<(), TraceReadError> {
+    let Some(writer) = trace_writer() else {
+        return Err(TraceReadError::new(
+            "trace_store_unavailable",
+            "full trace writer is unavailable",
+        ));
+    };
+    let (done_tx, done_rx) = mpsc::channel();
+    match writer.sender.try_send(TraceWrite::Flush(done_tx)) {
+        Ok(()) => done_rx.recv_timeout(Duration::from_secs(2)).map_err(|_| {
+            TraceReadError::new("trace_store_busy", "full trace writer flush timed out")
+        }),
+        Err(mpsc::TrySendError::Full(_)) => Err(TraceReadError::new(
+            "trace_store_busy",
+            "full trace writer queue is busy; retry the diagnostic read",
+        )),
+        Err(mpsc::TrySendError::Disconnected(_)) => Err(TraceReadError::new(
+            "trace_store_unavailable",
+            "full trace writer is disconnected",
+        )),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct IndexedTracePayload {
+    phase: String,
+    payload_bytes: usize,
+    compressed_bytes: usize,
+    payload_sha256: String,
+    file_name: String,
+}
+
+fn invalid_trace_ref() -> TraceReadError {
+    TraceReadError::new(
+        "invalid_trace_ref",
+        "trace_ref must be the canonical UUID returned by an eligible failed tool call",
+    )
+}
+
+fn validate_trace_ref(trace_ref: &str) -> Result<(), TraceReadError> {
+    let parsed = Uuid::parse_str(trace_ref).map_err(|_| invalid_trace_ref())?;
+    if parsed.to_string() != trace_ref {
+        return Err(invalid_trace_ref());
+    }
+    Ok(())
+}
+
+fn require_private_regular_file(
+    path: &Path,
+    kind: &'static str,
+) -> Result<fs::Metadata, TraceReadError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            TraceReadError::new(
+                "trace_not_found",
+                "trace data is unavailable or has expired",
+            )
+        } else {
+            TraceReadError::new(kind, "trace storage could not be inspected safely")
+        }
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(TraceReadError::new(
+            kind,
+            "trace storage failed the regular-file safety check",
+        ));
+    }
+    Ok(metadata)
+}
+
+fn require_private_directory(
+    path: &Path,
+    not_found_kind: &'static str,
+) -> Result<(), TraceReadError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            TraceReadError::new(not_found_kind, "trace data is unavailable or has expired")
+        } else {
+            TraceReadError::new(
+                "trace_store_unavailable",
+                "trace storage could not be inspected safely",
+            )
+        }
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(TraceReadError::new(
+            "trace_corrupt",
+            "trace storage failed the directory safety check",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_trace_payload_index(
+    trace_ref: &str,
+    trace_dir: &Path,
+) -> Result<Vec<IndexedTracePayload>, TraceReadError> {
+    require_private_regular_file(&trace_dir.join(TRACE_OWNER_MARKER), "trace_corrupt")?;
+    let events_path = trace_dir.join("events.jsonl");
+    let metadata = require_private_regular_file(&events_path, "trace_corrupt")?;
+    if metadata.len() > MAX_TRACE_EVENTS_FILE_BYTES {
+        return Err(TraceReadError::new(
+            "trace_too_large",
+            "trace event index exceeds the diagnostic read ceiling",
+        ));
+    }
+    let text = fs::read_to_string(events_path)
+        .map_err(|_| TraceReadError::new("trace_corrupt", "trace event index is unreadable"))?;
+    let mut payloads = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let event: Value = serde_json::from_str(line).map_err(|_| {
+            TraceReadError::new("trace_corrupt", "trace event index contains invalid JSON")
+        })?;
+        if event.get("event").and_then(Value::as_str) != Some("tool_trace_payload_captured") {
+            continue;
+        }
+        if event.get("server_trace_id").and_then(Value::as_str) != Some(trace_ref)
+            || event.get("encoding").and_then(Value::as_str) != Some("json+zstd")
+        {
+            return Err(TraceReadError::new(
+                "trace_corrupt",
+                "trace payload index correlation is invalid",
+            ));
+        }
+        let phase = event
+            .get("phase")
+            .and_then(Value::as_str)
+            .filter(|phase| !phase.is_empty() && phase.len() <= 80 && safe_phase(phase) == *phase)
+            .ok_or_else(|| TraceReadError::new("trace_corrupt", "trace payload phase is invalid"))?
+            .to_string();
+        let payload_bytes = event
+            .get("payload_bytes")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| TraceReadError::new("trace_corrupt", "trace payload size is invalid"))?;
+        let compressed_bytes = event
+            .get("compressed_bytes")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| {
+                TraceReadError::new("trace_corrupt", "trace compressed size is invalid")
+            })?;
+        let payload_sha256 = event
+            .get("payload_sha256")
+            .and_then(Value::as_str)
+            .filter(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or_else(|| TraceReadError::new("trace_corrupt", "trace payload digest is invalid"))?
+            .to_string();
+        let payload_path = event
+            .get("payload_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                TraceReadError::new("trace_corrupt", "trace payload location is invalid")
+            })?;
+        let Some(file_name) = payload_path.strip_prefix("payloads/") else {
+            return Err(TraceReadError::new(
+                "trace_corrupt",
+                "trace payload location is outside the owned payload directory",
+            ));
+        };
+        if file_name.is_empty()
+            || file_name.contains('/')
+            || file_name.contains('\\')
+            || file_name.contains("..")
+            || !file_name.ends_with(".json.zst")
+        {
+            return Err(TraceReadError::new(
+                "trace_corrupt",
+                "trace payload filename failed the safety check",
+            ));
+        }
+        payloads.push(IndexedTracePayload {
+            phase,
+            payload_bytes,
+            compressed_bytes,
+            payload_sha256,
+            file_name: file_name.to_string(),
+        });
+        if payloads.len() > MAX_TRACE_PAYLOAD_ENTRIES {
+            return Err(TraceReadError::new(
+                "trace_too_large",
+                "trace payload index exceeds the diagnostic entry ceiling",
+            ));
+        }
+    }
+    Ok(payloads)
+}
+
+fn trace_payload_metadata(index: usize, payload: &IndexedTracePayload) -> Value {
+    json!({
+        "payload_index": index,
+        "phase": payload.phase,
+        "payload_bytes": payload.payload_bytes,
+        "compressed_bytes": payload.compressed_bytes,
+        "payload_sha256": payload.payload_sha256,
+        "payload_available": payload.payload_bytes <= MAX_MODEL_TRACE_PAYLOAD_BYTES,
+    })
+}
+
+pub(crate) fn read_full_trace(
+    trace_ref: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    payload_index: Option<usize>,
+) -> Result<Value, TraceReadError> {
+    if !full_trace_enabled() {
+        return Err(TraceReadError::new(
+            "trace_mode_not_full",
+            "full tool-request tracing is not enabled on this Server",
+        ));
+    }
+    validate_trace_ref(trace_ref)?;
+    if payload_index.is_some() && (offset.is_some() || limit.is_some()) {
+        return Err(TraceReadError::new(
+            "invalid_trace_request",
+            "offset and limit cannot be combined with payload_index",
+        ));
+    }
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(DEFAULT_TRACE_INDEX_LIMIT);
+    if offset > 4095 || !(1..=MAX_TRACE_INDEX_LIMIT).contains(&limit) {
+        return Err(TraceReadError::new(
+            "invalid_trace_request",
+            "trace listing bounds are outside the supported range",
+        ));
+    }
+    if payload_index.is_some_and(|index| index > 4095) {
+        return Err(TraceReadError::new(
+            "invalid_trace_request",
+            "payload_index is outside the supported range",
+        ));
+    }
+
+    flush_trace_writer_for_read()?;
+    let trace_dir = trace_root().join(trace_ref);
+    require_private_directory(&trace_dir, "trace_not_found")?;
+    let payloads = parse_trace_payload_index(trace_ref, &trace_dir)?;
+
+    let Some(payload_index) = payload_index else {
+        let returned = payloads
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(limit)
+            .map(|(index, payload)| trace_payload_metadata(index, payload))
+            .collect::<Vec<_>>();
+        let next_offset =
+            (offset + returned.len() < payloads.len()).then_some(offset + returned.len());
+        return Ok(json!({
+            "trace_ref": trace_ref,
+            "trace_mode": "full",
+            "payload_count": payloads.len(),
+            "returned_count": returned.len(),
+            "offset": offset,
+            "next_offset": next_offset,
+            "payloads": returned,
+            "max_payload_bytes": MAX_MODEL_TRACE_PAYLOAD_BYTES,
+        }));
+    };
+
+    let Some(indexed) = payloads.get(payload_index) else {
+        return Err(TraceReadError::new(
+            "invalid_payload_index",
+            "payload_index does not identify a retained payload in this trace",
+        ));
+    };
+    if indexed.payload_bytes > MAX_MODEL_TRACE_PAYLOAD_BYTES {
+        return Ok(json!({
+            "trace_ref": trace_ref,
+            "trace_mode": "full",
+            "payload_index": payload_index,
+            "phase": indexed.phase,
+            "payload_bytes": indexed.payload_bytes,
+            "payload_sha256": indexed.payload_sha256,
+            "payload_available": false,
+            "max_payload_bytes": MAX_MODEL_TRACE_PAYLOAD_BYTES,
+            "reason": "payload_exceeds_model_read_limit",
+        }));
+    }
+    if indexed.compressed_bytes > MAX_MODEL_TRACE_COMPRESSED_BYTES {
+        return Err(TraceReadError::new(
+            "trace_corrupt",
+            "trace payload compressed size exceeds the diagnostic read ceiling",
+        ));
+    }
+
+    let payload_dir = trace_dir.join("payloads");
+    require_private_directory(&payload_dir, "trace_corrupt")?;
+    let payload_path = payload_dir.join(&indexed.file_name);
+    let metadata = require_private_regular_file(&payload_path, "trace_corrupt")?;
+    if metadata.len() != indexed.compressed_bytes as u64 {
+        return Err(TraceReadError::new(
+            "trace_corrupt",
+            "trace payload compressed size does not match its index",
+        ));
+    }
+    let file = File::open(payload_path)
+        .map_err(|_| TraceReadError::new("trace_corrupt", "trace payload is unreadable"))?;
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .map_err(|_| TraceReadError::new("trace_corrupt", "trace payload decompression failed"))?;
+    let mut raw = Vec::with_capacity(indexed.payload_bytes);
+    decoder
+        .take((MAX_MODEL_TRACE_PAYLOAD_BYTES + 1) as u64)
+        .read_to_end(&mut raw)
+        .map_err(|_| TraceReadError::new("trace_corrupt", "trace payload decompression failed"))?;
+    if raw.len() != indexed.payload_bytes || sha256_hex(&raw) != indexed.payload_sha256 {
+        return Err(TraceReadError::new(
+            "trace_corrupt",
+            "trace payload failed its size or digest check",
+        ));
+    }
+    let payload: Value = serde_json::from_slice(&raw)
+        .map_err(|_| TraceReadError::new("trace_corrupt", "trace payload is not valid JSON"))?;
+    Ok(json!({
+        "trace_ref": trace_ref,
+        "trace_mode": "full",
+        "payload_index": payload_index,
+        "phase": indexed.phase,
+        "payload_bytes": indexed.payload_bytes,
+        "payload_sha256": indexed.payload_sha256,
+        "payload_available": true,
+        "max_payload_bytes": MAX_MODEL_TRACE_PAYLOAD_BYTES,
+        "payload": payload,
+    }))
 }
 
 fn enqueue_trace_write(write: TraceWrite, trace_id: &str, phase: &str) {
@@ -1125,6 +1483,7 @@ pub struct ToolRequestLifecycle {
     jsonrpc_id: String,
     method: String,
     tool_name: Option<String>,
+    suppress_payload_capture: bool,
     started: Instant,
     completed: AtomicBool,
 }
@@ -1137,6 +1496,7 @@ impl ToolRequestLifecycle {
         method: impl Into<String>,
         tool_name: Option<String>,
     ) -> Self {
+        let suppress_payload_capture = tool_name.as_deref() == Some("read_tool_trace");
         Self {
             prefix,
             mode: crate::config::tool_request_trace_mode(),
@@ -1144,6 +1504,7 @@ impl ToolRequestLifecycle {
             jsonrpc_id: jsonrpc_id.into(),
             method: method.into(),
             tool_name,
+            suppress_payload_capture,
             started: Instant::now(),
             completed: AtomicBool::new(false),
         }
@@ -1162,7 +1523,7 @@ impl ToolRequestLifecycle {
     }
 
     pub fn capture_payload(&self, phase: &str, value: &Value) {
-        if self.full_enabled() {
+        if self.full_enabled() && !self.suppress_payload_capture {
             capture_payload_for_trace(&self.trace_id, phase, value);
         }
     }
@@ -1172,6 +1533,7 @@ impl ToolRequestLifecycle {
     }
 
     pub fn set_tool_name(&mut self, tool_name: Option<String>) {
+        self.suppress_payload_capture = tool_name.as_deref() == Some("read_tool_trace");
         self.tool_name = tool_name;
     }
 
@@ -1447,6 +1809,110 @@ mod tests {
         let events = fs::read_to_string(temp.path().join("trace-full/events.jsonl")).unwrap();
         assert!(events.contains("raw_arguments"));
         assert!(events.contains("payload_sha256"));
+    }
+
+    #[test]
+    fn full_mode_trace_reader_lists_then_reads_verified_payload_without_native_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let trace_id = Uuid::new_v4().to_string();
+        let payload = json!({
+            "private_diagnostic": "visible only through the side channel",
+            "nested": [1, 2, 3]
+        });
+        assert!(persist_payload(&trace_id, "runner_result", &payload)
+            .unwrap()
+            .is_some());
+
+        let listing = read_full_trace(&trace_id, None, None, None).unwrap();
+        assert_eq!(listing["payload_count"], 1);
+        assert_eq!(listing["returned_count"], 1);
+        assert_eq!(listing["payloads"][0]["payload_index"], 0);
+        assert_eq!(listing["payloads"][0]["phase"], "runner_result");
+        assert_eq!(listing["payloads"][0]["payload_available"], true);
+        let serialized_listing = serde_json::to_string(&listing).unwrap();
+        assert!(!serialized_listing.contains("payload_path"));
+        assert!(!serialized_listing.contains(temp.path().to_string_lossy().as_ref()));
+        assert!(!serialized_listing.contains("private_diagnostic"));
+
+        let selected = read_full_trace(&trace_id, None, None, Some(0)).unwrap();
+        assert_eq!(selected["payload_index"], 0);
+        assert_eq!(selected["phase"], "runner_result");
+        assert_eq!(selected["payload_available"], true);
+        assert_eq!(selected["payload"], payload);
+    }
+
+    #[test]
+    fn full_mode_trace_reader_rejects_unsafe_refs_and_never_returns_oversize_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let unsafe_ref = read_full_trace("../etc/passwd", None, None, None).unwrap_err();
+        assert_eq!(unsafe_ref.kind, "invalid_trace_ref");
+        let canonical = Uuid::new_v4().to_string();
+        let uppercase = canonical.to_ascii_uppercase();
+        let uppercase_error = read_full_trace(&uppercase, None, None, None).unwrap_err();
+        assert_eq!(uppercase_error.kind, "invalid_trace_ref");
+
+        let large_payload = json!({"body": "x".repeat(MAX_MODEL_TRACE_PAYLOAD_BYTES + 1024)});
+        assert!(
+            persist_payload(&canonical, "final_response", &large_payload)
+                .unwrap()
+                .is_some()
+        );
+        let selected = read_full_trace(&canonical, None, None, Some(0)).unwrap();
+        assert_eq!(selected["payload_available"], false);
+        assert_eq!(selected["reason"], "payload_exceeds_model_read_limit");
+        assert_eq!(selected["max_payload_bytes"], MAX_MODEL_TRACE_PAYLOAD_BYTES);
+        assert!(selected.get("payload").is_none());
+    }
+
+    #[test]
+    fn read_tool_trace_lifecycle_never_recursively_captures_payloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let trace_id = Uuid::new_v4().to_string();
+        let mut guard = ToolRequestLifecycle::new(
+            "mcp",
+            trace_id.clone(),
+            "none",
+            "tools/call",
+            Some("call_runtime_tool".into()),
+        );
+        // Adaptive routing begins at the gateway and later identifies the real
+        // target. The setter must suppress every subsequent forensic payload.
+        guard.set_tool_name(Some("read_tool_trace".into()));
+        guard.capture_payload(
+            "effective_arguments",
+            &json!({"trace_ref": Uuid::new_v4().to_string()}),
+        );
+        guard.capture_payload("final_response", &json!({"payload": "PRIVATE_RAW_TRACE"}));
+        drop(guard);
+        flush_full_trace_writer();
+        assert!(payload_files(temp.path(), &trace_id).is_empty());
     }
 
     #[test]

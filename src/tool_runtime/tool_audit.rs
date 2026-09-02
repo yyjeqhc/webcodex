@@ -1456,6 +1456,21 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
 
 pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {
     match tool_name {
+        "read_tool_trace" => serde_json::json!({
+            "trace_ref": output.get("trace_ref").cloned().unwrap_or(Value::Null),
+            "trace_mode": output.get("trace_mode").cloned().unwrap_or(Value::Null),
+            "payload_count": output.get("payload_count").cloned().unwrap_or(Value::Null),
+            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
+            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
+            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
+            "payload_index": output.get("payload_index").cloned().unwrap_or(Value::Null),
+            "phase": output.get("phase").cloned().unwrap_or(Value::Null),
+            "payload_bytes": output.get("payload_bytes").cloned().unwrap_or(Value::Null),
+            "payload_sha256": output.get("payload_sha256").cloned().unwrap_or(Value::Null),
+            "payload_available": output.get("payload_available").cloned().unwrap_or(Value::Null),
+            "reason": output.get("reason").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+        }),
         "coding_agent_start" | "coding_agent_cancel" => serde_json::json!({
             "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
             "project": output.get("project").cloned().unwrap_or(Value::Null),
@@ -2546,6 +2561,34 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("Private App"));
         assert!(!serialized.contains("application_"));
         assert!(!serialized.contains("native_identity"));
+    }
+
+    #[test]
+    fn trace_reader_audit_result_never_persists_raw_payload() {
+        let summary = session_log_result_for_tool(
+            "read_tool_trace",
+            &json!({
+                "trace_ref": "01234567-89ab-cdef-0123-456789abcdef",
+                "trace_mode": "full",
+                "payload_index": 2,
+                "phase": "final_response",
+                "payload_bytes": 123,
+                "payload_sha256": "a".repeat(64),
+                "payload_available": true,
+                "payload": {
+                    "private_token": "PRIVATE_RAW_TRACE_BODY",
+                    "stdout": "PRIVATE_OUTPUT"
+                }
+            }),
+        );
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["payload_index"], 2);
+        assert_eq!(summary["phase"], "final_response");
+        assert_eq!(summary["payload_bytes"], 123);
+        assert!(summary.get("payload").is_none());
+        assert!(!serialized.contains("PRIVATE_RAW_TRACE_BODY"));
+        assert!(!serialized.contains("PRIVATE_OUTPUT"));
+        assert!(!serialized.contains("private_token"));
     }
 
     #[test]

@@ -573,7 +573,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Process duration in milliseconds; omitted on ordinary synchronous terminal success."),
+                    schema_type("integer", "Process duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
                 (
                     "exit_code",
@@ -635,22 +635,22 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose; omitted on ordinary synchronous terminal success because it echoes the request.")),
+                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "process_summary",
                     schema_type(
                         "string",
-                        "Bounded human-readable executable/argv summary; never execution input. Omitted on ordinary synchronous terminal success when the canonical run_process source is implied by tool identity.",
+                        "Bounded human-readable executable/argv summary; never execution input. Omitted on ordinary synchronous terminal success and from the default model-facing failure projection; full operator trace diagnostics can retain the canonical execution payload when enabled.",
                     ),
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd; omitted on ordinary synchronous terminal success."),
+                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent; omitted on ordinary synchronous terminal success.")),
+                ("executor", schema_type("string", "Executor type: local or agent. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "execution_source",
-                    schema_type("string", "Canonical source is run_process. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),
+                    schema_type("string", "Canonical source is run_process. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
                 ),
                 (
                     "execution_state",
@@ -669,7 +669,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Script duration in milliseconds; omitted on ordinary synchronous terminal success."),
+                    schema_type("integer", "Script duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
                 (
                     "exit_code",
@@ -734,12 +734,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose; omitted on ordinary synchronous terminal success because it echoes the request.")),
+                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "script_summary",
                     schema_type(
                         "string",
-                        "Bounded body-free language/byte/argument summary; never execution input. Omitted on ordinary synchronous terminal success when the canonical run_script source is implied by tool identity.",
+                        "Bounded body-free language/byte/argument summary; never execution input. Omitted on ordinary synchronous terminal success and from the default model-facing failure projection; full operator trace diagnostics can retain the canonical execution payload when enabled.",
                     ),
                 ),
                 (
@@ -748,12 +748,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd; omitted on ordinary synchronous terminal success."),
+                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent; omitted on ordinary synchronous terminal success.")),
+                ("executor", schema_type("string", "Executor type: local or agent. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "execution_source",
-                    schema_type("string", "Canonical source is run_script. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),
+                    schema_type("string", "Canonical source is run_script. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
                 ),
                 (
                     "execution_state",

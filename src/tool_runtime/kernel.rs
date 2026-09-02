@@ -69,6 +69,9 @@ pub(crate) struct ToolProtocolCapabilities {
     /// read, manage, and administrator authority comes only from canonical
     /// ToolDefinition metadata.
     pub(crate) memory_surface: bool,
+    /// Protocol-surface support for privileged forensic trace retrieval. Caller
+    /// authority is still derived only from the canonical ToolDefinition.
+    pub(crate) trace_diagnostics: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +218,7 @@ impl ToolRuntime {
                 skill_runtime: context_sidecar_capable,
                 skill_management: false,
                 memory_surface: false,
+                trace_diagnostics: false,
             },
         )
         .await
@@ -256,6 +260,18 @@ impl ToolRuntime {
         // One trusted identity per real kernel request. The outer recorder and
         // inner business ledger pairs inherit it, but it never affects execution.
         recorder_metadata.assign_logical_invocation();
+        if request.tool_name == "read_tool_trace" && !capabilities.trace_diagnostics {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Tool trace diagnostics are available only on Stateless MCP 2026 operator surfaces"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+            };
+        }
         // Project Memory tools are kernel-known but globally model-hidden. One
         // explicit protocol-surface capability gates all six fixed tools; their
         // canonical ToolDefinition authority decides caller access below.
@@ -818,8 +834,23 @@ impl ToolRuntime {
             );
             super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
         }
-        // Final model-facing projection: the authoritative permission decision
-        // and recorder event have already been consumed by the Session ledger.
+        // Final model-facing projection: authoritative permission decisions and
+        // recorder events have already been consumed by the Session ledger.
+        super::dispatch::sparsify_failure_model_result_metadata(&request.tool_name, &mut result);
+        if !result.success
+            && request.tool_name != "read_tool_trace"
+            && capabilities.trace_diagnostics
+            && context
+                .auth
+                .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
+        {
+            if let (Some(trace_ref), Some(output)) = (
+                crate::tool_request_trace::current_full_trace_ref(),
+                result.output.as_object_mut(),
+            ) {
+                output.insert("trace_ref".to_string(), Value::String(trace_ref));
+            }
+        }
         super::dispatch::sparsify_success_model_result_metadata(&mut result);
         ToolCallOutcome {
             success: result.success,

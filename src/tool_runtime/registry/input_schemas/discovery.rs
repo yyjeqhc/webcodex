@@ -159,6 +159,40 @@ pub(crate) fn runtime_status_input_schema() -> Value {
     })
 }
 
+pub(crate) fn read_tool_trace_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "trace_ref": {
+                "type": "string",
+                "minLength": 36,
+                "maxLength": 36,
+                "description": "Opaque trace reference returned on an eligible failed tool result. Must be the canonical UUID; native trace paths are never accepted."
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4095,
+                "description": "Payload-index offset for metadata listing mode. Omit when payload_index is provided."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "description": "Maximum payload metadata entries returned in listing mode. Defaults to 20. Omit when payload_index is provided."
+            },
+            "payload_index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4095,
+                "description": "Read one indexed full-trace JSON payload. Omit to list bounded payload metadata first."
+            }
+        },
+        "required": ["trace_ref"],
+        "additionalProperties": false
+    })
+}
+
 pub(crate) fn empty_input_schema() -> Value {
     object_schema(vec![])
 }

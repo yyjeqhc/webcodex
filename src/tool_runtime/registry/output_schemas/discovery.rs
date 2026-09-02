@@ -99,6 +99,22 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("QUIC transport status, when enabled."),
             ),
         ])),
+        "read_tool_trace" => Some(wrapped_output_schema(vec![
+            ("trace_mode", schema_type("string", "Trace mode; read_tool_trace requires full.")),
+            ("payload_count", schema_type("integer", "Total indexed payloads in this trace.")),
+            ("returned_count", schema_type("integer", "Payload metadata entries returned in listing mode.")),
+            ("offset", schema_type("integer", "Listing offset.")),
+            ("next_offset", nullable_schema("integer", "Next listing offset or null.")),
+            ("payloads", array_schema(open_object_schema("Safe payload metadata: payload_index, phase, payload_bytes, compressed_bytes, payload_sha256, and payload_available. Native paths are never returned."), "Bounded payload metadata.")),
+            ("payload_index", schema_type("integer", "Selected payload index in payload-read mode.")),
+            ("phase", schema_type("string", "Selected payload lifecycle phase.")),
+            ("payload_bytes", schema_type("integer", "Uncompressed payload size.")),
+            ("payload_sha256", schema_type("string", "SHA-256 of the selected uncompressed payload.")),
+            ("payload_available", schema_type("boolean", "Whether the selected payload is within the model read ceiling.")),
+            ("max_payload_bytes", schema_type("integer", "Maximum uncompressed payload bytes readable through this tool.")),
+            ("reason", schema_type("string", "Bounded reason when a payload is not model-readable.")),
+            ("payload", json!({"description": "Selected raw JSON trace payload of any JSON type. May contain sensitive tool data; operator-only."})),
+        ])),
         "list_projects" => Some(wrapped_output_schema(vec![
             (
                 "projects",

@@ -11,6 +11,6 @@ pub(crate) use input_schemas::{
 };
 pub(crate) use output_schemas::output_schema_for_tool;
 pub(crate) use tool_specs::{
-    memory_management_tool_specs, memory_runtime_tool_specs, registered_tool_specs,
-    skill_management_tool_specs, skill_runtime_tool_specs,
+    memory_management_tool_specs, memory_runtime_tool_specs, operator_diagnostic_tool_specs,
+    registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
 };

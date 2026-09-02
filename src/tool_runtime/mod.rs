@@ -145,8 +145,8 @@ pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverErr
 pub(crate) use registry::accepted_flattened_args_for_spec;
 pub(crate) use registry::{
     generic_tool_call_flattened_args_for_spec, memory_management_tool_specs,
-    memory_runtime_tool_specs, registered_tool_specs, skill_management_tool_specs,
-    skill_runtime_tool_specs,
+    memory_runtime_tool_specs, operator_diagnostic_tool_specs, registered_tool_specs,
+    skill_management_tool_specs, skill_runtime_tool_specs,
 };
 pub(crate) use session_context::{add_session_telemetry_hint, unknown_session_result};
 pub(crate) use session_shell::SessionShellRegistry;

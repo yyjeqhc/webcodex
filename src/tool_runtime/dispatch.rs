@@ -151,8 +151,8 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
 
 /// Strip successful wrapper/telemetry facts only after every authority and
 /// Session recorder that needs them has consumed the canonical ToolResult.
-/// Failures keep the full decision/recovery envelope because those fields are
-/// actionable for retry, escalation, and reconciliation.
+/// Failure projection is handled separately and preserves every fact required
+/// for retry, escalation, uncertainty, Job handoff, and reconciliation.
 pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
     if !result.success {
         return;
@@ -164,6 +164,47 @@ pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
     if output.get("session_recorded").and_then(Value::as_bool) == Some(true) {
         output.remove("session_recorded");
         output.remove("session_event_id");
+    }
+}
+
+/// Strip model-irrelevant audit/wrapper facts from failures only after the
+/// canonical ToolResult has been consumed by permission and Session recorders.
+/// Retry/recovery, uncertainty, process output, exit state, Job handoff, and
+/// authorization-denial evidence remain explicit.
+pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &mut ToolResult) {
+    if result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    if output
+        .get("permission")
+        .and_then(|permission| permission.get("status"))
+        .and_then(Value::as_str)
+        == Some("auto_approved")
+    {
+        output.remove("permission");
+    }
+    if output.get("session_recorded").and_then(Value::as_bool) == Some(true) {
+        output.remove("session_recorded");
+        output.remove("session_event_id");
+    }
+    if matches!(tool_name, "run_process" | "run_script") {
+        for key in [
+            "executor",
+            "duration_ms",
+            "purpose",
+            "cwd",
+            "execution_source",
+        ] {
+            output.remove(key);
+        }
+        output.remove(match tool_name {
+            "run_process" => "process_summary",
+            "run_script" => "script_summary",
+            _ => unreachable!("structured failure sparsifier is tool-gated"),
+        });
     }
 }
 
@@ -1312,6 +1353,7 @@ impl ToolRuntime {
             call @ (ToolCall::ListTools { .. }
             | ToolCall::ListAgents { .. }
             | ToolCall::RuntimeStatus { .. }
+            | ToolCall::ReadToolTrace { .. }
             | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
 
             call @ (ToolCall::StartSession { .. }
@@ -2081,6 +2123,96 @@ mod structured_execution_sparse_projection_tests {
         assert!(alternate.output.get("cwd").is_none());
         assert!(alternate.output.get("executor").is_none());
         assert!(alternate.output.get("execution_state").is_none());
+    }
+
+    #[test]
+    fn failure_projection_removes_audit_noise_but_preserves_decision_relevant_facts() {
+        let mut result = ToolResult::err_with_output(
+            "process exited 17",
+            json!({
+                "permission": {"status": "auto_approved", "request_id": "wc_perm_private"},
+                "session_recorded": true,
+                "session_event_id": "evt_private",
+                "executor": "agent",
+                "duration_ms": 123,
+                "purpose": "diagnostic",
+                "cwd": "src/private",
+                "execution_source": "run_process",
+                "process_summary": "private-command --secret value",
+                "failure_kind": "command_exit_nonzero",
+                "execution_state": "completed",
+                "command_started": true,
+                "command_completed": true,
+                "command_ok": false,
+                "exit_code": 17,
+                "stderr_tail": "compiler error",
+                "stderr_truncated": false,
+                "job_id": "job_keep",
+                "observation_token": "token_keep",
+                "recovery": {"kind": "inspect_output"}
+            }),
+        );
+        sparsify_failure_model_result_metadata("run_process", &mut result);
+
+        for omitted in [
+            "permission",
+            "session_recorded",
+            "session_event_id",
+            "executor",
+            "duration_ms",
+            "purpose",
+            "cwd",
+            "execution_source",
+            "process_summary",
+        ] {
+            assert!(
+                result.output.get(omitted).is_none(),
+                "{omitted}: {}",
+                result.output
+            );
+        }
+        for retained in [
+            "failure_kind",
+            "execution_state",
+            "command_started",
+            "command_completed",
+            "command_ok",
+            "exit_code",
+            "stderr_tail",
+            "stderr_truncated",
+            "job_id",
+            "observation_token",
+            "recovery",
+        ] {
+            assert!(
+                result.output.get(retained).is_some(),
+                "{retained}: {}",
+                result.output
+            );
+        }
+    }
+
+    #[test]
+    fn failure_projection_keeps_permission_denials_and_unknown_outcomes() {
+        let mut result = ToolResult::err_with_output(
+            "permission denied",
+            json!({
+                "permission": {
+                    "status": "denied",
+                    "reason": "restricted_requires_human_authorization"
+                },
+                "failure_kind": "outcome_unknown",
+                "execution_state": "outcome_unknown",
+                "command_started": true,
+                "command_completed": false
+            }),
+        );
+        sparsify_failure_model_result_metadata("run_process", &mut result);
+        assert_eq!(result.output["permission"]["status"], "denied");
+        assert_eq!(result.output["failure_kind"], "outcome_unknown");
+        assert_eq!(result.output["execution_state"], "outcome_unknown");
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], false);
     }
 }
 

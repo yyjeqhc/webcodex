@@ -11,6 +11,7 @@ mod coding_task_semantic_navigation;
 mod collaboration;
 mod context_projection;
 mod continuation_feedback;
+mod diagnostics;
 mod dispatch;
 mod edit_tool_telemetry;
 mod execution_context;

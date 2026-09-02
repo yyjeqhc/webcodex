@@ -121,6 +121,27 @@ the tool result. A successful call may therefore return text such as
 in `structuredContent`. Clients that need tool data must consume
 `structuredContent` rather than parse `content.text`.
 
+The default failure projection follows the same layering rule. It keeps facts
+that can change the caller's next safe action, including failure/recovery kind,
+`not_started` / `outcome_unknown`, exit state and bounded process output, Job
+handoff identifiers, permission denials, and reconciliation hints. Recorder and
+diagnostic telemetry that has already served its audit purpose is omitted from
+ordinary failures: for example auto-approved permission envelopes, Session
+recorder ids, and `run_process` / `run_script` executor, cwd, duration, declared
+purpose, and command/script summary.
+
+When the Server explicitly runs with full tool-request tracing, an eligible
+failed call from an `admin` caller on a Stateless MCP 2026 operator-capable
+surface may additionally contain one opaque `trace_ref`. `read_tool_trace` is a
+ModelHidden, admin-only, bounded forensic reader for that Server-hosted trace;
+it is directly projected by `full_operator_runtime` and is a long-tail target
+behind `call_runtime_tool` in `adaptive_runtime`. It is unavailable on Local
+Coding, legacy MCP protocol eras, and ordinary HTTP runtime calls. Callers should
+list the trace payload index first and select one payload only when needed. The
+reader never returns native trace paths, does not recursively capture its own
+raw result, and raw payload bodies are not copied into the durable Workflow
+Session ledger.
+
 This is an intentional `0.3.x -> 0.4.0` cleanup boundary and applies across the
 WebCodex-supported `2025-06-18`, `2025-11-25`, and `2026-07-28` MCP protocol
 eras. Supporting those protocol versions does not preserve the pre-0.4 duplicate

@@ -109,6 +109,20 @@ logical validation 在修复后重跑，应复用原 `assertion_name`。这样 v
 重新读取当前文件，确认新的精确内容，再用 fresh guard 重试原本的编辑。不要为了让编辑
 成功而削弱 guard。
 
+**把 `apply_patch` 作为模型生成编辑的默认路径。** 小型、精确且带 SHA guard 的修改使用
+`apply_text_edits`；只有输入本身已经是 raw unified diff 时才使用 `apply_unified_diff`。
+普通 `apply_patch` 保留 Codex-compatible 的 `exact` → `trim_end` → `trim` 匹配顺序。
+每个 update chunk 都返回 bounded positioning metadata：`match_mode`、`match_source`、
+`matched_start_line`、`candidate_count` 和 `strict_match`。只有该 chunk 用于定位的所有
+文本匹配都 exact 且 unique 时，`strict_match=true`。没有 anchor 的 append 不执行文本匹配，
+但仍然 strict-safe；它返回 `match_source=append`，且 `match_mode` / `candidate_count` 为 null。
+
+当要求所有需要定位的 chunk 在任何文件写入前都满足 exact-and-unique 规则时，设置
+`strict_matching=true`。该模式要求 Runner 显式支持 `apply_patch_strict_matching` capability，
+并会拒绝 fuzzy 或 ambiguous placement，而不是静默降级。Server 会用自己解析的 patch
+校验 Runner 的 success match metadata；success metadata 缺失或互相矛盾时返回
+`outcome_unknown`，不会把它当成 clean success。
+
 **优先 structured validation。** 当 `cargo_test`、`go_test` 或其他 structured validation
 能够表达目标检查时，优先使用它们；只有结构化 surface 无法覆盖时才用 shell。结构化
 结果能给 Session ledger 更安全的 evidence，而不必解析任意 command text。

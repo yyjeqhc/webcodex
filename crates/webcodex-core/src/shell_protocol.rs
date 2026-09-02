@@ -3212,6 +3212,7 @@ mod envelope_tests {
                 apply_text_edit_occurrence: false,
                 apply_text_edit_line_scope: false,
                 apply_patch: false,
+                apply_patch_strict_matching: false,
                 git: false,
                 jobs: true,
                 async_jobs: true,

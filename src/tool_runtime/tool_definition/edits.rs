@@ -56,6 +56,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Precision fallback for small exact guarded file changes on the current worktree. Transactional and SHA-guarded; exact matches are unique by default, occurrence remains global source order, and optional line_scope fences matches. Prefer apply_patch for contextual, multi-hunk, or multi-file model changes.",
             apply_text_edits_input_schema,
         ),
-        60,
+        65,
     ),
 ];

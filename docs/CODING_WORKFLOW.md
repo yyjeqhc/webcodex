@@ -134,6 +134,23 @@ anchor fails closed. Re-read the current file, inspect the new exact content,
 and retry the intended edit with fresh guards. Do not weaken the guard merely
 to make the edit apply.
 
+**Use `apply_patch` as the default model-generated edit path.** Use
+`apply_text_edits` for small exact SHA-guarded edits and `apply_unified_diff`
+only when the input is already a raw unified diff. Ordinary `apply_patch`
+matching remains Codex-compatible: `exact` → `trim_end` → `trim`. Each update
+chunk reports bounded positioning metadata: `match_mode`, `match_source`,
+`matched_start_line`, `candidate_count`, and `strict_match`. A text-positioned
+chunk has `strict_match=true` only when every match used for positioning was
+exact and unique. An unanchored append is strict-safe without a text match and
+reports `match_source=append` with null `match_mode` / `candidate_count`.
+
+Set `strict_matching=true` when every positioned chunk must satisfy that
+exact-and-unique rule before any file is written. This mode requires the Runner
+`apply_patch_strict_matching` capability and rejects fuzzy or ambiguous
+placement instead of silently downgrading. The Server validates successful
+Runner match metadata against its parsed patch; missing or contradictory
+success metadata is surfaced as `outcome_unknown`, not as clean success.
+
 **Prefer structured validation.** Use focused tools such as `cargo_test`,
 `go_test`, or other structured validation when they express the check you need.
 Use a shell only when the structured surface does not cover the validation.

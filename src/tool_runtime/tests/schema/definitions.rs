@@ -108,6 +108,19 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         seen_ranks.len(),
         "every adaptive direct declaration must be present in the derived set"
     );
+    let apply_patch = derived
+        .iter()
+        .find(|definition| definition.name == "apply_patch")
+        .expect("apply_patch must be adaptive-direct");
+    let apply_text_edits = derived
+        .iter()
+        .find(|definition| definition.name == "apply_text_edits")
+        .expect("apply_text_edits must be adaptive-direct");
+    assert!(
+        apply_patch.adaptive_runtime_direct_rank()
+            < apply_text_edits.adaptive_runtime_direct_rank(),
+        "apply_patch must rank before apply_text_edits on the adaptive direct surface"
+    );
 }
 
 #[test]

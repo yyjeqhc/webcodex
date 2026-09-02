@@ -1495,8 +1495,23 @@ fn coding_intent_matches_local_coding_canonical_tools() {
     assert_eq!(coding.tools.first().copied(), Some("work_on_project"));
     assert_eq!(coding.tools.last().copied(), Some("finish_coding_task"));
     assert!(!coding.tools.contains(&"start_coding_task"));
+    let apply_patch_position = coding
+        .tools
+        .iter()
+        .position(|tool| *tool == "apply_patch")
+        .expect("apply_patch in coding intent");
+    let apply_text_edits_position = coding
+        .tools
+        .iter()
+        .position(|tool| *tool == "apply_text_edits")
+        .expect("apply_text_edits in coding intent");
+    assert!(
+        apply_patch_position < apply_text_edits_position,
+        "apply_patch must rank before apply_text_edits in local_coding/coding intent"
+    );
     for middle in [
         "project_overview",
+        "apply_patch",
         "apply_text_edits",
         "apply_unified_diff",
         "cargo_test",

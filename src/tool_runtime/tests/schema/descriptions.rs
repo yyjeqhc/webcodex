@@ -88,18 +88,43 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Canonical transactional edit path.
+    // Primary model-generated edit path.
+    let apply_patch_desc = desc("apply_patch");
+    for phrase in [
+        "primary model edit path",
+        "contextual/multi-file codex patches",
+        "transactional",
+        "sha rechecks",
+        "rollback",
+        "dry_run",
+        "strict_match",
+        "strict_matching=true",
+        "exact-unique positioning",
+        "apply_text_edits",
+        "small exact edits",
+        "external diffs",
+    ] {
+        assert!(
+            apply_patch_desc.contains(phrase),
+            "apply_patch description should mention {phrase}: {apply_patch_desc}"
+        );
+    }
+
+    // Small exact guarded-edit fallback.
     let apply_text_edits_desc = desc("apply_text_edits");
     for phrase in [
-        "canonical transactional file-change",
-        "preferred for ordinary local",
+        "precision fallback",
+        "small exact guarded file changes",
         "current worktree",
-        "not head",
-        "edit/create/delete/rename",
-        "whole batch",
-        "prefer over whole-file",
-        "dry_run",
-        "per-file hashes",
+        "transactional",
+        "sha-guarded",
+        "unique by default",
+        "occurrence",
+        "line_scope",
+        "prefer apply_patch",
+        "contextual",
+        "multi-hunk",
+        "multi-file",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -107,12 +132,14 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Canonical complex unified-diff path owns its own preflight and recovery semantics.
+    // Raw/external unified-diff path owns its own preflight and recovery semantics.
     let unified_diff_desc = desc("apply_unified_diff");
     for phrase in [
-        "canonical complex/multi-file",
-        "raw unified-diff mutation",
-        "prefer apply_text_edits",
+        "external raw unified-diff mutation path",
+        "prefer apply_patch",
+        "model-generated changes",
+        "apply_text_edits",
+        "small exact guarded edits",
         "bounded preflight",
         "never needs a separate validation call",
         "standard unified diff",
@@ -127,9 +154,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let write_file_desc = desc("write_project_file");
     for phrase in [
         "create new files",
-        "whole-file",
+        "whole-file rewrites",
+        "prefer apply_patch",
+        "model-generated changes",
+        "apply_text_edits",
+        "small exact guarded edits",
         "inspect current content",
-        "prefer apply_text_edits",
         "expected_sha256",
     ] {
         assert!(

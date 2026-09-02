@@ -426,8 +426,8 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "find_references",
     "call_hierarchy",
     // guarded edits
-    "apply_text_edits",
     "apply_patch",
+    "apply_text_edits",
     "apply_unified_diff",
     // structured process, shell escape hatch, and jobs
     "run_process",

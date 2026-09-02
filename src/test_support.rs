@@ -8,6 +8,41 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+thread_local! {
+    static TOOL_REQUEST_TRACE_ENV_READ_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only opt-in for reading the process-global tool-request trace env.
+///
+/// libtest executes tests in parallel within one process. Trace tests still use
+/// [`TestEnvGuard`] to serialize env mutation, but unrelated test threads must
+/// not observe a temporary `WEBCODEX_TOOL_REQUEST_TRACE=full` and start feeding
+/// the same bounded global trace writer. Child threads intentionally exercising
+/// trace behavior can opt in explicitly with this guard while the parent keeps
+/// the canonical env lock held.
+pub(crate) struct TestToolRequestTraceEnvReaderGuard;
+
+impl TestToolRequestTraceEnvReaderGuard {
+    pub(crate) fn new() -> Self {
+        TOOL_REQUEST_TRACE_ENV_READ_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+        Self
+    }
+}
+
+impl Drop for TestToolRequestTraceEnvReaderGuard {
+    fn drop(&mut self) {
+        TOOL_REQUEST_TRACE_ENV_READ_DEPTH.with(|depth| {
+            let current = depth.get();
+            debug_assert!(current > 0, "tool-request trace env reader depth underflow");
+            depth.set(current.saturating_sub(1));
+        });
+    }
+}
+
+pub(crate) fn tool_request_trace_env_visible_for_current_thread() -> bool {
+    TOOL_REQUEST_TRACE_ENV_READ_DEPTH.with(|depth| depth.get() > 0)
+}
+
 /// Panic-safe process-global environment mutation guard for server tests.
 ///
 /// The guard holds the canonical server test env lock for its full lifetime,
@@ -16,6 +51,7 @@ use std::sync::Arc;
 pub(crate) struct TestEnvGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
     previous: std::collections::BTreeMap<String, Option<std::ffi::OsString>>,
+    tool_request_trace_env_reader: Option<TestToolRequestTraceEnvReaderGuard>,
 }
 
 impl TestEnvGuard {
@@ -25,10 +61,14 @@ impl TestEnvGuard {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
             previous: std::collections::BTreeMap::new(),
+            tool_request_trace_env_reader: None,
         }
     }
 
     fn remember(&mut self, name: &str) {
+        if name == "WEBCODEX_TOOL_REQUEST_TRACE" && self.tool_request_trace_env_reader.is_none() {
+            self.tool_request_trace_env_reader = Some(TestToolRequestTraceEnvReaderGuard::new());
+        }
         if !self.previous.contains_key(name) {
             self.previous
                 .insert(name.to_string(), std::env::var_os(name));

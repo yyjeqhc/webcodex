@@ -349,6 +349,10 @@ impl ToolRequestTraceMode {
 }
 
 pub(crate) fn tool_request_trace_mode() -> ToolRequestTraceMode {
+    #[cfg(test)]
+    if !crate::test_support::tool_request_trace_env_visible_for_current_thread() {
+        return ToolRequestTraceMode::Off;
+    }
     let Ok(value) = std::env::var("WEBCODEX_TOOL_REQUEST_TRACE") else {
         return ToolRequestTraceMode::Off;
     };
@@ -966,5 +970,23 @@ mod tests {
         env.set("WEBCODEX_TOOL_REQUEST_TRACE", "maybe");
         assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Off);
         env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+    }
+
+    #[test]
+    fn tool_request_trace_test_env_is_visible_only_to_opted_in_threads() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        assert_eq!(tool_request_trace_mode(), ToolRequestTraceMode::Full);
+
+        let unrelated = std::thread::spawn(tool_request_trace_mode).join().unwrap();
+        assert_eq!(unrelated, ToolRequestTraceMode::Off);
+
+        let explicit_reader = std::thread::spawn(|| {
+            let _reader = crate::test_support::TestToolRequestTraceEnvReaderGuard::new();
+            tool_request_trace_mode()
+        })
+        .join()
+        .unwrap();
+        assert_eq!(explicit_reader, ToolRequestTraceMode::Full);
     }
 }

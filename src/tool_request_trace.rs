@@ -1997,6 +1997,7 @@ mod tests {
         let io_guard = trace_io_state().lock().unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let capture = thread::spawn(move || {
+            let _trace_env = crate::test_support::TestToolRequestTraceEnvReaderGuard::new();
             let guard = ToolRequestLifecycle::new(
                 "mcp",
                 "trace-background-writer".into(),

@@ -425,7 +425,14 @@ standing rule for `0.4.x` is compatibility-first:
 5. **Model, HTTP, and MCP contracts.** Canonical model-visible tool names,
    documented REST routes, MCP capability names, and documented serialized
    field names released in `v0.4.0` evolve additively or migration-first during
-   `0.4.x`. A true removal or rename should normally wait for `v0.5.0`.
+   `0.4.x`. A true removal or rename should normally wait for `v0.5.0`. The
+   `v0.4.0` MCP result-framing floor makes `structuredContent` the canonical
+   machine-readable `tools/call` result. `content.text` is a concise human
+   fallback, not a duplicate serialization of that result. This applies to all
+   MCP protocol eras WebCodex advertises; protocol-version support does not
+   preserve the pre-0.4 JSON-in-text duplication. `0.4.x` must keep this
+   structured-result ownership stable, including any transport-specific
+   post-framing output schema.
 
 The product concept and public lifecycle namespace are **Runner**, but several
 older `agent_*` names are already compatibility vocabulary and are deliberately

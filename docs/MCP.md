@@ -111,6 +111,26 @@ protocol/tool contracts; a first-time user does not need to choose among them.
 
 Model-facing failures may add a small recovery-control vocabulary without replacing existing subsystem fields. `error_kind` identifies what failed. `failure_kind`, when present, retains execution/effect/validation semantics such as `not_started`, `timeout`, or `outcome_unknown`. `recovery_kind` is the closed class of the next safe action: `fix_input`, `retry_same`, `reobserve`, `reconcile`, `wait`, `user_action`, or `none`. `recovery_tool`, when present, is a bounded public WebCodex tool for an explicit re-observation or reconciliation step; it never grants authority or triggers execution. `outcome_unknown` is not retry permission. `retry_same` is reserved for an exact idempotent replay contract and must not be interpreted as an ordinary repeat of an effect.
 
+### Tool result framing (v0.4 contract)
+
+Starting with `v0.4.0`, `structuredContent` is the authoritative machine-readable
+result for WebCodex `tools/call` responses. Ordinary text content is a compact
+human-readable fallback and must not be treated as a second serialized copy of
+the tool result. A successful call may therefore return text such as
+`WebCodex tool completed successfully.` while the actual fields are present only
+in `structuredContent`. Clients that need tool data must consume
+`structuredContent` rather than parse `content.text`.
+
+This is an intentional `0.3.x -> 0.4.0` cleanup boundary and applies across the
+WebCodex-supported `2025-06-18`, `2025-11-25`, and `2026-07-28` MCP protocol
+eras. Supporting those protocol versions does not preserve the pre-0.4 duplicate
+JSON-in-text result representation. The `v0.4.0` framing above is the compatibility
+floor for `0.4.x`: machine-readable result fields remain in `structuredContent`,
+while `content` remains available for concise text or protocol-native content
+blocks such as images and resource links. When MCP-specific framing transforms a
+structured result, the MCP-facing output schema describes that post-framing
+`structuredContent` shape.
+
 Hosted clients need public HTTPS. `share` supplies a temporary Cloudflare Quick
 Tunnel by default; `connect` uses an existing hosted Server; self-hosted
 deployments provide their own stable HTTPS origin. Do not use bootstrap/admin

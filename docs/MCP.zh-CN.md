@@ -96,6 +96,23 @@ annotations 与当前 runtime ModelSurface routing，不展开庞大的 output s
 `call_runtime_tool`。这些字段只描述调用路由，不代表授权或 feature readiness；目标 tool 原有的
 OAuth scope、project authority、permission gate、参数校验、effect 与 Session/ACK 语义保持不变。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
 
+### Tool result framing（v0.4 contract）
+
+从 `v0.4.0` 起，WebCodex `tools/call` 返回中的 `structuredContent` 是
+authoritative machine-readable result。普通 text content 只保留简短的人类可读 fallback，
+不再作为同一 tool result 的第二份 JSON 序列化副本。因此一次成功调用可以只在
+`content.text` 中返回 `WebCodex tool completed successfully.`，真正的结果字段只存在于
+`structuredContent`。需要读取 tool data 的 client 必须消费 `structuredContent`，不能依赖
+解析 `content.text`。
+
+这是一次有意的 `0.3.x -> 0.4.0` cleanup boundary，并同时适用于 WebCodex 支持的
+`2025-06-18`、`2025-11-25` 与 `2026-07-28` MCP protocol era。继续支持这些 protocol
+version 不代表继续保留 0.4 之前“在 text 中重复整份 JSON”的 result representation。
+上述 `v0.4.0` framing 是 `0.4.x` 的 compatibility floor：machine-readable result field
+继续位于 `structuredContent`；`content` 用于简短文本或 image、resource link 等
+protocol-native content block。若 MCP-specific framing 会转换 structured result，则
+MCP-facing output schema 描述的是转换后的 `structuredContent` shape。
+
 Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用
 已有 hosted Server，自托管部署则提供自己的稳定 HTTPS origin。不要把 bootstrap/admin token、
 Runner token 或持久 project-first Connector credential 当作公网 share secret。

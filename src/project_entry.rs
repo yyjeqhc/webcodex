@@ -39,6 +39,8 @@ use tokio::process::{Child, Command};
 
 const DEFAULT_PROFILE: &str = "personal";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECTOR_PROJECT_REGISTRY_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECT_REGISTRY_DIR";
+const LEGACY_CONNECTOR_PROJECTS_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECTS_DIR";
 
 const NPM_WRAPPER_NETWORK_ENV_KEYS: [&str; 8] = [
     "npm_config_https_proxy",
@@ -55,6 +57,15 @@ fn remove_npm_wrapper_network_environment(command: &mut Command) {
     for key in NPM_WRAPPER_NETWORK_ENV_KEYS {
         command.env_remove(key);
     }
+}
+
+fn configure_connector_project_registry_environment(command: &mut Command, path: &Path) {
+    // `Command` inherits the parent environment. Clear the pre-0.4 alias before
+    // setting the canonical variable so a stale shell/service environment cannot
+    // make the child Server observe both names and fail its dual-alias fence.
+    command
+        .env_remove(LEGACY_CONNECTOR_PROJECTS_DIR_ENV)
+        .env(CONNECTOR_PROJECT_REGISTRY_DIR_ENV, path);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -764,6 +775,7 @@ pub(super) async fn start_local_runtime(
     for name in &runtime_options.child_environment_remove {
         server_command.env_remove(name);
     }
+    configure_connector_project_registry_environment(&mut server_command, &paths.project_registry);
     server_command
         .current_dir(&paths.state)
         .env_remove("WEBCODEX_ENV_FILE")
@@ -805,10 +817,6 @@ pub(super) async fn start_local_runtime(
         .env("WEBCODEX_CONNECTOR_EXECUTOR_ROOT", &config.root)
         .env("WEBCODEX_CONNECTOR_RUNS_ROOT", &paths.runs)
         .env("WEBCODEX_CONNECTOR_RESULTS_ROOT", &paths.results)
-        .env(
-            "WEBCODEX_CONNECTOR_PROJECT_REGISTRY_DIR",
-            &paths.project_registry,
-        )
         .env("WEBCODEX_CONNECTOR_PROFILE", &config.profile)
         .stdout(Stdio::from(server_log))
         .stderr(Stdio::from(server_error))

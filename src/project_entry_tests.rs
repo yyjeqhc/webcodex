@@ -61,6 +61,33 @@ fn options(root: PathBuf, state: PathBuf) -> ProjectCommandOptions {
     }
 }
 
+#[test]
+fn connector_project_registry_environment_clears_legacy_alias() {
+    let mut command = tokio::process::Command::new("unused-test-command");
+    command.env(LEGACY_CONNECTOR_PROJECTS_DIR_ENV, "/legacy/projects.d");
+
+    configure_connector_project_registry_environment(
+        &mut command,
+        Path::new("/current/project-registry"),
+    );
+
+    let env = command
+        .as_std()
+        .get_envs()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.map(|value| value.to_string_lossy().into_owned()),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        env.get(CONNECTOR_PROJECT_REGISTRY_DIR_ENV),
+        Some(&Some("/current/project-registry".to_string()))
+    );
+    assert_eq!(env.get(LEGACY_CONNECTOR_PROJECTS_DIR_ENV), Some(&None));
+}
+
 fn write_console_assets(directory: &Path) {
     fs::create_dir_all(directory).unwrap();
     fs::write(directory.join("console.html"), "<html></html>\n").unwrap();

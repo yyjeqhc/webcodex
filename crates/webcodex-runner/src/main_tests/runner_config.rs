@@ -1,4 +1,5 @@
 use super::*;
+use crate::webcodex_runner::config::restart_required_fields;
 
 #[test]
 fn runner_config_accepts_legacy_projects_dir_alias_and_normalizes_it() {
@@ -19,6 +20,29 @@ fn runner_config_accepts_legacy_projects_dir_alias_and_normalizes_it() {
         Some(registry.as_path())
     );
     assert!(cfg.legacy_projects_dir.is_none());
+}
+
+#[test]
+fn runner_config_alias_only_migration_does_not_require_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("runner.toml");
+    let registry = tmp.path().join("projects.d");
+    let render = |field: &str| {
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\n{field} = {:?}\n[policy]\nallow_cwd_anywhere = true\n",
+            registry.to_string_lossy()
+        )
+    };
+
+    std::fs::write(&path, render("projects_dir")).unwrap();
+    let legacy = load_config(&path).unwrap();
+    std::fs::write(&path, render("project_registry_dir")).unwrap();
+    let canonical = load_config(&path).unwrap();
+
+    assert!(legacy.legacy_projects_dir.is_none());
+    assert!(canonical.legacy_projects_dir.is_none());
+    assert_eq!(legacy.project_registry_dir, canonical.project_registry_dir);
+    assert!(restart_required_fields(&legacy, &canonical).is_empty());
 }
 
 #[test]

@@ -47,10 +47,11 @@ struct CreateProjectRequest {
     pub allow_existing_empty: bool,
     #[serde(default)]
     pub overwrite: bool,
-    /// Preserve this dedicated endpoint's historical tolerance for unrelated
-    /// unknown fields while still detecting the retired managed-temporary flag.
-    #[serde(flatten)]
-    pub compatibility_fields: std::collections::BTreeMap<String, Value>,
+    /// Narrow pre-0.4 ingress sentinel. This dedicated endpoint historically
+    /// ignores unrelated unknown fields, so naming only the retired field keeps
+    /// that behavior without introducing a generic compatibility-field bag.
+    #[serde(default, rename = "managed_temporary_project")]
+    pub retired_managed_temporary_project: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,10 +133,7 @@ pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Res
     let Some(body) = parse_json_body::<CreateProjectRequest>(req, res).await else {
         return;
     };
-    if body
-        .compatibility_fields
-        .contains_key("managed_temporary_project")
-    {
+    if body.retired_managed_temporary_project.is_some() {
         render_result(
             res,
             &audit,

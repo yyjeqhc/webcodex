@@ -144,6 +144,38 @@ async fn http_projects_create_rejects_unknown_client_id() {
 }
 
 #[tokio::test]
+async fn http_projects_create_keeps_unrelated_unknown_field_tolerance() {
+    let config = super::test_config(Some("secret"));
+    let (_tmp, db) = super::test_db();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
+    let service = Service::new(super::build_projects_router(config, db, runtime));
+
+    let mut resp = TestClient::post("http://localhost/api/projects/create")
+        .bearer_auth("secret")
+        .json(&json!({
+            "client_id": "no-such-agent",
+            "id": "hello",
+            "name": "Hello",
+            "path": "/root/git/hello",
+            "unrelated_legacy_field": "ignored"
+        }))
+        .send(&service)
+        .await;
+
+    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("unknown agent")),
+        "unrelated unknown fields should keep the endpoint's historical tolerance: {:?}",
+        body["error"]
+    );
+}
+
+#[tokio::test]
 async fn http_projects_create_rejects_retired_managed_temporary_field_before_dispatch() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();

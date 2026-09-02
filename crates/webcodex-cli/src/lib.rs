@@ -28,13 +28,13 @@ use admin_cli::{
     parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions, ServerHttpOptions,
 };
 use runner_config::{
-    run_runner_init, RunnerInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
-    TRANSPORT_WEBSOCKET,
+    run_runner_init, RunnerInitOptions, DEFAULT_INIT_PROJECT_REGISTRY_DIR,
+    DEFAULT_POLL_INTERVAL_MS, TRANSPORT_WEBSOCKET,
 };
 use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
     base_dir_or_default, client_profile_agent_token_file,
-    client_profile_agent_token_file_for_scope, client_profile_projects_dir,
+    client_profile_agent_token_file_for_scope, client_profile_project_registry_dir,
     client_profile_runner_config, client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, connect_usage, current_user_home,
     default_device_name, default_server_paths, disconnect_usage, discover_internal_binary,
@@ -2230,7 +2230,7 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
         display_name: None,
         transport: TRANSPORT_WEBSOCKET.to_string(),
         poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-        projects_dir: PathBuf::new(),
+        project_registry_dir: PathBuf::new(),
         output: PathBuf::new(),
         allowed_roots: Vec::new(),
         allow_cwd_anywhere: false,
@@ -2238,7 +2238,8 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
     };
     let mut profile: Option<String> = None;
     let mut output_explicit = false;
-    let mut projects_dir_explicit = false;
+    let mut project_registry_dir_explicit = false;
+    let mut legacy_projects_dir_explicit = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -2256,9 +2257,25 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
                     .parse::<u64>()
                     .map_err(|_| "--poll-interval-ms must be an integer".to_string())?;
             }
+            "--project-registry-dir" => {
+                if legacy_projects_dir_explicit {
+                    return Err(
+                        "use only one of --project-registry-dir or legacy --projects-dir"
+                            .to_string(),
+                    );
+                }
+                opts.project_registry_dir = PathBuf::from(next_value(&mut iter, arg)?);
+                project_registry_dir_explicit = true;
+            }
             "--projects-dir" => {
-                opts.projects_dir = PathBuf::from(next_value(&mut iter, arg)?);
-                projects_dir_explicit = true;
+                if project_registry_dir_explicit {
+                    return Err(
+                        "use only one of --project-registry-dir or legacy --projects-dir"
+                            .to_string(),
+                    );
+                }
+                opts.project_registry_dir = PathBuf::from(next_value(&mut iter, arg)?);
+                legacy_projects_dir_explicit = true;
             }
             "--allowed-root" => opts
                 .allowed_roots
@@ -2283,18 +2300,22 @@ fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
         if !output_explicit {
             opts.output = client_profile_runner_config(&profile)?;
         }
-        if !projects_dir_explicit {
-            opts.projects_dir = client_profile_projects_dir(&profile)?;
+        if !project_registry_dir_explicit && !legacy_projects_dir_explicit {
+            opts.project_registry_dir = client_profile_project_registry_dir(&profile)?;
         }
     } else {
         if !output_explicit && opts.output.as_os_str().is_empty() {
             let profile = validate_client_profile(&opts.client_id)?;
             opts.output = client_profile_runner_config(&profile)?;
-            if !projects_dir_explicit {
-                opts.projects_dir = client_profile_projects_dir(&profile)?;
+            if !project_registry_dir_explicit && !legacy_projects_dir_explicit {
+                opts.project_registry_dir = client_profile_project_registry_dir(&profile)?;
             }
-        } else if !projects_dir_explicit {
-            opts.projects_dir = PathBuf::from(DEFAULT_INIT_PROJECTS_DIR);
+        } else if !project_registry_dir_explicit && !legacy_projects_dir_explicit {
+            let default = Path::new(DEFAULT_INIT_PROJECT_REGISTRY_DIR);
+            let base = default.parent().ok_or_else(|| {
+                "default Runner project registry path has no parent directory".to_string()
+            })?;
+            opts.project_registry_dir = runner_config::paths::select_project_registry_dir(base)?;
         }
     }
     runner_config::validate_runner_init_options(&opts)?;

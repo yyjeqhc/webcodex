@@ -120,7 +120,9 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
     let _lock = ProfileLock::acquire(&state_dir)?;
 
     let config_path = webcodex_runner_config::paths::resolve_runner_config_path(&profile_dir)?;
-    let projects_dir = ensure_private_directory(&profile_dir.join("projects.d"))?;
+    let project_registry_dir =
+        webcodex_runner_config::paths::select_project_registry_dir(&profile_dir)?;
+    let project_registry_dir = ensure_private_directory(&project_registry_dir)?;
     let log_path = local_runner_log_path(&state_dir);
     let existing_config = read_existing_runner_config(&config_path)?;
     validate_existing_profile(
@@ -145,7 +147,7 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
         (None, None) => generated_client_id(&canonical_server.url),
     };
     let (project_path, project, already_registered) = resolve_project(
-        &projects_dir,
+        &project_registry_dir,
         &canonical_project,
         opts.project_id.as_deref(),
     )?;
@@ -178,7 +180,7 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
         &canonical_server.url,
         &resolved_key.value,
         &client_id,
-        &projects_dir,
+        &project_registry_dir,
         &canonical_project,
     )?;
     atomic_write(&config_path, runner_content.as_bytes(), true)?;

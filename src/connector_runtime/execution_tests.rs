@@ -219,8 +219,8 @@ async fn fixture_built(
             executor_root: project.to_string_lossy().into_owned(),
             runs_root: state.join("runs").to_string_lossy().into_owned(),
             results_root: state.join("results").to_string_lossy().into_owned(),
-            projects_dir: state
-                .join("agent/projects.d")
+            project_registry_dir: state
+                .join("agent/project-registry")
                 .to_string_lossy()
                 .into_owned(),
             profile: "personal".into(),
@@ -4333,8 +4333,8 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                 executor_root: project.to_string_lossy().into_owned(),
                 runs_root: state.join("runs").to_string_lossy().into_owned(),
                 results_root: state.join("results").to_string_lossy().into_owned(),
-                projects_dir: state
-                    .join("agent/projects.d")
+                project_registry_dir: state
+                    .join("agent/project-registry")
                     .to_string_lossy()
                     .into_owned(),
                 profile: "personal".into(),

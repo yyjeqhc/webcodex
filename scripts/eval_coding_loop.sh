@@ -1013,7 +1013,7 @@ start_eval_services() {
     PORT="${EVAL_PORT:-$(find_free_port)}"
     TMP_ROOT="$(mktemp -d -t webcodex-eval-coding-loop-XXXXXX)"
     DATA_DIR="$TMP_ROOT/data"
-    PROJECTS_DIR="$TMP_ROOT/projects.d"
+    PROJECTS_DIR="$TMP_ROOT/project-registry"
     AGENT_TOML="$TMP_ROOT/runner.toml"
     TEST_REPO="$TMP_ROOT/coding-loop-project"
     SERVER_LOG="$TMP_ROOT/server.log"
@@ -1082,7 +1082,7 @@ token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
 display_name = "Coding Loop Eval Agent"
 owner = "eval"
-projects_dir = "${PROJECTS_DIR}"
+project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 500
 transport = "${TRANSPORT}"
 

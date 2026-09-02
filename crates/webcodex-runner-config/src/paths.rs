@@ -29,6 +29,10 @@ use std::path::{Path, PathBuf};
 pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
 /// Pre-0.4 Runner configuration filename retained as a read compatibility alias.
 pub const LEGACY_AGENT_CONFIG_FILE: &str = "agent.toml";
+/// Canonical directory name for newly created Runner project registries.
+pub const PROJECT_REGISTRY_DIR_NAME: &str = "project-registry";
+/// Legacy Runner project-registry directory name accepted for compatibility.
+pub const LEGACY_PROJECTS_DIR_NAME: &str = "projects.d";
 
 fn path_entry_exists(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
@@ -66,6 +70,27 @@ pub fn existing_runner_config_path(dir: &Path) -> Result<Option<PathBuf>, String
 /// gets the canonical `runner.toml` creation target.
 pub fn resolve_runner_config_path(dir: &Path) -> Result<PathBuf, String> {
     Ok(existing_runner_config_path(dir)?.unwrap_or_else(|| dir.join(RUNNER_CONFIG_FILE)))
+}
+
+/// Select the Runner project registry beneath `base` without merging layouts.
+///
+/// Compatibility contract:
+/// - only `project-registry/` exists: use it;
+/// - only legacy `projects.d/` exists: keep using it;
+/// - neither exists: select `project-registry/` for new installs;
+/// - both exist: fail closed so records are never silently merged or shadowed.
+pub fn select_project_registry_dir(base: &Path) -> Result<PathBuf, String> {
+    let current = base.join(PROJECT_REGISTRY_DIR_NAME);
+    let legacy = base.join(LEGACY_PROJECTS_DIR_NAME);
+    match (path_entry_exists(&current)?, path_entry_exists(&legacy)?) {
+        (true, true) => Err(format!(
+            "both Runner project registry directories exist: {} and {}; consolidate project registration records into one directory and remove the other before continuing",
+            current.display(),
+            legacy.display()
+        )),
+        (true, false) | (false, false) => Ok(current),
+        (false, true) => Ok(legacy),
+    }
 }
 
 /// Per-user home directory.
@@ -116,7 +141,7 @@ pub fn is_effective_root() -> bool {
 }
 
 /// Base directory for per-user WebCodex configuration and credentials
-/// (client profiles, `runner.toml`, `projects.d`, token files).
+/// (client profiles, `runner.toml`, Runner project registry, token files).
 ///
 /// - Unix (root): `/etc/webcodex`
 /// - Unix (user): `$XDG_CONFIG_HOME/webcodex`, else `$HOME/.config/webcodex`.
@@ -502,6 +527,46 @@ mod tests {
         assert!(error.contains(LEGACY_AGENT_CONFIG_FILE));
         assert!(error.contains("refusing to guess"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn project_registry_selection_prefers_new_layout_for_new_installs() {
+        let temp = test_temp_dir("new-layout");
+        assert_eq!(
+            select_project_registry_dir(&temp).unwrap(),
+            temp.join(PROJECT_REGISTRY_DIR_NAME)
+        );
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn project_registry_selection_preserves_single_existing_layout() {
+        let temp = test_temp_dir("current-layout");
+        let current = temp.join(PROJECT_REGISTRY_DIR_NAME);
+        std::fs::create_dir(&current).unwrap();
+        assert_eq!(select_project_registry_dir(&temp).unwrap(), current);
+        std::fs::remove_dir_all(temp).unwrap();
+
+        let temp = test_temp_dir("legacy-layout");
+        let legacy = temp.join(LEGACY_PROJECTS_DIR_NAME);
+        std::fs::create_dir(&legacy).unwrap();
+        assert_eq!(select_project_registry_dir(&temp).unwrap(), legacy);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn project_registry_selection_fails_closed_when_both_layouts_exist() {
+        let temp = test_temp_dir("ambiguous-layout");
+        let current = temp.join(PROJECT_REGISTRY_DIR_NAME);
+        let legacy = temp.join(LEGACY_PROJECTS_DIR_NAME);
+        std::fs::create_dir(&current).unwrap();
+        std::fs::create_dir(&legacy).unwrap();
+        let error = select_project_registry_dir(&temp).unwrap_err();
+        assert!(error.contains("both Runner project registry directories exist"));
+        assert!(error.contains(&current.display().to_string()));
+        assert!(error.contains(&legacy.display().to_string()));
+        assert!(error.contains("consolidate project registration records"));
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     /// RAII restore for environment variables: restores the previous value

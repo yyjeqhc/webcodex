@@ -1,8 +1,9 @@
 # Agent-side project file.
 #
-# Place one *.toml per project under the agent's projects_dir (default
-# ~/.config/webcodex/projects.d, or whatever projects_dir is set to
-# in runner.toml). The agent reads these and reports them to the server at
+# Place one *.toml project registration record per project under the Runner
+# project registry (default ~/.config/webcodex/project-registry, or whatever
+# project_registry_dir is set to in runner.toml). The Runner reads these and
+# reports them to the server at
 # registration; the server exposes them as runtime ids
 # agent:<client_id>:<project_id>.
 #

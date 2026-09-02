@@ -119,7 +119,7 @@ server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
 display_name = "${display}"
-projects_dir = "${PROJECTS_DIR}"
+project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 100
 max_concurrent_jobs = ${max_jobs}
 transport = "polling"
@@ -217,7 +217,7 @@ fi
     || fail "debug server/agent binaries are unavailable"
 TMP_ROOT="$(mktemp -d -t webcodex-runner-reload-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
-PROJECTS_DIR="$TMP_ROOT/projects.d"
+PROJECTS_DIR="$TMP_ROOT/project-registry"
 FIXTURE="$TMP_ROOT/fixture"
 ISOLATED_HOME="$TMP_ROOT/home"
 RUNTIME_TMP="$TMP_ROOT/tmp"

@@ -242,7 +242,9 @@ struct RunnerStatusConfig {
     #[serde(default)]
     transport: Option<String>,
     #[serde(default)]
-    projects_dir: Option<PathBuf>,
+    project_registry_dir: Option<PathBuf>,
+    #[serde(default, rename = "projects_dir")]
+    legacy_projects_dir: Option<PathBuf>,
     #[serde(default)]
     policy: RunnerStatusPolicy,
 }
@@ -260,7 +262,7 @@ struct RunnerConfigMetadata {
     owner: Option<String>,
     display_name: Option<String>,
     transport: Option<String>,
-    projects_dir: Option<PathBuf>,
+    project_registry_dir: PathBuf,
     allowed_roots: Vec<PathBuf>,
     server_url: String,
     token: String,
@@ -271,13 +273,26 @@ fn read_runner_config_metadata(path: &Path) -> Result<RunnerConfigMetadata, Stri
         .map_err(|e| format!("failed to read Runner config {}: {}", path.display(), e))?;
     let cfg: RunnerStatusConfig = toml::from_str(&content)
         .map_err(|e| format!("failed to parse Runner config {}: {}", path.display(), e))?;
+    let project_registry_dir = match (cfg.project_registry_dir, cfg.legacy_projects_dir) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "project_registry_dir and legacy projects_dir cannot both be configured; keep exactly one Runner project registry setting"
+                    .to_string(),
+            )
+        }
+        (Some(path), None) | (None, Some(path)) => path,
+        (None, None) => {
+            let base = webcodex_runner_config::paths::default_client_config_base_dir()?;
+            webcodex_runner_config::paths::select_project_registry_dir(&base)?
+        }
+    };
     Ok(RunnerConfigMetadata {
         path: path.to_path_buf(),
         client_id: cfg.client_id,
         owner: cfg.owner,
         display_name: cfg.display_name,
         transport: cfg.transport,
-        projects_dir: cfg.projects_dir,
+        project_registry_dir,
         allowed_roots: cfg.policy.allowed_roots,
         server_url: cfg.server_url,
         token: cfg.token,
@@ -536,7 +551,8 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
                 "owner": metadata.owner,
                 "display_name": metadata.display_name,
                 "transport": metadata.transport,
-                "projects_dir": metadata.projects_dir.map(|p| p.to_string_lossy().to_string()),
+                "project_registry_dir": metadata.project_registry_dir.to_string_lossy().to_string(),
+                "projects_dir": metadata.project_registry_dir.to_string_lossy().to_string(),
                 "allowed_roots": {
                     "count": metadata.allowed_roots.len(),
                     "summary": allowed_roots_summary(&metadata.allowed_roots),
@@ -567,10 +583,7 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
 
-    let projects_dir = metadata.projects_dir.clone().unwrap_or(
-        webcodex_runner_config::paths::default_client_config_base_dir()?.join("projects.d"),
-    );
-    let configured_project_count = read_enabled_project_count(&projects_dir).ok();
+    let configured_project_count = read_enabled_project_count(&metadata.project_registry_dir).ok();
     let mut out = render_runner_readiness_summary(
         client_online,
         loaded_project_count,
@@ -629,12 +642,8 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         metadata.transport.as_deref().unwrap_or("unknown")
     ));
     out.push_str(&format!(
-        "  projects_dir:         {}\n",
-        metadata
-            .projects_dir
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "runtime default".to_string())
+        "  project_registry_dir: {}\n",
+        metadata.project_registry_dir.display()
     ));
     out.push_str(&format!(
         "  allowed_roots:        {}\n",
@@ -782,12 +791,12 @@ mod tests {
     #[test]
     fn configured_project_count_matches_runner_enabled_project_semantics() {
         let tmp = tempfile::tempdir().unwrap();
-        let projects_dir = tmp.path().join("projects.d");
-        std::fs::create_dir_all(&projects_dir).unwrap();
+        let project_registry_dir = tmp.path().join("project-registry");
+        std::fs::create_dir_all(&project_registry_dir).unwrap();
         let enabled_path = tmp.path().join("enabled");
         let disabled_path = tmp.path().join("disabled");
         std::fs::write(
-            projects_dir.join("enabled.toml"),
+            project_registry_dir.join("enabled.toml"),
             format!(
                 "id = \"enabled\"\npath = {:?}\ndisabled = false\n",
                 enabled_path.to_string_lossy()
@@ -795,7 +804,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            projects_dir.join("disabled.toml"),
+            project_registry_dir.join("disabled.toml"),
             format!(
                 "id = \"disabled\"\npath = {:?}\ndisabled = true\n",
                 disabled_path.to_string_lossy()
@@ -803,7 +812,40 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(read_enabled_project_count(&projects_dir).unwrap(), 1);
+        assert_eq!(
+            read_enabled_project_count(&project_registry_dir).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn runner_status_metadata_accepts_legacy_registry_alias_and_rejects_both_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        let legacy = tmp.path().join("projects.d");
+        std::fs::write(
+            &config,
+            format!(
+                "server_url = \"https://example.test\"\ntoken = \"t\"\nclient_id = \"demo\"\nprojects_dir = {:?}\n",
+                legacy.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let metadata = read_runner_config_metadata(&config).unwrap();
+        assert_eq!(metadata.project_registry_dir, legacy);
+
+        let current = tmp.path().join("project-registry");
+        std::fs::write(
+            &config,
+            format!(
+                "server_url = \"https://example.test\"\ntoken = \"t\"\nclient_id = \"demo\"\nproject_registry_dir = {:?}\nprojects_dir = {:?}\n",
+                current.to_string_lossy(),
+                legacy.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let error = read_runner_config_metadata(&config).unwrap_err();
+        assert!(error.contains("cannot both be configured"), "{error}");
     }
 
     #[test]

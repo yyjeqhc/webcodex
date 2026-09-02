@@ -1990,7 +1990,7 @@ pub enum ToolCall {
 
     /// Register an existing directory as a WebCodex project on a selected
     /// agent. The agent validates the path against its own policy, writes a
-    /// `projects_dir/<id>.toml` file atomically, and refreshes its local
+    /// project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
     /// project list. The server refreshes its cached project summaries for
     /// that agent so `listProjects` sees the new project immediately. This is
     /// a mutating agent-side operation constrained by agent policy; the server
@@ -2021,7 +2021,7 @@ pub enum ToolCall {
     /// Create a new directory on the selected agent and register it as a
     /// WebCodex project. The agent validates the path against its own policy,
     /// creates the directory (and optional template files / git init), writes
-    /// a `projects_dir/<id>.toml` file atomically, and refreshes its local
+    /// a project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
     /// project list. The server refreshes its cached project summaries so
     /// `listProjects` sees the new project immediately. This is a mutating
     /// agent-side operation constrained by agent policy; the server never

@@ -15,6 +15,8 @@ pub(crate) const CONNECTOR_SURFACE_ENV: &str = "WEBCODEX_CONNECTOR_SURFACE";
 pub(crate) const CONNECTOR_SURFACE_TASK_V1: &str = "task-v1";
 pub(crate) const PROJECT_CREDENTIAL_FILE_ENV: &str = "WEBCODEX_PROJECT_CREDENTIAL_FILE";
 pub(crate) const PROJECT_AGENT_TOKEN_FILE_ENV: &str = "WEBCODEX_PROJECT_AGENT_TOKEN_FILE";
+const PROJECT_REGISTRY_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECT_REGISTRY_DIR";
+const LEGACY_PROJECTS_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECTS_DIR";
 
 const CONNECTOR_CONFIGURATION_ENV_NAMES: &[&str] = &[
     "WEBCODEX_CONNECTOR_PROJECT_ID",
@@ -24,7 +26,8 @@ const CONNECTOR_CONFIGURATION_ENV_NAMES: &[&str] = &[
     "WEBCODEX_CONNECTOR_EXECUTOR_ROOT",
     "WEBCODEX_CONNECTOR_RUNS_ROOT",
     "WEBCODEX_CONNECTOR_RESULTS_ROOT",
-    "WEBCODEX_CONNECTOR_PROJECTS_DIR",
+    PROJECT_REGISTRY_DIR_ENV,
+    LEGACY_PROJECTS_DIR_ENV,
     "WEBCODEX_CONNECTOR_PROFILE",
     "WEBCODEX_CONNECTOR_PROJECT_GRANT_ID",
     PROJECT_CREDENTIAL_FILE_ENV,
@@ -43,6 +46,21 @@ pub(crate) fn nonempty_env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn project_registry_dir_env() -> Result<String, String> {
+    match (
+        nonempty_env(PROJECT_REGISTRY_DIR_ENV),
+        nonempty_env(LEGACY_PROJECTS_DIR_ENV),
+    ) {
+        (Some(_), Some(_)) => Err(format!(
+            "{PROJECT_REGISTRY_DIR_ENV} and legacy {LEGACY_PROJECTS_DIR_ENV} cannot both be configured"
+        )),
+        (Some(value), None) | (None, Some(value)) => Ok(value),
+        (None, None) => Err(format!(
+            "{PROJECT_REGISTRY_DIR_ENV} is required when connector surface is enabled"
+        )),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorContext {
     pub(crate) project_id: String,
@@ -52,7 +70,7 @@ pub(crate) struct ConnectorContext {
     pub(crate) executor_root: String,
     pub(crate) runs_root: String,
     pub(crate) results_root: String,
-    pub(crate) projects_dir: String,
+    pub(crate) project_registry_dir: String,
     pub(crate) profile: String,
     pub(crate) project_grant_id: String,
 }
@@ -85,7 +103,7 @@ impl ConnectorContext {
             executor_root: required_env("WEBCODEX_CONNECTOR_EXECUTOR_ROOT")?,
             runs_root: required_env("WEBCODEX_CONNECTOR_RUNS_ROOT")?,
             results_root: required_env("WEBCODEX_CONNECTOR_RESULTS_ROOT")?,
-            projects_dir: required_env("WEBCODEX_CONNECTOR_PROJECTS_DIR")?,
+            project_registry_dir: project_registry_dir_env()?,
             profile: required_env("WEBCODEX_CONNECTOR_PROFILE")?,
             project_grant_id: required_env("WEBCODEX_CONNECTOR_PROJECT_GRANT_ID")?,
         };

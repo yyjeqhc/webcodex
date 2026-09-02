@@ -343,7 +343,7 @@ def run_graceful_inflight(binary: Path, runner_binary: Path) -> Dict[str, object
     with tempfile.TemporaryDirectory(prefix="webcodex-graceful-inflight-") as root:
         root_path = Path(root)
         data = root_path / "data"
-        projects = root_path / "projects.d"
+        projects = root_path / "project-registry"
         project = root_path / "project"
         data.mkdir()
         projects.mkdir()
@@ -374,7 +374,7 @@ def run_graceful_inflight(binary: Path, runner_binary: Path) -> Dict[str, object
             f"client_id = {json.dumps(RUNNER_CLIENT_ID)}\n"
             'display_name = "Graceful Drain E2E Runner"\n'
             'owner = "e2e"\n'
-            f"projects_dir = {json.dumps(str(projects))}\n"
+            f"project_registry_dir = {json.dumps(str(projects))}\n"
             "poll_interval_ms = 200\n"
             'transport = "websocket"\n\n'
             "[policy]\n"

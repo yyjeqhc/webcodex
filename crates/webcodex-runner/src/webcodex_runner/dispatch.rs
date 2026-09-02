@@ -46,7 +46,7 @@ fn run_native_shell_or_internal_search(
     config: &HotRunnerConfig,
     runtime: &ReloadableRunnerConfig,
     jobs: &JobManager,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     request: &ShellAgentShellRequest,
 ) -> ShellCommandResult {
     if request.command.lines().next() == Some(EXTERNAL_SEARCH_REQUEST_PREFIX) {
@@ -66,7 +66,7 @@ fn run_native_shell_or_internal_search(
             config.generation,
             &config.policy,
             &config.shell,
-            projects_dir,
+            project_registry_dir,
             &jobs.prepared_profiles,
             request.cwd.as_deref(),
             script,
@@ -78,7 +78,7 @@ fn run_native_shell_or_internal_search(
         config.generation,
         &config.policy,
         &config.shell,
-        projects_dir,
+        project_registry_dir,
         &jobs.prepared_profiles,
         request.cwd.as_deref(),
         &request.command,
@@ -98,7 +98,7 @@ pub(crate) fn dispatch_request(
     runtime: &ReloadableRunnerConfig,
     jobs: &JobManager,
     persistent_shells: &PersistentShellManager,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     lsp: &LspSupervisor,
     request: ShellAgentShellRequest,
 ) -> Result<bool, SubmitResultError> {
@@ -119,7 +119,7 @@ pub(crate) fn dispatch_request(
     if request.kind == "coding_agent" {
         let request_id = request.request_id.clone();
         let response = match (runtime.coding_agents(), request.coding_agent) {
-            (Some(manager), Some(operation)) => manager.handle(operation, projects_dir),
+            (Some(manager), Some(operation)) => manager.handle(operation, project_registry_dir),
             (None, _) => webcodex_core::coding_agent::CodingAgentResponse::error(
                 webcodex_core::coding_agent::CodingAgentDispatchState::NotStarted,
                 "coding_agent_unavailable",
@@ -281,7 +281,7 @@ pub(crate) fn dispatch_request(
                     config.generation,
                     policy,
                     shell,
-                    projects_dir,
+                    project_registry_dir,
                     &jobs.prepared_profiles,
                     request.cwd.as_deref(),
                     &process.executable,
@@ -324,7 +324,7 @@ pub(crate) fn dispatch_request(
                     config.generation,
                     policy,
                     shell,
-                    projects_dir,
+                    project_registry_dir,
                     &jobs.prepared_profiles,
                     request.cwd.as_deref(),
                     script,
@@ -366,7 +366,7 @@ pub(crate) fn dispatch_request(
                     config.generation,
                     policy,
                     shell,
-                    projects_dir,
+                    project_registry_dir,
                     &jobs.prepared_profiles,
                     request.cwd.as_deref(),
                     script,
@@ -396,7 +396,7 @@ pub(crate) fn dispatch_request(
             shell,
             &config.ssh,
             config.generation,
-            projects_dir,
+            project_registry_dir,
             &request,
         );
         let submitted = sink.submit_persistent_shell_result(request_id, result);
@@ -472,8 +472,13 @@ pub(crate) fn dispatch_request(
                     .submit_result_with_metadata(request_id, result, config, runtime)
                     .map(|_| true);
             }
-            let result =
-                run_native_shell_or_internal_search(config, runtime, jobs, projects_dir, &request);
+            let result = run_native_shell_or_internal_search(
+                config,
+                runtime,
+                jobs,
+                project_registry_dir,
+                &request,
+            );
             external_tools.complete_native_fallback(fallback, &result.result);
             return sink
                 .submit_shell_result_with_metadata(request_id, result, config, runtime)
@@ -494,7 +499,7 @@ pub(crate) fn dispatch_request(
                     policy: policy.clone(),
                     shell: shell.clone(),
                     ssh: config.ssh.clone(),
-                    projects_dir: projects_dir.to_path_buf(),
+                    project_registry_dir: project_registry_dir.to_path_buf(),
                     request,
                 },
             );
@@ -519,7 +524,7 @@ pub(crate) fn dispatch_request(
             let request_id = request.request_id.clone();
             let result = handle_project_op_with_temporary_projects_root(
                 policy,
-                projects_dir,
+                project_registry_dir,
                 runtime.temporary_projects_root(),
                 &request,
             );
@@ -528,7 +533,7 @@ pub(crate) fn dispatch_request(
         }
         "resolve_or_register_project" => {
             let request_id = request.request_id.clone();
-            let result = handle_resolve_or_register_project(policy, projects_dir, &request);
+            let result = handle_resolve_or_register_project(policy, project_registry_dir, &request);
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
@@ -536,7 +541,7 @@ pub(crate) fn dispatch_request(
         | "project_lifecycle_disable"
         | "project_lifecycle_unregister" => {
             let request_id = request.request_id.clone();
-            let result = handle_project_lifecycle_op(policy, projects_dir, &request);
+            let result = handle_project_lifecycle_op(policy, project_registry_dir, &request);
             if result.exit_code == Some(0)
                 && matches!(
                     request.kind.as_str(),
@@ -555,7 +560,7 @@ pub(crate) fn dispatch_request(
         kind if is_lsp_request_kind(kind) => {
             // Explicit LSP branch — must never fall through to shell execution.
             let request_id = request.request_id.clone();
-            let result = handle_lsp_request(policy, projects_dir, lsp, &request);
+            let result = handle_lsp_request(policy, project_registry_dir, lsp, &request);
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
@@ -564,7 +569,7 @@ pub(crate) fn dispatch_request(
             let request_id = request.request_id.clone();
             let result = handle_validation_request(
                 policy,
-                projects_dir,
+                project_registry_dir,
                 &request,
                 Some(runtime.shutdown_flag()),
             );
@@ -600,7 +605,7 @@ pub(crate) fn dispatch_request(
                     config,
                     runtime,
                     jobs,
-                    projects_dir,
+                    project_registry_dir,
                     &request,
                 ),
             };

@@ -18,7 +18,7 @@
 //! `ID_RSA.PEM` cannot slip past on a case-preserving filesystem.
 
 /// Exact component names whose entire subtree holds credentials.
-const SECRET_COMPONENTS: &[&str] = &["secrets", "tokens", "projects.d"];
+const SECRET_COMPONENTS: &[&str] = &["secrets", "tokens", "project-registry", "projects.d"];
 
 /// Component prefixes that mark a credential or Runner-config file.
 ///
@@ -108,6 +108,7 @@ mod tests {
             // exact credential directories
             "secrets/key.txt",
             "tokens/agent",
+            "project-registry/demo.toml",
             "projects.d/demo.toml",
             // Runner configuration, canonical and legacy
             "runner.toml",
@@ -194,6 +195,8 @@ mod tests {
             "*.key",
             "**/*.KEY",
             "secrets/**",
+            "project-registry/**",
+            "projects.d/**",
             "./**/.env",
         ] {
             assert!(

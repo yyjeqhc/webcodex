@@ -185,7 +185,7 @@ pub(crate) struct LocalTaskState {
     pub state: PathBuf,
     pub data: PathBuf,
     pub runs: PathBuf,
-    pub projects: PathBuf,
+    pub project_registry: PathBuf,
     pub cargo_target: PathBuf,
     pub logical_project_id: String,
 }
@@ -805,7 +805,10 @@ pub(super) async fn start_local_runtime(
         .env("WEBCODEX_CONNECTOR_EXECUTOR_ROOT", &config.root)
         .env("WEBCODEX_CONNECTOR_RUNS_ROOT", &paths.runs)
         .env("WEBCODEX_CONNECTOR_RESULTS_ROOT", &paths.results)
-        .env("WEBCODEX_CONNECTOR_PROJECTS_DIR", &paths.projects)
+        .env(
+            "WEBCODEX_CONNECTOR_PROJECT_REGISTRY_DIR",
+            &paths.project_registry,
+        )
         .env("WEBCODEX_CONNECTOR_PROFILE", &config.profile)
         .stdout(Stdio::from(server_log))
         .stderr(Stdio::from(server_error))

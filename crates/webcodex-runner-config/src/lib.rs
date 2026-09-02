@@ -17,8 +17,8 @@ use webcodex_core::shell_protocol::ShellClientCapabilities;
 
 pub mod paths;
 
-/// Default projects directory written into generated Runner configs.
-pub const DEFAULT_INIT_PROJECTS_DIR: &str = "/etc/webcodex/projects.d";
+/// Default Runner project registry selected for a new system-level install.
+pub const DEFAULT_INIT_PROJECT_REGISTRY_DIR: &str = "/etc/webcodex/project-registry";
 pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
@@ -43,7 +43,7 @@ pub struct RunnerInitOptions {
     pub display_name: Option<String>,
     pub transport: String,
     pub poll_interval_ms: u64,
-    pub projects_dir: PathBuf,
+    pub project_registry_dir: PathBuf,
     pub output: PathBuf,
     pub allowed_roots: Vec<PathBuf>,
     pub allow_cwd_anywhere: bool,
@@ -111,8 +111,8 @@ pub fn validate_runner_init_options(opts: &RunnerInitOptions) -> Result<(), Stri
     ) {
         return Err("--transport must be websocket, polling, quic, or auto".to_string());
     }
-    if opts.projects_dir.as_os_str().is_empty() {
-        return Err("--projects-dir cannot be empty".to_string());
+    if opts.project_registry_dir.as_os_str().is_empty() {
+        return Err("--project-registry-dir cannot be empty".to_string());
     }
     if opts.output.as_os_str().is_empty() {
         return Err("--output is required".to_string());
@@ -167,7 +167,7 @@ struct GeneratedRunnerConfig {
     owner: String,
     transport: String,
     poll_interval_ms: u64,
-    projects_dir: PathBuf,
+    project_registry_dir: PathBuf,
     capabilities: ShellClientCapabilities,
     policy: GeneratedRunnerPolicy,
 }
@@ -191,7 +191,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
         owner: opts.owner.clone(),
         transport: opts.transport.clone(),
         poll_interval_ms: opts.poll_interval_ms,
-        projects_dir: opts.projects_dir.clone(),
+        project_registry_dir: opts.project_registry_dir.clone(),
         capabilities: ShellClientCapabilities {
             shell: true,
             file_read: true,
@@ -431,7 +431,7 @@ mod tests {
             display_name: Some("Alice Laptop".to_string()),
             transport: TRANSPORT_WEBSOCKET.to_string(),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            projects_dir: PathBuf::from("/etc/webcodex/projects.d"),
+            project_registry_dir: PathBuf::from("/etc/webcodex/project-registry"),
             output,
             allowed_roots: vec![PathBuf::from("/srv/projects")],
             allow_cwd_anywhere: false,

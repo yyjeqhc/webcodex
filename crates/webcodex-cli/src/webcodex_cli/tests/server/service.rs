@@ -859,7 +859,7 @@ client_id = "alice-laptop"
 owner = "alice"
 display_name = "Alice Laptop"
 transport = "websocket"
-projects_dir = "/etc/webcodex/projects.d"
+project_registry_dir = "/etc/webcodex/project-registry"
 
 [policy]
 allowed_roots = ["/srv/projects"]
@@ -985,8 +985,8 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
     std::fs::write(
         &profile_config,
         format!(
-            "server_url = \"\"\ntoken = \"hosted-shared-key\"\nclient_id = \"hosted\"\nprojects_dir = {:?}\n",
-            profile_config.parent().unwrap().join("projects.d")
+            "server_url = \"\"\ntoken = \"hosted-shared-key\"\nclient_id = \"hosted\"\nproject_registry_dir = {:?}\n",
+            profile_config.parent().unwrap().join("project-registry")
         ),
     )
     .unwrap();

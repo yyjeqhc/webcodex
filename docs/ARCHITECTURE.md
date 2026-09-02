@@ -75,7 +75,7 @@ agent:<client_id>:<project_id>
 ```
 
 `client_id` is the stable logical identifier of a Runner/device; `project_id`
-is the id registered by that Runner in its `projects.d` registry.
+is the id registered by that Runner in its `project-registry` registry.
 `allowed_roots` controls where projects may be registered or created (default
 `$HOME`; an explicit list narrows it).
 

@@ -1613,6 +1613,7 @@ fn untracked_preview_path_is_sensitive(path: &str) -> bool {
                 ".git"
                     | "target"
                     | "node_modules"
+                    | "project-registry"
                     | "projects.d"
                     | "runner.toml"
                     | "agent.toml"

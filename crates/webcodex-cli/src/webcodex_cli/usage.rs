@@ -85,7 +85,7 @@ pub(crate) fn project_register_usage() -> &'static str {
     "Usage: webcodex project register --config PATH <PROJECT> [OPTIONS]\n\n\
 Add one existing project to a Runner configuration.\n\
 A newly added project is loaded after that Runner restarts; adding the same project again is idempotent.\n\
-Advanced: projects_dir remains the Runner project registry directory and allowed_roots remains the filesystem authority boundary.\n\n\
+Advanced: project_registry_dir is the Runner project registry directory, not a workspace root; allowed_roots remains the filesystem authority boundary.\n\n\
 Options:\n\
   --config PATH              Runner configuration created by login/init\n\
   --json                     Print machine-readable output\n\
@@ -324,13 +324,14 @@ pub(crate) fn runner_init_usage() -> &'static str {
        --display-name NAME        Human-readable Runner name\n\
        --transport NAME           websocket (default), polling, quic, or auto\n\
        --poll-interval-ms N       Polling interval, default 1000\n\
-       --projects-dir PATH        Project config directory [default: profile projects.d]\n\
+       --project-registry-dir PATH  Runner project registry directory [default: profile project-registry]\n\
+       --projects-dir PATH        Deprecated legacy alias for --project-registry-dir\n\
        --allowed-root PATH        Allowed project/root path; repeatable\n\
        --allow-cwd-anywhere BOOL  Allow cwd outside allowed_roots; default false\n\
        --output PATH|-            Output config path, or '-' for stdout [default: profile runner.toml]\n\
        --overwrite                Replace an existing output file\n\
        -h, --help                 Print help and exit\n\n\
-     With --profile, missing output/projects-dir paths are derived under\n\
+     With --profile, missing output/project-registry paths are derived under\n\
      /etc/webcodex/clients/<profile> for root or\n\
      ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
      flags override profile-derived defaults.\n"

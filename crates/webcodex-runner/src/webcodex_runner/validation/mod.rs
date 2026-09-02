@@ -34,7 +34,7 @@ pub(crate) fn is_validation_request_kind(kind: &str) -> bool {
 
 pub(crate) fn handle_validation_request(
     policy: &RunnerPolicy,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     request: &ShellAgentShellRequest,
     shutdown: Option<&AtomicBool>,
 ) -> CommandResult {
@@ -46,7 +46,7 @@ pub(crate) fn handle_validation_request(
             "validation request missing typed payload",
         );
     };
-    match execute_validation_with_shutdown(policy, projects_dir, payload, shutdown) {
+    match execute_validation_with_shutdown(policy, project_registry_dir, payload, shutdown) {
         Ok(response) => {
             let envelope = ValidationBridgeResultEnvelope::ok(response);
             CommandResult {
@@ -69,7 +69,7 @@ pub(crate) fn handle_validation_request(
 
 fn execute_validation_with_shutdown(
     policy: &RunnerPolicy,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     request: &ValidationBridgeRequest,
     shutdown: Option<&AtomicBool>,
 ) -> Result<ValidationBridgeResponse, ValidationBridgeResultEnvelope> {
@@ -106,7 +106,7 @@ fn execute_validation_with_shutdown(
         ));
     }
 
-    let project = resolve_runner_project(projects_dir, &request.project_id)?;
+    let project = resolve_runner_project(project_registry_dir, &request.project_id)?;
     let project_root = validate_project_root(policy, &project)?;
 
     match meta.adapter_id {
@@ -163,10 +163,10 @@ pub(crate) fn execute_validation_at_root(
 }
 
 fn resolve_runner_project(
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     project_id: &str,
 ) -> Result<PathBuf, ValidationBridgeResultEnvelope> {
-    let projects = load_runner_project_summaries_from_dir(projects_dir);
+    let projects = load_runner_project_summaries_from_dir(project_registry_dir);
     let project = projects
         .into_iter()
         .find(|p| p.id == project_id)

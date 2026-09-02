@@ -57,12 +57,12 @@ fn run_direct_process(
     stdin: Option<&str>,
     timeout_secs: u64,
 ) -> ShellCommandResult {
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     run_process_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.to_string_lossy().as_ref()),
         &executable.to_string_lossy(),
@@ -81,12 +81,12 @@ fn run_direct_script(
     stdin: Option<&str>,
     timeout_secs: u64,
 ) -> ShellCommandResult {
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     run_script_with_profiles_and_execution_state(
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.to_string_lossy().as_ref()),
         &ShellScriptPayload {
@@ -184,7 +184,7 @@ fn internal_posix_interpreter_rejects_wsl_only_bash() {
 #[test]
 fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
     let cwd = tempfile::tempdir().unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
     let git_root = root.path().join("Git");
     let git_cmd = git_root.join("cmd");
@@ -208,7 +208,7 @@ fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
         1,
         &unrestricted_policy(),
         &shell,
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         script,
@@ -231,7 +231,7 @@ fn internal_posix_runtime_ignores_configured_shell_on_posix_hosts() {
     use std::os::unix::fs::PermissionsExt;
 
     let cwd = tempfile::tempdir().unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let marker = cwd.path().join("configured-shell-ran");
     let configured_shell = cwd.path().join("configured-shell");
     std::fs::write(
@@ -250,7 +250,7 @@ fn internal_posix_runtime_ignores_configured_shell_on_posix_hosts() {
         1,
         &unrestricted_policy(),
         &shell,
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         script,
@@ -653,14 +653,14 @@ fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
 #[test]
 fn structured_process_continuously_drains_large_stdout_and_stderr() {
     let cwd = tempfile::tempdir().unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let mut policy = unrestricted_policy();
     policy.max_output_bytes = 16 * 1024;
     let result = run_process_with_profiles_and_execution_state(
         1,
         &policy,
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &process_argv_helper().to_string_lossy(),
@@ -701,7 +701,7 @@ fn structured_process_continuously_drains_large_stdout_and_stderr() {
 #[test]
 fn structured_script_continuously_drains_large_stdout_and_stderr() {
     let cwd = tempfile::tempdir().unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let mut policy = unrestricted_policy();
     policy.max_output_bytes = 16 * 1024;
     let stdout_payload = "x".repeat(4096);
@@ -724,7 +724,7 @@ fn structured_script_continuously_drains_large_stdout_and_stderr() {
         1,
         &policy,
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &ShellScriptPayload {
@@ -1031,7 +1031,7 @@ fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
 fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
     let cwd = tempfile::tempdir().unwrap();
     let marker = cwd.path().join("marker");
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let mut shell = ShellConfig {
         program: "custom-shell".to_string(),
         ..Default::default()
@@ -1041,7 +1041,7 @@ fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
         1,
         &unrestricted_policy(),
         &shell,
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &ShellScriptPayload {
@@ -1081,7 +1081,7 @@ fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
     )
     .unwrap();
     std::fs::set_permissions(&custom_shell, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let mut shell = ShellConfig {
         program: custom_shell.to_string_lossy().into_owned(),
         ..Default::default()
@@ -1091,7 +1091,7 @@ fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
         1,
         &unrestricted_policy(),
         &shell,
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &ShellScriptPayload {
@@ -1192,7 +1192,7 @@ fn phase_f_powershell_temp_file_uses_utf8_bom_without_script_preamble() {
 #[test]
 fn powershell_runtime_executes_from_file_when_available() {
     let cwd = tempfile::tempdir().unwrap();
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     if configured_script_interpreter(
         &ShellConfig::default(),
         None,
@@ -1206,7 +1206,7 @@ fn powershell_runtime_executes_from_file_when_available() {
         1,
         &unrestricted_policy(),
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &ShellScriptPayload {
@@ -1296,14 +1296,14 @@ fn phase_f_windows_native_oem_stdout_stderr_use_active_oem_page() {
         .contains('\u{fffd}'));
 
     let bounded_expected_path = cwd.path().join("bounded-expected.txt");
-    let projects_dir = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
     let mut policy = unrestricted_policy();
     policy.max_output_bytes = 64;
     let bounded = run_process_with_profiles_and_execution_state(
         1,
         &policy,
         &ShellConfig::default(),
-        projects_dir.path(),
+        project_registry_dir.path(),
         &PreparedShellProfileCache::default(),
         Some(cwd.path().to_string_lossy().as_ref()),
         &process_argv_helper().to_string_lossy(),

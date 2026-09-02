@@ -1125,7 +1125,7 @@ fn enqueue_structured_process_job_with_policy(
             policy,
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: cwd.join("projects.d"),
+            project_registry_dir: cwd.join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "structured-agent",
@@ -1170,7 +1170,7 @@ fn enqueue_detached_process_job(
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: cwd.join("projects.d"),
+            project_registry_dir: cwd.join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "structured-agent",
@@ -1296,7 +1296,7 @@ fn enqueue_shell_job(
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: cwd.join("projects.d"),
+            project_registry_dir: cwd.join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "backpressure-agent",
@@ -1386,7 +1386,7 @@ fn enqueue_gated_structured_job_for_project(
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: cwd.join("projects.d"),
+            project_registry_dir: cwd.join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": format!("request-{}", job.job_id),
                 "client_id": "structured-agent",
@@ -1768,7 +1768,7 @@ fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
             ..RunnerPolicy::default()
         },
         ShellConfig::default(),
-        temp.path().join("projects.d"),
+        temp.path().join("project-registry"),
         failed_request,
     );
 
@@ -1881,7 +1881,7 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
             },
             shell,
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "request-validation-shared-slot",
                 "client_id": "structured-agent",
@@ -2762,7 +2762,7 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "request-phase-f-stream",
                 "client_id": "structured-agent",
@@ -2807,7 +2807,7 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "request-phase-f-oem-stream",
                 "client_id": "structured-agent",
@@ -2929,7 +2929,7 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request,
         },
     );
@@ -3008,7 +3008,7 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "request-structured-script-chatty",
                 "client_id": "structured-agent",
@@ -3196,7 +3196,7 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
             },
             shell,
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": format!("validation-request-{attempt}"),
                 "client_id": "validation-agent",
@@ -3287,7 +3287,7 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
             },
             shell,
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "validation-backpressure-request",
                 "client_id": "validation-agent",
@@ -3488,7 +3488,7 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
             },
             shell,
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "spawn-failure-request",
                 "client_id": "validation-agent",
@@ -4201,7 +4201,7 @@ fn job_timeout_terminates_the_whole_tree() {
             },
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
-            projects_dir: temp.path().join("projects.d"),
+            project_registry_dir: temp.path().join("project-registry"),
             request: serde_json::from_value(json!({
                 "request_id": "timeout-request",
                 "client_id": "timeout-agent",

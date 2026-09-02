@@ -35,8 +35,8 @@ pub(crate) use computer::{handle_computer_request, is_computer_request_kind};
 pub(crate) use config::SshConfig;
 pub(crate) use config::{
     client_profile_runner_config, default_config_path, hostname, load_config, max_concurrent_jobs,
-    projects_dir, validate_client_profile, HotRunnerConfig, ReloadableRunnerConfig, RunnerConfig,
-    RunnerPolicy, ShellConfig,
+    project_registry_dir, validate_client_profile, HotRunnerConfig, ReloadableRunnerConfig,
+    RunnerConfig, RunnerPolicy, ShellConfig,
 };
 #[cfg(test)]
 pub(crate) use config::{

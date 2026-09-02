@@ -162,8 +162,9 @@ pub(crate) fn client_profile_runner_config(profile: &str) -> Result<PathBuf, Str
     paths::resolve_runner_config_path(&client_profile_dir(profile)?)
 }
 
-pub(crate) fn client_profile_projects_dir(profile: &str) -> Result<PathBuf, String> {
-    Ok(client_profile_dir(profile)?.join("projects.d"))
+pub(crate) fn client_profile_project_registry_dir(profile: &str) -> Result<PathBuf, String> {
+    let profile_dir = client_profile_dir(profile)?;
+    webcodex_runner_config::paths::select_project_registry_dir(&profile_dir)
 }
 
 pub(crate) fn client_profile_user_token_file(profile: &str) -> Result<PathBuf, String> {

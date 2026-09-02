@@ -53,7 +53,7 @@ fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
 struct NavFixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
-    projects_dir: PathBuf,
+    project_registry_dir: PathBuf,
     marker: PathBuf,
     supervisor: LspSupervisor,
     policy: RunnerPolicy,
@@ -104,10 +104,10 @@ impl NavFixture {
     /// and build the fixture. The fake server is language-agnostic, so the
     /// language behavior under test comes from the profile registry.
     fn finish(temp: tempfile::TempDir, root: PathBuf, scenario: &str, kind: LspServerKind) -> Self {
-        let projects_dir = temp.path().join("projects.d");
-        fs::create_dir_all(&projects_dir).unwrap();
+        let project_registry_dir = temp.path().join("project-registry");
+        fs::create_dir_all(&project_registry_dir).unwrap();
         fs::write(
-            projects_dir.join("demo.toml"),
+            project_registry_dir.join("demo.toml"),
             format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
         )
         .unwrap();
@@ -135,7 +135,7 @@ impl NavFixture {
         Self {
             _temp: temp,
             root,
-            projects_dir,
+            project_registry_dir,
             marker,
             supervisor,
             policy,
@@ -149,7 +149,12 @@ impl NavFixture {
     fn request_with_timeout(&self, payload: AgentLspPayload, timeout_secs: u64) -> Value {
         let mut req = shell_lsp_request(payload);
         req.timeout_secs = timeout_secs;
-        let result = handle_lsp_request(&self.policy, &self.projects_dir, &self.supervisor, &req);
+        let result = handle_lsp_request(
+            &self.policy,
+            &self.project_registry_dir,
+            &self.supervisor,
+            &req,
+        );
         assert!(result.error.is_none(), "{result:?}");
         let stdout = result.stdout.expect("stdout envelope");
         let envelope = parse_agent_lsp_result_envelope(&stdout).expect("valid envelope");
@@ -351,7 +356,7 @@ fn call_hierarchy_uses_one_shared_operation_deadline() {
     let started = Instant::now();
     let result = handle_lsp_request(
         &fixture.policy,
-        &fixture.projects_dir,
+        &fixture.project_registry_dir,
         &fixture.supervisor,
         &request,
     );
@@ -617,10 +622,10 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
     fs::create_dir_all(&root).unwrap();
-    let projects_dir = temp.path().join("projects.d");
-    fs::create_dir_all(&projects_dir).unwrap();
+    let project_registry_dir = temp.path().join("project-registry");
+    fs::create_dir_all(&project_registry_dir).unwrap();
     fs::write(
-        projects_dir.join("demo.toml"),
+        project_registry_dir.join("demo.toml"),
         format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
     )
     .unwrap();
@@ -666,7 +671,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         coding_agent: None,
         persistent_shell: None,
     };
-    let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
+    let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
     let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(envelope.success);
     let value = envelope.result.unwrap();
@@ -1666,7 +1671,7 @@ fn missing_lsp_payload_returns_structured_error() {
     };
     let result = handle_lsp_request(
         &fixture.policy,
-        &fixture.projects_dir,
+        &fixture.project_registry_dir,
         &fixture.supervisor,
         &req,
     );
@@ -1714,7 +1719,7 @@ fn lsp_request_ignores_command_field() {
     };
     let result = handle_lsp_request(
         &fixture.policy,
-        &fixture.projects_dir,
+        &fixture.project_registry_dir,
         &fixture.supervisor,
         &req,
     );
@@ -2026,10 +2031,10 @@ fn real_pyright_document_symbols_end_to_end() {
     )
     .unwrap();
 
-    let projects_dir = temp.path().join("projects.d");
-    fs::create_dir_all(&projects_dir).unwrap();
+    let project_registry_dir = temp.path().join("project-registry");
+    fs::create_dir_all(&project_registry_dir).unwrap();
     fs::write(
-        projects_dir.join("demo.toml"),
+        project_registry_dir.join("demo.toml"),
         format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
     )
     .unwrap();
@@ -2059,7 +2064,7 @@ fn real_pyright_document_symbols_end_to_end() {
             limit: 50,
         },
     });
-    let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
+    let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
     assert!(result.error.is_none(), "{result:?}");
     let envelope =
         parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope");
@@ -2105,7 +2110,7 @@ fn real_pyright_document_symbols_end_to_end() {
             limit: 10,
         },
     });
-    let goto_result = handle_lsp_request(&policy, &projects_dir, &supervisor, &goto);
+    let goto_result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &goto);
     let goto_value = serde_json::to_value(
         parse_agent_lsp_result_envelope(goto_result.stdout.as_deref().unwrap()).unwrap(),
     )
@@ -2165,10 +2170,10 @@ fn real_typescript_document_symbols_end_to_end() {
     fs::create_dir_all(root.join("node_modules")).unwrap();
     std::os::unix::fs::symlink(&ts_lib, root.join("node_modules/typescript")).unwrap();
 
-    let projects_dir = temp.path().join("projects.d");
-    fs::create_dir_all(&projects_dir).unwrap();
+    let project_registry_dir = temp.path().join("project-registry");
+    fs::create_dir_all(&project_registry_dir).unwrap();
     fs::write(
-        projects_dir.join("demo.toml"),
+        project_registry_dir.join("demo.toml"),
         format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
     )
     .unwrap();
@@ -2196,7 +2201,7 @@ fn real_typescript_document_symbols_end_to_end() {
             limit: 50,
         },
     });
-    let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
+    let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
     assert!(result.error.is_none(), "{result:?}");
     let value = serde_json::to_value(
         parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope"),
@@ -2254,10 +2259,10 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
     )
     .unwrap();
 
-    let projects_dir = temp.path().join("projects.d");
-    fs::create_dir_all(&projects_dir).unwrap();
+    let project_registry_dir = temp.path().join("project-registry");
+    fs::create_dir_all(&project_registry_dir).unwrap();
     fs::write(
-        projects_dir.join("demo.toml"),
+        project_registry_dir.join("demo.toml"),
         format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
     )
     .unwrap();
@@ -2277,7 +2282,7 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
     let request = |request| {
         let result = handle_lsp_request(
             &policy,
-            &projects_dir,
+            &project_registry_dir,
             &supervisor,
             &shell_lsp_request(AgentLspPayload {
                 project_id: "demo".into(),

@@ -9,7 +9,7 @@ display_name = "Example Agent"
 owner = "example-user"
 transport = "auto"
 poll_interval_ms = 1000
-projects_dir = "/etc/webcodex/clients/workstation/projects.d"
+project_registry_dir = "/etc/webcodex/clients/workstation/project-registry"
 
 # Agent transport. New deployments should prefer auto transport with
 # [quic] configured: the agent tries QUIC first, then WebSocket, then polling.

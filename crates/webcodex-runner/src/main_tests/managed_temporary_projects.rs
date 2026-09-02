@@ -4,7 +4,7 @@ use super::*;
 fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compatible() {
     let tmp = tempfile::tempdir().unwrap();
     let temporary_root = tmp.path().join("temporary-projects");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir(&temporary_root).unwrap();
     let policy = project_policy(tmp.path());
     let request = project_request(
@@ -17,7 +17,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
 
     let created = project_ok(handle_project_op_with_temporary_projects_root(
         &policy,
-        &projects_dir,
+        &project_registry_dir,
         Some(&temporary_root),
         &request,
     ));
@@ -38,7 +38,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
     );
 
     let persisted = parse_runner_project_toml(
-        &std::fs::read_to_string(projects_dir.join(format!("{id}.toml"))).unwrap(),
+        &std::fs::read_to_string(project_registry_dir.join(format!("{id}.toml"))).unwrap(),
     )
     .unwrap();
     assert_eq!(persisted.kind.as_deref(), Some("managed_temporary"));
@@ -46,7 +46,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
 
     // A fresh project-registry scan models a Runner restart: it finds the same
     // ordinary project record, including its source marker and canonical path.
-    let reloaded = load_runner_project_summaries_from_dir(&projects_dir);
+    let reloaded = load_runner_project_summaries_from_dir(&project_registry_dir);
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].id, id);
     assert_eq!(reloaded[0].kind.as_deref(), Some("managed_temporary"));
@@ -82,7 +82,7 @@ fn managed_temporary_project_is_registered_persistent_and_ordinary_project_compa
 fn managed_temporary_project_rejects_path_traversal_and_never_overwrites_existing_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let temporary_root = tmp.path().join("temporary-projects");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir(&temporary_root).unwrap();
     let pre_existing = temporary_root.join("scratch");
     std::fs::create_dir(&pre_existing).unwrap();
@@ -91,7 +91,7 @@ fn managed_temporary_project_rejects_path_traversal_and_never_overwrites_existin
 
     let traversal = project_err(handle_project_op_with_temporary_projects_root(
         &policy,
-        &projects_dir,
+        &project_registry_dir,
         Some(&temporary_root),
         &project_request(
             "create_project",
@@ -107,7 +107,7 @@ fn managed_temporary_project_rejects_path_traversal_and_never_overwrites_existin
 
     let path_like_name = project_err(handle_project_op_with_temporary_projects_root(
         &policy,
-        &projects_dir,
+        &project_registry_dir,
         Some(&temporary_root),
         &project_request(
             "create_project",
@@ -121,7 +121,7 @@ fn managed_temporary_project_rejects_path_traversal_and_never_overwrites_existin
 
     let created = project_ok(handle_project_op_with_temporary_projects_root(
         &policy,
-        &projects_dir,
+        &project_registry_dir,
         Some(&temporary_root),
         &project_request(
             "create_project",
@@ -145,12 +145,12 @@ fn managed_temporary_project_rejects_path_traversal_and_never_overwrites_existin
 fn managed_temporary_project_requires_root_inside_runner_policy() {
     let allowed = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let projects_dir = allowed.path().join("projects.d");
+    let project_registry_dir = allowed.path().join("project-registry");
     let policy = project_policy(allowed.path());
 
     let error = project_err(handle_project_op_with_temporary_projects_root(
         &policy,
-        &projects_dir,
+        &project_registry_dir,
         Some(outside.path()),
         &project_request(
             "create_project",
@@ -158,5 +158,5 @@ fn managed_temporary_project_requires_root_inside_runner_policy() {
         ),
     ));
     assert_eq!(error, "temporary_projects_root_outside_allowed_roots");
-    assert!(!projects_dir.exists());
+    assert!(!project_registry_dir.exists());
 }

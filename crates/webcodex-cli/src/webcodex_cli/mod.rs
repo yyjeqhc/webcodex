@@ -82,7 +82,7 @@ pub(crate) use pairing::run_pairing_create;
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
 pub(crate) use profiles::{
     client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
-    client_profile_projects_dir, client_profile_runner_config, client_profile_state_dir,
+    client_profile_project_registry_dir, client_profile_runner_config, client_profile_state_dir,
     client_profile_user_token_file, client_profile_user_token_file_for_scope, current_user_home,
     runner_config_for_scope, runner_service_file_for_scope, validate_client_profile,
     validate_service_file_scope,

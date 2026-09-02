@@ -210,7 +210,7 @@ STATE_DIR="$TMP_ROOT/state/webcodex/clients/$PROFILE"
     || die "runner state is not mode 0600"
 [ "$(stat -c '%a' "$STATE_DIR/runner.log")" = "600" ] \
     || die "runner log is not mode 0600"
-[ -f "$PROFILE_DIR/projects.d/project.toml" ] \
+[ -f "$PROFILE_DIR/project-registry/project.toml" ] \
     || die "connect did not register the project locally"
 [ -f "$STATE_DIR/runner.toml" ] && [ -f "$STATE_DIR/runner.log" ] \
     || die "connect did not persist Runner state and logs"

@@ -1,6 +1,6 @@
 use super::config::{
-    max_concurrent_jobs, projects_dir, validate_quic_config, HotRunnerConfig, QuicClientConfig,
-    ReloadableRunnerConfig, RunnerConfig,
+    max_concurrent_jobs, project_registry_dir, validate_quic_config, HotRunnerConfig,
+    QuicClientConfig, ReloadableRunnerConfig, RunnerConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use super::detached_job::DetachedJobStore;
@@ -112,7 +112,7 @@ const POLLING_IDLE_BACKOFF_STEPS: [Duration; 3] = [
     Duration::from_secs(5),
 ];
 /// Polling periodically refreshes the Server's project projection so external
-/// projects.d and Git metadata changes remain discoverable without attaching
+/// project-registry and Git metadata changes remain discoverable without attaching
 /// the full inventory to every poll.
 const POLLING_PROJECT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// The current server contract keeps an active polling instance online for
@@ -2985,7 +2985,7 @@ fn handle_stream_envelope(
             let hot = config.snapshot();
             let jobs = runtime.jobs.clone();
             let persistent_shells = runtime.persistent_shells.clone();
-            let projects_dir = match projects_dir(cfg) {
+            let project_registry_dir = match project_registry_dir(cfg) {
                 Ok(dir) => dir,
                 Err(error) => return Some(error),
             };
@@ -3000,7 +3000,7 @@ fn handle_stream_envelope(
                     &config,
                     &jobs,
                     &persistent_shells,
-                    &projects_dir,
+                    &project_registry_dir,
                     &lsp,
                     request,
                 );

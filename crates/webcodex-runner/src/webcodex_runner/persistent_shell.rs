@@ -53,7 +53,7 @@ impl PersistentShellManager {
         shell: &ShellConfig,
         ssh: &SshConfig,
         ssh_generation: u64,
-        projects_dir: &Path,
+        project_registry_dir: &Path,
         request: &ShellAgentShellRequest,
     ) -> PersistentShellResult {
         self.processes.update_limits(limits(shell));
@@ -74,27 +74,32 @@ impl PersistentShellManager {
             return self.close(operation);
         }
 
-        let project =
-            match validate_boundary(policy, shell, projects_dir, &request.client_id, operation) {
-                Ok(project) => project,
-                Err((code, message)) => {
-                    if operation.action != "open" {
-                        let _ = self.processes.close(
-                            &operation.shell_id,
-                            &operation.workflow_session_id,
-                            &operation.runtime_project_id,
-                            code,
-                        );
-                    }
-                    return error_result(
+        let project = match validate_boundary(
+            policy,
+            shell,
+            project_registry_dir,
+            &request.client_id,
+            operation,
+        ) {
+            Ok(project) => project,
+            Err((code, message)) => {
+                if operation.action != "open" {
+                    let _ = self.processes.close(
                         &operation.shell_id,
                         &operation.workflow_session_id,
                         &operation.runtime_project_id,
                         code,
-                        message,
                     );
                 }
-            };
+                return error_result(
+                    &operation.shell_id,
+                    &operation.workflow_session_id,
+                    &operation.runtime_project_id,
+                    code,
+                    message,
+                );
+            }
+        };
 
         match operation.action.as_str() {
             "open" => {
@@ -629,7 +634,7 @@ fn limits(shell: &ShellConfig) -> ShellLimits {
 fn validate_boundary(
     policy: &RunnerPolicy,
     shell: &ShellConfig,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     client_id: &str,
     operation: &PersistentShellRequest,
 ) -> Result<RunnerProjectShellContext, (&'static str, String)> {
@@ -651,7 +656,7 @@ fn validate_boundary(
                 "runtime project does not belong to this Runner".to_string(),
             )
         })?;
-    find_project_shell_context_by_id(projects_dir, project_id).ok_or_else(|| {
+    find_project_shell_context_by_id(project_registry_dir, project_id).ok_or_else(|| {
         (
             "persistent_shell_project_unavailable",
             "project is disabled, unregistered, or not executable by this Runner".to_string(),
@@ -1189,7 +1194,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, RunnerPolicy) {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let projects = temp.path().join("projects.d");
+        let projects = temp.path().join("project-registry");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(project.join("sub")).unwrap();
         std::fs::create_dir_all(&projects).unwrap();
@@ -1620,7 +1625,7 @@ mod windows_tests {
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, RunnerPolicy) {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let projects = temp.path().join("projects.d");
+        let projects = temp.path().join("project-registry");
         std::fs::create_dir_all(project.join("sub")).unwrap();
         std::fs::create_dir_all(&projects).unwrap();
         let escaped = project.to_string_lossy().replace('\\', "\\\\");

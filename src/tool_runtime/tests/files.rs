@@ -3950,6 +3950,7 @@ fn validate_edit_file_path_rejects_unsafe_and_sensitive_paths() {
         ".env",
         ".env.local",
         "secrets/projects.d/x",
+        "project-registry",
         "projects.d",
         ".git/config",
         "target/debug/bin",
@@ -4435,6 +4436,7 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
         "agent.toml",
         "secrets/token",
         "tokens/agent",
+        "project-registry/demo.toml",
         "projects.d/demo.toml",
     ] {
         let result = runtime

@@ -21,10 +21,10 @@ client_id = "{client_id}"
 owner = "alice"
 poll_interval_ms = 1000
 {max_jobs}
-# Explicit projects_dir: load_config materializes the default from the
+# Explicit project_registry_dir: load_config materializes the default from the
 # per-user config base, which depends on ambient HOME/USERPROFILE that other
 # tests mutate.
-projects_dir = "projects.d"
+project_registry_dir = "project-registry"
 policy.allow_raw_shell = true
 policy.allow_cwd_anywhere = true
 policy.allowed_roots = ["/"]
@@ -87,7 +87,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
         runtime: Some("Prefer this Runner for ordinary development.".to_string()),
         ..Default::default()
     });
-    changed.projects_dir = Some(PathBuf::from("projects-b"));
+    changed.project_registry_dir = Some(PathBuf::from("projects-b"));
     changed.temporary_projects_root = Some(PathBuf::from("/tmp/webcodex-temporary"));
     changed.poll_interval_ms += 1;
     changed.capabilities = Some(ShellClientCapabilities::default());
@@ -98,7 +98,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.quic = Some(quic_client_config());
     assert_eq!(
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
-            "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
+            "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms project_registry_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
         );
 }
 

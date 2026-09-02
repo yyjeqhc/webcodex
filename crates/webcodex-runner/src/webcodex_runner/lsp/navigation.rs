@@ -52,7 +52,7 @@ pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
 
 pub(crate) fn handle_lsp_request(
     policy: &RunnerPolicy,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     supervisor: &LspSupervisor,
     request: &ShellAgentShellRequest,
 ) -> CommandResult {
@@ -69,7 +69,7 @@ pub(crate) fn handle_lsp_request(
         .unwrap_or(start);
     match execute_lsp(
         policy,
-        projects_dir,
+        project_registry_dir,
         supervisor,
         payload,
         operation_deadline,
@@ -95,12 +95,12 @@ pub(crate) fn handle_lsp_request(
 
 fn execute_lsp(
     policy: &RunnerPolicy,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     supervisor: &LspSupervisor,
     payload: &AgentLspPayload,
     operation_deadline: Instant,
 ) -> Result<AgentLspResultEnvelope, AgentLspResultEnvelope> {
-    let project = resolve_runner_project(projects_dir, &payload.project_id)?;
+    let project = resolve_runner_project(project_registry_dir, &payload.project_id)?;
     let project_root = validate_project_root(policy, &project.path)?;
     match &payload.request {
         AgentLspRequest::Status => Ok(AgentLspResultEnvelope::ok(lsp_status(
@@ -206,7 +206,7 @@ struct ResolvedProject {
 }
 
 fn resolve_runner_project(
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     project_id: &str,
 ) -> Result<ResolvedProject, AgentLspResultEnvelope> {
     let id = project_id.trim();
@@ -216,7 +216,7 @@ fn resolve_runner_project(
             "project_id cannot be empty",
         ));
     }
-    let projects = load_runner_project_summaries_from_dir(projects_dir);
+    let projects = load_runner_project_summaries_from_dir(project_registry_dir);
     let project = projects.into_iter().find(|p| p.id == id).ok_or_else(|| {
         AgentLspResultEnvelope::err(error_codes::UNKNOWN_PROJECT, "unknown agent project")
     })?;

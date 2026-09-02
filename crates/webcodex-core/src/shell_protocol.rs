@@ -245,7 +245,7 @@ pub const SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_onl
 pub const SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 /// Resolve an absolute canonical project path to an existing registration or
-/// atomically persist a new projects.d entry. Missing on older runners and
+/// atomically persist a new project registration record. Missing on older runners and
 /// therefore fails closed.
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
 /// Runner-global read-only operator-installed Skill store discovery/read.
@@ -743,7 +743,7 @@ pub struct ShellAgentProjectSummary {
     pub hooks: Vec<String>,
     #[serde(default)]
     pub disabled: bool,
-    /// Stable SHA-256 revision of the persisted projects.d TOML content.
+    /// Stable SHA-256 revision of the persisted project registration record TOML content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
     #[serde(default)]

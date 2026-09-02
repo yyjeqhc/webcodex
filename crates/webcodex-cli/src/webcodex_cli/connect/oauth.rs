@@ -573,7 +573,9 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
     let _lock = ProfileLock::acquire(&state_dir)?;
     let config_path = webcodex_runner_config::paths::resolve_runner_config_path(&profile_dir)?;
     let oauth_path = profile_dir.join(OAUTH_PROFILE_FILE);
-    let projects_dir = ensure_private_directory(&profile_dir.join("projects.d"))?;
+    let project_registry_dir =
+        webcodex_runner_config::paths::select_project_registry_dir(&profile_dir)?;
+    let project_registry_dir = ensure_private_directory(&project_registry_dir)?;
     let existing_config = read_existing_runner_config(&config_path)?;
     let existing_oauth = read_oauth_profile(&oauth_path)?;
     let previous_oauth_bytes = if oauth_path.exists() {
@@ -613,7 +615,7 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
     };
 
     let (project_path, project, already_registered) = resolve_project(
-        &projects_dir,
+        &project_registry_dir,
         &canonical_project,
         opts.project_id.as_deref(),
     )?;
@@ -722,7 +724,7 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
         &canonical_server.url,
         &agent_token,
         &client_id,
-        &projects_dir,
+        &project_registry_dir,
         &canonical_project,
     ) {
         Ok(content) => content,

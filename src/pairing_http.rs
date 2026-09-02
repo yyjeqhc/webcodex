@@ -68,7 +68,9 @@ pub(crate) struct PairingEnrollRequest {
     #[serde(default)]
     pub transport: Option<String>,
     #[serde(default)]
-    pub projects_dir: Option<String>,
+    pub project_registry_dir: Option<String>,
+    #[serde(default, rename = "projects_dir")]
+    pub legacy_projects_dir: Option<String>,
     #[serde(default)]
     pub allowed_roots: Option<Vec<String>>,
     #[serde(default)]
@@ -334,7 +336,8 @@ pub(crate) async fn pairing_enroll(req: &mut Request, depot: &mut Depot, res: &m
         }
     };
     let _ = (
-        body.projects_dir,
+        body.project_registry_dir,
+        body.legacy_projects_dir,
         body.allowed_roots,
         body.allow_cwd_anywhere,
     );

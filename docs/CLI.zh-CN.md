@@ -111,7 +111,7 @@ Windows 支持 `server init`、前台 `server run` 与显式 `share`。受管 se
 应传入相同的 `--service-file` 来管理或检查该自定义 pair；省略时仍操作默认的
 `webcodex.service` / `webcodex.socket` pair。
 
-Runner 配置术语中，`projects_dir` 是 Project registry TOML 文件目录，不是 workspace root；`[policy].allowed_roots` 只限制哪些文件系统路径可以注册，Project record 才指向实际 workspace。
+Runner 配置术语中，`project_registry_dir` 是 Project registry TOML 文件目录，不是 workspace root；`[policy].allowed_roots` 只限制哪些文件系统路径可以注册，Project record 才指向实际 workspace。
 
 ### 运维（只读操作检查）
 
@@ -199,7 +199,7 @@ credential；admin token management 也使用相同的 plural namespace。
 
 ### 项目与工作
 
-- **project_id** —— agent 在其 `projects.d` 注册表中注册的项目 id。
+- **project_id** —— agent 在其 `project-registry` 注册表中注册的项目 id。
 - **runtime project id** —— 完整的 `agent:<client_id>:<project_id>`，用于定位
   已注册项目。project-bound Connector 内部会解析它；普通用户不需要输入。
 - **Task** —— 模型创建、人工审查的一个有界项目工作单元。Task 有稳定 id

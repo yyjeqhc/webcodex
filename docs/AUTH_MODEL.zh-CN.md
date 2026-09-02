@@ -216,14 +216,14 @@ agent:ubuntu-client:webcodex
 agent:alice-macbook:my-repo
 ```
 
-`<project_id>` 来自 agent `projects.d/*.toml` 文件的顶层 `id` 字段：
+`<project_id>` 来自 agent `project-registry/*.toml` 文件的顶层 `id` 字段：
 
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-不要在 agent `projects.d/*.toml` 文件中使用服务端 `[projects.<id>]` 语法。
+不要在 agent `project-registry/*.toml` 文件中使用服务端 `[projects.<id>]` 语法。
 
 ## Hash 存储
 
@@ -250,7 +250,7 @@ path = "/srv/webcodex/projects/webcodex"
       server.toml               规范 server URL、用户名、设备
       runner.toml                agent token 内联在此
       webcodex-user-token
-      projects.d/
+      project-registry/
 ```
 
 Server 身份是规范 URL，不是目录名；slug 只是给人类看的、可能有损的索引。当 AI

@@ -258,6 +258,7 @@ SENSITIVE_PATTERNS=(
     'agent.toml'
     'webcodex.env'
     '.env'
+    'project-registry'
     'projects.d'
 )
 violations=""

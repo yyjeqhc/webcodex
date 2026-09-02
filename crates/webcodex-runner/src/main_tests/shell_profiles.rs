@@ -88,7 +88,7 @@ fn prepared_profile_failure_reports_exit_code() {
 fn prepared_profile_init_script_is_project_relative() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("project");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     // Windows virtual environments activate through `.venv/Scripts/
     // Activate.ps1`; Unix through `.venv/bin/activate`.
     #[cfg(windows)]
@@ -105,7 +105,7 @@ fn prepared_profile_init_script_is_project_relative() {
         ),
     )
     .unwrap();
-    write_runner_project(&projects_dir, "demo", &project_dir, Some("py-venv"));
+    write_runner_project(&project_registry_dir, "demo", &project_dir, Some("py-venv"));
     let shell = shell_with_profiles(
         None,
         vec![(
@@ -119,7 +119,7 @@ fn prepared_profile_init_script_is_project_relative() {
     let result = run_profile_shell(
         &unrestricted_test_policy(),
         &shell,
-        &projects_dir,
+        &project_registry_dir,
         &PreparedShellProfileCache::default(),
         &project_dir,
         &shell_env_var("WEBCODEX_PROJECT_VENV"),
@@ -132,9 +132,9 @@ fn prepared_profile_init_script_is_project_relative() {
 fn project_shell_profile_overrides_default_profile() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("project");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_runner_project(&projects_dir, "demo", &project_dir, Some("project"));
+    write_runner_project(&project_registry_dir, "demo", &project_dir, Some("project"));
     let shell = shell_with_profiles(
         Some("default"),
         vec![
@@ -157,7 +157,7 @@ fn project_shell_profile_overrides_default_profile() {
     let result = run_profile_shell(
         &unrestricted_test_policy(),
         &shell,
-        &projects_dir,
+        &project_registry_dir,
         &PreparedShellProfileCache::default(),
         &project_dir,
         &shell_env_var("WEBCODEX_TEST_PROFILE"),
@@ -198,9 +198,9 @@ fn wait_for_job_stdout(
 fn prepared_profile_run_shell_and_run_job_see_same_env() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("project");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_runner_project(&projects_dir, "demo", &project_dir, Some("test"));
+    write_runner_project(&project_registry_dir, "demo", &project_dir, Some("test"));
     let shell = shell_with_profiles(
         None,
         vec![(
@@ -215,7 +215,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
     let shell_result = run_profile_shell(
         &unrestricted_test_policy(),
         &shell,
-        &projects_dir,
+        &project_registry_dir,
         &jobs.prepared_profiles,
         &project_dir,
         &shell_env_var("WEBCODEX_TEST_PROFILE"),
@@ -224,7 +224,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
 
     let (sink, mut rx) = ws_sink("ws-client");
     let lsp = webcodex_runner::LspSupervisor::default();
-    let mut cfg = test_config(projects_dir.clone());
+    let mut cfg = test_config(project_registry_dir.clone());
     cfg.shell = shell.clone();
     let hot = runtime_config(&cfg);
     let persistent_shells = webcodex_runner::PersistentShellManager::new(
@@ -237,7 +237,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
         &hot,
         &jobs,
         &persistent_shells,
-        &projects_dir,
+        &project_registry_dir,
         &lsp,
         shell_job_request(&project_dir, &shell_env_var("WEBCODEX_TEST_PROFILE")),
     )
@@ -397,12 +397,12 @@ fn prepared_profile_prepare_reaps_background_pipe_holder() {
     );
     let policy = unrestricted_test_policy();
     let cache = PreparedShellProfileCache::default();
-    let projects_dir = tmp.path().to_path_buf();
+    let project_registry_dir = tmp.path().to_path_buf();
     let cwd = tmp.path().to_string_lossy().to_string();
     let worker_shell = shell.clone();
     let worker_policy = policy.clone();
     let worker_cache = cache.clone();
-    let worker_projects_dir = projects_dir.clone();
+    let worker_project_registry_dir = project_registry_dir.clone();
     let worker_cwd = cwd.clone();
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
@@ -410,7 +410,7 @@ fn prepared_profile_prepare_reaps_background_pipe_holder() {
             1,
             &worker_policy,
             &worker_shell,
-            &worker_projects_dir,
+            &worker_project_registry_dir,
             &worker_cache,
             Some(&worker_cwd),
             &shell_env_var("WEBCODEX_TEST_PROFILE"),
@@ -608,13 +608,13 @@ fn prepared_profile_program_spawn_failure_mentions_profile() {
 fn project_shell_profile_missing_profile_returns_clear_error() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("project");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir_all(&project_dir).unwrap();
-    write_runner_project(&projects_dir, "demo", &project_dir, Some("missing"));
+    write_runner_project(&project_registry_dir, "demo", &project_dir, Some("missing"));
     let result = run_profile_shell(
         &unrestricted_test_policy(),
         &ShellConfig::default(),
-        &projects_dir,
+        &project_registry_dir,
         &PreparedShellProfileCache::default(),
         &project_dir,
         "true",

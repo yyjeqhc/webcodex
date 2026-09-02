@@ -260,7 +260,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` is the canonical client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and a `runner.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `projects_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-runner-config> /path/to/repo` before project-bound work. Use the documented `login --device` and `--dir` options when an explicit device identity or alternate local base directory is required; there is no separate compatibility enrollment command.
+`webcodex login` is the canonical client entry: it derives a unique device name, redeems the pairing code, and writes the client-side `webcodex-user-token` and a `runner.toml`. `--allowed-root` grants registration authority only; `--project` names the actual existing workspace to register. The generated `project_registry_dir` is a registry directory, not the workspace root. If login is performed without `--project`, use `webcodex project register --config <login-reported-runner-config> /path/to/repo` before project-bound work. Use the documented `login --device` and `--dir` options when an explicit device identity or alternate local base directory is required; there is no separate compatibility enrollment command.
 
 The pairing code is created server/admin-side:
 
@@ -404,7 +404,7 @@ Client enrollment generates the Runner config. Important settings in
 | `client_id` | Stable id used in `agent:<client_id>:<project_id>`. |
 | `owner` | Owner principal for this agent. |
 | `transport` | Prefer `auto` with `[quic]` configured. |
-| `projects_dir` | Directory of project registry files. |
+| `project_registry_dir` | Directory of project registry files. |
 | `[policy]` | Local execution boundary (`allowed_roots`, etc.). |
 | `[shell]` | Optional shell profile definitions and bounded persistent-shell limits. |
 | `[ssh.resources.<name>]` | Optional named SSH target for Session-bound `run_shell` / `run_job`. |

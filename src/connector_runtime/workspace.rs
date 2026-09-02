@@ -154,7 +154,7 @@ pub(crate) struct WorkspaceResourceStatus {
 pub(crate) struct WorkspaceManager {
     runs_root: PathBuf,
     results_root: PathBuf,
-    projects_dir: PathBuf,
+    project_registry_dir: PathBuf,
 }
 
 impl WorkspaceManager {
@@ -162,12 +162,12 @@ impl WorkspaceManager {
         let manager = Self {
             runs_root: PathBuf::from(&context.runs_root),
             results_root: PathBuf::from(&context.results_root),
-            projects_dir: PathBuf::from(&context.projects_dir),
+            project_registry_dir: PathBuf::from(&context.project_registry_dir),
         };
         for (label, path) in [
             ("runs root", &manager.runs_root),
             ("results root", &manager.results_root),
-            ("agent projects directory", &manager.projects_dir),
+            ("Runner project registry", &manager.project_registry_dir),
         ] {
             if !path.is_absolute() || path == Path::new("/") {
                 return Err(format!(
@@ -179,7 +179,7 @@ impl WorkspaceManager {
         for (label, path) in [
             ("runs root", &manager.runs_root),
             ("results root", &manager.results_root),
-            ("agent projects directory", &manager.projects_dir),
+            ("Runner project registry", &manager.project_registry_dir),
         ] {
             if lexical_normalize(path).starts_with(&target) {
                 return Err(format!(
@@ -252,10 +252,12 @@ impl WorkspaceManager {
                 "results_directory_unavailable",
                 &self.results_root,
             ),
+            // Historical reason-code spelling is part of the connector error
+            // surface; keep it stable while the internal domain term changes.
             (
                 "projects_directory",
                 "projects_directory_unavailable",
-                &self.projects_dir,
+                &self.project_registry_dir,
             ),
         ] {
             create_private_dir(path).map_err(|_| {
@@ -383,7 +385,7 @@ impl WorkspaceManager {
                 target_root,
                 &execution_root,
                 &self.runs_root,
-                &self.projects_dir,
+                &self.project_registry_dir,
                 WRITE_SLOT_PROJECT_ID,
                 run_id,
             ) {
@@ -412,7 +414,7 @@ impl WorkspaceManager {
         target_root: &Path,
         runs_root: &Path,
         results_root: &Path,
-        projects_dir: &Path,
+        project_registry_dir: &Path,
     ) -> WritableWorkspaceReadiness {
         let not_ready = |reason_code, summary| WritableWorkspaceReadiness {
             status: WritableWorkspaceReadinessStatus::NotReady,
@@ -462,7 +464,7 @@ impl WorkspaceManager {
             );
         }
         let target = lexical_normalize(target_root);
-        for path in [runs_root, results_root, projects_dir] {
+        for path in [runs_root, results_root, project_registry_dir] {
             if !path.is_absolute()
                 || path == Path::new("/")
                 || lexical_normalize(path).starts_with(&target)
@@ -531,7 +533,7 @@ impl WorkspaceManager {
             Path::new(target_root),
             Path::new(&prepared.execution_root),
             &self.runs_root,
-            &self.projects_dir,
+            &self.project_registry_dir,
             &prepared.agent_project_id,
             &prepared.run_id,
         )
@@ -624,7 +626,7 @@ impl WorkspaceManager {
             Path::new(&task.target_root),
             execution_root,
             &self.runs_root,
-            &self.projects_dir,
+            &self.project_registry_dir,
             &project_id,
             &task.run_id,
         )
@@ -643,7 +645,7 @@ impl WorkspaceManager {
             warnings.push(error);
             return warnings;
         }
-        if let Err(error) = create_private_dir(&self.projects_dir) {
+        if let Err(error) = create_private_dir(&self.project_registry_dir) {
             warnings.push(error);
             return warnings;
         }
@@ -704,7 +706,7 @@ impl WorkspaceManager {
                             target_root,
                             &slot_root,
                             &self.runs_root,
-                            &self.projects_dir,
+                            &self.project_registry_dir,
                             WRITE_SLOT_PROJECT_ID,
                             &lease.run_id,
                         ) {
@@ -725,7 +727,7 @@ impl WorkspaceManager {
                             }
                         }
                         let config = self
-                            .projects_dir
+                            .project_registry_dir
                             .join(format!("{WRITE_SLOT_PROJECT_ID}.toml"));
                         if let Err(cleanup) = remove_file_if_exists(&config) {
                             warnings.push(cleanup);
@@ -742,7 +744,7 @@ impl WorkspaceManager {
                 {
                     Ok(()) => {
                         let config = self
-                            .projects_dir
+                            .project_registry_dir
                             .join(format!("{WRITE_SLOT_PROJECT_ID}.toml"));
                         if let Err(error) = remove_file_if_exists(&config) {
                             warnings.push(error);
@@ -753,7 +755,7 @@ impl WorkspaceManager {
             }
         }
 
-        if let Ok(entries) = fs::read_dir(&self.projects_dir) {
+        if let Ok(entries) = fs::read_dir(&self.project_registry_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -1000,7 +1002,7 @@ impl WorkspaceManager {
     pub(crate) fn validate_resume(
         task: &ConnectorTaskSnapshot,
         runs_root: &Path,
-        projects_dir: &Path,
+        project_registry_dir: &Path,
     ) -> Result<(), String> {
         if task.mode == "inspect" {
             return Err("inspect_mode_retired: this pre-0.4 inspect task can no longer execute; reject it locally and start a new read_only or normal task".to_string());
@@ -1015,7 +1017,10 @@ impl WorkspaceManager {
                 return Err("interrupted execution worktree is no longer available".to_string());
             }
             let (_, project_id) = parse_agent_executor_ref(&task.execution_executor_ref)?;
-            if !projects_dir.join(format!("{project_id}.toml")).is_file() {
+            if !project_registry_dir
+                .join(format!("{project_id}.toml"))
+                .is_file()
+            {
                 return Err(
                     "interrupted execution project registration is no longer available".to_string(),
                 );
@@ -1354,12 +1359,17 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
     let (_, project_id) = parse_agent_executor_ref(&task.execution_executor_ref).ok()?;
     let execution_root = Path::new(&task.execution_root);
     let runs_root = execution_root.parent()?;
-    let projects_dir = runs_root.parent()?.join("agent/projects.d");
+    let registry_base = runs_root.parent()?.join("agent");
+    let project_registry_dir =
+        match crate::runner_config::paths::select_project_registry_dir(&registry_base) {
+            Ok(path) => path,
+            Err(error) => return Some(error),
+        };
     release_workspace_slot(
         Path::new(&task.target_root),
         execution_root,
         runs_root,
-        &projects_dir,
+        &project_registry_dir,
         &project_id,
         &task.run_id,
     )
@@ -1415,7 +1425,7 @@ fn release_workspace_slot(
     target_root: &Path,
     execution_root: &Path,
     runs_root: &Path,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     agent_project_id: &str,
     expected_run_id: &str,
 ) -> Option<String> {
@@ -1446,7 +1456,7 @@ fn release_workspace_slot(
             warnings.push(format!("managed workspace reset failed: {error}"));
         }
     }
-    let config = projects_dir.join(format!("{agent_project_id}.toml"));
+    let config = project_registry_dir.join(format!("{agent_project_id}.toml"));
     if let Err(error) = remove_file_if_exists(&config) {
         warnings.push(format!(
             "temporary project registration cleanup failed: {error}"
@@ -1964,14 +1974,17 @@ mod tests {
             executor_root: root.to_string_lossy().to_string(),
             runs_root: state.join("runs").to_string_lossy().to_string(),
             results_root: state.join("results").to_string_lossy().to_string(),
-            projects_dir: state.join("agent/projects.d").to_string_lossy().to_string(),
+            project_registry_dir: state
+                .join("agent/project-registry")
+                .to_string_lossy()
+                .to_string(),
             profile: "personal".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };
         for path in [
             &context.runs_root,
             &context.results_root,
-            &context.projects_dir,
+            &context.project_registry_dir,
         ] {
             fs::create_dir_all(path).unwrap();
         }
@@ -2264,7 +2277,7 @@ mod tests {
             Path::new(&context.executor_root),
             &manager.runs_root,
             &manager.results_root,
-            &manager.projects_dir,
+            &manager.project_registry_dir,
         );
         assert_eq!(
             readiness.status,
@@ -2285,7 +2298,7 @@ mod tests {
             Path::new(&context.executor_root),
             &manager.runs_root,
             &manager.results_root,
-            &manager.projects_dir,
+            &manager.project_registry_dir,
         );
         assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::Occupied);
         assert_eq!(readiness.reason_code, "writable_workspace_occupied");
@@ -2295,7 +2308,7 @@ mod tests {
             Path::new(&context.executor_root),
             &manager.runs_root,
             &manager.results_root,
-            &manager.projects_dir,
+            &manager.project_registry_dir,
         );
         assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::Reusable);
         assert_eq!(readiness.reason_code, "writable_workspace_reusable");
@@ -2311,7 +2324,7 @@ mod tests {
             Path::new(&context.executor_root),
             &manager.runs_root,
             &manager.results_root,
-            &manager.projects_dir,
+            &manager.project_registry_dir,
         );
         assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::NotReady);
         assert_eq!(readiness.reason_code, "existing_managed_slot_invalid");
@@ -2341,7 +2354,7 @@ mod tests {
             Path::new(&context.executor_root),
             &manager.runs_root,
             &manager.results_root,
-            &manager.projects_dir,
+            &manager.project_registry_dir,
         );
         assert_eq!(readiness.status, WritableWorkspaceReadinessStatus::NotReady);
         assert_eq!(readiness.reason_code, "writable_slot_lease_invalid");
@@ -2371,7 +2384,10 @@ mod tests {
             executor_root: root.to_string_lossy().to_string(),
             runs_root: state.join("runs").to_string_lossy().to_string(),
             results_root: state.join("results").to_string_lossy().to_string(),
-            projects_dir: state.join("agent/projects.d").to_string_lossy().to_string(),
+            project_registry_dir: state
+                .join("agent/project-registry")
+                .to_string_lossy()
+                .to_string(),
             profile: "personal".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };

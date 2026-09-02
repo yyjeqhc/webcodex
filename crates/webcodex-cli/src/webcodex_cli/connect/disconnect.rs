@@ -118,7 +118,9 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
     // still be a regular file and still name this canonical repository before
     // either the remote or local registration is changed.
     validate_existing_regular_file(&candidate.project_path)?;
-    let current_projects = read_project_files(&candidate.profile_dir.join("projects.d"))?;
+    let project_registry_dir =
+        webcodex_runner_config::paths::select_project_registry_dir(&candidate.profile_dir)?;
+    let current_projects = read_project_files(&project_registry_dir)?;
     let current = current_projects
         .iter()
         .find(|(path, project)| {
@@ -193,7 +195,7 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
         "local_unregistered".to_string()
     };
 
-    let remaining = read_project_files(&candidate.profile_dir.join("projects.d"))?.len();
+    let remaining = read_project_files(&project_registry_dir)?.len();
     let runner_action =
         runner_action_after_disconnect(runner.running, remaining, &candidate.state_dir);
 
@@ -267,7 +269,9 @@ fn resolve_registration(
             continue;
         }
         validate_existing_regular_file(&marker)?;
-        let project_matches = read_project_files(&profile_dir.join("projects.d"))?
+        let project_registry_dir =
+            webcodex_runner_config::paths::select_project_registry_dir(&profile_dir)?;
+        let project_matches = read_project_files(&project_registry_dir)?
             .into_iter()
             .filter(|(_, project)| stored_project_matches(project, canonical_project))
             .collect::<Vec<_>>();
@@ -547,7 +551,7 @@ mod tests {
     ) -> (PathBuf, PathBuf) {
         let profile_dir = client_output_dir_for_profile(config_base, profile);
         let state_dir = client_state_dir_for_profile(state_base, profile);
-        std::fs::create_dir_all(profile_dir.join("projects.d")).unwrap();
+        std::fs::create_dir_all(profile_dir.join("project-registry")).unwrap();
         std::fs::create_dir_all(&state_dir).unwrap();
         std::fs::write(
             profile_dir.join("runner.toml"),
@@ -556,7 +560,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             profile_dir
-                .join("projects.d")
+                .join("project-registry")
                 .join(format!("{project_id}.toml")),
             format!(
                 "id = \"{project_id}\"\npath = {:?}\n",
@@ -592,6 +596,34 @@ mod tests {
         assert_eq!(explicit.project.id, "different-id");
     }
 
+    #[test]
+    fn resolve_registration_accepts_a_single_legacy_registry_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let state = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(config.join("clients")).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let (profile_dir, _) = write_profile(&config, &state, "one", &project, "repo");
+        std::fs::rename(
+            profile_dir.join("project-registry"),
+            profile_dir.join("projects.d"),
+        )
+        .unwrap();
+
+        let resolved = resolve_registration(
+            &config,
+            &state,
+            &project.canonicalize().unwrap(),
+            Some("one"),
+        )
+        .unwrap();
+        assert_eq!(resolved.project.id, "repo");
+        assert_eq!(resolved.profile_dir, profile_dir);
+        assert!(profile_dir.join("projects.d/repo.toml").is_file());
+    }
+
     #[cfg(unix)]
     #[test]
     fn project_registration_symlink_fails_closed() {
@@ -604,7 +636,7 @@ mod tests {
         std::fs::create_dir_all(config.join("clients")).unwrap();
         std::fs::create_dir_all(&state).unwrap();
         let (profile_dir, _) = write_profile(&config, &state, "one", &project, "repo");
-        let actual = profile_dir.join("projects.d/repo.toml");
+        let actual = profile_dir.join("project-registry/repo.toml");
         let target = profile_dir.join("actual.toml");
         std::fs::rename(&actual, &target).unwrap();
         symlink(&target, &actual).unwrap();
@@ -620,7 +652,7 @@ mod tests {
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(config.join("clients/one/projects.d/bad.toml")).unwrap();
+        std::fs::create_dir_all(config.join("clients/one/project-registry/bad.toml")).unwrap();
         std::fs::create_dir_all(state.join("clients/one")).unwrap();
         std::fs::write(
             super::super::process::local_runner_profile_marker(&state.join("clients/one")),
@@ -646,7 +678,7 @@ mod tests {
         std::fs::create_dir_all(&state).unwrap();
         let (profile_dir, _) = write_profile(&config, &state, "one", &project, "repo");
         std::fs::write(
-            profile_dir.join("projects.d/other.toml"),
+            profile_dir.join("project-registry/other.toml"),
             format!("id = \"other\"\npath = {:?}\n", other.to_string_lossy()),
         )
         .unwrap();
@@ -661,7 +693,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.outcome, "local_unregistered");
         assert_eq!(result.runner_action, "not_running");
-        assert!(profile_dir.join("projects.d/other.toml").is_file());
+        assert!(profile_dir.join("project-registry/other.toml").is_file());
         assert!(profile_dir.join("runner.toml").is_file());
         assert_eq!(
             std::fs::read_to_string(project.join("keep.txt")).unwrap(),
@@ -728,7 +760,7 @@ mod tests {
         assert!(error.contains("runner.toml"));
         assert!(error.contains("agent.toml"));
         assert!(error.contains("refusing to guess"));
-        assert!(profile_dir.join("projects.d/repo.toml").is_file());
+        assert!(profile_dir.join("project-registry/repo.toml").is_file());
     }
 
     #[tokio::test]
@@ -848,7 +880,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let registration = profile_dir.join("projects.d/repo.toml");
+        let registration = profile_dir.join("project-registry/repo.toml");
 
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(
@@ -941,7 +973,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let registration = profile_dir.join("projects.d/repo.toml");
+        let registration = profile_dir.join("project-registry/repo.toml");
 
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(

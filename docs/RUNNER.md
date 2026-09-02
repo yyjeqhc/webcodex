@@ -127,7 +127,7 @@ with the Server; the Server does not scan the filesystem and does not invent
 project paths.
 
 Each registered project is a one-file-per-project TOML file in the Runner's
-`projects_dir` (default `projects.d`). The format:
+`project_registry_dir` (default `project-registry`). The format:
 
 ```toml
 id = "webcodex"
@@ -137,8 +137,22 @@ kind = "repo"
 allow_patch = true
 ```
 
+The Runner project registry compatibility contract is deliberately fail-closed:
+
+| Situation | Result |
+| --- | --- |
+| Only `project-registry/` exists | Use `project-registry/`. |
+| Only legacy `projects.d/` exists | Keep using `projects.d/`; no implicit migration is performed. |
+| Neither directory exists | New installs select/create `project-registry/`. |
+| Both directories exist | Fail with an actionable error; records are never merged or shadowed implicitly. |
+| Config contains only `project_registry_dir` | Use that explicit Runner project registry path. |
+| Config contains only legacy `projects_dir` | Accept it as a compatibility alias and normalize it to the effective project registry path. |
+| Config contains both fields | Fail; no precedence rule is guessed. |
+
+The CLI follows the same rule: `--project-registry-dir` is the preferred flag; legacy `--projects-dir` remains accepted as a deprecated alias, and supplying both is an error. A project registration record's TOML `path` is the actual workspace/project directory; the registry directory itself is not a workspace root.
+
 The top-level `id` and `path` are required. The old nested
-`[projects.<id>]` server-side format is not used in `projects.d`.
+`[projects.<id>]` server-side format is not used in `project-registry`.
 
 Runtime project ids take the shape `agent:<client_id>:<project_id>`, for
 example `agent:workstation:my-repo`. A project-bound Connector resolves this

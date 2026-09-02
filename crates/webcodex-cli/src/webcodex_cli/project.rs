@@ -29,7 +29,10 @@ struct RegistrationPolicy {
 
 #[derive(Debug, Deserialize)]
 struct RegistrationRunnerConfig {
-    projects_dir: Option<PathBuf>,
+    #[serde(default)]
+    project_registry_dir: Option<PathBuf>,
+    #[serde(default, rename = "projects_dir")]
+    legacy_projects_dir: Option<PathBuf>,
     #[serde(default)]
     policy: RegistrationPolicy,
 }
@@ -77,7 +80,7 @@ fn validate_project_authority(
 fn ensure_registry_directory(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
         return Err(format!(
-            "projects_dir {} must be an absolute path; projects_dir is the Runner project registry directory, not a workspace root",
+            "project_registry_dir {} must be an absolute path; project_registry_dir is the Runner project registry directory, not a workspace root",
             path.display()
         ));
     }
@@ -85,19 +88,22 @@ fn ensure_registry_directory(path: &Path) -> Result<(), String> {
         Ok(metadata) => {
             if metadata.is_symlink() || !metadata.is_dir() {
                 return Err(format!(
-                    "projects_dir {} is not a real directory; projects_dir is the Runner project registry directory, not a workspace root",
+                    "project_registry_dir {} is not a real directory; project_registry_dir is the Runner project registry directory, not a workspace root",
                     path.display()
                 ));
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             std::fs::create_dir_all(path).map_err(|error| {
-                format!("failed to create projects_dir {}: {error}", path.display())
+                format!(
+                    "failed to create project_registry_dir {}: {error}",
+                    path.display()
+                )
             })?;
         }
         Err(error) => {
             return Err(format!(
-                "failed to inspect projects_dir {}: {error}",
+                "failed to inspect project_registry_dir {}: {error}",
                 path.display()
             ));
         }
@@ -106,7 +112,7 @@ fn ensure_registry_directory(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn register_existing_project(
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     project: &Path,
     configured_roots: &[PathBuf],
     allow_cwd_anywhere: bool,
@@ -116,9 +122,9 @@ pub(crate) fn register_existing_project(
     let canonical_project = canonical_existing_directory(project, "project path")?;
     let roots =
         validate_project_authority(&canonical_project, configured_roots, allow_cwd_anywhere)?;
-    ensure_registry_directory(projects_dir)?;
+    ensure_registry_directory(project_registry_dir)?;
     let (record_path, project_file, already_registered) =
-        resolve_project(projects_dir, &canonical_project, explicit_id)?;
+        resolve_project(project_registry_dir, &canonical_project, explicit_id)?;
     if !already_registered {
         let content = render_project_file(&project_file)?;
         atomic_write(&record_path, content.as_bytes(), false)?;
@@ -153,22 +159,31 @@ fn read_registration_config(path: &Path) -> Result<RegistrationRunnerConfig, Str
         .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))
 }
 
-fn registration_projects_dir(config: &RegistrationRunnerConfig) -> Result<PathBuf, String> {
-    config.projects_dir.clone().map(Ok).unwrap_or_else(|| {
-        webcodex_runner_config::paths::default_client_config_base_dir()
-            .map(|base| base.join("projects.d"))
-    })
+fn registration_project_registry_dir(config: &RegistrationRunnerConfig) -> Result<PathBuf, String> {
+    match (
+        config.project_registry_dir.as_ref(),
+        config.legacy_projects_dir.as_ref(),
+    ) {
+        (Some(_), Some(_)) => Err(
+            "project_registry_dir and legacy projects_dir cannot both be configured; keep exactly one Runner project registry setting"
+                .to_string(),
+        ),
+        (Some(path), None) | (None, Some(path)) => Ok(path.clone()),
+        (None, None) => {
+            let base = webcodex_runner_config::paths::default_client_config_base_dir()?;
+            webcodex_runner_config::paths::select_project_registry_dir(&base)
+        }
+    }
 }
 
 pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<String, String> {
     let config = read_registration_config(&opts.config)?;
-    // Mirror Runner config loading exactly: a minimal Runner config may omit
-    // projects_dir, in which case the Runner materializes the shared per-user
-    // config-base projects.d path. The local registration CLI must write to that
-    // same registry rather than rejecting a config the Runner itself accepts.
-    let projects_dir = registration_projects_dir(&config)?;
+    // Mirror Runner config loading exactly: old/new config spellings normalize
+    // to one registry path, and an omitted field uses the shared four-state
+    // on-disk selection contract.
+    let project_registry_dir = registration_project_registry_dir(&config)?;
     let (registration, roots) = register_existing_project(
-        &projects_dir,
+        &project_registry_dir,
         &opts.project,
         &config.policy.allowed_roots,
         config.policy.allow_cwd_anywhere,
@@ -179,7 +194,8 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
             "runner_config": opts.config.to_string_lossy(),
             // Machine-readable compatibility alias retained for pre-0.4 consumers.
             "agent_config": opts.config.to_string_lossy(),
-            "projects_dir": projects_dir.to_string_lossy(),
+            "project_registry_dir": project_registry_dir.to_string_lossy(),
+            "projects_dir": project_registry_dir.to_string_lossy(),
             "project": {
                 "id": registration.id,
                 "path": registration.path.to_string_lossy(),
@@ -228,7 +244,7 @@ mod tests {
 
     fn config_with_policy(
         path: &Path,
-        projects_dir: &Path,
+        project_registry_dir: &Path,
         roots: &[PathBuf],
         allow_cwd_anywhere: bool,
     ) {
@@ -240,15 +256,15 @@ mod tests {
         std::fs::write(
             path,
             format!(
-                "server_url = \"https://example.test\"\ntoken = \"secret-not-printed\"\nclient_id = \"client\"\nprojects_dir = {:?}\n\n[policy]\nallow_cwd_anywhere = {allow_cwd_anywhere}\nallowed_roots = [{roots}]\n",
-                projects_dir.to_string_lossy(),
+                "server_url = \"https://example.test\"\ntoken = \"secret-not-printed\"\nclient_id = \"client\"\nproject_registry_dir = {:?}\n\n[policy]\nallow_cwd_anywhere = {allow_cwd_anywhere}\nallowed_roots = [{roots}]\n",
+                project_registry_dir.to_string_lossy(),
             ),
         )
         .unwrap();
     }
 
-    fn config(path: &Path, projects_dir: &Path, root: &Path) {
-        config_with_policy(path, projects_dir, &[root.to_path_buf()], false);
+    fn config(path: &Path, project_registry_dir: &Path, root: &Path) {
+        config_with_policy(path, project_registry_dir, &[root.to_path_buf()], false);
     }
 
     #[test]
@@ -316,7 +332,7 @@ mod tests {
             cfg!(target_os = "linux"),
             "{first}"
         );
-        assert!(!first.contains("projects registry"), "{first}");
+        assert!(!first.contains("project registry"), "{first}");
         assert!(!first.contains("project record"), "{first}");
 
         let second = run_project_register(ProjectRegisterOptions {
@@ -333,15 +349,41 @@ mod tests {
     }
 
     #[test]
-    fn omitted_projects_dir_uses_the_same_default_as_runner_config_loading() {
+    fn omitted_project_registry_dir_uses_the_same_default_as_runner_config_loading() {
+        let _guard = crate::webcodex_cli::test_support::env_test_guard();
         let config = RegistrationRunnerConfig {
-            projects_dir: None,
+            project_registry_dir: None,
+            legacy_projects_dir: None,
             policy: RegistrationPolicy::default(),
         };
-        let expected = webcodex_runner_config::paths::default_client_config_base_dir()
-            .unwrap()
-            .join("projects.d");
-        assert_eq!(registration_projects_dir(&config).unwrap(), expected);
+        let base = webcodex_runner_config::paths::default_client_config_base_dir().unwrap();
+        let expected = webcodex_runner_config::paths::select_project_registry_dir(&base).unwrap();
+        assert_eq!(
+            registration_project_registry_dir(&config).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn registration_config_accepts_legacy_projects_dir_alias() {
+        let legacy = PathBuf::from("/tmp/legacy-projects.d");
+        let config = RegistrationRunnerConfig {
+            project_registry_dir: None,
+            legacy_projects_dir: Some(legacy.clone()),
+            policy: RegistrationPolicy::default(),
+        };
+        assert_eq!(registration_project_registry_dir(&config).unwrap(), legacy);
+    }
+
+    #[test]
+    fn registration_config_rejects_both_registry_fields() {
+        let config = RegistrationRunnerConfig {
+            project_registry_dir: Some(PathBuf::from("/tmp/project-registry")),
+            legacy_projects_dir: Some(PathBuf::from("/tmp/projects.d")),
+            policy: RegistrationPolicy::default(),
+        };
+        let error = registration_project_registry_dir(&config).unwrap_err();
+        assert!(error.contains("cannot both be configured"), "{error}");
     }
 
     #[test]

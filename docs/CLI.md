@@ -115,7 +115,7 @@ On Windows, `server init`, foreground `server run`, and explicit `share` are sup
 `status`, `logs`, and `uninstall` to manage or inspect that custom pair; omitting
 it targets the default `webcodex.service` / `webcodex.socket` pair.
 
-For Runner config terminology, `projects_dir` is the directory of Project registry TOML files, not a workspace root. `[policy].allowed_roots` bounds which filesystem paths may be registered; a Project record names the actual workspace.
+For Runner config terminology, `project_registry_dir` is the directory of Project registry TOML files, not a workspace root. `[policy].allowed_roots` bounds which filesystem paths may be registered; a Project record names the actual workspace.
 
 ### Operations (read-only operator checks)
 
@@ -213,7 +213,7 @@ normal entry points.
 
 ### Projects and work
 
-- **project_id** — a project id registered by an agent in its `projects.d`
+- **project_id** — a project id registered by an agent in its `project-registry`
   registry.
 - **runtime project id** — the full identifier `agent:<client_id>:<project_id>`
   that addresses a registered project. A project-bound Connector resolves this

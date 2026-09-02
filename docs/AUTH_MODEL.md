@@ -402,14 +402,14 @@ agent:alice-macbook:my-repo
 ```
 
 The `<project_id>` comes from a top-level `id` field in an agent
-`projects.d/*.toml` file:
+`project-registry/*.toml` file:
 
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-Do not use server-side `[projects.<id>]` syntax in agent `projects.d/*.toml`
+Do not use server-side `[projects.<id>]` syntax in agent `project-registry/*.toml`
 files.
 
 ## Hash storage
@@ -438,7 +438,7 @@ The per-(server, user) directory layout under `~/.config/webcodex/` is:
       server.toml               canonical server URL, username, device
       runner.toml                the agent token lives here, inline
       webcodex-user-token
-      projects.d/
+      project-registry/
 ```
 
 Server identity is the canonical URL, not the directory name; the slug is a

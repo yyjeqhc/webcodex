@@ -2353,7 +2353,7 @@ mod tests {
                 policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config.clone(),
-                projects_dir: PathBuf::new(),
+                project_registry_dir: PathBuf::new(),
                 request: ssh_job_request("ssh-job-complete", "tmp", "printf job-ok"),
             },
         );
@@ -2380,7 +2380,7 @@ mod tests {
                 policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config.clone(),
-                projects_dir: PathBuf::new(),
+                project_registry_dir: PathBuf::new(),
                 request: ssh_job_request("ssh-job-stop", "tmp", "sleep 30"),
             },
         );
@@ -2411,7 +2411,7 @@ mod tests {
                 policy: RunnerPolicy::default(),
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config,
-                projects_dir: PathBuf::new(),
+                project_registry_dir: PathBuf::new(),
                 request: ssh_job_request("ssh-job-missing", "missing", "printf never-started"),
             },
         );
@@ -2514,11 +2514,11 @@ mod tests {
         panic!("timed out waiting for remote SSH job {job_id}");
     }
 
-    /// A projects.d directory with a registered `remote-project` owned by the
+    /// A project-registry directory with a registered `remote-project` owned by the
     /// `ssh-agent` Runner. SSH persistent shells still require the project to
     /// be registered on the Runner (it owns the Runner + resource binding);
     /// only execution happens remotely.
-    fn ssh_projects_dir() -> tempfile::TempDir {
+    fn ssh_project_registry_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("create ssh projects dir");
         std::fs::write(
             dir.path().join("remote-project.toml"),
@@ -2602,8 +2602,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
 
         let opened = manager.handle(
             &policy,
@@ -2714,8 +2714,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
 
         let opened = manager.handle(
             &policy,
@@ -2763,8 +2763,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
         let shell_id = "wc_shell_rps_gen";
         let resource = "tmp";
 
@@ -2873,8 +2873,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
 
         // The resource default_cwd is server.remote_cwd; an explicit cwd must
         // win.
@@ -2937,8 +2937,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
         let session_cwd = server.remote_cwd.join("session-dir");
         std::fs::create_dir(&session_cwd).expect("create session cwd");
         let session_cwd = session_cwd.to_string_lossy().into_owned();
@@ -3002,8 +3002,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
         let resource_cwd = server.remote_cwd.to_string_lossy().into_owned();
 
         let opened = manager.handle(
@@ -3051,8 +3051,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
 
         // The remote login directory: what a plain `ssh host pwd -P` reports
         // when no cd is issued.
@@ -3154,8 +3154,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
         let physical = server.remote_cwd.join("physical");
         let logical = server.remote_cwd.join("logical");
         std::fs::create_dir(&physical).expect("create physical remote cwd");
@@ -3240,8 +3240,8 @@ mod tests {
             pool,
         );
         let policy = RunnerPolicy::default();
-        let projects_dir = ssh_projects_dir();
-        let projects = projects_dir.path().to_path_buf();
+        let project_registry_dir = ssh_project_registry_dir();
+        let projects = project_registry_dir.path().to_path_buf();
         let missing = server
             .remote_cwd
             .join("does-not-exist")
@@ -3667,7 +3667,7 @@ fn main() {
                 policy,
                 shell: crate::webcodex_runner::ShellConfig::default(),
                 ssh: config,
-                projects_dir: PathBuf::new(),
+                project_registry_dir: PathBuf::new(),
                 request: ssh_job_request(job_id, command, timeout_secs),
             },
         );

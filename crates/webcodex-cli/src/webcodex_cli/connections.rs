@@ -10,7 +10,7 @@
 //!       server.toml               canonical server_url, username, device, time
 //!       runner.toml               the Runner token lives here, inline
 //!       webcodex-user-token
-//!       projects.d/
+//!       project-registry/
 //! ```
 //!
 //! Server identity is the *canonical URL*, not the directory name. The slug is
@@ -359,7 +359,7 @@ pub(crate) struct ConnectionPaths {
     pub(crate) dir: PathBuf,
     pub(crate) descriptor: PathBuf,
     pub(crate) runner_config: PathBuf,
-    pub(crate) projects_dir: PathBuf,
+    pub(crate) project_registry_dir: PathBuf,
     pub(crate) user_token: PathBuf,
 }
 
@@ -368,7 +368,8 @@ impl ConnectionPaths {
         Self {
             descriptor: dir.join("server.toml"),
             runner_config: dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE),
-            projects_dir: dir.join("projects.d"),
+            project_registry_dir: dir
+                .join(webcodex_runner_config::paths::PROJECT_REGISTRY_DIR_NAME),
             user_token: dir.join("webcodex-user-token"),
             dir,
         }
@@ -460,7 +461,18 @@ fn read_connection(dir: PathBuf) -> Option<Connection> {
     if !is_real_dir(&dir) {
         return None;
     }
-    let paths = ConnectionPaths::new(dir);
+    let mut paths = ConnectionPaths::new(dir);
+    paths.project_registry_dir =
+        match webcodex_runner_config::paths::select_project_registry_dir(&paths.dir) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!(
+                    "warning: refusing ambiguous connection layout {}: {error}",
+                    paths.dir.display()
+                );
+                return None;
+            }
+        };
     if !is_regular_file(&paths.descriptor) {
         return None;
     }
@@ -756,6 +768,16 @@ mod tests {
         let plain = connections_for_server(base, "http://api.example.com");
         assert_eq!(plain.len(), 1);
         assert_eq!(plain[0].server_url, "http://api.example.com");
+    }
+
+    #[test]
+    fn connection_listing_fails_closed_when_both_registry_layouts_exist() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths = seed(temp.path(), "https://api.example.com", "alice");
+        std::fs::create_dir_all(paths.dir.join("project-registry")).unwrap();
+        std::fs::create_dir_all(paths.dir.join("projects.d")).unwrap();
+
+        assert!(list_connections(temp.path()).is_empty());
     }
 
     #[test]

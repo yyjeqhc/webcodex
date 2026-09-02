@@ -127,7 +127,7 @@ Provider.
 
 Identity, server/auth, registration, project source, concurrency, and transport
 fields still require restart: `server_url`, `token`, `client_id`,
-`display_name`, `owner`, `hostname`, `projects_dir`, `poll_interval_ms`,
+`display_name`, `owner`, `hostname`, `project_registry_dir`, `poll_interval_ms`,
 `temporary_projects_root`, `capabilities`, `max_concurrent_jobs`, `transport`,
 `websocket_connect_timeout_secs`, and `quic.*`. A mixed reload applies the hot
 sections and reports these field names as `restart_required_fields`; it never
@@ -136,7 +136,7 @@ the active generation unchanged.
 
 The latest bounded result is exposed as `tool_providers.config_reload`
 (`generation`, result/error code, and restart-required summary). Generation
-starts at 1 and advances only after a valid reload. `projects.d/*.toml` keeps
+starts at 1 and advances only after a valid reload. `project-registry/*.toml` keeps
 its existing independent cache refresh. Reload does not change public MCP
 tools, refresh MCP metadata, or add an OpenAPI operation.
 

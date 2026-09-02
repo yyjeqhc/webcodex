@@ -28,8 +28,8 @@ fn build_connector_test_router(
             executor_root: project_root.to_string_lossy().to_string(),
             runs_root: state_root.join("runs").to_string_lossy().to_string(),
             results_root: state_root.join("results").to_string_lossy().to_string(),
-            projects_dir: state_root
-                .join("agent/projects.d")
+            project_registry_dir: state_root
+                .join("agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),

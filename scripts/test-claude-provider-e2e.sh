@@ -173,7 +173,7 @@ server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
 display_name = "Claude Provider E2E"
-projects_dir = "${PROJECTS_DIR}"
+project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 100
 transport = "websocket"
 
@@ -244,7 +244,7 @@ fi
 TMP_ROOT="$(mktemp -d -t webcodex-claude-provider-e2e-XXXXXX)"
 PORT="$(find_port)"
 DATA_DIR="$TMP_ROOT/data"
-PROJECTS_DIR="$TMP_ROOT/projects.d"
+PROJECTS_DIR="$TMP_ROOT/project-registry"
 FIXTURE="$TMP_ROOT/fixture"
 ISOLATED_HOME="$TMP_ROOT/home"
 RUNNER_CONFIG="$TMP_ROOT/runner.toml"

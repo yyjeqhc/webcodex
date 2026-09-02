@@ -7,7 +7,7 @@
 
 默认用户目标应理解为：**“让 ChatGPT 正常使用我的开发环境。”** 除非用户明确说只想临时试用，否则优先帮助他获得普通 Server + Runner 的完整 coding 体验，而不是默认把 `share` 当成 WebCodex 本体。
 
-第一次成功前，把用户需要理解的词汇压缩到：**WebCodex 服务、Runner（运行代码的机器）、Project（项目）、一次性登录码、ChatGPT 连接**。不要提前解释 `client_id`、runtime project id、`projects_dir`、PAT、Runner token、scope ceiling、Connector surface 等内部术语。
+第一次成功前，把用户需要理解的词汇压缩到：**WebCodex 服务、Runner（运行代码的机器）、Project（项目）、一次性登录码、ChatGPT 连接**。不要提前解释 `client_id`、runtime project id、`project_registry_dir`、PAT、Runner token、scope ceiling、Connector surface 等内部术语。
 
 ## 先判断用户要哪种体验
 
@@ -84,7 +84,7 @@ webcodex runner install --scope user \
   --config <login-reported-runner-config>
 ```
 
-面向普通用户只解释：`--project` 是实际项目，`--allowed-root` 是以后允许继续添加项目的父目录。不要要求用户手工编辑 `runner.toml` 或 `projects.d`；只有排障或 reference 场景才解释 registry/authority 的内部表示。如果 login 时没有传 `--project`，再用 `webcodex project register --config <login-reported-runner-config> /path/to/repo` 添加项目。
+面向普通用户只解释：`--project` 是实际项目，`--allowed-root` 是以后允许继续添加项目的父目录。不要要求用户手工编辑 `runner.toml` 或 `project-registry`；只有排障或 reference 场景才解释 registry/authority 的内部表示。如果 login 时没有传 `--project`，再用 `webcodex project register --config <login-reported-runner-config> /path/to/repo` 添加项目。
 
 只有 MCP client 要求 OAuth 且精确 callback URL 已知时，才使用 `share --auth oauth` 或
 `connect --auth oauth`。不要把 OAuth client secret、shared key、Project Credential、PAT、

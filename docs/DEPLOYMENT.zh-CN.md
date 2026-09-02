@@ -228,7 +228,7 @@ webcodex ops status --server-url https://your-domain.example \
   --token-file <login-reported-webcodex-user-token> --strict
 ```
 
-`webcodex login` 是 canonical 客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `runner.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `projects_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-runner-config> /path/to/repo`。需要显式设备 identity 或不同的本地 base directory 时，使用 `login` 已文档化的 `--device` 与 `--dir`；不再有单独的 compatibility enrollment 命令。
+`webcodex login` 是 canonical 客户端入口：它自动派生唯一设备名、兑换 pairing code，并写入客户端侧 `webcodex-user-token` 与 `runner.toml`。`--allowed-root` 只授予 Project 注册 authority，`--project` 才表示要注册的实际 existing workspace；生成的 `project_registry_dir` 是 registry 而不是 workspace root。如果 login 时没有传 `--project`，应在 project-bound 工作前执行 `webcodex project register --config <login-reported-runner-config> /path/to/repo`。需要显式设备 identity 或不同的本地 base directory 时，使用 `login` 已文档化的 `--device` 与 `--dir`；不再有单独的 compatibility enrollment 命令。
 
 pairing code 由 server/admin 侧创建：
 
@@ -354,7 +354,7 @@ package 时默认将其设为 private；维护者
 | `client_id` | 用于 `agent:<client_id>:<project_id>` 的稳定 id。 |
 | `owner` | 该 agent 的 owner principal。 |
 | `transport` | 配置 `[quic]` 时优先用 `auto`。 |
-| `projects_dir` | 项目注册文件目录。 |
+| `project_registry_dir` | 项目注册文件目录。 |
 | `[policy]` | 本地执行边界（`allowed_roots` 等）。 |
 | `[shell]` | 可选 shell profile 定义与有界 persistent-shell 限制。 |
 | `[ssh.resources.<name>]` | 可选命名 SSH 目标，用于 Session 绑定的 `run_shell` / `run_job`。 |

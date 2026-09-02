@@ -67,7 +67,7 @@ fn unrestricted_test_policy() -> RunnerPolicy {
     }
 }
 
-fn test_config(projects_dir: PathBuf) -> RunnerConfig {
+fn test_config(project_registry_dir: PathBuf) -> RunnerConfig {
     RunnerConfig {
         server_url: "http://127.0.0.1:8000".to_string(),
         token: "test-token".to_string(),
@@ -76,7 +76,8 @@ fn test_config(projects_dir: PathBuf) -> RunnerConfig {
         owner: Some("alice".to_string()),
         hostname: None,
         host_context: None,
-        projects_dir: Some(projects_dir),
+        project_registry_dir: Some(project_registry_dir),
+        legacy_projects_dir: None,
         temporary_projects_root: None,
         poll_interval_ms: 1000,
         capabilities: None,
@@ -290,13 +291,18 @@ fn profile_env(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn write_runner_project(projects_dir: &Path, id: &str, path: &Path, shell_profile: Option<&str>) {
-    std::fs::create_dir_all(projects_dir).unwrap();
+fn write_runner_project(
+    project_registry_dir: &Path,
+    id: &str,
+    path: &Path,
+    shell_profile: Option<&str>,
+) {
+    std::fs::create_dir_all(project_registry_dir).unwrap();
     let shell_profile = shell_profile
         .map(|profile| format!("shell_profile = {:?}\n", profile))
         .unwrap_or_default();
     std::fs::write(
-        projects_dir.join(format!("{}.toml", id)),
+        project_registry_dir.join(format!("{}.toml", id)),
         format!(
             "id = {:?}\npath = {:?}\nname = {:?}\n{}",
             id,
@@ -311,7 +317,7 @@ fn write_runner_project(projects_dir: &Path, id: &str, path: &Path, shell_profil
 fn run_profile_shell(
     policy: &RunnerPolicy,
     shell: &ShellConfig,
-    projects_dir: &Path,
+    project_registry_dir: &Path,
     cache: &PreparedShellProfileCache,
     cwd: &Path,
     command: &str,
@@ -321,7 +327,7 @@ fn run_profile_shell(
         1,
         policy,
         shell,
-        projects_dir,
+        project_registry_dir,
         cache,
         Some(&cwd),
         command,
@@ -979,7 +985,7 @@ fn shell_job_native_exe_nonzero_exit_code_is_preserved() {
 fn shell_job_unicode_stdout_stderr_env_and_cwd() {
     let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let unicode_cwd = tmp.path().join("unicode cwd 测试");
     std::fs::create_dir_all(&unicode_cwd).unwrap();
     let cwd = unicode_cwd.to_string_lossy().to_string();
@@ -1107,7 +1113,7 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
     assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
     // The register builder carries it through unchanged.
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let body = build_register_request(&cfg, &id, 0);
     assert_eq!(body.agent_instance_id, id);
     assert!(!body.agent_instance_id.is_empty());
@@ -1145,7 +1151,7 @@ fn quic_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentE
 #[test]
 fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let jobs = JobManager::new(1);
     let stop_requested = Arc::new(AtomicBool::new(false));
     let mut running_command =
@@ -1209,7 +1215,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
             policy: cfg.policy.clone(),
             shell: cfg.shell.clone(),
             ssh: cfg.ssh.clone(),
-            projects_dir: projects_dir(&cfg).unwrap(),
+            project_registry_dir: project_registry_dir(&cfg).unwrap(),
             request,
         },
     );
@@ -1241,7 +1247,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
             policy: cfg.policy.clone(),
             shell: cfg.shell.clone(),
             ssh: cfg.ssh.clone(),
-            projects_dir: projects_dir(&cfg).unwrap(),
+            project_registry_dir: project_registry_dir(&cfg).unwrap(),
             request: rejected_request,
         },
     );
@@ -1342,9 +1348,9 @@ fn project_error_value(result: CommandResult) -> serde_json::Value {
 fn runner_project_cache_invalidate_refreshes_after_project_op() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("repo");
-    let projects_dir = tmp.path().join("projects.d");
+    let project_registry_dir = tmp.path().join("project-registry");
     std::fs::create_dir(&project_dir).unwrap();
-    let mut cfg = test_config(projects_dir.clone());
+    let mut cfg = test_config(project_registry_dir.clone());
     cfg.policy = project_policy(tmp.path());
     let mut cache = RunnerProjectCache::default();
     assert!(cache.get(&cfg).is_empty());
@@ -1357,7 +1363,7 @@ fn runner_project_cache_invalidate_refreshes_after_project_op() {
             "path": project_dir.to_string_lossy()
         }),
     );
-    project_ok(handle_project_op(&cfg.policy, &projects_dir, &req));
+    project_ok(handle_project_op(&cfg.policy, &project_registry_dir, &req));
 
     assert!(
         cache.get(&cfg).is_empty(),
@@ -1372,7 +1378,7 @@ fn runner_project_cache_invalidate_refreshes_after_project_op() {
 #[test]
 fn http_sink_client_id_matches_config() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let client = Client::new();
     let sink = RunnerSink::Http(HttpSendConfig {
         client,
@@ -1467,7 +1473,7 @@ fn empty_tokens_http_register_omits_authorization_header() {
     });
 
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("projects.d"));
+    let mut cfg = test_config(tmp.path().join("project-registry"));
     cfg.server_url = format!("http://{}", addr);
     cfg.token = "   \t".to_string();
 
@@ -1597,7 +1603,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
     });
 
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     cfg.server_url = format!("http://{}", addr);
     cfg.transport = Some(TRANSPORT_WEBSOCKET.to_string());
     let runtime = RunnerRuntimeState::new(&cfg, PathBuf::new());

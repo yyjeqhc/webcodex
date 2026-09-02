@@ -3636,7 +3636,10 @@ impl ConnectorRuntime {
             .replace(&self.context.executor_root, ".")
             .replace(&self.context.runs_root, "<managed-runs>")
             .replace(&self.context.results_root, "<managed-results>")
-            .replace(&self.context.projects_dir, "<managed-projects>")
+            .replace(
+                &self.context.project_registry_dir,
+                "<managed-project-registry>",
+            )
     }
 
     fn sanitize_task_value(&self, task: &ConnectorTaskSnapshot, mut value: Value) -> Value {
@@ -3658,7 +3661,10 @@ impl ConnectorRuntime {
             .replace(&task.execution_root, ".")
             .replace(&self.context.runs_root, "<managed-runs>")
             .replace(&self.context.results_root, "<managed-results>")
-            .replace(&self.context.projects_dir, "<managed-projects>");
+            .replace(
+                &self.context.project_registry_dir,
+                "<managed-project-registry>",
+            );
         match executor_client_id(&task.execution_executor_ref) {
             Some(client_id) => value.replace(client_id, "<agent>"),
             None => value,

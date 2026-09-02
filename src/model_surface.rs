@@ -340,7 +340,7 @@ mod tests {
             executor_root: "/tmp/webcodex".to_string(),
             runs_root: "/tmp/webcodex-runs".to_string(),
             results_root: "/tmp/webcodex-results".to_string(),
-            projects_dir: "/tmp/webcodex-projects".to_string(),
+            project_registry_dir: "/tmp/webcodex-projects".to_string(),
             profile: "default".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         }

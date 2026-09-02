@@ -7,7 +7,7 @@
 //! model-facing tool and `POST /api/projects/unregister` have the same revision
 //! CAS, active-Job fence, capability check, uncertain-delivery semantics, and
 //! server inventory update. The Runner remains authoritative for its local
-//! `projects.d` registration state.
+//! project registration records in the Runner project registry.
 //!
 //! The server never writes project config files or creates directories on the
 //! agent host directly. OS permissions and agent policy
@@ -418,7 +418,7 @@ impl ToolRuntime {
     }
 
     /// Ask a Runner to create a directory under its configured managed
-    /// temporary-project root and register it through the ordinary projects.d
+    /// temporary-project root and register it through the ordinary project-registry
     /// lifecycle. The Runner, rather than this server, owns all directory-name
     /// generation, path validation, and filesystem mutation.
     pub(crate) async fn create_managed_temporary_project(
@@ -447,7 +447,7 @@ impl ToolRuntime {
     }
 
     /// Ask the selected Runner to resolve an existing registration by
-    /// canonical path or persist a new projects.d entry under its registry
+    /// canonical path or persist a new project registration record under its registry
     /// write lock. This internal operation is intentionally absent from the
     /// model-visible tool registry.
     pub(crate) async fn resolve_or_register_project(

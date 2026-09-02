@@ -31,7 +31,7 @@ pub(super) struct ProjectPaths {
     pub(super) cache: PathBuf,
     pub(super) cargo_target: PathBuf,
     pub(super) credentials: PathBuf,
-    pub(super) projects: PathBuf,
+    pub(super) project_registry: PathBuf,
     pub(super) runs: PathBuf,
     pub(super) results: PathBuf,
     pub(super) logs: PathBuf,
@@ -44,15 +44,18 @@ pub(super) struct ProjectPaths {
 }
 
 impl ProjectPaths {
-    fn new(state: PathBuf) -> Self {
+    fn new(state: PathBuf) -> Result<Self, ProductError> {
         let credentials = state.join("credentials");
         let runner_state_dir = state.join("agent");
         let cache = state.join("cache");
-        Self {
+        let project_registry =
+            crate::runner_config::paths::select_project_registry_dir(&runner_state_dir)
+                .map_err(|message| invalid_registration(&message))?;
+        Ok(Self {
             data: state.join("data"),
             cargo_target: cache.join("cargo-target"),
             cache,
-            projects: runner_state_dir.join("projects.d"),
+            project_registry,
             runs: state.join("runs"),
             results: state.join("results"),
             logs: state.join("logs"),
@@ -65,7 +68,7 @@ impl ProjectPaths {
                 .join(webcodex_runner_config::paths::LEGACY_AGENT_CONFIG_FILE),
             credentials,
             state,
-        }
+        })
     }
 
     pub(super) fn resolved_runner_config(&self) -> Result<PathBuf, ProductError> {
@@ -91,7 +94,7 @@ impl ProjectPaths {
             &self.cache,
             &self.cargo_target,
             &self.credentials,
-            &self.projects,
+            &self.project_registry,
             &self.runs,
             &self.results,
             &self.logs,
@@ -190,7 +193,7 @@ impl ProjectConfig {
                 executor_project_id,
                 executor_client_id: format!("local-{}-{}", &identity[..8], &grant_id[10..18]),
             },
-            ProjectPaths::new(state),
+            ProjectPaths::new(state)?,
         ))
     }
 
@@ -238,7 +241,7 @@ pub(crate) fn resolve_local_task_state(
         state: paths.state,
         data: paths.data,
         runs: paths.runs,
-        projects: paths.projects,
+        project_registry: paths.project_registry,
         cargo_target: paths.cargo_target,
         logical_project_id: config.logical_project_id,
     })
@@ -315,7 +318,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             display_name: Some(format!("{} local Runner", config.project_name)),
             transport: TRANSPORT_WEBSOCKET.to_string(),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            projects_dir: paths.projects.clone(),
+            project_registry_dir: paths.project_registry.clone(),
             output: runner_config.clone(),
             allowed_roots: vec![config.root.clone(), paths.runs.clone(), paths.cache.clone()],
             allow_cwd_anywhere: false,
@@ -498,7 +501,7 @@ fn configured_readiness(config: ProjectConfig, paths: ProjectPaths) -> LocalRead
         &config.root,
         &paths.runs,
         &paths.results,
-        &paths.projects,
+        &paths.project_registry,
     );
     findings.push(match writable_workspace.status {
         WritableWorkspaceReadinessStatus::Uninitialized
@@ -557,7 +560,10 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
             return LocalProjectState::workspace_unavailable(None, None, error);
         }
     };
-    let paths = ProjectPaths::new(state);
+    let paths = match ProjectPaths::new(state) {
+        Ok(paths) => paths,
+        Err(error) => return LocalProjectState::workspace_unavailable(None, None, error),
+    };
     if !paths.state.exists() {
         return LocalProjectState::NotConfigured;
     }
@@ -610,7 +616,7 @@ fn contains_setup_state(paths: &ProjectPaths) -> bool {
         || paths.connector_key.exists()
         || paths.agent_token.exists()
         || paths.bootstrap_key.exists()
-        || paths.projects.exists()
+        || paths.project_registry.exists()
         || paths.data.exists()
 }
 
@@ -662,10 +668,6 @@ pub(super) fn validate_existing_runner(
     let expected = [
         ("server_url", config.server_url()),
         ("client_id", config.executor_client_id.clone()),
-        (
-            "projects_dir",
-            paths.projects.to_string_lossy().into_owned(),
-        ),
     ];
     for (field, expected) in expected {
         if value.get(field).and_then(toml::Value::as_str) != Some(expected.as_str()) {
@@ -677,6 +679,23 @@ pub(super) fn validate_existing_runner(
                 ),
             ));
         }
+    }
+    let current_registry = value
+        .get("project_registry_dir")
+        .and_then(toml::Value::as_str);
+    let legacy_registry = value.get("projects_dir").and_then(toml::Value::as_str);
+    if current_registry.is_some() && legacy_registry.is_some() {
+        return Err(invalid_registration(
+            "existing Runner configuration contains both project_registry_dir and legacy projects_dir",
+        ));
+    }
+    let expected_registry = paths.project_registry.to_string_lossy();
+    if current_registry.or(legacy_registry) != Some(expected_registry.as_ref()) {
+        return Err(ProductError::new(
+            "project_registration_invalid",
+            "existing Runner configuration conflicts in field 'project_registry_dir'",
+            Some("Resolve the existing configuration conflict; WebCodex will not overwrite it."),
+        ));
     }
     if value
         .get("token")
@@ -778,7 +797,7 @@ fn expected_registration(config: &ProjectConfig) -> ProjectRegistration {
 
 fn registration_path(config: &ProjectConfig, paths: &ProjectPaths) -> PathBuf {
     paths
-        .projects
+        .project_registry
         .join(format!("{}.toml", config.executor_project_id))
 }
 

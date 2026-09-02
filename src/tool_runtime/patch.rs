@@ -182,6 +182,7 @@ fn sensitive_path_warning(path: &str) -> Option<String> {
                 | "webcodex.env"
                 | "secret.pem"
                 | "id_rsa"
+                | "project-registry"
                 | "projects.d"
                 | ".git"
                 | "target"

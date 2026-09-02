@@ -309,7 +309,7 @@ BASE="http://127.0.0.1:${PORT}"
 
 TMP_ROOT="$(mktemp -d -t webcodex-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
-PROJECTS_DIR="$TMP_ROOT/projects.d"
+PROJECTS_DIR="$TMP_ROOT/project-registry"
 AGENT_TOML="$TMP_ROOT/runner.toml"
 TEST_REPO="$TMP_ROOT/smoke-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
@@ -351,7 +351,7 @@ token = "${TOKEN}"
 client_id = "${CLIENT_ID}"
 display_name = "E2E Agent"
 owner = "e2e"
-projects_dir = "${PROJECTS_DIR}"
+project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 500
 transport = "${TRANSPORT}"
 

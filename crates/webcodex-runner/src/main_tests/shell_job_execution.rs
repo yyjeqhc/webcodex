@@ -5,7 +5,7 @@ use super::*;
 fn shell_job_filters_sensitive_env_case_insensitive() {
     let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     // The plain (non-profile) path removes sensitive keys from the child
     // environment; Windows removal must be case-insensitive like the OS.
@@ -103,7 +103,7 @@ fn raw_shell_job_post_spawn_interruption_never_reuses_not_started_proof() {
 #[test]
 fn shell_job_success_and_failure_results_are_structured() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
 
     let success = run_shell(
@@ -136,7 +136,7 @@ fn shell_job_success_and_failure_results_are_structured() {
 #[test]
 fn shell_job_writes_stdin_to_child() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
 
     let result = run_shell(
@@ -157,7 +157,7 @@ fn shell_job_writes_stdin_to_child() {
 #[test]
 fn shell_job_preserves_result_when_child_closes_stdin_early() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     // Larger than a pipe buffer, so write_all observes the closed reader
     // instead of winning the race by buffering the whole payload.
@@ -210,7 +210,7 @@ fn shell_job_rejects_cwd_symlink_escape() {
 #[test]
 fn shell_job_timeout_returns_timeout_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
 
     let result = run_shell(
@@ -243,7 +243,7 @@ fn long_lived_descendant_command(pid_file: &Path) -> String {
 #[test]
 fn shell_job_timeout_reaps_descendant_process_group() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     let pid_file = tmp.path().join("timeout-descendant.pid");
 
@@ -313,7 +313,7 @@ fn shell_job_timeout_profile_reaps_descendant_process_group() {
 #[test]
 fn shell_job_powershell_statement_error_is_nonzero() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     let result = run_shell(
         &cfg.policy,
@@ -332,7 +332,7 @@ fn shell_job_powershell_statement_error_is_nonzero() {
 #[test]
 fn shell_job_powershell_last_success_overrides_stale_native_exit() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     let result = run_shell(
         &cfg.policy,
@@ -354,7 +354,7 @@ fn shell_job_powershell_last_success_overrides_stale_native_exit() {
 #[test]
 fn shell_job_stop_flag_is_best_effort() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     let stop_requested = AtomicBool::new(true);
 
@@ -380,7 +380,7 @@ fn shell_job_stop_flag_is_best_effort() {
 #[test]
 fn shell_job_stop_reaps_descendant_process_group() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
     let pid_file = tmp.path().join("stop-descendant.pid");
     let stop_requested = Arc::new(AtomicBool::new(false));
@@ -419,7 +419,7 @@ fn shell_job_stop_reaps_descendant_process_group() {
 #[test]
 fn shell_job_stdout_stderr_are_bounded() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     cfg.policy.max_output_bytes = 8;
     let cwd = tmp.path().to_string_lossy().to_string();
 

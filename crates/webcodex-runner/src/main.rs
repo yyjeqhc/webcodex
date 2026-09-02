@@ -71,7 +71,7 @@ use webcodex_runner::{
     handle_checkpoint_file_request, handle_write_project_file_request, hostname,
     is_artifact_request_kind, is_basic_file_request_kind, is_checkpoint_request_kind,
     is_project_op, is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
-    prepare_detached_process_launch, projects_dir, resolve_prepared_shell_profile,
+    prepare_detached_process_launch, project_registry_dir, resolve_prepared_shell_profile,
     resolve_requested_path, run_runner, validate_client_profile,
     validate_structured_edit_runner_path, CommandResult, HotRunnerConfig, HttpSendConfig,
     PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig, RunnerConfig,
@@ -208,7 +208,7 @@ struct PendingJobStart {
     policy: RunnerPolicy,
     shell: ShellConfig,
     ssh: SshConfig,
-    projects_dir: PathBuf,
+    project_registry_dir: PathBuf,
     request: ShellAgentShellRequest,
 }
 
@@ -605,7 +605,7 @@ fn usage() -> &'static str {
        client_id = \"xrh\"\n\
        display_name = \"XRH\"\n\
        owner = \"yyjeqhc\"\n\
-       projects_dir = \"/root/.config/webcodex/projects.d\"\n\
+       project_registry_dir = \"/root/.config/webcodex/project-registry\"\n\
        poll_interval_ms = 1000\n\
 \n\
        [policy]\n\
@@ -1155,7 +1155,7 @@ struct PollingDispatch {
     runtime: Arc<ReloadableRunnerConfig>,
     jobs: JobManager,
     persistent_shells: webcodex_runner::PersistentShellManager,
-    projects_dir: PathBuf,
+    project_registry_dir: PathBuf,
     lsp: webcodex_runner::LspSupervisor,
     request: ShellAgentShellRequest,
 }
@@ -1168,7 +1168,7 @@ impl PollingDispatch {
             &self.runtime,
             &self.jobs,
             &self.persistent_shells,
-            &self.projects_dir,
+            &self.project_registry_dir,
             &self.lsp,
             self.request,
         )
@@ -4068,11 +4068,17 @@ impl JobManager {
                 generation,
                 policy,
                 shell,
-                projects_dir,
+                project_registry_dir,
                 request,
                 ..
             } = start;
-            self.start_detached_process_job(generation, policy, shell, projects_dir, request);
+            self.start_detached_process_job(
+                generation,
+                policy,
+                shell,
+                project_registry_dir,
+                request,
+            );
         } else if matches!(
             start.request.kind.as_str(),
             "start_process_job" | "start_script_job"
@@ -4081,11 +4087,11 @@ impl JobManager {
                 generation,
                 policy,
                 shell,
-                projects_dir,
+                project_registry_dir,
                 request,
                 ..
             } = start;
-            self.start_structured_job(generation, policy, shell, projects_dir, request);
+            self.start_structured_job(generation, policy, shell, project_registry_dir, request);
         } else {
             self.start_shell_job(start);
         }
@@ -4143,7 +4149,7 @@ impl JobManager {
         generation: u64,
         policy: RunnerPolicy,
         shell: ShellConfig,
-        projects_dir: PathBuf,
+        project_registry_dir: PathBuf,
         request: ShellAgentShellRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
@@ -4194,7 +4200,7 @@ impl JobManager {
                 generation,
                 &policy,
                 &shell,
-                &projects_dir,
+                &project_registry_dir,
                 &manager.prepared_profiles,
                 request.cwd.as_deref(),
                 &process.executable,
@@ -4311,7 +4317,7 @@ impl JobManager {
         generation: u64,
         policy: RunnerPolicy,
         shell: ShellConfig,
-        projects_dir: PathBuf,
+        project_registry_dir: PathBuf,
         request: ShellAgentShellRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
@@ -4366,7 +4372,7 @@ impl JobManager {
                         generation,
                         &policy,
                         &shell,
-                        &projects_dir,
+                        &project_registry_dir,
                         &manager.prepared_profiles,
                         request.cwd.as_deref(),
                         &process.executable,
@@ -4383,7 +4389,7 @@ impl JobManager {
                         generation,
                         &policy,
                         &shell,
-                        &projects_dir,
+                        &project_registry_dir,
                         &manager.prepared_profiles,
                         request.cwd.as_deref(),
                         script,
@@ -4434,7 +4440,7 @@ impl JobManager {
             policy,
             shell,
             ssh,
-            projects_dir,
+            project_registry_dir,
             request,
         } = start;
         let Some(job_id) = request.job_id.clone() else {
@@ -4514,7 +4520,7 @@ impl JobManager {
         let prepared_profile = match resolve_prepared_shell_profile(
             generation,
             &shell,
-            &projects_dir,
+            &project_registry_dir,
             &cwd_path,
             request.cwd.is_some(),
             &self.prepared_profiles,
@@ -5539,7 +5545,7 @@ fn handle_one_poll(
     let runtime = Arc::clone(runtime);
     let jobs = jobs.clone();
     let persistent_shells = persistent_shells.clone();
-    let projects_dir = match projects_dir(cfg) {
+    let project_registry_dir = match project_registry_dir(cfg) {
         Ok(dir) => dir,
         Err(error) => return Err(PollError::new(PollErrorKind::Config, error)),
     };
@@ -5552,7 +5558,7 @@ fn handle_one_poll(
         runtime,
         jobs,
         persistent_shells,
-        projects_dir,
+        project_registry_dir,
         lsp,
         request,
     };

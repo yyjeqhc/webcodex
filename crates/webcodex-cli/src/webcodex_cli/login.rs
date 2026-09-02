@@ -538,7 +538,7 @@ pub(crate) fn write_descriptor(
 /// second copy on disk for it to drift from.
 pub(crate) fn stage_connection(
     staging: &Path,
-    published_projects_dir: &Path,
+    published_project_registry_dir: &Path,
     opts: &LoginOptions,
     server_url: &str,
     identity: &EnrolledIdentity,
@@ -546,8 +546,12 @@ pub(crate) fn stage_connection(
     now: &str,
 ) -> Result<(), String> {
     let paths = ConnectionPaths::new(staging.to_path_buf());
-    std::fs::create_dir_all(&paths.projects_dir)
-        .map_err(|error| format!("failed to create {}: {error}", paths.projects_dir.display()))?;
+    std::fs::create_dir_all(&paths.project_registry_dir).map_err(|error| {
+        format!(
+            "failed to create {}: {error}",
+            paths.project_registry_dir.display()
+        )
+    })?;
 
     super::system::write_text_file(
         &paths.user_token,
@@ -568,7 +572,7 @@ pub(crate) fn stage_connection(
         // The directory is created inside staging above so it is published
         // atomically with the rest of the connection, but runner.toml must
         // point at its final path after that staging directory is renamed.
-        projects_dir: published_projects_dir.to_path_buf(),
+        project_registry_dir: published_project_registry_dir.to_path_buf(),
         output: paths.runner_config.clone(),
         allowed_roots: opts.allowed_roots.clone(),
         allow_cwd_anywhere: false,
@@ -579,7 +583,7 @@ pub(crate) fn stage_connection(
     write_descriptor(&paths, server_url, &identity.username, device, now)
 }
 
-const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the Runner config, working directory, projects directory, and allowed roots";
+const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the Runner config, working directory, project registry directory, and allowed roots";
 const ROOT_FOREGROUND_REASON: &str = "login ran as root; no foreground Runner argv is emitted because it would execute project commands as root";
 const WINDOWS_RUNNER_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
 const NON_LINUX_RUNNER_INSTALL_REASON: &str = "managed Runner service installation is supported only on Linux; start the foreground Runner shown above instead";
@@ -689,7 +693,8 @@ pub(crate) fn render_login_result(
             "runner_config": paths.runner_config.to_string_lossy(),
             // Machine-readable compatibility alias retained for pre-0.4 consumers.
             "agent_config": paths.runner_config.to_string_lossy(),
-            "projects_registry": paths.projects_dir.to_string_lossy(),
+            "project_registry_dir": paths.project_registry_dir.to_string_lossy(),
+            "projects_registry": paths.project_registry_dir.to_string_lossy(),
             "allowed_roots": allowed_roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             "project_registration": {
                 "registered": registration.is_some(),
@@ -983,9 +988,9 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     let mut prestaged: Option<(PathBuf, ProjectRegistration)> = None;
     if let Some(project) = &opts.project {
         let staging = create_staging_dir(&parent)?;
-        let staged_projects_dir = staging.join("projects.d");
+        let staged_project_registry_dir = staging.join("project-registry");
         match register_existing_project(
-            &staged_projects_dir,
+            &staged_project_registry_dir,
             project,
             &output_allowed_roots,
             false,
@@ -1035,7 +1040,7 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     let now = chrono::Utc::now().to_rfc3339();
     if let Err(error) = stage_connection(
         &staging,
-        &paths.projects_dir,
+        &paths.project_registry_dir,
         &opts,
         &server_url,
         &identity,
@@ -1049,7 +1054,9 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     match publish_connection(&staging, &paths.dir, opts.overwrite)? {
         PublishOutcome::Published => {
             if let Some(project) = registration.as_mut() {
-                project.record_path = paths.projects_dir.join(format!("{}.toml", project.id));
+                project.record_path = paths
+                    .project_registry_dir
+                    .join(format!("{}.toml", project.id));
             }
             render_login_result(
                 &paths,
@@ -1220,7 +1227,7 @@ mod tests {
         let staging = create_staging_dir(&parent)?;
         if let Err(error) = stage_connection(
             &staging,
-            &paths.projects_dir,
+            &paths.project_registry_dir,
             &opts,
             &canonical.url,
             &identity,
@@ -1339,25 +1346,30 @@ mod tests {
         let paths = &listed[0].paths;
         assert!(paths.runner_config.is_file());
         assert!(paths.user_token.is_file());
-        assert!(paths.projects_dir.is_dir());
-        assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
+        assert!(paths.project_registry_dir.is_dir());
+        assert_eq!(
+            std::fs::read_dir(&paths.project_registry_dir)
+                .unwrap()
+                .count(),
+            0
+        );
         // The agent token has exactly one home.
         assert!(!paths.dir.join("webcodex-runner-token").exists());
         let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
         assert!(runner_config.contains(AGENT_TOKEN));
         let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
-        let configured_projects_dir = PathBuf::from(
+        let configured_project_registry_dir = PathBuf::from(
             parsed
-                .get("projects_dir")
+                .get("project_registry_dir")
                 .and_then(toml::Value::as_str)
-                .expect("projects_dir must be present"),
+                .expect("project_registry_dir must be present"),
         );
         assert_eq!(
-            configured_projects_dir.canonicalize().unwrap(),
-            paths.projects_dir.canonicalize().unwrap(),
-            "published runner.toml must reference the published projects.d directory"
+            configured_project_registry_dir.canonicalize().unwrap(),
+            paths.project_registry_dir.canonicalize().unwrap(),
+            "published runner.toml must reference the published project-registry directory"
         );
-        // Canonical equality above proves this is the published projects.d,
+        // Canonical equality above proves this is the published project-registry,
         // not the differently named staging directory that existed before the
         // atomic rename.
 
@@ -1380,7 +1392,7 @@ mod tests {
         let staging = create_staging_dir(&parent).unwrap();
         stage_connection(
             &staging,
-            &paths.projects_dir,
+            &paths.project_registry_dir,
             &opts,
             &canonical.url,
             &identity,
@@ -1392,17 +1404,22 @@ mod tests {
             publish_connection(&staging, &paths.dir, false).unwrap(),
             PublishOutcome::Published
         );
-        assert_eq!(std::fs::read_dir(&paths.projects_dir).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::read_dir(&paths.project_registry_dir)
+                .unwrap()
+                .count(),
+            0
+        );
         let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
         let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
         assert_eq!(
-            PathBuf::from(parsed["projects_dir"].as_str().unwrap())
+            PathBuf::from(parsed["project_registry_dir"].as_str().unwrap())
                 .canonicalize()
                 .unwrap(),
-            paths.projects_dir.canonicalize().unwrap()
+            paths.project_registry_dir.canonicalize().unwrap()
         );
         assert_ne!(
-            paths.projects_dir.canonicalize().unwrap(),
+            paths.project_registry_dir.canonicalize().unwrap(),
             allowed_root.canonicalize().unwrap()
         );
         assert_eq!(
@@ -1452,7 +1469,7 @@ mod tests {
         std::fs::create_dir_all(staging.join("runner.toml")).unwrap();
         let result = stage_connection(
             &staging,
-            &paths.projects_dir,
+            &paths.project_registry_dir,
             &opts,
             "https://api.example.com",
             &identity,
@@ -2079,7 +2096,7 @@ mod tests {
         let staging = create_staging_dir(&parent).unwrap();
         stage_connection(
             &staging,
-            &final_dir.join("projects.d"),
+            &final_dir.join("project-registry"),
             &opts,
             &canonical.url,
             &identity(),
@@ -2307,14 +2324,15 @@ mod tests {
         assert_eq!(connections.len(), 1);
         let paths = &connections[0].paths;
         let records =
-            crate::webcodex_cli::connect::profile::read_project_files(&paths.projects_dir).unwrap();
+            crate::webcodex_cli::connect::profile::read_project_files(&paths.project_registry_dir)
+                .unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].1.id, "my-repo");
         assert_eq!(
             PathBuf::from(&records[0].1.path).canonicalize().unwrap(),
             project.canonicalize().unwrap()
         );
-        assert!(records[0].0.starts_with(&paths.projects_dir));
+        assert!(records[0].0.starts_with(&paths.project_registry_dir));
         let reported_record =
             PathBuf::from(value["registered_projects"][0]["record"].as_str().unwrap());
         assert_eq!(
@@ -2324,10 +2342,10 @@ mod tests {
         let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
         let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
         assert_eq!(
-            PathBuf::from(parsed["projects_dir"].as_str().unwrap())
+            PathBuf::from(parsed["project_registry_dir"].as_str().unwrap())
                 .canonicalize()
                 .unwrap(),
-            paths.projects_dir.canonicalize().unwrap()
+            paths.project_registry_dir.canonicalize().unwrap()
         );
         assert_no_internal_residue(paths.dir.parent().unwrap());
     }
@@ -2638,7 +2656,7 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("device/client_id"), "{text}");
-        assert!(!text.contains("projects registry"), "{text}");
+        assert!(!text.contains("project registry"), "{text}");
         assert!(!text.contains("runtime_project"), "{text}");
         assert!(
             !text.contains(&paths.user_token.display().to_string()),
@@ -2677,8 +2695,12 @@ mod tests {
         assert_eq!(json_value["project_registration"]["count"], 0);
         assert_eq!(json_value["registered_projects"], serde_json::json!([]));
         assert_eq!(
+            json_value["project_registry_dir"],
+            paths.project_registry_dir.to_string_lossy().as_ref()
+        );
+        assert_eq!(
             json_value["projects_registry"],
-            paths.projects_dir.to_string_lossy().as_ref()
+            paths.project_registry_dir.to_string_lossy().as_ref()
         );
         assert_eq!(
             json_value
@@ -2708,7 +2730,7 @@ mod tests {
         let project = ProjectRegistration {
             id: "demo".to_string(),
             path: PathBuf::from("/tmp/demo"),
-            record_path: paths.projects_dir.join("demo.toml"),
+            record_path: paths.project_registry_dir.join("demo.toml"),
             already_registered: false,
         };
         let text = render_login_result(
@@ -2767,7 +2789,7 @@ mod tests {
         let registration = ProjectRegistration {
             id: "demo".to_string(),
             path: PathBuf::from("/tmp/demo"),
-            record_path: paths.projects_dir.join("demo.toml"),
+            record_path: paths.project_registry_dir.join("demo.toml"),
             already_registered: false,
         };
 
@@ -2889,7 +2911,7 @@ mod tests {
         let registration = ProjectRegistration {
             id: "demo".to_string(),
             path: PathBuf::from("/tmp/demo"),
-            record_path: paths.projects_dir.join("demo.toml"),
+            record_path: paths.project_registry_dir.join("demo.toml"),
             already_registered: false,
         };
 
@@ -3042,7 +3064,7 @@ mod tests {
         let staging = create_staging_dir(&parent).unwrap();
         stage_connection(
             &staging,
-            &paths.projects_dir,
+            &paths.project_registry_dir,
             &opts,
             &canonical.url,
             &identity,

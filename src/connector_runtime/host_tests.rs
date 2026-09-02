@@ -56,8 +56,8 @@ fn fixture(finish: bool) -> Fixture {
         executor_root: root.to_string_lossy().into_owned(),
         runs_root: state.join("runs").to_string_lossy().into_owned(),
         results_root: state.join("results").to_string_lossy().into_owned(),
-        projects_dir: state
-            .join("agent/projects.d")
+        project_registry_dir: state
+            .join("agent/project-registry")
             .to_string_lossy()
             .into_owned(),
         profile: "personal".to_string(),

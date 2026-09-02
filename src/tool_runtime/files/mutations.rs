@@ -272,7 +272,7 @@ pub(crate) fn validate_edit_file_path(path: &str) -> Result<(), String> {
     if is_sensitive_edit_path(path) {
         return Err(format!(
             "refusing sensitive path '{}': touches runner.toml, legacy agent.toml, webcodex.env, \
-             .env, projects.d, .git, target, or node_modules",
+             .env, project-registry, projects.d, .git, target, or node_modules",
             path
         ));
     }

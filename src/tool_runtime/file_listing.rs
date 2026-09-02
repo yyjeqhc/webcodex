@@ -359,6 +359,7 @@ mod tests {
             "certs/server.pem",
             "certs/server.key",
             "secrets/db.txt",
+            "project-registry/one.toml",
             "projects.d/one.toml",
             "node_modules/left-pad/index.js",
             "target/debug/build.rs",

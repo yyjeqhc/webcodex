@@ -831,6 +831,7 @@ pub fn sensitive_path(path: &str) -> bool {
             ".git"
                 | "target"
                 | "node_modules"
+                | "project-registry"
                 | "projects.d"
                 | "runner.toml"
                 | "agent.toml"

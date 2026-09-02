@@ -312,6 +312,7 @@ fn is_excluded_component(component: &str) -> bool {
             | ".parcel-cache"
             | ".pnpm-store"
             | ".turbo"
+            | "project-registry"
             | "projects.d"
             | "secrets"
             | "secret"

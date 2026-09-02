@@ -25,7 +25,8 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
         owner: Some("tester".to_string()),
         hostname: Some("oe-host".to_string()),
         host_context: None,
-        projects_dir: None,
+        project_registry_dir: None,
+        legacy_projects_dir: None,
         temporary_projects_root: None,
         poll_interval_ms: 10,
         capabilities: Some(ShellClientCapabilities {
@@ -51,10 +52,10 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
     }
 }
 
-fn polling_runner_config(server_url: String, projects_dir: PathBuf) -> RunnerConfig {
+fn polling_runner_config(server_url: String, project_registry_dir: PathBuf) -> RunnerConfig {
     let mut cfg = test_runner_config(server_url);
     cfg.transport = Some(TRANSPORT_POLLING.to_string());
-    cfg.projects_dir = Some(projects_dir);
+    cfg.project_registry_dir = Some(project_registry_dir);
     cfg
 }
 
@@ -99,13 +100,13 @@ fn inventory_status(
     }
 }
 
-fn write_synthetic_project_configs(projects_dir: &Path, root: &Path, count: usize) {
-    std::fs::create_dir_all(projects_dir).unwrap();
+fn write_synthetic_project_configs(project_registry_dir: &Path, root: &Path, count: usize) {
+    std::fs::create_dir_all(project_registry_dir).unwrap();
     for index in 0..count {
         let path = root.join(format!("project-{index:04}"));
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(
-            projects_dir.join(format!("project-{index:04}.toml")),
+            project_registry_dir.join(format!("project-{index:04}.toml")),
             format!(
                 "id = \"project-{index:04}\"\nname = \"Project {index:04}\"\npath = {:?}\nallow_patch = true\n",
                 path.to_string_lossy()
@@ -477,7 +478,7 @@ fn run_polling_runner_against_server(
     let (server_url, poll_count, server) =
         start_polling_http_server(poll_status, poll_content_type, poll_body, once);
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = polling_runner_config(server_url, tmp.path().join("projects.d"));
+    let cfg = polling_runner_config(server_url, tmp.path().join("project-registry"));
     let runtime = test_runtime(&cfg);
     let shutdown = Arc::new(AtomicBool::new(false));
     let failsafe = Arc::clone(&shutdown);
@@ -1138,7 +1139,7 @@ fn run_polling_runner_against_scripted_server(
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
     let runner = thread::spawn(move || {
         let tmp = tempfile::tempdir().unwrap();
-        let cfg = polling_runner_config(server_url, tmp.path().join("projects.d"));
+        let cfg = polling_runner_config(server_url, tmp.path().join("project-registry"));
         let runtime = test_runtime(&cfg);
         let result =
             run_polling_runner_with_shutdown(cfg, once, "inst-script", runner_shutdown, &runtime);
@@ -1248,7 +1249,10 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1356,7 +1360,10 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1473,7 +1480,10 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1535,7 +1545,10 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1606,7 +1619,10 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -1672,7 +1688,10 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime =
         RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_secs(2));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -1723,7 +1742,7 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
 fn polling_background_project_operation_invalidates_the_project_cache() {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
-    let projects_dir = temp.path().join("projects.d");
+    let project_registry_dir = temp.path().join("project-registry");
     std::fs::create_dir_all(&project).unwrap();
     let mut request = sync_file_request("req-register-project");
     request.kind = "register_project".to_string();
@@ -1789,7 +1808,7 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
     // authorizes them. This test exercises polling project-cache
     // invalidation, not project-root safety policy, so authorize this
     // test's own temp root explicitly.
-    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir.clone());
+    let mut cfg = polling_runner_config(server.server_url.clone(), project_registry_dir.clone());
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
@@ -1810,7 +1829,7 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
         .finish(Duration::from_secs(30), "project-cache polling runner")
         .expect("project-cache runner should shut down cleanly");
     server.finish();
-    assert!(projects_dir.join("e1-project.toml").exists());
+    assert!(project_registry_dir.join("e1-project.toml").exists());
     assert!(poll_count.load(Ordering::SeqCst) >= 2);
     assert!(refreshed_seen.load(Ordering::SeqCst));
 }
@@ -1829,11 +1848,11 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
 
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
-    let projects_dir = temp.path().join("projects.d");
+    let project_registry_dir = temp.path().join("project-registry");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::create_dir_all(&projects_dir).unwrap();
+    std::fs::create_dir_all(&project_registry_dir).unwrap();
     std::fs::write(
-        projects_dir.join("demo.toml"),
+        project_registry_dir.join("demo.toml"),
         format!(
             "id = \"demo\"\npath = {:?}\nallow_patch = true\n",
             project.to_string_lossy()
@@ -1904,7 +1923,7 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_runner_config(server.server_url.clone(), projects_dir);
+    let cfg = polling_runner_config(server.server_url.clone(), project_registry_dir);
     let runtime = test_runtime(&cfg);
     let runner = spawn_polling_runner(
         cfg,
@@ -2536,7 +2555,10 @@ fn polling_shutdown_uses_the_process_coordinator_once() {
         },
     ]);
     let temp = tempfile::tempdir().unwrap();
-    let cfg = polling_runner_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        temp.path().join("project-registry"),
+    );
     let runtime =
         RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
     run_polling_runner_with_shutdown(
@@ -3555,7 +3577,7 @@ fn auto_websocket_failure_falls_back_to_polling() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_runner_config(server_url);
     cfg.transport = Some(TRANSPORT_AUTO.to_string());
-    cfg.projects_dir = Some(tmp.path().join("projects.d"));
+    cfg.project_registry_dir = Some(tmp.path().join("project-registry"));
     cfg.websocket_connect_timeout_secs = 1;
 
     let runtime = test_runtime(&cfg);
@@ -3981,12 +4003,12 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
 async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_and_quic() {
     for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
         let temp = tempfile::tempdir().unwrap();
-        let projects_dir = temp.path().join("projects.d");
+        let project_registry_dir = temp.path().join("project-registry");
         let project_root = temp.path().join("projects");
-        write_synthetic_project_configs(&projects_dir, &project_root, 100);
+        write_synthetic_project_configs(&project_registry_dir, &project_root, 100);
 
         let mut cfg = test_runner_config("http://127.0.0.1:1".to_string());
-        cfg.projects_dir = Some(projects_dir.clone());
+        cfg.project_registry_dir = Some(project_registry_dir.clone());
         let runtime = test_runtime(&cfg);
         let mut initial_cache = RunnerProjectCache::default();
         let initial_projects = runtime.project_summaries(&mut initial_cache, &cfg);
@@ -4024,13 +4046,13 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
         assert_eq!(page_a1.page_index, 1);
 
         // Model a successful project mutation after its result was submitted:
-        // projects.d now has 101 entries. The event-driven dirty signal may
+        // project-registry now has 101 entries. The event-driven dirty signal may
         // eagerly create generation B before the Server-side dynamic projection
         // has retired A, so B alone is not sufficient for correctness.
         let added_root = project_root.join("new-project");
         std::fs::create_dir_all(&added_root).unwrap();
         std::fs::write(
-            projects_dir.join("new-project.toml"),
+            project_registry_dir.join("new-project.toml"),
             format!(
                 "id = \"new-project\"\nname = \"New Project\"\npath = {:?}\nallow_patch = true\n",
                 added_root.to_string_lossy()
@@ -4065,7 +4087,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
 
         // The authoritative dynamic projection can race after B/page0 and retire
         // it too. A stale status is therefore the synchronization fence: abandon
-        // the old logical snapshot and re-observe projects.d as generation C.
+        // the old logical snapshot and re-observe project-registry as generation C.
         coordinator.handle_status(
             transport,
             ShellProjectInventoryStatus {
@@ -4301,9 +4323,9 @@ async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
 #[test]
 fn polling_once_startup_with_100_projects_registers_liveness_then_completes_paged_inventory() {
     let temp = tempfile::tempdir().unwrap();
-    let projects_dir = temp.path().join("projects.d");
+    let project_registry_dir = temp.path().join("project-registry");
     let project_root = temp.path().join("projects");
-    write_synthetic_project_configs(&projects_dir, &project_root, 100);
+    write_synthetic_project_configs(&project_registry_dir, &project_root, 100);
 
     let seen = Arc::new(Mutex::new(Vec::<String>::new()));
     let next_page = Arc::new(AtomicUsize::new(0));
@@ -4362,7 +4384,7 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let mut cfg = polling_runner_config(server.server_url.clone(), projects_dir);
+    let mut cfg = polling_runner_config(server.server_url.clone(), project_registry_dir);
     cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
     let result = run_polling_runner_with_shutdown(
@@ -4390,7 +4412,7 @@ fn polling_project_refresh_is_periodic_and_invalidation_is_immediate() {
     let temp = tempfile::tempdir().unwrap();
     let cfg = polling_runner_config(
         "http://127.0.0.1:1".to_string(),
-        temp.path().join("projects.d"),
+        temp.path().join("project-registry"),
     );
     let shutdown = AtomicBool::new(false);
     let mut project_cache = RunnerProjectCache::default();

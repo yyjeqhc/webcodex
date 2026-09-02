@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_local_launch_details() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     cfg.mcp_gateway.providers = vec![webcodex_runner::config::McpGatewayProviderConfig {
         id: "local-tools".to_string(),
         name: "Local tools".to_string(),
@@ -39,7 +39,7 @@ fn mcp_gateway_register_request_projects_bounded_provider_inventory_without_loca
 #[test]
 fn current_runner_registration_advertises_v2_and_complete_generation_baseline() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let cfg = test_config(tmp.path().join("config/project-registry"));
     let body = build_register_request(&cfg, "baseline-instance", 0);
     assert_eq!(body.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
 
@@ -95,7 +95,7 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
 #[test]
 fn computer_register_request_announces_platform_capabilities_and_generation() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     // A stale or hand-edited config cannot force capability advertisement:
     // registration replaces it with the result of the real host probe.
     cfg.capabilities = Some(ShellClientCapabilities {
@@ -234,7 +234,7 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
 #[test]
 fn phase_e2_register_request_reports_effective_job_concurrency_limit() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     for (configured, expected) in [
         (None, 4),
         (Some(0), 1),
@@ -261,7 +261,7 @@ fn register_request_carries_sanitized_shell_profiles_summary() {
     // has_init_script=true, and env_keys_count, but MUST NOT include the env
     // value or the init_script body.
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
     let secret_env = "DO_NOT_LEAK_THIS_ENV_VALUE";
     let secret_script = "DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY";
     cfg.shell = shell_with_profiles(

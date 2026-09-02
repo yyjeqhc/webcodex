@@ -39,7 +39,12 @@ pub(crate) struct RunnerConfig {
     #[serde(default)]
     pub(crate) host_context: Option<AgentHostContext>,
     #[serde(default)]
-    pub(crate) projects_dir: Option<PathBuf>,
+    pub(crate) project_registry_dir: Option<PathBuf>,
+    /// Legacy config spelling retained only for load-time compatibility. A
+    /// loaded config is normalized into `project_registry_dir` and clears this
+    /// field so runtime comparisons operate on one effective registry path.
+    #[serde(default, rename = "projects_dir")]
+    pub(crate) legacy_projects_dir: Option<PathBuf>,
     /// Optional Runner-owned root for managed temporary projects. When absent,
     /// temporary project creation is disabled; ordinary project registration is
     /// unchanged.
@@ -526,7 +531,7 @@ impl ReloadableRunnerConfig {
         &self.startup.server_url
     }
 
-    /// Startup-owned managed temporary-project root. Like `projects_dir`, a
+    /// Startup-owned managed temporary-project root. Like `project_registry_dir`, a
     /// changed value is reported as restart-required so one running Runner
     /// cannot silently switch its project-registration boundary.
     pub(crate) fn temporary_projects_root(&self) -> Option<&Path> {
@@ -621,7 +626,7 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, ssh: _, tool_providers: _, $($field: _),+
+                policy: _, shell: _, ssh: _, tool_providers: _, legacy_projects_dir: _, $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
                 .into_iter()
@@ -640,7 +645,7 @@ pub(crate) fn restart_required_fields(
         mcp_gateway,
         owner,
         poll_interval_ms,
-        projects_dir,
+        project_registry_dir,
         temporary_projects_root,
         quic,
         server_url,
@@ -1094,14 +1099,23 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     let effective =
         effective_allowed_roots(&cfg.policy.allowed_roots, cfg.policy.allow_cwd_anywhere)?;
     cfg.policy.allowed_roots = effective;
-    // Materialize the default projects dir at load time so request-time code
-    // never re-derives it and can never fall back to a relative path. A
-    // minimal Runner config without an explicit projects_dir gets the shared
-    // per-user config base (`$HOME/.config/webcodex/projects.d` on Unix,
-    // `%APPDATA%\webcodex\projects.d` on Windows).
-    if cfg.projects_dir.is_none() {
-        cfg.projects_dir = Some(default_projects_dir()?);
-    }
+    // Normalize old/new config spellings into one effective registry path. Two
+    // explicit fields are ambiguous and fail closed rather than guessing
+    // precedence. With neither field configured, select the on-disk layout
+    // using the shared four-state compatibility contract.
+    cfg.project_registry_dir = match (
+        cfg.project_registry_dir.take(),
+        cfg.legacy_projects_dir.take(),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "project_registry_dir and legacy projects_dir cannot both be configured; keep exactly one Runner project registry setting"
+                    .to_string(),
+            );
+        }
+        (Some(path), None) | (None, Some(path)) => Some(path),
+        (None, None) => Some(default_project_registry_dir()?),
+    };
     validate_shell_config(&cfg.shell)?;
     validate_ssh_config(&mut cfg.ssh)?;
     if let Some(quic) = &cfg.quic {
@@ -1518,13 +1532,14 @@ pub(crate) fn hostname() -> Option<String> {
         })
 }
 
-fn default_projects_dir() -> Result<PathBuf, String> {
-    Ok(default_client_base_dir()?.join("projects.d"))
+fn default_project_registry_dir() -> Result<PathBuf, String> {
+    let base = default_client_base_dir()?;
+    crate::runner_config::paths::select_project_registry_dir(&base)
 }
 
-pub(crate) fn projects_dir(cfg: &RunnerConfig) -> Result<PathBuf, String> {
-    match &cfg.projects_dir {
-        Some(projects_dir) => Ok(projects_dir.clone()),
-        None => default_projects_dir(),
+pub(crate) fn project_registry_dir(cfg: &RunnerConfig) -> Result<PathBuf, String> {
+    match &cfg.project_registry_dir {
+        Some(project_registry_dir) => Ok(project_registry_dir.clone()),
+        None => default_project_registry_dir(),
     }
 }

@@ -296,7 +296,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 executor_root: config.root.to_string_lossy().into_owned(),
                 runs_root: paths.runs.to_string_lossy().into_owned(),
                 results_root: paths.results.to_string_lossy().into_owned(),
-                projects_dir: paths.projects.to_string_lossy().into_owned(),
+                project_registry_dir: paths.project_registry.to_string_lossy().into_owned(),
                 profile: config.profile.clone(),
                 project_grant_id: grant_id,
             },
@@ -1100,7 +1100,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
     );
     let agent = fs::read_to_string(state.join("agent/runner.toml")).unwrap();
     let registration = fs::read_to_string(
-        fs::read_dir(state.join("agent/projects.d"))
+        fs::read_dir(state.join("agent/project-registry"))
             .unwrap()
             .next()
             .unwrap()
@@ -1123,10 +1123,10 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
         Some(canonical_root.to_string_lossy().as_ref())
     );
     assert_eq!(
-        agent_toml["projects_dir"].as_str(),
+        agent_toml["project_registry_dir"].as_str(),
         Some(
             canonical_state
-                .join("agent/projects.d")
+                .join("agent/project-registry")
                 .to_string_lossy()
                 .as_ref()
         )
@@ -1140,7 +1140,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
         fs::read_to_string(state.join("agent/runner.toml")).unwrap(),
         before.0
     );
-    let project_file = fs::read_dir(state.join("agent/projects.d"))
+    let project_file = fs::read_dir(state.join("agent/project-registry"))
         .unwrap()
         .next()
         .unwrap()
@@ -1168,13 +1168,50 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
 }
 
 #[test]
+fn setup_preserves_a_single_legacy_project_registry_layout() {
+    let (_temp, root, state) = repo("legacy-registry");
+    let legacy = state.join("agent/projects.d");
+    fs::create_dir_all(&legacy).unwrap();
+    let options = options(root, state.clone());
+
+    setup(&options).unwrap();
+
+    assert!(legacy.is_dir());
+    assert!(!state.join("agent/project-registry").exists());
+    let runner = fs::read_to_string(state.join("agent/runner.toml")).unwrap();
+    let runner_toml: toml::Value = toml::from_str(&runner).unwrap();
+    assert_eq!(
+        runner_toml["project_registry_dir"].as_str(),
+        Some(legacy.canonicalize().unwrap().to_string_lossy().as_ref())
+    );
+    assert_eq!(fs::read_dir(legacy).unwrap().count(), 1);
+}
+
+#[test]
+fn setup_fails_closed_when_both_project_registry_layouts_exist() {
+    let (_temp, root, state) = repo("ambiguous-registry");
+    fs::create_dir_all(state.join("agent/project-registry")).unwrap();
+    fs::create_dir_all(state.join("agent/projects.d")).unwrap();
+
+    let error = setup(&options(root, state)).unwrap_err();
+    assert_eq!(error.code, "project_registration_invalid");
+    assert!(
+        error
+            .message
+            .contains("both Runner project registry directories exist"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn setup_repairs_only_missing_components_and_preserves_existing_config() {
     let (_temp, root, state) = repo("repair");
     let options = options(root, state.clone());
     setup(&options).unwrap();
     let agent_path = state.join("agent/runner.toml");
     let original_agent = fs::read_to_string(&agent_path).unwrap();
-    let project_path = fs::read_dir(state.join("agent/projects.d"))
+    let project_path = fs::read_dir(state.join("agent/project-registry"))
         .unwrap()
         .next()
         .unwrap()
@@ -1641,7 +1678,7 @@ fn doctor_reports_malformed_registration() {
     let (_temp, root, state) = repo("malformed-registration");
     let options = options(root, state.clone());
     setup(&options).unwrap();
-    let project_path = fs::read_dir(state.join("agent/projects.d"))
+    let project_path = fs::read_dir(state.join("agent/project-registry"))
         .unwrap()
         .next()
         .unwrap()
@@ -1667,7 +1704,7 @@ fn doctor_reports_conflicting_registration() {
     let (_temp, root, state) = repo("conflicting-registration");
     let options = options(root, state.clone());
     setup(&options).unwrap();
-    let project_path = fs::read_dir(state.join("agent/projects.d"))
+    let project_path = fs::read_dir(state.join("agent/project-registry"))
         .unwrap()
         .next()
         .unwrap()

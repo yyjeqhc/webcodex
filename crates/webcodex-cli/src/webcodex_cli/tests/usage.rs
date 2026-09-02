@@ -133,7 +133,8 @@ fn webcodex_cli_help_presents_primary_mental_model() {
 fn project_register_and_login_project_help_prioritize_user_language() {
     let project_help = cli_exit(["project", "register", "--help"]).unwrap();
     assert!(project_help.contains("Add one existing project to a Runner configuration"));
-    assert!(project_help.contains("Advanced: projects_dir"));
+    assert!(project_help.contains("Advanced: project_registry_dir"));
+    assert!(project_help.contains("not a workspace root"));
     assert!(project_help.contains("allowed_roots"));
     let login_help = cli_exit(["login", "--help"]).unwrap();
     assert!(login_help.contains("one-time login code"));

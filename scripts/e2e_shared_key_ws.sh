@@ -146,8 +146,8 @@ TMP_ROOT="$(mktemp -d /tmp/webcodex-shared-key-e2e.XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
 SHARED_PROJECT="$TMP_ROOT/shared-project"
 MANAGED_PROJECT="$TMP_ROOT/managed-project"
-SHARED_PROJECTS_DIR="$TMP_ROOT/shared-projects.d"
-MANAGED_PROJECTS_DIR="$TMP_ROOT/managed-projects.d"
+SHARED_PROJECTS_DIR="$TMP_ROOT/shared-project-registry"
+MANAGED_PROJECTS_DIR="$TMP_ROOT/managed-project-registry"
 mkdir -p "$DATA_DIR" "$SHARED_PROJECT" "$MANAGED_PROJECT" \
     "$SHARED_PROJECTS_DIR" "$MANAGED_PROJECTS_DIR"
 
@@ -204,7 +204,7 @@ token = "$SHARED_KEY_A"
 client_id = "shared-runner"
 display_name = "Shared Runner"
 owner = "must-be-ignored"
-projects_dir = "$SHARED_PROJECTS_DIR"
+project_registry_dir = "$SHARED_PROJECTS_DIR"
 transport = "websocket"
 
 [policy]
@@ -218,7 +218,7 @@ token = "$MANAGED_AGENT_TOKEN"
 client_id = "managed-runner"
 display_name = "Managed Runner"
 owner = "managed-e2e"
-projects_dir = "$MANAGED_PROJECTS_DIR"
+project_registry_dir = "$MANAGED_PROJECTS_DIR"
 transport = "websocket"
 
 [policy]

@@ -105,7 +105,7 @@ clamp。
 项目存放在 Runner 机器上。Runner 把允许的目录注册给 Server；Server 不扫描文件
 系统，也不自行发现项目路径。
 
-每个注册项目是 Runner `projects_dir`（默认 `projects.d`）下的一个一文件一项目
+每个注册项目是 Runner `project_registry_dir`（默认 `project-registry`）下的一个一文件一项目
 TOML：
 
 ```toml
@@ -116,8 +116,22 @@ kind = "repo"
 allow_patch = true
 ```
 
+Runner project registry 的兼容 contract 明确采用 fail-closed：
+
+| 情况 | 行为 |
+| --- | --- |
+| 只有 `project-registry/` | 使用 `project-registry/`。 |
+| 只有旧 `projects.d/` | 继续使用 `projects.d/`，不做隐式迁移。 |
+| 两个目录都不存在 | 新安装选择/创建 `project-registry/`。 |
+| 两个目录同时存在 | 直接报 actionable error；不会静默 merge，也不会任选一个。 |
+| 配置只有 `project_registry_dir` | 使用显式 Runner project registry 路径。 |
+| 配置只有旧 `projects_dir` | 作为兼容 alias 接受，并归一化成 effective project registry path。 |
+| 两个配置字段同时出现 | 直接失败，不猜 precedence。 |
+
+CLI 同样遵守该规则：优先使用 `--project-registry-dir`；旧 `--projects-dir` 作为 deprecated alias 继续接受，但两个 flag 同时提供会报错。每条 project registration record TOML 中的 `path` 才是实际 workspace/project 目录；registry directory 本身不是 workspace root。
+
 顶层 `id` 与 `path` 是必需的。旧的 `[projects.<id>]` 服务端嵌套格式不能用于
-`projects.d`。
+`project-registry`。
 
 Runtime project id 形如 `agent:<client_id>:<project_id>`，例如
 `agent:workstation:my-repo`。project-bound Connector 会在内部解析它；普通用户

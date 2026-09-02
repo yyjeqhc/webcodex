@@ -24,6 +24,7 @@ data*
 /.webcodex-bootstrap.receipt
 /runner.toml
 /agent.toml
+/project-registry/
 /projects.d/
 /*.local.toml
 /webcodex.env

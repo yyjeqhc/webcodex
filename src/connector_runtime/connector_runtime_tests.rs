@@ -266,9 +266,9 @@ pub(super) fn connector() -> (tempfile::TempDir, ConnectorRuntime) {
             executor_root: project.to_string_lossy().to_string(),
             runs_root: temp.path().join("runs").to_string_lossy().to_string(),
             results_root: temp.path().join("results").to_string_lossy().to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("agent/projects.d")
+                .join("agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
@@ -338,9 +338,9 @@ async fn connector_with_lsp_capabilities(
                 executor_root: project.to_string_lossy().to_string(),
                 runs_root: temp.path().join("runs").to_string_lossy().to_string(),
                 results_root: temp.path().join("results").to_string_lossy().to_string(),
-                projects_dir: temp
+                project_registry_dir: temp
                     .path()
-                    .join("agent/projects.d")
+                    .join("agent/project-registry")
                     .to_string_lossy()
                     .to_string(),
                 profile: "personal".to_string(),
@@ -701,9 +701,9 @@ async fn one_window_switches_projects_and_restores_each_task() {
                     .join(format!("{state}/results"))
                     .to_string_lossy()
                     .to_string(),
-                projects_dir: temp
+                project_registry_dir: temp
                     .path()
-                    .join(format!("{state}/projects.d"))
+                    .join(format!("{state}/project-registry"))
                     .to_string_lossy()
                     .to_string(),
                 profile: "personal".to_string(),
@@ -903,9 +903,9 @@ async fn read_only_to_write_keeps_task_and_rechecks_write_authority() {
                 .join("state/results")
                 .to_string_lossy()
                 .to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("state/projects.d")
+                .join("state/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
@@ -1100,7 +1100,11 @@ async fn restart_recovers_history_without_guessing_execution_state() {
         executor_root: project.to_string_lossy().to_string(),
         runs_root: temp.path().join("runs").to_string_lossy().to_string(),
         results_root: temp.path().join("results").to_string_lossy().to_string(),
-        projects_dir: temp.path().join("projects.d").to_string_lossy().to_string(),
+        project_registry_dir: temp
+            .path()
+            .join("project-registry")
+            .to_string_lossy()
+            .to_string(),
         profile: "personal".to_string(),
         project_grant_id: PROJECT_GRANT_ID.to_string(),
     };
@@ -1203,9 +1207,9 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                 .join("state/results")
                 .to_string_lossy()
                 .to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("state/agent/projects.d")
+                .join("state/agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
@@ -1477,9 +1481,9 @@ async fn failed_runner_project_registration_unwinds_workspace_and_allows_retry()
                 .join("state/results")
                 .to_string_lossy()
                 .to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("state/agent/projects.d")
+                .join("state/agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
@@ -1581,7 +1585,7 @@ async fn failed_runner_project_registration_unwinds_workspace_and_allows_retry()
     let lease = temp.path().join("state/runs/.wc-slot-write-01.lease.json");
     let registration = temp
         .path()
-        .join("state/agent/projects.d/wc-slot-write-01.toml");
+        .join("state/agent/project-registry/wc-slot-write-01.toml");
     assert!(
         !lease.exists(),
         "failed registration retained the workspace lease"
@@ -1631,9 +1635,9 @@ async fn failed_task_binding_releases_prepared_workspace_for_retry() {
                 .join("state/results")
                 .to_string_lossy()
                 .to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("state/agent/projects.d")
+                .join("state/agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),
@@ -1722,7 +1726,7 @@ async fn failed_task_binding_releases_prepared_workspace_for_retry() {
     let lease = temp.path().join("state/runs/.wc-slot-write-01.lease.json");
     let registration = temp
         .path()
-        .join("state/agent/projects.d/wc-slot-write-01.toml");
+        .join("state/agent/project-registry/wc-slot-write-01.toml");
     assert!(!lease.exists(), "failed start retained the workspace lease");
     assert!(
         !registration.exists(),
@@ -1773,9 +1777,9 @@ async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
             executor_root: project.to_string_lossy().to_string(),
             runs_root: temp.path().join("runs").to_string_lossy().to_string(),
             results_root: temp.path().join("results").to_string_lossy().to_string(),
-            projects_dir: temp
+            project_registry_dir: temp
                 .path()
-                .join("agent/projects.d")
+                .join("agent/project-registry")
                 .to_string_lossy()
                 .to_string(),
             profile: "personal".to_string(),

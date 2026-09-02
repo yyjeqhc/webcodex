@@ -443,7 +443,7 @@ fn resume_task(location: &TaskLocationOptions, task_id: &str) -> Result<String, 
         .local_connector_task(task_id, &state.logical_project_id)
         .map_err(store_error)?;
     ensure_target(&state, &task.target_root)?;
-    WorkspaceManager::validate_resume(&task, &state.runs, &state.projects)?;
+    WorkspaceManager::validate_resume(&task, &state.runs, &state.project_registry)?;
     let resumed = db
         .resume_connector_task(
             task_id,
@@ -748,7 +748,7 @@ mod tests {
             executor_root: root.to_string_lossy().to_string(),
             runs_root: state.runs.to_string_lossy().to_string(),
             results_root: state_dir.join("results").to_string_lossy().to_string(),
-            projects_dir: state.projects.to_string_lossy().to_string(),
+            project_registry_dir: state.project_registry.to_string_lossy().to_string(),
             profile: "personal".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };

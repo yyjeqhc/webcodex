@@ -85,6 +85,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::Shell,
         RunnerFeature::Git,
         RunnerFeature::ApplyTextEditLineScope,
+        RunnerFeature::ApplyPatchStrictMatching,
         RunnerFeature::SshShell,
         RunnerFeature::PersistentShell,
         RunnerFeature::SshPersistentShell,
@@ -118,6 +119,23 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
             feature.as_wire_name()
         );
     }
+}
+
+#[tokio::test]
+async fn strict_patch_capability_requires_base_apply_patch_capability() {
+    let registry = ShellClientRegistry::default();
+    let mut registration = runner_registration("strict-without-base", "inst-a", Vec::new());
+    registration.capabilities = with_wire_feature(
+        &v2_baseline_capabilities(),
+        RunnerFeature::ApplyPatchStrictMatching,
+        true,
+    );
+
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(
+        error,
+        "apply_patch_strict_matching capability requires apply_patch capability"
+    );
 }
 
 #[test]

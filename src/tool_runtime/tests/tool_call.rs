@@ -1154,16 +1154,18 @@ fn from_tool_name_parses_apply_patch_and_rejects_retired_patch_helpers() {
         "apply_patch",
         json!({
             "project": "agent:c:p",
-            "patch": "*** Begin Patch\n*** Add File: new.txt\n+hello\n*** End Patch"
+            "patch": "*** Begin Patch\n*** Add File: new.txt\n+hello\n*** End Patch",
+            "strict_matching": true
         }),
     )
     .expect("current apply_patch DSL tool must parse");
     assert!(matches!(
         patch,
-        ToolCall::ApplyPatch { project, patch, dry_run, .. }
+        ToolCall::ApplyPatch { project, patch, dry_run, strict_matching, .. }
             if project == "agent:c:p"
                 && patch.contains("*** Add File: new.txt")
                 && dry_run.is_none()
+                && strict_matching == Some(true)
     ));
 
     for removed in ["apply_patch_checked", "validate_patch"] {

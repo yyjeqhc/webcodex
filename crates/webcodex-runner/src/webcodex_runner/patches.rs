@@ -332,7 +332,7 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
 use crate::apply_patch_shared::{
-    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchHunk,
+    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchChunkMatch, CodexPatchHunk,
 };
 
 #[derive(Debug, Deserialize)]
@@ -350,6 +350,8 @@ struct ApplyPatchPayload {
     patch: String,
     #[serde(default)]
     dry_run: Option<bool>,
+    #[serde(default)]
+    strict_matching: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -1216,6 +1218,37 @@ fn apply_patch_conflict(
     )
 }
 
+fn apply_patch_strict_match_rejection(
+    index: usize,
+    path: &str,
+    matched: &CodexPatchChunkMatch,
+    start: Instant,
+) -> CommandResult {
+    line_edit_stdout(
+        serde_json::json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "strict_match_rejected",
+            "change_index": index,
+            "path": path,
+            "chunk_index": matched.chunk_index,
+            "match_mode": matched.match_mode.map(|mode| mode.as_str()),
+            "match_source": matched.match_source.as_str(),
+            "matched_start_line": matched.matched_start_line,
+            "candidate_count": matched.candidate_count,
+            "strict_match": false,
+            "recovery_action": "refine_patch_or_relax_strict_matching",
+            "retry_guidance": "add exact unique context and retry strict_matching=true; use strict_matching=false only when ordinary Codex fuzzy/first-match positioning is acceptable",
+            "error": format!(
+                "Rejected strict Codex patch before write: {path} chunk {} was not positioned by exact unique matching. No files were modified.",
+                matched.chunk_index
+            ),
+        }),
+        start,
+    )
+}
+
 pub(crate) fn handle_apply_patch_file_request(
     policy: &RunnerPolicy,
     request: &ShellAgentShellRequest,
@@ -1254,6 +1287,7 @@ pub(crate) fn handle_apply_patch_file_request(
         }
     };
     let dry_run = payload.dry_run.unwrap_or(false);
+    let strict_matching = payload.strict_matching.unwrap_or(false);
     let mut touched = HashSet::new();
     let mut plans = Vec::with_capacity(patch.hunks.len());
 
@@ -1361,7 +1395,20 @@ pub(crate) fn handle_apply_patch_file_request(
                     (original.clone(), Vec::new())
                 } else {
                     match derive_codex_patch_update_with_matches(&original, path, chunks) {
-                        Ok(update) => (update.content, update.chunk_matches),
+                        Ok(update) => {
+                            if strict_matching {
+                                if let Some(matched) = update
+                                    .chunk_matches
+                                    .iter()
+                                    .find(|matched| !matched.strict_match)
+                                {
+                                    return apply_patch_strict_match_rejection(
+                                        index, path, matched, start,
+                                    );
+                                }
+                            }
+                            (update.content, update.chunk_matches)
+                        }
                         Err(error) => {
                             return apply_patch_conflict(
                                 index,

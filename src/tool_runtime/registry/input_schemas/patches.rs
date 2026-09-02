@@ -17,11 +17,18 @@ pub(crate) fn apply_patch_input_schema() -> Value {
             "If true, fully parse and preflight the patch without writing any file.",
             false,
         ),
+        (
+            "strict_matching",
+            "boolean",
+            "If true, require every text positioning match to be exact and unique before any write; unanchored append remains allowed. Requires Runner apply_patch_strict_matching capability. Defaults false.",
+            false,
+        ),
     ]));
     schema["properties"]["patch"]["minLength"] = json!(1);
     schema["properties"]["patch"]["maxLength"] =
         json!(crate::apply_patch_shared::MAX_CODEX_PATCH_BYTES);
     schema["properties"]["dry_run"]["default"] = json!(false);
+    schema["properties"]["strict_matching"]["default"] = json!(false);
     schema
 }
 

@@ -22,7 +22,8 @@ use crate::shell_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
     ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
-    SHELL_CLIENT_CAPABILITY_APPLY_PATCH, SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH, SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, SHELL_CLIENT_CAPABILITY_FILE_READ,
@@ -573,6 +574,7 @@ impl ShellClientRegistry {
     pub(crate) async fn enqueue_apply_patch(
         &self,
         body: ShellFileOpRequest,
+        strict_matching: bool,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
@@ -619,6 +621,16 @@ impl ShellClientRegistry {
         if !client.runner_features.supports(RunnerFeature::ApplyPatch) {
             return Err(format!(
                 "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_APPLY_PATCH}",
+                body.client_id
+            ));
+        }
+        if strict_matching
+            && !client
+                .runner_features
+                .supports(RunnerFeature::ApplyPatchStrictMatching)
+        {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING}",
                 body.client_id
             ));
         }

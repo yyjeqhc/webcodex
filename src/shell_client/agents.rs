@@ -249,6 +249,14 @@ impl ShellClientRegistry {
         let accepted_protocol =
             AcceptedRunnerProtocol::try_from_registration(body.agent_protocol_generation)?;
         let runner_features = RunnerFeatureSet::try_from_registration(&body.capabilities)?;
+        if runner_features.supports(RunnerFeature::ApplyPatchStrictMatching)
+            && !runner_features.supports(RunnerFeature::ApplyPatch)
+        {
+            return Err(
+                "apply_patch_strict_matching capability requires apply_patch capability"
+                    .to_string(),
+            );
+        }
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();

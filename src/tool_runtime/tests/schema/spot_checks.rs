@@ -696,7 +696,7 @@ fn tool_specs_schema_spot_checks() {
         (
             "apply_patch",
             vec!["project", "patch"],
-            vec!["dry_run", "session_id"],
+            vec!["dry_run", "strict_matching", "session_id"],
         ),
         (
             "apply_unified_diff",

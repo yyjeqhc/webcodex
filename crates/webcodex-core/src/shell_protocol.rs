@@ -163,6 +163,10 @@ pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text
 /// Missing on older Runners is false and is never inferred from file_write or
 /// protocol generation, so a new Server cannot send this request kind to an old Runner.
 pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
+/// The Runner understands `strict_matching=true` for apply_patch and rejects
+/// any update chunk whose positioning is not exact and unique before writing.
+/// Missing on older Runners is false and is never inferred from apply_patch.
+pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING: &str = "apply_patch_strict_matching";
 pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
@@ -356,6 +360,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+    SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
@@ -465,6 +470,10 @@ pub struct ShellClientCapabilities {
     /// Missing on older Runners is false and never follows from generic file_write.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_patch: bool,
+    /// Fail-closed exact-and-unique positioning for apply_patch requests that
+    /// explicitly opt into strict_matching. Missing on older Runners is false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_patch_strict_matching: bool,
     #[serde(default)]
     pub git: bool,
     #[serde(default)]
@@ -660,6 +669,7 @@ impl Default for ShellClientCapabilities {
             apply_text_edit_occurrence: false,
             apply_text_edit_line_scope: false,
             apply_patch: false,
+            apply_patch_strict_matching: false,
             git: false,
             jobs: false,
             async_jobs: false,

@@ -17,6 +17,7 @@ pub(crate) enum RunnerFeature {
     ApplyTextEditOccurrence,
     ApplyTextEditLineScope,
     ApplyPatch,
+    ApplyPatchStrictMatching,
     Git,
     Jobs,
     AsyncJobs,
@@ -59,7 +60,7 @@ pub(crate) enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 49] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 50] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -69,6 +70,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 49] = [
     RunnerFeature::ApplyTextEditOccurrence,
     RunnerFeature::ApplyTextEditLineScope,
     RunnerFeature::ApplyPatch,
+    RunnerFeature::ApplyPatchStrictMatching,
     RunnerFeature::Git,
     RunnerFeature::Jobs,
     RunnerFeature::AsyncJobs,
@@ -147,6 +149,9 @@ impl RunnerFeature {
                 wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE
             }
             Self::ApplyPatch => wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+            Self::ApplyPatchStrictMatching => {
+                wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
+            }
             Self::Git => wire::SHELL_CLIENT_CAPABILITY_GIT,
             Self::Jobs => wire::SHELL_CLIENT_CAPABILITY_JOBS,
             Self::AsyncJobs => wire::SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
@@ -229,6 +234,9 @@ impl RunnerFeature {
                 Self::ApplyTextEditLineScope
             }
             wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH => Self::ApplyPatch,
+            wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING => {
+                Self::ApplyPatchStrictMatching
+            }
             wire::SHELL_CLIENT_CAPABILITY_GIT => Self::Git,
             wire::SHELL_CLIENT_CAPABILITY_JOBS => Self::Jobs,
             wire::SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => Self::AsyncJobs,
@@ -321,6 +329,7 @@ impl RunnerFeature {
             | Self::Git
             | Self::ApplyTextEditLineScope
             | Self::ApplyPatch
+            | Self::ApplyPatchStrictMatching
             | Self::SshShell
             | Self::PersistentShell
             | Self::SshPersistentShell
@@ -360,6 +369,7 @@ impl RunnerFeature {
             Self::ApplyTextEditOccurrence => capabilities.apply_text_edit_occurrence,
             Self::ApplyTextEditLineScope => capabilities.apply_text_edit_line_scope,
             Self::ApplyPatch => capabilities.apply_patch,
+            Self::ApplyPatchStrictMatching => capabilities.apply_patch_strict_matching,
             Self::Git => capabilities.git,
             Self::Jobs => capabilities.jobs,
             Self::AsyncJobs => capabilities.async_jobs,

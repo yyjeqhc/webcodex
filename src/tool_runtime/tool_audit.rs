@@ -1159,7 +1159,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 "patch_present".to_string(),
                 Value::Bool(obj.contains_key("patch")),
             );
-            copy_keys(obj, &mut out, &["dry_run"]);
+            copy_keys(obj, &mut out, &["dry_run", "strict_matching"]);
         }
         "apply_unified_diff" => {
             out.insert(
@@ -5276,12 +5276,14 @@ impl ToolCall {
                 project,
                 patch,
                 dry_run,
+                strict_matching,
                 ..
             } => serde_json::json!({
                 "project": project,
                 "patch_present": !patch.is_empty(),
                 "patch_bytes": patch.len(),
                 "dry_run": dry_run,
+                "strict_matching": strict_matching,
             }),
             Self::ApplyTextEdits {
                 project,

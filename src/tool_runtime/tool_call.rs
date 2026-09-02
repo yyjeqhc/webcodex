@@ -731,6 +731,8 @@ pub enum ToolCall {
         #[serde(default)]
         dry_run: Option<bool>,
         #[serde(default)]
+        strict_matching: Option<bool>,
+        #[serde(default)]
         session_id: Option<String>,
     },
 

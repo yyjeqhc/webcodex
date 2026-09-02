@@ -214,6 +214,9 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Codex Patch is a running-binary request kind and must not be
             // inferred from generated config or generic file-write support.
             apply_patch: false,
+            // Strict patch matching is also runtime-only and must be explicitly
+            // advertised by a binary that enforces it before mutation.
+            apply_patch_strict_matching: false,
             git: true,
             jobs: true,
             async_jobs: true,

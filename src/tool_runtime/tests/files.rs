@@ -744,6 +744,38 @@ fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
     assert!(!typed_json.contains("private-name.pptx"));
 }
 
+#[test]
+fn apply_patch_audit_records_strict_flags_without_patch_body() {
+    let private_patch =
+        "*** Begin Patch\n*** Add File: NEVER_LOG_PATCH_BODY.txt\n+secret\n*** End Patch";
+    let arguments = serde_json::json!({
+        "project": "agent:test:demo",
+        "patch": private_patch,
+        "dry_run": true,
+        "strict_matching": true,
+    });
+
+    let raw_summary =
+        super::super::tool_audit::session_log_arguments_for_tool_request("apply_patch", &arguments);
+    assert_eq!(raw_summary["project"], "agent:test:demo");
+    assert_eq!(raw_summary["patch_present"], true);
+    assert_eq!(raw_summary["dry_run"], true);
+    assert_eq!(raw_summary["strict_matching"], true);
+    assert!(!serde_json::to_string(&raw_summary)
+        .unwrap()
+        .contains("NEVER_LOG_PATCH_BODY"));
+
+    let call = ToolCall::from_tool_name("apply_patch", arguments).unwrap();
+    let typed_summary = call.session_log_arguments();
+    assert_eq!(typed_summary["project"], "agent:test:demo");
+    assert_eq!(typed_summary["patch_present"], true);
+    assert_eq!(typed_summary["dry_run"], true);
+    assert_eq!(typed_summary["strict_matching"], true);
+    assert!(!serde_json::to_string(&typed_summary)
+        .unwrap()
+        .contains("NEVER_LOG_PATCH_BODY"));
+}
+
 #[tokio::test]
 async fn conversation_import_durable_session_events_do_not_store_host_file_refs() {
     use crate::tool_runtime::kernel::{

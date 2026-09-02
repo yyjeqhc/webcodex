@@ -221,6 +221,26 @@ fn apply_patch_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
     .with_recovery(crate::tool_runtime::RecoveryKind::RetrySame, None)
 }
 
+fn apply_patch_strict_matching_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_patch_strict_matching, or disable strict_matching only if ordinary Codex fuzzy/first-match positioning is acceptable."
+        ),
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+            "recovery_action": "upgrade_or_reconnect_runner",
+            "retry_guidance": "reconnect or upgrade the Runner so it explicitly advertises apply_patch_strict_matching; never silently downgrade a strict patch"
+        }),
+    )
+    .with_recovery(crate::tool_runtime::RecoveryKind::RetrySame, None)
+}
+
 /// Maximum decoded size for whole-payload/model-facing artifact operations.
 /// These paths aggregate content or return it as base64/JSON, so they remain at
 /// 10 MiB even though data-plane upload/export paths admit larger files.
@@ -1318,6 +1338,7 @@ impl ToolRuntime {
         project: String,
         patch: String,
         dry_run: Option<bool>,
+        strict_matching: Option<bool>,
     ) -> ToolResult {
         let parsed = match crate::apply_patch_shared::parse_codex_patch(&patch) {
             Ok(parsed) => parsed,
@@ -1372,10 +1393,14 @@ impl ToolRuntime {
 
         let expected_change_count = parsed.hunks.len();
         let expected_dry_run = dry_run.unwrap_or(false);
-        let payload = json!({
+        let expected_strict_matching = strict_matching.unwrap_or(false);
+        let mut payload = json!({
             "patch": patch,
             "dry_run": expected_dry_run,
         });
+        if expected_strict_matching {
+            payload["strict_matching"] = json!(true);
+        }
         let serialized = match serde_json::to_string(&payload) {
             Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,
             Ok(_) => {
@@ -1442,10 +1467,22 @@ impl ToolRuntime {
         };
         let (request_id, rx) = match self
             .shell_clients
-            .enqueue_apply_patch(request, "tool_runtime".to_string())
+            .enqueue_apply_patch(
+                request,
+                expected_strict_matching,
+                "tool_runtime".to_string(),
+            )
             .await
         {
             Ok(request) => request,
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error.contains(
+                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+                    ) =>
+            {
+                return apply_patch_strict_matching_capability_rejection(error)
+            }
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error
@@ -1726,6 +1763,27 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_patch_strict_capability_rejection_names_exact_additive_capability() {
+        let result = apply_patch_strict_matching_capability_rejection(
+            "capability_unavailable: demo lacks apply_patch_strict_matching",
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.output["state_changed"], false);
+        assert_eq!(result.output["execution_state"], "not_started");
+        assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
+        assert_eq!(
+            result.output["capability"],
+            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
+        );
+        assert_eq!(result.output["recovery_kind"], "retry_same");
+        assert!(result.output["retry_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("never silently downgrade"));
+    }
 
     #[test]
     fn apply_text_edits_path_policy_recovery_omits_untrusted_path_metadata() {

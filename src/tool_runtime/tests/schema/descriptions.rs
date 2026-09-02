@@ -258,7 +258,7 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         );
     }
     let codex_patch = &spec_named(&specs, "apply_patch").input_schema["properties"];
-    for field in ["project", "patch", "dry_run"] {
+    for field in ["project", "patch", "dry_run", "strict_matching"] {
         assert!(
             codex_patch.get(field).is_some(),
             "apply_patch must keep field {field}"

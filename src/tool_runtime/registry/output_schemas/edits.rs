@@ -155,7 +155,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("execution_state", json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Transactional patch mutation effect state."})),
             ("error_kind", nullable_schema("string", "Stable parse, preflight, conflict, capability, transaction, or uncertainty classification.")),
             ("failure_kind", nullable_schema("string", "not_started, capability_unavailable, or outcome_unknown for delivery/admission failures.")),
-            ("recovery_action", nullable_schema("string", "Bounded next action such as regenerate_patch, reread_or_regenerate_patch, upgrade_or_reconnect_runner, or inspect_workspace_before_retry.")),
+            ("recovery_action", nullable_schema("string", "Bounded next action such as regenerate_patch, reread_or_regenerate_patch, refine_patch_or_relax_strict_matching, upgrade_or_reconnect_runner, or inspect_workspace_before_retry.")),
             ("rollback_complete", nullable_schema("boolean", "Whether a failed transactional apply fully restored all earlier changes.")),
             ("change_index", nullable_schema("integer", "Zero-based failed file-operation index when known.")),
             ("kind", nullable_schema("string", "Failed patch file-operation kind when known.")),

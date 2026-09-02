@@ -57,6 +57,18 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
         !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.contains(&"apply_patch"),
         "apply_patch is additive and must not become a generation-2 registration baseline"
     );
+    assert!(
+        !AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+            .contains(&"apply_patch_strict_matching"),
+        "strict patch matching is additive and must not become a generation-2 registration baseline"
+    );
+    assert_eq!(
+        capabilities
+            .get("apply_patch_strict_matching")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "current Runner must explicitly advertise strict patch matching"
+    );
     for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         assert_eq!(
             capabilities

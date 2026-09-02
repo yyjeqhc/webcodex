@@ -1874,6 +1874,9 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
     // Codex Patch is an additive request kind with Runner-authoritative parsing and
     // transaction semantics. Older Runners omit it and must fail closed.
     capabilities.apply_patch = true;
+    // Strict patch positioning is an additive extension to apply_patch. Older
+    // Runners omit it, so new Servers must not send strict_matching to them.
+    capabilities.apply_patch_strict_matching = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
     // SSH support intentionally depends on the local OpenSSH executable.

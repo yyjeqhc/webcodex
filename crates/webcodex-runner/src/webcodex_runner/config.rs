@@ -8,8 +8,8 @@ use crate::runner_config::{
     TRANSPORT_WEBSOCKET,
 };
 use crate::shell_protocol::{
-    AgentConfigReloadStatus, AgentHostContext, ShellClientCapabilities,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    AgentConfigReloadStatus, AgentHostContext, ShellClientCapabilities, RUNNER_JOB_CONCURRENCY_MAX,
+    RUNNER_JOB_CONCURRENCY_MIN,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -22,6 +22,20 @@ pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub(crate) const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS: u64 = 5;
+
+const DEFAULT_ACP_MAX_CONCURRENT_RUNS: usize = 1;
+const ACP_MIN_CONCURRENT_RUNS: usize = 1;
+const ACP_MAX_CONCURRENT_RUNS: usize = 8;
+const DEFAULT_ACP_PERMISSION_TIMEOUT_SECS: u64 = 5;
+const ACP_PERMISSION_TIMEOUT_MIN_SECS: u64 = 1;
+const ACP_PERMISSION_TIMEOUT_MAX_SECS: u64 = 60;
+
+const DEFAULT_MAX_PERSISTENT_SHELLS: usize = 8;
+const MIN_PERSISTENT_SHELLS: usize = 1;
+const MAX_PERSISTENT_SHELLS: usize = 64;
+const DEFAULT_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 30 * 60;
+const MIN_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 1;
+const MAX_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RunnerConfig {
@@ -122,10 +136,10 @@ pub(crate) struct AcpAgentConfig {
 }
 
 fn default_acp_max_concurrent_runs() -> usize {
-    1
+    DEFAULT_ACP_MAX_CONCURRENT_RUNS
 }
 fn default_acp_permission_timeout_secs() -> u64 {
-    5
+    DEFAULT_ACP_PERMISSION_TIMEOUT_SECS
 }
 
 impl Default for AcpConfig {
@@ -682,11 +696,11 @@ fn default_shell_args() -> Vec<String> {
 }
 
 pub(crate) fn default_max_persistent_shells() -> usize {
-    8
+    DEFAULT_MAX_PERSISTENT_SHELLS
 }
 
 pub(crate) fn default_persistent_shell_idle_timeout_secs() -> u64 {
-    30 * 60
+    DEFAULT_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS
 }
 
 pub(crate) fn default_true() -> bool {
@@ -706,9 +720,22 @@ fn default_max_output_bytes() -> usize {
 }
 
 pub(crate) fn max_concurrent_jobs(cfg: &RunnerConfig) -> usize {
-    cfg.max_concurrent_jobs
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
-        .clamp(1, JOB_INVENTORY_MAX_ACTIVE_JOBS)
+    let value = cfg
+        .max_concurrent_jobs
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS);
+    debug_assert!((RUNNER_JOB_CONCURRENCY_MIN..=RUNNER_JOB_CONCURRENCY_MAX).contains(&value));
+    value
+}
+
+fn validate_max_concurrent_jobs(value: Option<usize>) -> Result<(), String> {
+    if value.is_some_and(|value| {
+        !(RUNNER_JOB_CONCURRENCY_MIN..=RUNNER_JOB_CONCURRENCY_MAX).contains(&value)
+    }) {
+        return Err(format!(
+            "max_concurrent_jobs must be between {RUNNER_JOB_CONCURRENCY_MIN} and {RUNNER_JOB_CONCURRENCY_MAX}"
+        ));
+    }
+    Ok(())
 }
 
 fn default_client_base_dir() -> Result<PathBuf, String> {
@@ -925,13 +952,17 @@ pub(crate) fn validate_shell_config(shell: &ShellConfig) -> Result<(), String> {
     {
         return Err("shell.init_script cannot be empty".to_string());
     }
-    if !(1..=64).contains(&shell.max_persistent_shells) {
-        return Err("shell.max_persistent_shells must be between 1 and 64".to_string());
+    if !(MIN_PERSISTENT_SHELLS..=MAX_PERSISTENT_SHELLS).contains(&shell.max_persistent_shells) {
+        return Err(format!(
+            "shell.max_persistent_shells must be between {MIN_PERSISTENT_SHELLS} and {MAX_PERSISTENT_SHELLS}"
+        ));
     }
-    if !(1..=86_400).contains(&shell.persistent_shell_idle_timeout_secs) {
-        return Err(
-            "shell.persistent_shell_idle_timeout_secs must be between 1 and 86400".to_string(),
-        );
+    if !(MIN_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS..=MAX_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS)
+        .contains(&shell.persistent_shell_idle_timeout_secs)
+    {
+        return Err(format!(
+            "shell.persistent_shell_idle_timeout_secs must be between {MIN_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS} and {MAX_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS}"
+        ));
     }
     Ok(())
 }
@@ -1066,6 +1097,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     if cfg.websocket_connect_timeout_secs == 0 {
         return Err("websocket_connect_timeout_secs must be > 0".to_string());
     }
+    validate_max_concurrent_jobs(cfg.max_concurrent_jobs)?;
     if let Some(host_context) = cfg.host_context.take() {
         cfg.host_context = Some(host_context.normalized()?);
     }
@@ -1152,11 +1184,17 @@ fn validate_acp_config(config: &AcpConfig) -> Result<(), String> {
         CODING_AGENT_MAX_PROVIDER_NAME_BYTES,
     };
 
-    if !(1..=8).contains(&config.max_concurrent_runs) {
-        return Err("acp.max_concurrent_runs must be between 1 and 8".to_string());
+    if !(ACP_MIN_CONCURRENT_RUNS..=ACP_MAX_CONCURRENT_RUNS).contains(&config.max_concurrent_runs) {
+        return Err(format!(
+            "acp.max_concurrent_runs must be between {ACP_MIN_CONCURRENT_RUNS} and {ACP_MAX_CONCURRENT_RUNS}"
+        ));
     }
-    if !(1..=60).contains(&config.permission_timeout_secs) {
-        return Err("acp.permission_timeout_secs must be between 1 and 60".to_string());
+    if !(ACP_PERMISSION_TIMEOUT_MIN_SECS..=ACP_PERMISSION_TIMEOUT_MAX_SECS)
+        .contains(&config.permission_timeout_secs)
+    {
+        return Err(format!(
+            "acp.permission_timeout_secs must be between {ACP_PERMISSION_TIMEOUT_MIN_SECS} and {ACP_PERMISSION_TIMEOUT_MAX_SECS}"
+        ));
     }
     if config.agents.len() > CODING_AGENT_MAX_PROVIDERS {
         return Err(format!(

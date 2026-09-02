@@ -410,6 +410,11 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
 ];
 
+/// Valid process-wide Runner Job execution concurrency advertised during
+/// registration. This is intentionally independent from inventory retention:
+/// a future inventory may retain more queued Jobs than the Runner executes.
+pub const RUNNER_JOB_CONCURRENCY_MIN: usize = 1;
+pub const RUNNER_JOB_CONCURRENCY_MAX: usize = 64;
 /// Maximum retained bytes for one stdout or stderr stream in a runner job
 /// snapshot. The server may retain a larger live tail, but reconciliation
 /// deliberately converges to this bounded authoritative runner tail.

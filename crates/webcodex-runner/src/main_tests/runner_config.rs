@@ -943,35 +943,44 @@ fn missing_project_registry_dir_returns_empty_list() {
 }
 
 #[test]
-fn phase_e2_max_concurrent_jobs_normalizes_to_inventory_capacity() {
+fn phase_e2_max_concurrent_jobs_uses_valid_configured_value() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/project-registry"));
     assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
     assert_eq!(max_concurrent_jobs(&cfg), DEFAULT_MAX_CONCURRENT_JOBS);
 
-    cfg.max_concurrent_jobs = Some(0);
-    assert_eq!(max_concurrent_jobs(&cfg), 1);
+    for value in [1, 4, 8, 64] {
+        cfg.max_concurrent_jobs = Some(value);
+        assert_eq!(max_concurrent_jobs(&cfg), value);
+    }
+}
 
-    cfg.max_concurrent_jobs = Some(1);
-    assert_eq!(max_concurrent_jobs(&cfg), 1);
+#[test]
+fn runner_config_rejects_max_concurrent_jobs_outside_valid_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("agent.toml");
+    for value in [0, 65] {
+        std::fs::write(
+            &path,
+            format!(
+                r#"server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+project_registry_dir = "project-registry"
+max_concurrent_jobs = {value}
 
-    cfg.max_concurrent_jobs = Some(4);
-    assert_eq!(max_concurrent_jobs(&cfg), 4);
-
-    cfg.max_concurrent_jobs = Some(8);
-    assert_eq!(max_concurrent_jobs(&cfg), 8);
-
-    cfg.max_concurrent_jobs = Some(64);
-    assert_eq!(max_concurrent_jobs(&cfg), 64);
-
-    cfg.max_concurrent_jobs = Some(65);
-    assert_eq!(max_concurrent_jobs(&cfg), 64);
-
-    cfg.max_concurrent_jobs = Some(128);
-    assert_eq!(max_concurrent_jobs(&cfg), 64);
-
-    cfg.max_concurrent_jobs = Some(usize::MAX);
-    assert_eq!(max_concurrent_jobs(&cfg), 64);
+[policy]
+allow_cwd_anywhere = true
+"#
+            ),
+        )
+        .unwrap();
+        let error = load_config(&path).unwrap_err();
+        assert!(
+            error.contains("max_concurrent_jobs must be between 1 and 64"),
+            "configured={value}: {error}"
+        );
+    }
 }
 
 #[test]

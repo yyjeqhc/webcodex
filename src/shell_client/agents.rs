@@ -21,7 +21,8 @@ use super::{
 };
 use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
-    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    ShellClientRegisterRequest, ShellClientView, RUNNER_JOB_CONCURRENCY_MAX,
+    RUNNER_JOB_CONCURRENCY_MIN,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -235,12 +236,11 @@ impl ShellClientRegistry {
         validate_optional_field(&body.display_name, "display_name")?;
         validate_optional_field(&body.owner, "owner")?;
         validate_optional_field(&body.hostname, "hostname")?;
-        if body
-            .job_concurrency_limit
-            .is_some_and(|limit| !(1..=JOB_INVENTORY_MAX_ACTIVE_JOBS).contains(&limit))
-        {
+        if body.job_concurrency_limit.is_some_and(|limit| {
+            !(RUNNER_JOB_CONCURRENCY_MIN..=RUNNER_JOB_CONCURRENCY_MAX).contains(&limit)
+        }) {
             return Err(format!(
-                "job_concurrency_limit must be between 1 and {JOB_INVENTORY_MAX_ACTIVE_JOBS}"
+                "job_concurrency_limit must be between {RUNNER_JOB_CONCURRENCY_MIN} and {RUNNER_JOB_CONCURRENCY_MAX}"
             ));
         }
 

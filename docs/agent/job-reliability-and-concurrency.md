@@ -116,9 +116,9 @@ credentials, and private paths are not required.
 
 ## 4. Runner Job capacity is shared across windows and projects
 
-`max_concurrent_jobs` is a Runner-process execution limit (default 4, effective
-range 1..64). It is not allocated per ChatGPT window, Workflow Session, or
-Project.
+`max_concurrent_jobs` is a Runner-process execution limit (default 4, valid
+range 1..64; out-of-range configuration is rejected). It is not allocated per
+ChatGPT window, Workflow Session, or Project.
 
 Opening multiple model windows consumes no Job slot by itself. A slot is consumed
 while a Job-backed execution owns Runner execution capacity. Therefore several

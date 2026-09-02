@@ -1173,12 +1173,30 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     assert!(result.output["session_recovery"]["current_handoff"].is_object());
     let recovery_validation = &result.output["session_recovery"]["current_handoff"]["validation"];
     assert_eq!(recovery_validation["unresolved_failures"]["count"], 1);
+    assert_eq!(
+        recovery_validation["unresolved_failures"]["truncated"],
+        false
+    );
+    assert_eq!(recovery_validation["resolved_failures"]["count"], 0);
+    assert!(recovery_validation.get("events").is_none());
+    assert!(recovery_validation.get("latest").is_none());
+    assert!(recovery_validation.get("latest_success").is_none());
+    assert!(recovery_validation.get("latest_failure").is_none());
+    assert!(recovery_validation.get("parser").is_none());
+    let recovery_validation_bytes = serde_json::to_vec(recovery_validation).unwrap().len();
+    assert!(
+        recovery_validation_bytes <= 4096,
+        "current_handoff validation recovery must stay compact: {recovery_validation_bytes} bytes"
+    );
     let unresolved = &recovery_validation["unresolved_failures"]["events"][0];
     assert_eq!(unresolved["assertion_name"], assertion_name);
     assert_eq!(
         unresolved["identity"],
         crate::tool_runtime::tool_audit::assertion_validation_identity(assertion_name)
     );
+    assert!(unresolved.get("stdout_evidence").is_none());
+    assert!(unresolved.get("stderr_evidence").is_none());
+    assert!(unresolved.get("diagnostics").is_none());
     assert!(
         result.output["session_recovery"]["current_handoff"]["suggested_next_actions"]
             .as_array()

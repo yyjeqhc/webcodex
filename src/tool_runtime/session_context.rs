@@ -12,6 +12,7 @@ const SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT: usize = 20;
 pub(crate) const SESSION_CONTINUITY_RECOVERY_EVENT_BYTES: usize = 48 * 1024;
 const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_LIMIT: usize = 40;
 const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_BYTES: usize = 512;
+const SESSION_RECOVERY_VALIDATION_FAILURE_LIMIT: usize = 3;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {
@@ -495,6 +496,83 @@ fn bounded_recovery_handoff_changed_paths(value: Option<&Value>) -> Value {
     )
 }
 
+fn recovery_validation_failure_event(event: &Value) -> Value {
+    json!({
+        "tool_name": event.get("tool_name"),
+        "execution_source": event.get("execution_source"),
+        "identity": event.get("identity"),
+        "assertion_name": event.get("assertion_name"),
+        "purpose": event.get("purpose"),
+        "validation_kind": event.get("validation_kind"),
+        "failure_kind": event.get("failure_kind"),
+        "failure_category": event.get("failure_category"),
+        "exit_code": event.get("exit_code"),
+        "summary": event.get("summary"),
+        "command_summary": event.get("command_summary"),
+        "cwd": event.get("cwd"),
+        "tests_run_count": event.get("tests_run_count"),
+        "tests_passed": event.get("tests_passed"),
+        "tests_failed": event.get("tests_failed"),
+        "zero_tests_run": event.get("zero_tests_run"),
+        "test_count_assertion": event.get("test_count_assertion"),
+    })
+}
+
+fn recovery_validation_failure_set(value: Option<&Value>) -> Value {
+    let count = value
+        .and_then(|value| value.get("count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut events = Vec::new();
+    if let Some(source) = value
+        .and_then(|value| value.get("events"))
+        .and_then(Value::as_array)
+    {
+        for event in source
+            .iter()
+            .rev()
+            .take(SESSION_RECOVERY_VALIDATION_FAILURE_LIMIT)
+        {
+            events.insert(0, recovery_validation_failure_event(event));
+        }
+    }
+    let omitted_count = count.saturating_sub(events.len() as u64);
+    json!({
+        "count": count,
+        "events": events,
+        "omitted_count": omitted_count,
+        "truncated": omitted_count > 0,
+    })
+}
+
+fn recovery_validation_summary(value: Option<&Value>) -> Value {
+    let Some(validation) = value.filter(|value| value.is_object()) else {
+        return value.cloned().unwrap_or(Value::Null);
+    };
+    json!({
+        "available": validation.get("available"),
+        "status": validation.get("status"),
+        "reason": validation.get("reason"),
+        "latest_status": validation.get("latest_status"),
+        "current_evidence": validation.get("current_evidence"),
+        "historical_failures": validation.get("historical_failures"),
+        "resolved_failures": {
+            "count": validation
+                .pointer("/resolved_failures/count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        },
+        "unresolved_failures": recovery_validation_failure_set(
+            validation.get("unresolved_failures")
+        ),
+        "source": validation.get("source"),
+        "events_total": validation.get("events_total"),
+        "successes": validation.get("successes"),
+        "failures": validation.get("failures"),
+        "cargo_test_zero_tests_run": validation.get("cargo_test_zero_tests_run"),
+    })
+}
+
 impl ToolRuntime {
     pub(crate) async fn add_session_history_recovery(
         &self,
@@ -549,7 +627,7 @@ impl ToolRuntime {
         let current = json!({
             "workspace": handoff.output.get("workspace"),
             "checkpoints": handoff.output.get("checkpoints"),
-            "validation": handoff.output.get("validation"),
+            "validation": recovery_validation_summary(handoff.output.get("validation")),
             "jobs": handoff.output.get("jobs"),
             "open_todos": handoff.output.get("open_todos"),
             "open_risks": handoff.output.get("open_risks"),

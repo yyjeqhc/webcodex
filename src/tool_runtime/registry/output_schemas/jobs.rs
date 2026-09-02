@@ -427,7 +427,8 @@ fn observe_jobs_output_schema() -> Value {
             "terminal": schema_type("boolean", "Canonical terminal classification."),
             "executor": {
                 "type": "string",
-                "enum": ["local", "agent"]
+                "const": "agent",
+                "description": "Runner-backed Job executor. Registered Project Jobs are never executed by the Server."
             },
             "session_id": nullable_schema("string", "Owning Workflow Session, when recorded."),
             "ssh_resource": nullable_schema("string", "Named SSH resource, when recorded."),
@@ -644,7 +645,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "cwd",
                     schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
+                ("executor", json!({
+                    "type": "string",
+                    "const": "agent",
+                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
+                })),
                 (
                     "execution_source",
                     schema_type("string", "Canonical source is run_process. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
@@ -747,7 +752,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "cwd",
                     schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
+                ("executor", json!({
+                    "type": "string",
+                    "const": "agent",
+                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
+                })),
                 (
                     "execution_source",
                     schema_type("string", "Canonical source is run_script. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
@@ -852,7 +861,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "Actual selected shell, configured executor shell, or remote SSH executor.",
                     ),
                 ),
-                ("executor", schema_type("string", "Executor type: local or agent.")),
+                ("executor", json!({
+                    "type": "string",
+                    "const": "agent",
+                    "description": "Runner-backed executor."
+                })),
                 (
                     "ssh_resource",
                     nullable_schema(
@@ -896,7 +909,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Selected shell, configured executor shell, or remote SSH executor.",
                 ),
             ),
-            ("executor", schema_type("string", "Executor type: local or agent.")),
+            ("executor", json!({
+                "type": "string",
+                "const": "agent",
+                "description": "Runner-backed executor."
+            })),
             (
                 "ssh_resource",
                 nullable_schema(
@@ -918,7 +935,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "last_update_seq",
-                nullable_schema("integer", "Agent Runner protocol diagnostic sequence; not a bounded-wait token. Omitted for local jobs."),
+                nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
             ),
         ])),
         "list_jobs" => Some(wrapped_output_schema(vec![
@@ -1052,7 +1069,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "last_update_seq",
-                nullable_schema("integer", "Agent Runner protocol diagnostic sequence; not a bounded-wait token. Omitted for local jobs."),
+                nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
             ),
             (
                 "stdout_retained_from_line",
@@ -1231,7 +1248,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "last_update_seq",
-                nullable_schema("integer", "Agent Runner protocol diagnostic sequence; not a bounded-wait token. Omitted for local jobs."),
+                nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
             ),
             ("validation", validation_job_projection_schema()),
             (
@@ -1246,7 +1263,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "executor",
-                schema_type("string", "Executor backing the job: local or agent."),
+                json!({
+                    "type": "string",
+                    "const": "agent",
+                    "description": "Runner-backed Job executor."
+                }),
             ),
             (
                 "cwd",
@@ -1297,7 +1318,11 @@ fn persistent_shell_output_schema() -> Value {
         ),
         (
             "executor",
-            schema_type("string", "Process host class: local or agent."),
+            json!({
+                "type": "string",
+                "enum": ["agent", "ssh"],
+                "description": "Runner-backed persistent-shell host class: the registered Project Runner or a named SSH resource reached through that Runner."
+            }),
         ),
         (
             "shell",
@@ -1414,7 +1439,11 @@ fn job_summary_schema() -> Value {
             "project": nullable_schema("string", "Project id, when known."),
             "session_id": nullable_schema("string", "Workflow Session that owns this job, when recorded."),
             "ssh_resource": nullable_schema("string", "Named Runner-local SSH resource used for this job, when any."),
-            "executor": schema_type("string", "Executor backing this job, such as agent or local."),
+            "executor": json!({
+                "type": "string",
+                "const": "agent",
+                "description": "Runner-backed Job executor."
+            }),
             "client_id": nullable_schema("string", "Agent client id for agent-backed jobs, when available."),
             "created_at": schema_type("integer", "Job creation timestamp."),
             "started_at": nullable_schema("integer", "Job start timestamp, when available."),

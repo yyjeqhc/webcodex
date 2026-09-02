@@ -250,22 +250,21 @@ session_shell_status
 close_session_shell
 ```
 
-Opening creates one real long-lived local shell process, at most one active
-shell per Workflow Session: `sh`/`bash` on Unix, or the configured PowerShell
-program/profile on Windows. For an `agent:<client>:<project>` the Runner owns
+Opening creates one real long-lived Runner-owned shell process, at most one
+active shell per Workflow Session: `sh`/`bash` on Unix, or the configured
+PowerShell program/profile on Windows. For an `agent:<client>:<project>` the Runner owns
 and controls the shell. Without `execution_context.resource`, it runs against
 the registered project host. With a named resource, the Runner opens a remote
 persistent shell through that SSH resource; this requires `persistent_shell` +
 `ssh_persistent_shell`, not the separate one-shot/background `ssh_shell`
-capability, and never silently falls back locally. Unix may reuse its OpenSSH mux;
+capability, and never silently falls back to the registered Project host. Unix may reuse its OpenSSH mux;
 Windows owns one direct long-lived `ssh.exe` channel while the remote shell remains
-`sh`/`bash`. No PTY/ConPTY or terminal-control protocol is implied. The process
-manager also has a Server-owned executor branch for a hosting surface
-that supplies a Server-local project, although the current built-in public
-project registry advertises Agent projects only. `read_only` Sessions cannot
-open or execute a persistent shell. The pre-0.4 `inspect` Session mode is retired.
+`sh`/`bash`. No PTY/ConPTY or terminal-control protocol is implied. Registered
+Project execution is Runner-owned; the Server has no Project-local process or
+persistent-shell fallback. `read_only` Sessions cannot open or execute a persistent
+shell. The pre-0.4 `inspect` Session mode is retired.
 
-Local open resolution is explicit `cwd`/`shell`, then the exact Session's
+Runner-project open resolution is explicit `cwd`/`shell`, then the exact Session's
 `default_cwd`/`default_shell`, then the project/Runner defaults. The explicit
 `sh`/`bash` override is Unix-only; Windows callers omit it and the Runner uses
 the configured PowerShell program/profile, failing closed for incompatible

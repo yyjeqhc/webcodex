@@ -419,7 +419,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// Shell preamble that resolves `head_cmd` at runtime (agent/local sh).
+/// Shell preamble that resolves `head_cmd` at runtime on the Runner POSIX shell.
 /// Absolute fallbacks are embedded as literals for POSIX `sh`.
 pub(super) fn search_head_resolution_shell(absolute_candidates: &[&str]) -> String {
     let mut script = String::from(
@@ -568,14 +568,14 @@ exit "$status""#,
 }
 
 /// Formal cap on search output bytes, applied by a second `head -c` stage in
-/// the command (shared by local and agent paths) so no single over-long match
+/// the Runner command so no single over-long match
 /// line, context line, or path can push the output past the Runner transport
 /// cap (default 256 KiB) before the Rust layer ever sees it. The command emits
 /// at most one probe byte beyond this formal budget; the parser consumes that
 /// byte only as proof of truncation and never exposes it. A record cut mid-line
 /// is dropped and reports `truncation_reason = "output_bytes"`.
 ///
-/// Kept at 32 KiB, not larger: the local path executes the command through
+/// Kept at 32 KiB, not larger: unit tests execute the same command through
 /// [`run_command_sync`](crate::tool_runtime::helpers::run_command_sync), whose
 /// polling loop does not drain stdout while waiting. Output over the ~64 KiB
 /// Linux pipe buffer would block the producer until the hard timeout. 32 KiB

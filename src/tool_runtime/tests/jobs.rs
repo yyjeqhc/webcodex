@@ -294,6 +294,46 @@ fn assert_run_shell_result_matches_schema(result: &ToolResult) {
         });
 }
 
+#[test]
+fn project_execution_output_schemas_do_not_advertise_server_local_executor() {
+    let observe = super::super::registry::output_schema_for_tool("observe_jobs");
+    let observation = &observe["properties"]["output"]["anyOf"][0]["properties"]["items"]["items"]
+        ["properties"]["output"]["anyOf"][0];
+    assert_eq!(observation["properties"]["executor"]["const"], "agent");
+
+    let list = super::super::registry::output_schema_for_tool("list_jobs");
+    assert_eq!(
+        list["properties"]["output"]["properties"]["jobs"]["items"]["properties"]["executor"]
+            ["const"],
+        "agent"
+    );
+
+    let persistent = super::super::registry::output_schema_for_tool("open_session_shell");
+    assert_eq!(
+        persistent["properties"]["output"]["properties"]["executor"]["enum"],
+        json!(["agent", "ssh"])
+    );
+
+    for name in [
+        "run_process",
+        "run_script",
+        "run_shell",
+        "run_job",
+        "job_log",
+        "cargo_fmt",
+        "cargo_check",
+        "cargo_test",
+        "go_test",
+    ] {
+        let schema = super::super::registry::output_schema_for_tool(name);
+        let executor = &schema["properties"]["output"]["properties"]["executor"];
+        assert_eq!(
+            executor["const"], "agent",
+            "{name} must publish the Runner-only Project execution contract"
+        );
+    }
+}
+
 #[tokio::test]
 async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it() {
     let client_id = "shell-long-handoff";

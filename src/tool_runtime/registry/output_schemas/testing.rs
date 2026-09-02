@@ -17,7 +17,11 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("project", schema_type("string", "Runtime project id.")),
             ("command_summary", schema_type("string", "Bounded structured validation command summary.")),
             ("shell", schema_type("string", "Executor command mode.")),
-            ("executor", schema_type("string", "local or agent executor.")),
+            ("executor", json!({
+                "type": "string",
+                "const": "agent",
+                "description": "Runner-backed structured validation executor."
+            })),
             (
                 "cwd",
                 schema_type("string", "Project-relative working directory."),

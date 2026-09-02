@@ -1507,7 +1507,7 @@ pub enum ToolCall {
         session_event_limit: Option<usize>,
     },
 
-    /// List bounded runtime job summaries across agent and local executors.
+    /// List bounded runtime Job summaries for caller-visible Runner work.
     /// Never returns stdout/stderr bodies — only metadata (job_id, kind,
     /// status, project, timestamps, exit_code).
     ListJobs {

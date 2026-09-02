@@ -1339,7 +1339,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Bounded source reads: local/agent parity, strict validation, budgets.
+    // Bounded source reads: reference/Runner parity, strict validation, budgets.
     // -------------------------------------------------------------------------
 
     /// Build a local result from full file content and a request range.

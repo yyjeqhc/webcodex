@@ -450,12 +450,14 @@ fn exploration_input_audit_omits_queries_and_shell_commands() {
             "process_summary": "RAW_EXECUTABLE RAW_ARG",
             "executable_present": true,
             "arg_count": 2,
-            "stdin_present": true
+            "stdin_present": true,
+            "purpose": "diagnostic"
         }),
     );
     assert_eq!(process["executable_present"], true);
     assert_eq!(process["arg_count"], 2);
     assert_eq!(process["stdin_present"], true);
+    assert_eq!(process["purpose"], "diagnostic");
     assert!(process.get("executable").is_none());
     assert!(process.get("args").is_none());
     assert!(process.get("stdin").is_none());

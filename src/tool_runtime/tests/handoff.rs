@@ -425,6 +425,48 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
 }
 
 #[tokio::test]
+async fn failure_history_started_diagnostic_process_failure_remains_actionable_in_handoff() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("diagnostic failure".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "run_process",
+        json!({"purpose": "diagnostic"}),
+        false,
+        json!({
+            "failure_kind": "command_exit_nonzero",
+            "exit_code": 1,
+            "state_changed": false,
+            "command_started": true,
+            "command_completed": true,
+            "execution_state": "completed"
+        }),
+    );
+
+    let handoff = handoff_summary(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+}
+
+#[tokio::test]
 async fn expectation_mismatch_and_unexpected_success_are_visible() {
     let runtime = test_runtime();
     let auth = open_auth_context();

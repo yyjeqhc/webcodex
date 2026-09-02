@@ -2429,6 +2429,84 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
 }
 
 #[tokio::test]
+async fn failure_history_started_diagnostic_process_failure_remains_actionable() {
+    let fixture = finish_summary_fixture("coding-finish-diagnostic-history").await;
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "run_process",
+        json!({
+            "project": fixture.project.clone(),
+            "executable": "diagnostic-probe",
+            "purpose": "diagnostic"
+        }),
+        false,
+        json!({
+            "failure_kind": "command_exit_nonzero",
+            "exit_code": 1,
+            "state_changed": false,
+            "command_started": true,
+            "command_completed": true,
+            "execution_state": "completed"
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project.clone(),
+        fixture.session_id.clone(),
+        fixture.auth.clone(),
+    )
+    .await;
+    let full = finish_coding_task_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        0
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert!(!full.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some("completed diagnostic tool failures are retained as non-actionable evidence")));
+}
+
+#[tokio::test]
 async fn failure_history_started_shell_failure_remains_actionable() {
     let fixture = finish_summary_fixture("coding-finish-started-shell-failure").await;
     record_coding_task_tool_event(

@@ -1250,6 +1250,10 @@ fn unexpected_failure_is_proven_non_actionable(event: &SessionEvent) -> bool {
     {
         return false;
     }
+    // ExecutionPurpose is caller-declared evidence metadata, not effect-safety
+    // proof. Once a generic shell/process command has started, a failed result
+    // remains actionable regardless of whether its declared purpose was
+    // diagnostic, validation, or anything else.
     if effect.and_then(|effect| effect.command_started) == Some(true)
         || matches!(
             execution_state,

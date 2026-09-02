@@ -341,10 +341,7 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
         "permission",
         "recovery_kind",
         "recovery_tool",
-        "session_event_id",
         "session_hint",
-        "session_id",
-        "session_recorded",
         "trace_ref",
     ]
     .into_iter()

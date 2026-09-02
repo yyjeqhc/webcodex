@@ -1173,7 +1173,9 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     )
     .await;
     assert!(coexisting.success);
-    assert!(coexisting.output["session_context_revision"].is_u64());
+    assert!(coexisting.output.get("session_context_revision").is_none());
+    assert!(coexisting.output.get("session_continuity").is_none());
+    assert!(coexisting.output.get("session_recovery").is_none());
     assert_eq!(coexisting.output["session_attention"]["requires_ack"], true);
     assert_eq!(
         coexisting.output["context_projection"]["materials"][0]["key"],

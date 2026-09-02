@@ -144,6 +144,38 @@ async fn http_projects_create_rejects_unknown_client_id() {
 }
 
 #[tokio::test]
+async fn http_projects_create_rejects_retired_managed_temporary_field_before_dispatch() {
+    let config = super::test_config(Some("secret"));
+    let (_tmp, db) = super::test_db();
+    let tmp_proj = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
+    let service = Service::new(super::build_projects_router(config, db, runtime));
+
+    let mut resp = TestClient::post("http://localhost/api/projects/create")
+        .bearer_auth("secret")
+        .json(&json!({
+            "client_id": "no-such-agent",
+            "id": "legacy-temp",
+            "name": "Legacy Temp",
+            "path": "/root/git/legacy-temp",
+            "managed_temporary_project": true
+        }))
+        .send(&service)
+        .await;
+
+    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("managed_temporary_project"), "{error}");
+    assert!(error.contains("no longer supported"), "{error}");
+    assert!(
+        !error.contains("unknown agent"),
+        "retired field must fail before project dispatch: {error}"
+    );
+}
+
+#[tokio::test]
 async fn http_projects_register_rejects_unsafe_id() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();

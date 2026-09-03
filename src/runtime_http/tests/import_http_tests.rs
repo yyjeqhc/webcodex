@@ -13,6 +13,31 @@ const IMPORT_TEST_AGENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const IMPORT_TEST_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 const IMPORT_TEST_SERVER_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn run_import_http_in_large_stack_test_thread<F, Fut>(test: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    // The host-ref artifact import fixture retains the HTTP/import runtime and
+    // upload protocol state across several awaits. Keep that integration stack
+    // local to the test instead of requiring a suite-wide RUST_MIN_STACK.
+    let result = std::thread::Builder::new()
+        .name("runtime-http-import-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build isolated runtime HTTP import test runtime")
+                .block_on(test());
+        })
+        .expect("spawn isolated runtime HTTP import test thread")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 async fn lock_import_http_test() -> tokio::sync::MutexGuard<'static, ()> {
     tokio::time::timeout(
         IMPORT_TEST_LOCK_TIMEOUT,
@@ -425,8 +450,7 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
     }
 }
 
-#[tokio::test]
-async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path() {
+async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path_body() {
     use crate::auth::{AuthContext, AuthKind};
     use crate::runner_protocol::RunnerCapabilities;
     use crate::tool_runtime::kernel::{
@@ -522,6 +546,13 @@ async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path()
         std::fs::read(tmp.path().join("paper/export/import-test.pptx")).unwrap(),
         pptx
     );
+}
+
+#[test]
+fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path() {
+    run_import_http_in_large_stack_test_thread(|| {
+        runtime_conversation_import_host_ref_saves_pptx_through_artifact_path_body()
+    });
 }
 
 #[tokio::test]

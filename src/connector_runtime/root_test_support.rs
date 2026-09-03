@@ -78,9 +78,11 @@ async fn root_wrapper_preserves_unknown_capability_before_authentication() {
     let project = temp.path().join("project");
     init_repo(&project);
     let state = temp.path().join("state");
-    let tools = Arc::new(crate::tool_runtime::ToolRuntime::new_for_tests_with_shell_clients(
-        Arc::new(crate::shell_client::ShellClientRegistry::default()),
-    ));
+    let tools = Arc::new(
+        crate::tool_runtime::ToolRuntime::new_for_tests_with_shell_clients(Arc::new(
+            crate::shell_client::ShellClientRegistry::default(),
+        )),
+    );
     let runtime = super::ConnectorRuntime::new(
         tools,
         Arc::new(Database::open(&temp.path().join("connector.db")).unwrap()),

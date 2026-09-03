@@ -883,9 +883,10 @@ impl ToolRuntime {
                 ))
             }
         };
+        let access = crate::shell_client::runner_access_from_auth(auth);
         let job = match self
             .shell_clients
-            .start_job_with_metadata_for_auth(
+            .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
                     op: "start".to_string(),
                     client_id: Some(client_id),
@@ -926,7 +927,8 @@ impl ToolRuntime {
                     stdin: None,
                     detached_idempotency_key: None,
                 },
-                auth,
+                access.as_ref(),
+                None,
             )
             .await
         {
@@ -951,7 +953,7 @@ impl ToolRuntime {
             executor: "agent".to_string(),
             command_summary: crate::shell_client::command_preview(command),
             minimum_tests,
-            auth: auth.cloned(),
+            auth: access,
         };
         self.await_validation_job(job_id, sync_wait_secs, adapter, handoff)
             .await
@@ -1434,7 +1436,7 @@ struct ValidationHandoff {
     executor: String,
     command_summary: String,
     minimum_tests: Option<u64>,
-    auth: Option<AuthContext>,
+    auth: Option<webcodex_runner_registry::RunnerAccess>,
 }
 
 /// Build the canonical structured validation step for a read-only validation tool
@@ -1567,7 +1569,7 @@ fn apply_validation_projection_fields(payload: &mut Value, projection: &Value) {
 struct ValidationCleanupGuard {
     clients: std::sync::Arc<crate::shell_client::ShellClientRegistry>,
     job_id: String,
-    auth: Option<AuthContext>,
+    auth: Option<webcodex_runner_registry::RunnerAccess>,
     armed: bool,
 }
 
@@ -1575,7 +1577,7 @@ impl ValidationCleanupGuard {
     fn new(
         clients: std::sync::Arc<crate::shell_client::ShellClientRegistry>,
         job_id: String,
-        auth: Option<AuthContext>,
+        auth: Option<webcodex_runner_registry::RunnerAccess>,
     ) -> Self {
         Self {
             clients,

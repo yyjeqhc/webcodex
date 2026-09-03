@@ -88,9 +88,10 @@ impl ToolRuntime {
             .with_recovery(RecoveryKind::FixInput, None));
         }
         let client_id = proj.client_id.clone();
+        let access = crate::shell_client::runner_access_from_auth(auth);
         if self
             .shell_clients
-            .get_client_view_for_auth(&client_id, auth)
+            .get_client_view_for_auth(&client_id, access.as_ref())
             .await
             .is_none()
         {
@@ -100,7 +101,7 @@ impl ToolRuntime {
             )));
         }
         self.shell_clients
-            .assert_client_access(auth, &client_id)
+            .assert_client_access(access.as_ref(), &client_id)
             .await
             .map_err(ToolResult::err)?;
         if let Some(required) = required {
@@ -111,7 +112,7 @@ impl ToolRuntime {
                 for capability in required.registry_capabilities() {
                     if self
                         .shell_clients
-                        .client_supports_for_auth(&client_id, capability, auth)
+                        .client_supports_for_auth(&client_id, capability, access.as_ref())
                         .await
                         .map_err(ToolResult::err)?
                     {
@@ -190,7 +191,7 @@ impl ToolRuntime {
                     .client_supports_for_auth(
                         &client_id,
                         SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-                        auth,
+                        access.as_ref(),
                     )
                     .await
                     .map_err(ToolResult::err)?
@@ -206,7 +207,11 @@ impl ToolRuntime {
                 // process/script resource calls have already failed closed above.
                 if !self
                     .shell_clients
-                    .client_supports_for_auth(&client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL, auth)
+                    .client_supports_for_auth(
+                        &client_id,
+                        SHELL_CLIENT_CAPABILITY_SSH_SHELL,
+                        access.as_ref(),
+                    )
                     .await
                     .map_err(ToolResult::err)?
                 {

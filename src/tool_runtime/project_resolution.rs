@@ -165,7 +165,12 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> Vec<ProjectResolverCandidate> {
         let mut candidates = Vec::new();
-        for client in self.shell_clients.list_clients_for_auth(auth).await {
+        let access = crate::shell_client::runner_access_from_auth(auth);
+        for client in self
+            .shell_clients
+            .list_clients_for_auth(access.as_ref())
+            .await
+        {
             for project in client.projects.iter().filter(|project| !project.disabled) {
                 candidates.push(Self::project_candidate_from_view(&client, project));
             }

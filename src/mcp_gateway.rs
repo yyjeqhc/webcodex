@@ -415,11 +415,16 @@ async fn visible_provider_candidates(
     auth: Option<&AuthContext>,
 ) -> BTreeMap<String, Vec<ResolvedProvider>> {
     let mut providers: BTreeMap<String, Vec<ResolvedProvider>> = BTreeMap::new();
-    for client in runtime.shell_clients.list_clients_for_auth(auth).await {
+    let access = crate::shell_client::runner_access_from_auth(auth);
+    for client in runtime
+        .shell_clients
+        .list_clients_for_auth(access.as_ref())
+        .await
+    {
         if !client.connected
             || runtime
                 .shell_clients
-                .assert_client_access(auth, &client.client_id)
+                .assert_client_access(access.as_ref(), &client.client_id)
                 .await
                 .is_err()
         {
@@ -476,13 +481,14 @@ async fn execute_exact(
     request: McpGatewayRequest,
     auth: Option<&AuthContext>,
 ) -> Result<McpGatewayResponse, GatewayError> {
+    let access = crate::shell_client::runner_access_from_auth(auth);
     let (request_id, receiver) = runtime
         .shell_clients
         .enqueue_mcp_gateway(
             &provider.client_id,
             &provider.agent_instance_id,
             request,
-            auth,
+            access.as_ref(),
             "mcp_tool".to_string(),
         )
         .await

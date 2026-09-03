@@ -6,6 +6,7 @@ use crate::shell_protocol::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use webcodex_runner_registry::RunnerAccess;
 
 pub(crate) const STRUCTURED_EXECUTION_SYNC_WAIT_SECS: u64 = 10;
 pub(crate) use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
@@ -76,15 +77,16 @@ pub(crate) async fn await_hidden_structured_job(
     sync_wait: Duration,
     auth: Option<AuthContext>,
 ) -> Result<HiddenStructuredJobWait, String> {
-    let mut guard = HiddenJobCleanupGuard::new(clients.clone(), job_id.clone(), auth.clone());
+    let access = crate::shell_client::runner_access_from_auth(auth.as_ref());
+    let mut guard = HiddenJobCleanupGuard::new(clients.clone(), job_id.clone(), access.clone());
     let deadline = std::time::Instant::now() + sync_wait;
     loop {
         if let Ok(job) = clients
-            .get_hidden_job_for_auth(auth.as_ref(), &job_id)
+            .get_hidden_job_for_auth(access.as_ref(), &job_id)
             .await
         {
             if crate::tool_runtime::jobs::is_terminal_job_status(&job.status) {
-                let terminal = hidden_terminal_snapshot(&clients, auth.as_ref(), &job_id).await?;
+                let terminal = hidden_terminal_snapshot(&clients, access.as_ref(), &job_id).await?;
                 guard.disarm();
                 return Ok(terminal);
             }
@@ -97,7 +99,7 @@ pub(crate) async fn await_hidden_structured_job(
 
     let promoted = clients.promote_hidden_job(&job_id).await?;
     if crate::tool_runtime::jobs::is_terminal_job_status(&promoted.status) {
-        let terminal = hidden_terminal_snapshot(&clients, auth.as_ref(), &job_id).await?;
+        let terminal = hidden_terminal_snapshot(&clients, access.as_ref(), &job_id).await?;
         guard.disarm();
         return Ok(terminal);
     }
@@ -121,10 +123,12 @@ pub(crate) async fn await_hidden_structured_job(
 
 async fn hidden_terminal_snapshot(
     clients: &ShellClientRegistry,
-    auth: Option<&AuthContext>,
+    access: Option<&RunnerAccess>,
     job_id: &str,
 ) -> Result<HiddenStructuredJobWait, String> {
-    let (job, stdout, stderr, _, _) = clients.hidden_job_log_for_auth(auth, job_id, None).await?;
+    let (job, stdout, stderr, _, _) = clients
+        .hidden_job_log_for_auth(access, job_id, None)
+        .await?;
     Ok(HiddenStructuredJobWait::Terminal {
         job,
         stdout: stdout.unwrap_or_default(),
@@ -137,16 +141,20 @@ async fn hidden_terminal_snapshot(
 struct HiddenJobCleanupGuard {
     clients: Arc<ShellClientRegistry>,
     job_id: String,
-    auth: Option<AuthContext>,
+    access: Option<RunnerAccess>,
     armed: bool,
 }
 
 impl HiddenJobCleanupGuard {
-    fn new(clients: Arc<ShellClientRegistry>, job_id: String, auth: Option<AuthContext>) -> Self {
+    fn new(
+        clients: Arc<ShellClientRegistry>,
+        job_id: String,
+        access: Option<RunnerAccess>,
+    ) -> Self {
         Self {
             clients,
             job_id,
-            auth,
+            access,
             armed: true,
         }
     }
@@ -162,7 +170,7 @@ impl Drop for HiddenJobCleanupGuard {
             return;
         }
         let clients = self.clients.clone();
-        clients.record_hidden_cleanup_intent(self.job_id.clone(), self.auth.clone());
+        clients.record_hidden_cleanup_intent(self.job_id.clone(), self.access.clone());
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 clients.process_hidden_cleanup_intents().await;

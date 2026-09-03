@@ -432,9 +432,24 @@ impl ToolRuntime {
                 ShellCommandExecutionState::NotStarted,
             );
         }
+        let access = crate::shell_client::runner_access_from_auth(auth);
+        let detached_initiator = match crate::shell_client::detached_initiator_identity_from_auth(auth)
+        {
+            Ok(identity) => identity,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        &error,
+                        "observe the deterministic logical Job if an initiating response may have been lost; do not retry with a fresh key unless no Job was admitted.",
+                    ),
+                    classify_process_failure(&error),
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
         match self
             .shell_clients
-            .start_job_with_metadata_for_auth(
+            .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
                     op: "start".to_string(),
                     client_id: Some(client_id),
@@ -461,7 +476,8 @@ impl ToolRuntime {
                     detached_idempotency_key: Some(idempotency_key),
                     ..Default::default()
                 },
-                auth,
+                access.as_ref(),
+                Some(&detached_initiator),
             )
             .await
         {
@@ -679,7 +695,7 @@ impl ToolRuntime {
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
                 .shell_clients
-                .start_job_with_metadata_for_auth(
+                .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id),
@@ -715,7 +731,8 @@ impl ToolRuntime {
                         stdin,
                         ..Default::default()
                     },
-                    auth,
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    None,
                 )
                 .await;
             let job = match job {

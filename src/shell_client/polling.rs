@@ -453,7 +453,8 @@ impl ShellClientRegistry {
         if pending.request.mcp_gateway.is_none() && payload.mcp_gateway.is_some() {
             return Err("unexpected MCP gateway result for non-bridge request".to_string());
         }
-        crate::tool_request_trace::capture_runner_result(&body.request_id, &payload);
+        self.telemetry
+            .runner_result_accepted(&body.request_id, &payload);
         let trace_request_id = body.request_id.clone();
         let ShellAgentResultPayload {
             result: body,
@@ -498,7 +499,7 @@ impl ShellClientRegistry {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);
             }
-            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
+            self.telemetry.runner_result_finalized(&trace_request_id);
             return Ok(());
         }
         if pending.request.coding_agent.is_some() {
@@ -544,7 +545,7 @@ impl ShellClientRegistry {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);
             }
-            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
+            self.telemetry.runner_result_finalized(&trace_request_id);
             return Ok(());
         }
         let request_id = body.request_id.clone();
@@ -603,12 +604,10 @@ impl ShellClientRegistry {
             let _ = waiter.send(response);
         }
         if let Some(job_id) = terminal_job_id.as_deref() {
-            crate::tool_request_trace::finalize_runner_job_correlation(
-                Some(&trace_request_id),
-                job_id,
-            );
+            self.telemetry
+                .runner_job_finalized(Some(&trace_request_id), job_id);
         } else {
-            crate::tool_request_trace::finalize_runner_result_correlation(&trace_request_id);
+            self.telemetry.runner_result_finalized(&trace_request_id);
         }
         Ok(())
     }

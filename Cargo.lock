@@ -5138,6 +5138,7 @@ dependencies = [
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-runner-config",
+ "webcodex-runner-registry",
  "webcodex-store",
  "webcodex-tool-contracts",
  "webcodex-workflow-session",
@@ -5279,6 +5280,13 @@ version = "0.3.9"
 dependencies = [
  "serde",
  "toml 0.8.23",
+ "webcodex-core",
+]
+
+[[package]]
+name = "webcodex-runner-registry"
+version = "0.3.9"
+dependencies = [
  "webcodex-core",
 ]
 

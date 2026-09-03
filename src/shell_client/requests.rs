@@ -130,6 +130,7 @@ pub(super) fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: 
 }
 
 pub(super) fn enqueue_pending_request_locked(
+    telemetry: &dyn webcodex_runner_registry::RunnerRegistryTelemetry,
     inner: &mut ShellClientRegistryInner,
     client_id: &str,
     request_id: String,
@@ -140,7 +141,7 @@ pub(super) fn enqueue_pending_request_locked(
     ensure_dispatch_supported_locked(inner, client_id)?;
     ensure_queue_capacity_locked(inner, client_id)?;
     let runner = inner.clients.get(client_id);
-    crate::tool_request_trace::record_runner_request_enqueued(
+    telemetry.request_enqueued(
         &request,
         &request_id,
         client_id,
@@ -404,6 +405,7 @@ impl ShellClientRegistry {
         };
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -475,6 +477,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -558,6 +561,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -646,6 +650,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -667,7 +672,7 @@ impl ShellClientRegistry {
         expected_project_id: &str,
         expected_project_cwd: &str,
         requested_by: String,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "save_project_artifact" {
@@ -738,6 +743,7 @@ impl ShellClientRegistry {
         }
         let expected_client_owner = current.owner.clone();
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -763,7 +769,7 @@ impl ShellClientRegistry {
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "read_project_artifact_metadata" {
@@ -832,6 +838,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -850,7 +857,7 @@ impl ShellClientRegistry {
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "read_project_artifact_export_chunk" {
@@ -910,6 +917,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -982,6 +990,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -1065,6 +1074,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1139,6 +1149,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1222,6 +1233,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1314,6 +1326,7 @@ impl ShellClientRegistry {
             }
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
             request_id.clone(),
@@ -1391,7 +1404,7 @@ impl ShellClientRegistry {
         client_id: &str,
         expected_agent_instance_id: &str,
         operation: SkillStoreRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         let management = operation.requires_management_capability();
@@ -1459,6 +1472,7 @@ impl ShellClientRegistry {
             );
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             client_id,
             request_id.clone(),
@@ -1487,7 +1501,7 @@ impl ShellClientRegistry {
         client_id: &str,
         expected_agent_instance_id: &str,
         operation: McpGatewayRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<McpGatewayResponse>), String> {
         validate_mcp_gateway_request(&operation)
@@ -1551,6 +1565,7 @@ impl ShellClientRegistry {
             return Err("exact Runner is offline; request was not started".to_string());
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             client_id,
             request_id.clone(),
@@ -1581,7 +1596,7 @@ impl ShellClientRegistry {
         expected_provider_id: &str,
         expected_provider_instance_id: &str,
         operation: CodingAgentRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<CodingAgentResponse>), String> {
         validate_coding_agent_request(&operation)
@@ -1655,6 +1670,7 @@ impl ShellClientRegistry {
             return Err("exact Runner is offline; CodingAgentRun was not dispatched".to_string());
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             client_id,
             request_id.clone(),
@@ -1778,6 +1794,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1871,6 +1888,7 @@ impl ShellClientRegistry {
             }
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1892,7 +1910,7 @@ impl ShellClientRegistry {
         kind: &'static str,
         payload: String,
         requested_by: String,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
@@ -1975,6 +1993,7 @@ impl ShellClientRegistry {
             ));
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -2055,6 +2074,7 @@ impl ShellClientRegistry {
             });
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),

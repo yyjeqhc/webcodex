@@ -1,6 +1,5 @@
 //! Runtime observability metadata injected into `ToolRuntime`.
 
-use super::jobs::ACTIVE_JOB_STATUSES;
 use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -148,7 +147,11 @@ impl ToolRuntime {
             }
         }
 
-        let mut clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let access = crate::shell_client::runner_access_from_auth(auth);
+        let mut clients = self
+            .shell_clients
+            .list_clients_for_auth(access.as_ref())
+            .await;
         clients.sort_by(|a, b| a.client_id.cmp(&b.client_id));
         clients.retain(|client| {
             if let Some(expected) = options.client_id.as_deref() {
@@ -161,7 +164,10 @@ impl ToolRuntime {
             }
             true
         });
-        let mut agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        let mut agent_jobs = self
+            .shell_clients
+            .list_all_jobs_for_auth(access.as_ref())
+            .await;
         if options.client_id.is_some() || options.client_ids.is_some() {
             agent_jobs.retain(|job| {
                 clients
@@ -259,7 +265,11 @@ impl ToolRuntime {
     /// stdout/stderr. Returns a structured JSON object with service metadata,
     /// agent-registered project status, agent client summaries, and job counts.
     pub(crate) async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
-        let clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let access = crate::shell_client::runner_access_from_auth(auth);
+        let clients = self
+            .shell_clients
+            .list_clients_for_auth(access.as_ref())
+            .await;
 
         // -- projects summary -------------------------------------------------
         let agent_registered_count: usize = clients
@@ -303,7 +313,10 @@ impl ToolRuntime {
         });
 
         let now = chrono::Utc::now().timestamp();
-        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        let agent_jobs = self
+            .shell_clients
+            .list_all_jobs_for_auth(access.as_ref())
+            .await;
 
         // -- agents summary ---------------------------------------------------
         // Build a trimmed client list so the summary never leaks per-request
@@ -369,7 +382,7 @@ impl ToolRuntime {
         let agent_known_count = agent_jobs.len();
         let active_count = agent_jobs
             .iter()
-            .filter(|j| ACTIVE_JOB_STATUSES.contains(&j.status.as_str()))
+            .filter(|j| webcodex_runner_registry::job_status_is_active(&j.status))
             .count();
         let recovering_count = agent_jobs
             .iter()
@@ -489,7 +502,11 @@ impl ToolRuntime {
                 json!({"error_kind": "invalid_client_id"}),
             );
         }
-        let visible_clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let access = crate::shell_client::runner_access_from_auth(auth);
+        let visible_clients = self
+            .shell_clients
+            .list_clients_for_auth(access.as_ref())
+            .await;
         let Some(client) = visible_clients
             .iter()
             .find(|client| client.client_id == client_id)
@@ -501,7 +518,10 @@ impl ToolRuntime {
                 json!({"error_kind": "unknown_client_id", "client_id": client_id}),
             );
         };
-        let visible_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        let visible_jobs = self
+            .shell_clients
+            .list_all_jobs_for_auth(access.as_ref())
+            .await;
         let selected_jobs: Vec<ShellJobInfo> = visible_jobs
             .iter()
             .filter(|job| job.client_id == client.client_id)
@@ -541,7 +561,7 @@ impl ToolRuntime {
             .count();
         let agent_active = selected_jobs
             .iter()
-            .filter(|job| ACTIVE_JOB_STATUSES.contains(&job.status.as_str()))
+            .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
             .count();
         let running_count = selected_jobs
             .iter()
@@ -1293,7 +1313,8 @@ fn active_jobs_for_client(agent_jobs: &[ShellJobInfo], client_id: &str) -> usize
     agent_jobs
         .iter()
         .filter(|job| {
-            job.client_id == client_id && ACTIVE_JOB_STATUSES.contains(&job.status.as_str())
+            job.client_id == client_id
+                && webcodex_runner_registry::job_status_is_active(&job.status)
         })
         .count()
 }

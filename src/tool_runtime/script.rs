@@ -149,7 +149,7 @@ impl ToolRuntime {
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
                 .shell_clients
-                .start_job_with_metadata_for_auth(
+                .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id),
@@ -185,7 +185,8 @@ impl ToolRuntime {
                         stdin,
                         ..Default::default()
                     },
-                    auth,
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    None,
                 )
                 .await;
             let job = match job {

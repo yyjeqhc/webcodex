@@ -255,16 +255,17 @@ impl ToolRuntime {
         client_id: &str,
         auth: Option<&AuthContext>,
     ) -> Result<(), ToolResult> {
+        let access = crate::shell_client::runner_access_from_auth(auth);
         let supports_shell = self
             .shell_clients
-            .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_SHELL, auth)
+            .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_SHELL, access.as_ref())
             .await
             .map_err(ToolResult::err)?;
         let supports_git = if supports_shell {
             false
         } else {
             self.shell_clients
-                .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_GIT, auth)
+                .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_GIT, access.as_ref())
                 .await
                 .map_err(ToolResult::err)?
         };
@@ -1654,10 +1655,15 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> Value {
         let client_id = resolved.config.client_id.as_str();
+        let access = crate::shell_client::runner_access_from_auth(auth);
         // The owning runner must support the structured file capability.
         if !self
             .shell_clients
-            .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_FILE_READ, auth)
+            .client_supports_for_auth(
+                client_id,
+                SHELL_CLIENT_CAPABILITY_FILE_READ,
+                access.as_ref(),
+            )
             .await
             .unwrap_or(false)
         {

@@ -1,4 +1,3 @@
-use super::auth::ShellClientAuthGroup;
 use super::jobs::{
     command_preview, is_final_job_status, is_runner_active_job_status, mark_job_lost,
     notify_job_update, observe_job_terminal, replace_log_from_snapshot, COMMAND_PREVIEW_MAX_CHARS,
@@ -15,6 +14,7 @@ use crate::shell_protocol::{
     JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::HashSet;
+use webcodex_runner_registry::RunnerAccessGroup;
 
 const MAX_CONTEXT_FIELD_CHARS: usize = 1_024;
 const MAX_SNAPSHOT_ERROR_CHARS: usize = 4_096;
@@ -136,7 +136,7 @@ fn validate_context(
         .workflow_session_id
         .as_deref()
         .is_some_and(|session_id| {
-            !crate::tool_runtime::sessions::is_valid_session_id(session_id)
+            !webcodex_workflow_session::is_valid_session_id(session_id)
                 || session_id.chars().count() > 128
         })
     {
@@ -557,7 +557,7 @@ fn remove_job_control_requests(
 fn record_from_snapshot(
     client_id: &str,
     agent_instance_id: &str,
-    auth_group: Option<ShellClientAuthGroup>,
+    auth_group: Option<RunnerAccessGroup>,
     observation_epoch: std::sync::Arc<str>,
     snapshot: &ShellJobSnapshot,
     now: i64,
@@ -870,7 +870,7 @@ pub(super) fn reconcile_inventory_locked(
     inner: &mut ShellClientRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
-    auth_group: Option<ShellClientAuthGroup>,
+    auth_group: Option<RunnerAccessGroup>,
     observation_epoch: std::sync::Arc<str>,
     inventory: &ShellJobInventory,
     now: i64,

@@ -1,4 +1,4 @@
-use super::auth::{assert_shell_client_access, shell_client_visible_to_auth, ShellClientAuthGroup};
+use super::auth::{assert_shell_client_access, shell_client_visible_to_auth};
 use super::jobs::{begin_job_recovery, is_final_job_status, mark_job_lost, offline_last_seen};
 use super::project_inventory::{
     expire_staging, pending_inventory_state, preserve_authoritative_pending,
@@ -19,7 +19,6 @@ use super::{
     now_ts, AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet,
     ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
 };
-use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
     ShellClientRegisterRequest, ShellClientView, RUNNER_JOB_CONCURRENCY_MAX,
     RUNNER_JOB_CONCURRENCY_MIN,
@@ -34,6 +33,8 @@ use webcodex_core::coding_agent::{
     CODING_AGENT_MAX_INVENTORY_RUNS, CODING_AGENT_MAX_PROVIDERS,
     CODING_AGENT_MAX_PROVIDER_NAME_BYTES,
 };
+use webcodex_core::mcp_gateway::validate_providers;
+use webcodex_runner_registry::RunnerAccessGroup;
 
 fn validate_coding_agent_registration(
     client_id: &str,
@@ -147,7 +148,7 @@ impl ShellClientRegistry {
     pub(crate) async fn register_with_auth(
         &self,
         body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<ShellClientView, String> {
         self.register_session(body, auth, None).await
     }
@@ -156,7 +157,7 @@ impl ShellClientRegistry {
     pub(crate) async fn register_streaming_session(
         &self,
         body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         connection_id: &str,
         transport: AgentTransport,
         notify: Arc<Notify>,
@@ -180,7 +181,7 @@ impl ShellClientRegistry {
     pub(crate) async fn register_streaming_session_with_cancel(
         &self,
         body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         connection_id: &str,
         transport: AgentTransport,
         notify: Arc<Notify>,
@@ -202,7 +203,7 @@ impl ShellClientRegistry {
     async fn register_streaming_session_with_cancel_sender(
         &self,
         body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         connection_id: &str,
         transport: AgentTransport,
         notify: Arc<Notify>,
@@ -228,7 +229,7 @@ impl ShellClientRegistry {
     async fn register_session(
         &self,
         body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         streaming: Option<StreamingSessionRegistration>,
     ) -> Result<ShellClientView, String> {
         validate_id(&body.client_id, "client_id")?;
@@ -313,7 +314,7 @@ impl ShellClientRegistry {
                 .unwrap_or(AgentTransport::Polling),
             accepted_protocol,
             policy,
-            auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
+            auth_group: auth.and_then(|access| access.group.clone()),
             registered_at: now,
             connected_at: now,
             connection_id: streaming
@@ -359,7 +360,7 @@ impl ShellClientRegistry {
         {
             return Err("agent client identity is unavailable".to_string());
         }
-        if let Some(ShellClientAuthGroup::SharedKey(group)) = record.auth_group.as_ref() {
+        if let Some(RunnerAccessGroup::SharedKey(group)) = record.auth_group.as_ref() {
             let is_new_client = !inner.clients.contains_key(&client_id);
             if is_new_client {
                 let group_count = inner
@@ -368,7 +369,7 @@ impl ShellClientRegistry {
                     .filter(|client| {
                         matches!(
                             client.auth_group.as_ref(),
-                            Some(ShellClientAuthGroup::SharedKey(existing_group))
+                            Some(RunnerAccessGroup::SharedKey(existing_group))
                                 if existing_group == group
                         )
                     })
@@ -383,7 +384,7 @@ impl ShellClientRegistry {
                     .clients
                     .values()
                     .filter(|client| {
-                        matches!(client.auth_group, Some(ShellClientAuthGroup::SharedKey(_)))
+                        matches!(client.auth_group, Some(RunnerAccessGroup::SharedKey(_)))
                     })
                     .count();
                 if global_count >= self.shared_key_limits.global {
@@ -786,7 +787,7 @@ impl ShellClientRegistry {
             .clients
             .iter()
             .filter_map(|(client_id, client)| {
-                if !matches!(client.auth_group, Some(ShellClientAuthGroup::SharedKey(_))) {
+                if !matches!(client.auth_group, Some(RunnerAccessGroup::SharedKey(_))) {
                     return None;
                 }
                 let transport_connected = inner.notifiers.contains_key(client_id);
@@ -1073,7 +1074,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn list_clients_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Vec<ShellClientView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
@@ -1102,7 +1103,7 @@ impl ShellClientRegistry {
         inner.clients.values().any(|client| {
             matches!(
                 client.auth_group.as_ref(),
-                Some(ShellClientAuthGroup::SharedKey(group)) if group == shared_key_hash
+                Some(RunnerAccessGroup::SharedKey(group)) if group == shared_key_hash
             ) && now.saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS
         })
     }
@@ -1124,7 +1125,7 @@ impl ShellClientRegistry {
             .filter(|client| {
                 matches!(
                     client.auth_group.as_ref(),
-                    Some(ShellClientAuthGroup::SharedKey(group)) if group == shared_key_hash
+                    Some(RunnerAccessGroup::SharedKey(group)) if group == shared_key_hash
                 ) && now.saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS
             })
             .map(|client| client.runner_features.clone())
@@ -1133,7 +1134,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn list_client_semantic_views_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Vec<ShellClientSemanticView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
@@ -1160,7 +1161,7 @@ impl ShellClientRegistry {
     /// incomplete and must never support a negative authority conclusion.
     pub(crate) async fn list_bounded_client_semantic_views_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         max_clients: usize,
         max_projects: usize,
     ) -> Option<Vec<ShellClientSemanticView>> {
@@ -1179,7 +1180,7 @@ impl ShellClientRegistry {
     /// inside `f`.
     pub(crate) async fn with_bounded_client_semantic_views_for_auth_locked<R>(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         max_clients: usize,
         max_projects: usize,
         f: impl FnOnce(Option<Vec<ShellClientSemanticView>>) -> R,
@@ -1232,7 +1233,7 @@ impl ShellClientRegistry {
     pub(crate) async fn get_client_view_for_auth(
         &self,
         client_id: &str,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Option<ShellClientView> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
@@ -1259,7 +1260,7 @@ impl ShellClientRegistry {
     pub(crate) async fn get_client_semantic_view_for_auth(
         &self,
         client_id: &str,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Option<ShellClientSemanticView> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
@@ -1273,7 +1274,7 @@ impl ShellClientRegistry {
     pub(crate) async fn get_client_semantic_view_checked_for_auth(
         &self,
         client_id: &str,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<ShellClientSemanticView, String> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
@@ -1288,7 +1289,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn coding_agent_run_for_client_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         client_id: &str,
         run_id: &str,
     ) -> Option<(ShellClientView, CodingAgentRunSnapshot)> {
@@ -1310,7 +1311,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn coding_agent_run_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         run_id: &str,
     ) -> Option<(ShellClientView, CodingAgentRunSnapshot)> {
         let now = now_ts();
@@ -1349,7 +1350,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn assert_client_access(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         client_id: &str,
     ) -> Result<(), String> {
         let mut inner = self.inner.lock().await;
@@ -1363,7 +1364,7 @@ impl ShellClientRegistry {
 
     fn bounded_client_semantic_views_for_auth_locked(
         inner: &ShellClientRegistryInner,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         max_clients: usize,
         max_projects: usize,
     ) -> Option<Vec<ShellClientSemanticView>> {

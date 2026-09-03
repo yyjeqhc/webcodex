@@ -241,7 +241,7 @@ only for local/trusted-network demos."
     // login form to the consent decision. PAT/bootstrap plaintext is never
     // stored here — only the resolved user identity.
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
-    let shell_registry = Arc::new(ShellClientRegistry::default());
+    let shell_registry = Arc::new(shell_client::registry_with_tool_request_trace());
     // Root HTTP admission consults this process-local state before any
     // side-effecting handler can run. It closes the small race between the
     // authoritative drain transition and Salvo consuming its stop command.

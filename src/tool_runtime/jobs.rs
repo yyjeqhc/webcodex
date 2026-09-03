@@ -30,18 +30,6 @@ pub(crate) fn is_terminal_job_status(status: &str) -> bool {
     )
 }
 
-/// Statuses counted as broadly active by runtime observability and bounded
-/// summaries. `stop_requested` remains active for compatibility, but lifecycle
-/// summaries classify it as nonblocking terminal-pending state.
-pub(crate) const ACTIVE_JOB_STATUSES: &[&str] = &[
-    "running",
-    "queued",
-    "started",
-    "agent_queued",
-    "stop_requested",
-    "recovering",
-];
-
 pub(crate) fn detected_job_summary(
     command_summary: Option<&str>,
     purpose: Option<&str>,
@@ -833,7 +821,7 @@ impl ToolRuntime {
         };
         match self
                 .shell_clients
-                .start_job_with_metadata_for_auth(
+                .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id),
@@ -865,7 +853,8 @@ impl ToolRuntime {
                         stdin: None,
                         detached_idempotency_key: None,
                     },
-                    auth,
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    None,
                 )
                 .await
             {
@@ -910,7 +899,14 @@ impl ToolRuntime {
         include_command_preview: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        match self.shell_clients.get_job_for_auth(auth, &job_id).await {
+        match self
+            .shell_clients
+            .get_job_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                &job_id,
+            )
+            .await
+        {
             Ok(job) => {
                 let mut output = json!({
                     "job_id": job.job_id,
@@ -955,7 +951,15 @@ impl ToolRuntime {
                 if tool.is_some() {
                     let logs = self
                         .shell_clients
-                        .job_log_for_auth(auth, &job_id, None, None, Some(500), None, None)
+                        .job_log_for_auth(
+                            crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                            &job_id,
+                            None,
+                            None,
+                            Some(500),
+                            None,
+                            None,
+                        )
                         .await;
                     let (stdout, stderr, truncated) = match logs {
                         Ok((logged_job, stdout, stderr, next_stdout_line, next_stderr_line, _)) => {
@@ -1046,7 +1050,7 @@ impl ToolRuntime {
         match self
             .shell_clients
             .job_log_for_auth(
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 &job_id,
                 offset,
                 None,
@@ -1211,7 +1215,10 @@ impl ToolRuntime {
         // filters only reduce that already-visible set, and limit is applied
         // after every filter so exact project/session targets cannot be hidden
         // behind unrelated recent Jobs.
-        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
+        let agent_jobs = self
+            .shell_clients
+            .list_all_jobs_for_auth(crate::shell_client::runner_access_from_auth(auth).as_ref())
+            .await;
         let mut summaries: Vec<Value> = agent_jobs
             .iter()
             .filter(|job| {
@@ -1268,7 +1275,12 @@ impl ToolRuntime {
         if requested.is_empty() {
             return grouped;
         }
-        for job in self.shell_clients.list_all_jobs_for_auth(auth).await.iter() {
+        for job in self
+            .shell_clients
+            .list_all_jobs_for_auth(crate::shell_client::runner_access_from_auth(auth).as_ref())
+            .await
+            .iter()
+        {
             let Some(session_id) = job.session_id.as_deref() else {
                 continue;
             };
@@ -1361,7 +1373,14 @@ impl ToolRuntime {
             Err(err) => return err.into_tool_result(),
         };
         let request_project = resolved.resolved_id;
-        let job = match self.shell_clients.get_job_for_auth(auth, &job_id).await {
+        let job = match self
+            .shell_clients
+            .get_job_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                &job_id,
+            )
+            .await
+        {
             Ok(job) => job,
             Err(_) => return job_not_found_result(&request_project, &job_id),
         };
@@ -1406,7 +1425,7 @@ impl ToolRuntime {
                 warnings,
             ));
         }
-        if !ACTIVE_JOB_STATUSES.contains(&status_before.as_str()) {
+        if !webcodex_runner_registry::job_status_is_active(&status_before) {
             return ToolResult::ok(stop_job_output(
                 &request_project,
                 &job_id,
@@ -1420,14 +1439,21 @@ impl ToolRuntime {
         }
         let stopped = match self
             .shell_clients
-            .stop_job_for_auth(auth, &job_id, "tool_runtime".to_string())
+            .stop_job_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                &job_id,
+                "tool_runtime".to_string(),
+            )
             .await
         {
             Ok(job) => job,
             Err(error) if error.contains("runner_unavailable_recovering") => {
                 let recovering = self
                     .shell_clients
-                    .get_job_for_auth(auth, &job_id)
+                    .get_job_for_auth(
+                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                        &job_id,
+                    )
                     .await
                     .unwrap_or(job);
                 return job_recovering_stop_result(&request_project, &recovering);
@@ -1456,8 +1482,15 @@ impl ToolRuntime {
     ) -> Value {
         let max = limit.clamp(1, 20);
         let mut active = Vec::new();
-        for job in self.shell_clients.list_jobs_for_auth(auth, Some(100)).await {
-            if !ACTIVE_JOB_STATUSES.contains(&job.status.as_str()) {
+        for job in self
+            .shell_clients
+            .list_jobs_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                Some(100),
+            )
+            .await
+        {
+            if !webcodex_runner_registry::job_status_is_active(&job.status) {
                 continue;
             }
             if let Some(project) = project {

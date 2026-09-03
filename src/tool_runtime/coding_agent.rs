@@ -392,7 +392,10 @@ impl ToolRuntime {
         let client_id = resolved.config.client_id.as_str();
         let client = match self
             .shell_clients
-            .get_client_semantic_view_for_auth(client_id, auth)
+            .get_client_semantic_view_for_auth(
+                client_id,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await
         {
             Some(client) if client.view.connected => client,
@@ -521,7 +524,7 @@ impl ToolRuntime {
                 &prepared.provider_id,
                 &prepared.provider_instance_id,
                 operation,
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 prepared.authority_fingerprint.clone(),
             )
             .await
@@ -744,7 +747,7 @@ impl ToolRuntime {
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 authority.clone(),
             )
             .await
@@ -809,7 +812,10 @@ impl ToolRuntime {
                 }
                 let client = match self
                     .shell_clients
-                    .get_client_view_for_auth(&binding.client_id, auth)
+                    .get_client_view_for_auth(
+                        &binding.client_id,
+                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    )
                     .await
                 {
                     Some(client) if client.agent_instance_id == binding.agent_instance_id => client,
@@ -913,7 +919,7 @@ impl ToolRuntime {
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 authority.clone(),
             )
             .await
@@ -961,7 +967,10 @@ impl ToolRuntime {
                 }
                 if let Some(client) = self
                     .shell_clients
-                    .get_client_view_for_auth(&binding.client_id, auth)
+                    .get_client_view_for_auth(
+                        &binding.client_id,
+                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    )
                     .await
                 {
                     if client.agent_instance_id != binding.agent_instance_id {
@@ -1087,7 +1096,11 @@ impl ToolRuntime {
             // not evidence about this Run and must not force a false retarget/lost.
             if let Some((client, run)) = self
                 .shell_clients
-                .coding_agent_run_for_client_for_auth(auth, &binding.client_id, run_id)
+                .coding_agent_run_for_client_for_auth(
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    &binding.client_id,
+                    run_id,
+                )
                 .await
             {
                 if run.authority_fingerprint != authority {
@@ -1122,7 +1135,10 @@ impl ToolRuntime {
             // executed and P1 must close it `lost` rather than retrying blindly.
             if let Some(current) = self
                 .shell_clients
-                .get_client_view_for_auth(&binding.client_id, auth)
+                .get_client_view_for_auth(
+                    &binding.client_id,
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                )
                 .await
             {
                 let instance_replaced = current.agent_instance_id != binding.agent_instance_id;
@@ -1152,7 +1168,10 @@ impl ToolRuntime {
         // on duplicate run ids instead of choosing by iteration order.
         let Some((client, run)) = self
             .shell_clients
-            .coding_agent_run_for_auth(auth, run_id)
+            .coding_agent_run_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                run_id,
+            )
             .await
         else {
             return Ok(None);
@@ -1172,7 +1191,10 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> Option<String> {
         self.shell_clients
-            .get_client_view_for_auth(client_id, auth)
+            .get_client_view_for_auth(
+                client_id,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await
             .map(|client| client.agent_instance_id)
     }

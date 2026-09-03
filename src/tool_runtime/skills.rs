@@ -157,9 +157,10 @@ impl ToolRuntime {
         optional_if_unsupported: bool,
     ) -> Result<Option<ShellRunResponse>, String> {
         let client_id = project.config.client_id.clone();
+        let access = crate::shell_client::runner_access_from_auth(auth);
         let view = self
             .shell_clients
-            .get_client_semantic_view_checked_for_auth(&client_id, auth)
+            .get_client_semantic_view_checked_for_auth(&client_id, access.as_ref())
             .await
             .map_err(|_| "skill_store_runner_unavailable".to_string())?;
         let management = operation.requires_management_capability();
@@ -185,7 +186,7 @@ impl ToolRuntime {
                 &client_id,
                 &view.view.agent_instance_id,
                 operation,
-                auth,
+                access.as_ref(),
                 "skill_runtime".to_string(),
             )
             .await

@@ -559,7 +559,7 @@ impl ToolRuntime {
         if async_handoff_available {
             let job = self
                 .shell_clients
-                .start_job_with_metadata_for_auth(
+                .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id.clone()),
@@ -583,7 +583,8 @@ impl ToolRuntime {
                         visibility: ShellJobVisibility::HiddenUntilHandoff,
                         ..Default::default()
                     },
-                    auth,
+                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    None,
                 )
                 .await;
             let job = match job {

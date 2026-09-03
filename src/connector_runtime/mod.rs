@@ -294,10 +294,11 @@ impl ConnectorRuntime {
         else {
             return Some(self.observed_readiness(RemoteProbe::ProjectMissing));
         };
+        let access = crate::shell_client::runner_access_from_auth(Some(auth));
         let Some(agent) = self
             .tools
             .shell_clients
-            .get_client_semantic_view_for_auth(client_id, Some(auth))
+            .get_client_semantic_view_for_auth(client_id, access.as_ref())
             .await
         else {
             return Some(self.observed_readiness(RemoteProbe::RunnerOffline));
@@ -2083,6 +2084,7 @@ impl ConnectorRuntime {
         let reservation = match existing {
             Some(existing) => existing,
             None => {
+                let access = crate::shell_client::runner_access_from_auth(Some(auth));
                 let supports_structured_validation = match client_id {
                     Some(client_id) => self
                         .tools
@@ -2090,7 +2092,7 @@ impl ConnectorRuntime {
                         .client_supports_for_auth(
                             client_id,
                             SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-                            Some(auth),
+                            access.as_ref(),
                         )
                         .await
                         .unwrap_or(false),
@@ -2119,7 +2121,7 @@ impl ConnectorRuntime {
                             .client_supports_for_auth(
                                 client_id,
                                 SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-                                Some(auth),
+                                access.as_ref(),
                             )
                             .await
                             .unwrap_or(false),
@@ -3447,10 +3449,11 @@ impl ConnectorRuntime {
         Vec<String>,
     ) {
         use crate::tool_runtime::activity::ActivityVisibility;
+        let access = crate::shell_client::runner_access_from_auth(Some(auth));
         let clients: Vec<String> = self
             .tools
             .shell_clients
-            .list_clients_for_auth(Some(auth))
+            .list_clients_for_auth(access.as_ref())
             .await
             .into_iter()
             .map(|client| client.client_id)

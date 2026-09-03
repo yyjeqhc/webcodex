@@ -117,11 +117,12 @@ async fn handle_agent_ws(
 
     // 2. Commit the complete streaming session in one registry transaction.
     //    Transport identity comes from this handler, not the raw protocol label.
+    let access = crate::shell_client::runner_access_from_auth(auth.as_ref());
     let notify = Arc::new(Notify::new());
     let (view, cancel) = match registry
         .register_streaming_session_with_cancel(
             register_payload,
-            auth.as_ref(),
+            access.as_ref(),
             &connection_id,
             AgentTransport::WebSocket,
             notify.clone(),

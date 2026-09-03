@@ -91,7 +91,7 @@ impl ShellClientRegistry {
         &self,
         client_id: &str,
         capability: &str,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Result<bool, String> {
         self.prune_expired_shared_key_clients().await;
         let inner = self.inner.lock().await;

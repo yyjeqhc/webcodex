@@ -15,6 +15,7 @@ pub mod project_instructions;
 pub mod project_listing;
 pub mod runtime_contract;
 pub mod sensitive_paths;
+pub mod sensitive_text;
 pub mod shell_protocol;
 pub mod skill_metadata;
 pub mod skill_store;

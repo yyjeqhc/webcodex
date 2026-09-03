@@ -1,0 +1,9 @@
+[package]
+name = "webcodex-runner-registry"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+webcodex-core = { path = "../webcodex-core" }
+

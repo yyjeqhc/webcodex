@@ -301,7 +301,11 @@ impl ToolRuntime {
         };
         let (request_id, rx) = self
             .shell_clients
-            .enqueue_artifact_export_metadata(request, "mcp_artifact_export".to_string(), auth)
+            .enqueue_artifact_export_metadata(
+                request,
+                "mcp_artifact_export".to_string(),
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,
@@ -401,7 +405,11 @@ impl ToolRuntime {
         };
         let (request_id, rx) = self
             .shell_clients
-            .enqueue_artifact_export_chunk(request, "mcp_artifact_export".to_string(), auth)
+            .enqueue_artifact_export_chunk(
+                request,
+                "mcp_artifact_export".to_string(),
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,

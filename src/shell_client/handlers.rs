@@ -1,6 +1,6 @@
 use super::{
     effective_register_owner, enforce_agent_transport, enforce_register_owner, get_registry,
-    require_agent_transport_scope,
+    require_agent_transport_scope, runner_access_from_auth,
 };
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
@@ -59,7 +59,8 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
     // own username; bootstrap keeps the request body owner.
     let mut body = body;
     body.owner = effective_register_owner(auth.as_ref(), body.owner.as_deref());
-    match registry.register_with_auth(body, auth.as_ref()).await {
+    let access = runner_access_from_auth(auth.as_ref());
+    match registry.register_with_auth(body, access.as_ref()).await {
         Ok(client) => res.render(Json(ShellClientRegisterResponse {
             success: true,
             client: Some(client),
@@ -122,8 +123,9 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
         }));
         return;
     }
+    let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(auth.as_ref(), &body.request.client_id)
+        .assert_client_access(access.as_ref(), &body.request.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -212,8 +214,9 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         }));
         return;
     }
+    let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(auth.as_ref(), &body.result.client_id)
+        .assert_client_access(access.as_ref(), &body.result.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -282,8 +285,9 @@ pub async fn shell_agent_persistent_shell_result(
         }));
         return;
     }
+    let access = runner_access_from_auth(auth.as_ref());
     if let Err(error) = registry
-        .assert_client_access(auth.as_ref(), &body.client_id)
+        .assert_client_access(access.as_ref(), &body.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -352,8 +356,9 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
         }));
         return;
     }
+    let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(auth.as_ref(), &body.client_id)
+        .assert_client_access(access.as_ref(), &body.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);

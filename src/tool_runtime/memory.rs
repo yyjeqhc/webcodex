@@ -557,7 +557,7 @@ impl ToolRuntime {
         let views = self
             .shell_clients
             .list_bounded_client_semantic_views_for_auth(
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 MAX_MEMORY_SCOPE_INVENTORY_CLIENTS,
                 MAX_MEMORIES_GLOBAL,
             )
@@ -660,7 +660,7 @@ impl ToolRuntime {
 
         self.shell_clients
             .with_bounded_client_semantic_views_for_auth_locked(
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 MAX_MEMORY_SCOPE_INVENTORY_CLIENTS,
                 MAX_MEMORIES_GLOBAL,
                 |views| {

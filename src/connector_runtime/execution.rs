@@ -446,9 +446,10 @@ impl ExecutionService {
         auth: &AuthContext,
     ) -> Option<Value> {
         let job_id = execution.executor_reference.as_deref()?;
+        let access = crate::shell_client::runner_access_from_auth(Some(auth));
         self.tools
             .shell_clients
-            .job_log_for_auth(Some(auth), job_id, None, None, Some(200), None, None)
+            .job_log_for_auth(access.as_ref(), job_id, None, None, Some(200), None, None)
             .await
             .ok()
             .map(|(_, stdout, stderr, _, _, _)| {

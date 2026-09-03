@@ -311,13 +311,14 @@ async fn handle_quic_connection(
     }
 
     // 4. Commit the complete QUIC session in one registry transaction. The
-    //    transport credential is already gone; only AuthContext and the
-    //    registration payload enter shared session state.
+    //    transport credential is already gone; only its non-secret registry
+    //    access projection and the registration payload enter shared state.
+    let access = crate::shell_client::runner_access_from_auth(Some(&auth));
     let notify = Arc::new(Notify::new());
     let (view, cancel) = match registry
         .register_streaming_session_with_cancel(
             register_payload,
-            Some(&auth),
+            access.as_ref(),
             &connection_id,
             AgentTransport::Quic,
             notify.clone(),

@@ -8,6 +8,7 @@ members = [
     "crates/webcodex-persistent-shell",
     "crates/webcodex-process",
     "crates/webcodex-runner",
+    "crates/webcodex-runner-registry",
     "crates/webcodex-store",
     "crates/webcodex-workspace",
     "crates/webcodex-workflow-session",
@@ -33,6 +34,7 @@ path = "src/bin/webcodex-server.rs"
 [dependencies]
 webcodex-admin = { path = "crates/webcodex-admin" }
 webcodex-runner-config = { path = "crates/webcodex-runner-config" }
+webcodex-runner-registry = { path = "crates/webcodex-runner-registry" }
 webcodex-core = { path = "crates/webcodex-core" }
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts" }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session" }

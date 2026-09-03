@@ -167,6 +167,7 @@ impl ExecutionService {
         execution_id: &str,
         auth: &AuthContext,
     ) -> Result<ConnectorExecution, (&'static str, String)> {
+        let access = crate::shell_client::runner_access_from_auth(Some(auth));
         let execution = self
             .db
             .connector_execution(execution_id)
@@ -181,7 +182,7 @@ impl ExecutionService {
             .tools
             .shell_clients
             .job_log_for_auth(
-                Some(auth),
+                access.as_ref(),
                 job_id,
                 Some(execution.stdout_cursor),
                 Some(execution.stderr_cursor),
@@ -227,7 +228,7 @@ impl ExecutionService {
             let (_, full_stdout, full_stderr, _, _, _) = self
                 .tools
                 .shell_clients
-                .job_log_for_auth(Some(auth), job_id, None, None, None, None, None)
+                .job_log_for_auth(access.as_ref(), job_id, None, None, None, None, None)
                 .await
                 .unwrap_or_else(|_| (job.clone(), None, None, 1, 1, Default::default()));
             failed_check.map(|check| {

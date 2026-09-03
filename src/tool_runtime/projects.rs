@@ -155,9 +155,10 @@ impl ToolRuntime {
             Ok(validated) => validated,
             Err(result) => return result,
         };
+        let access = crate::shell_client::runner_access_from_auth(auth);
         let clients = self
             .shell_clients
-            .list_client_semantic_views_for_auth(auth)
+            .list_client_semantic_views_for_auth(access.as_ref())
             .await;
         self.list_projects_from_semantic_clients(auth, &options, query.as_deref(), limit, &clients)
             .await
@@ -197,6 +198,7 @@ impl ToolRuntime {
         limit: Option<usize>,
         clients: &[ShellClientSemanticView],
     ) -> ToolResult {
+        let access = crate::shell_client::runner_access_from_auth(auth);
         let mut candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
         if let Some(limit) = limit {
@@ -247,7 +249,7 @@ impl ToolRuntime {
             };
             let active_jobs = self
                 .shell_clients
-                .count_active_jobs_for_project(auth, &runtime_id)
+                .count_active_jobs_for_project(access.as_ref(), &runtime_id)
                 .await;
             let value = if options.summary_only {
                 json!({
@@ -425,6 +427,7 @@ impl ToolRuntime {
         path: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let access = crate::shell_client::runner_access_from_auth(auth);
         if let Err(error) = validate_project_op_path(&path) {
             return ToolResult::err_with_output(
                 error,
@@ -438,12 +441,12 @@ impl ToolRuntime {
         }
         if let Some(client) = self
             .shell_clients
-            .get_client_semantic_view_for_auth(&client_id, auth)
+            .get_client_semantic_view_for_auth(&client_id, access.as_ref())
             .await
         {
             if let Err(error) = self
                 .shell_clients
-                .assert_client_access(auth, &client_id)
+                .assert_client_access(access.as_ref(), &client_id)
                 .await
             {
                 return ToolResult::err(error);
@@ -535,10 +538,11 @@ impl ToolRuntime {
         payload: Value,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let access = crate::shell_client::runner_access_from_auth(auth);
         // -- owner boundary + client existence --------------------------------
         let Some(client_view) = self
             .shell_clients
-            .get_client_view_for_auth(&client_id, auth)
+            .get_client_view_for_auth(&client_id, access.as_ref())
             .await
         else {
             return ToolResult::err(format!(
@@ -549,7 +553,7 @@ impl ToolRuntime {
         let expected_agent_instance_id = client_view.agent_instance_id.clone();
         if let Err(e) = self
             .shell_clients
-            .assert_client_access(auth, &client_id)
+            .assert_client_access(access.as_ref(), &client_id)
             .await
         {
             return ToolResult::err(e);

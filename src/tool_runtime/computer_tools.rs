@@ -830,7 +830,7 @@ impl ToolRuntime {
                 &target_agent_project_id,
                 &target_cwd,
                 requested_by,
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
             )
             .await
         {
@@ -996,7 +996,9 @@ impl ToolRuntime {
     async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {
         let clients = self
             .shell_clients
-            .list_client_semantic_views_for_auth(auth)
+            .list_client_semantic_views_for_auth(
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await;
         let mut total_count = 0usize;
         let mut targets = Vec::new();
@@ -1150,7 +1152,10 @@ impl ToolRuntime {
         };
         let client = match self
             .shell_clients
-            .get_client_semantic_view_checked_for_auth(client_id, auth)
+            .get_client_semantic_view_checked_for_auth(
+                client_id,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            )
             .await
         {
             Ok(client) => client,
@@ -1271,7 +1276,7 @@ impl ToolRuntime {
                 kind,
                 payload,
                 requested_by,
-                auth,
+                crate::shell_client::runner_access_from_auth(auth).as_ref(),
                 COMPUTER_WAIT_SECS,
             )
             .await

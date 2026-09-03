@@ -1,26 +1,61 @@
 use super::state::{ShellClientRecord, ShellClientRegistryInner, ShellJobRecord};
+use webcodex_runner_registry::{DetachedInitiatorIdentity, RunnerAccess, RunnerAccessGroup};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ShellClientAuthGroup {
-    SharedKey(String),
-    ProjectGrant(String),
-    OpenAnonymous,
+pub(crate) fn runner_access_from_auth(
+    auth: Option<&crate::auth::AuthContext>,
+) -> Option<RunnerAccess> {
+    auth.map(|auth| RunnerAccess {
+        admin: auth.is_admin(),
+        username: auth.username.clone(),
+        group: match auth.kind {
+            crate::auth::AuthKind::ProjectCredential | crate::auth::AuthKind::AgentToken => auth
+                .project_grant_id
+                .clone()
+                .map(RunnerAccessGroup::ProjectGrant),
+            crate::auth::AuthKind::SharedKey => auth
+                .shared_key_hash
+                .clone()
+                .map(RunnerAccessGroup::SharedKey),
+            crate::auth::AuthKind::OAuth2Token if auth.is_oauth_shared_key_subject() => auth
+                .shared_key_hash
+                .clone()
+                .map(RunnerAccessGroup::SharedKey),
+            crate::auth::AuthKind::OpenAnonymous => Some(RunnerAccessGroup::OpenAnonymous),
+            _ => None,
+        },
+    })
 }
 
-impl ShellClientAuthGroup {
-    pub(crate) fn from_auth(auth: &crate::auth::AuthContext) -> Option<Self> {
-        match auth.kind {
-            crate::auth::AuthKind::ProjectCredential | crate::auth::AuthKind::AgentToken => {
-                auth.project_grant_id.clone().map(Self::ProjectGrant)
-            }
-            crate::auth::AuthKind::SharedKey => auth.shared_key_hash.clone().map(Self::SharedKey),
-            crate::auth::AuthKind::OAuth2Token if auth.is_oauth_shared_key_subject() => {
-                auth.shared_key_hash.clone().map(Self::SharedKey)
-            }
-            crate::auth::AuthKind::OpenAnonymous => Some(Self::OpenAnonymous),
-            _ => None,
-        }
+pub(crate) fn detached_initiator_identity_from_auth(
+    auth: Option<&crate::auth::AuthContext>,
+) -> Result<DetachedInitiatorIdentity, String> {
+    let Some(auth) = auth else {
+        return Ok(DetachedInitiatorIdentity::internal());
+    };
+    if auth.is_bootstrap() {
+        return Ok(DetachedInitiatorIdentity::from_stable_principal(
+            "bootstrap".to_string(),
+        ));
     }
+    if auth.is_oauth_token() && !auth.is_oauth_shared_key_subject() {
+        let user_id = auth.user_id.as_deref().ok_or_else(|| {
+            "detached idempotency requires a stable OAuth user identity".to_string()
+        })?;
+        let client_id = auth
+            .allowed_client_id
+            .as_deref()
+            .unwrap_or("unknown-client");
+        return Ok(DetachedInitiatorIdentity::from_stable_principal(format!(
+            "oauth2:{user_id}:{client_id}"
+        )));
+    }
+    if let Some(api_key_id) = auth.api_key_id.as_deref() {
+        return Ok(DetachedInitiatorIdentity::from_stable_principal(format!(
+            "{}:{api_key_id}",
+            auth.principal_kind()
+        )));
+    }
+    Err("detached idempotency requires a stable authenticated caller identity".to_string())
 }
 
 pub(crate) fn requested_by_from_auth(auth: Option<&crate::auth::AuthContext>) -> String {
@@ -34,18 +69,18 @@ pub(crate) fn requested_by_from_auth(auth: Option<&crate::auth::AuthContext>) ->
 }
 
 pub(crate) fn assert_shell_client_owner(
-    auth: Option<&crate::auth::AuthContext>,
+    access: Option<&RunnerAccess>,
     client_id: &str,
     owner: Option<&str>,
 ) -> Result<(), String> {
-    if auth.map(|auth| auth.is_bootstrap).unwrap_or(false) {
+    if access.map(|access| access.admin).unwrap_or(false) {
         return Ok(());
     }
     let owner = owner
         .filter(|owner| !owner.trim().is_empty())
         .ok_or_else(|| format!("agent client {} has no owner", client_id))?;
-    let username = auth
-        .and_then(|auth| auth.username.as_deref())
+    let username = access
+        .and_then(|access| access.username.as_deref())
         .filter(|username| !username.trim().is_empty());
     if username == Some(owner) {
         return Ok(());
@@ -58,26 +93,28 @@ pub(crate) fn assert_shell_client_owner(
 }
 
 fn lightweight_group_matches(
-    auth: Option<&crate::auth::AuthContext>,
-    group: Option<&ShellClientAuthGroup>,
+    access: Option<&RunnerAccess>,
+    group: Option<&RunnerAccessGroup>,
 ) -> bool {
     match group {
-        Some(group) => auth.and_then(ShellClientAuthGroup::from_auth).as_ref() == Some(group),
-        None => auth.and_then(ShellClientAuthGroup::from_auth).is_none(),
+        Some(group) => access.and_then(|access| access.group.as_ref()) == Some(group),
+        None => access.and_then(|access| access.group.as_ref()).is_none(),
     }
 }
 
 pub(super) fn shell_client_visible_to_auth(
-    auth: Option<&crate::auth::AuthContext>,
+    access: Option<&RunnerAccess>,
     client: &ShellClientRecord,
 ) -> bool {
-    match auth {
+    match access {
         None => true,
-        Some(auth) if auth.is_admin() => true,
-        Some(auth) if !lightweight_group_matches(Some(auth), client.auth_group.as_ref()) => false,
+        Some(access) if access.admin => true,
+        Some(access) if !lightweight_group_matches(Some(access), client.auth_group.as_ref()) => {
+            false
+        }
         Some(_) if client.auth_group.is_some() => true,
-        Some(auth) => {
-            let username = auth
+        Some(access) => {
+            let username = access
                 .username
                 .as_deref()
                 .filter(|username| !username.trim().is_empty());
@@ -91,36 +128,36 @@ pub(super) fn shell_client_visible_to_auth(
 }
 
 pub(super) fn assert_shell_client_access(
-    auth: Option<&crate::auth::AuthContext>,
+    access: Option<&RunnerAccess>,
     client: &ShellClientRecord,
 ) -> Result<(), String> {
-    if !shell_client_visible_to_auth(auth, client) {
+    if !shell_client_visible_to_auth(access, client) {
         return Err(format!("unknown shell client: {}", client.client_id));
     }
     if client.auth_group.is_some() {
         return Ok(());
     }
-    assert_shell_client_owner(auth, &client.client_id, client.owner.as_deref())
+    assert_shell_client_owner(access, &client.client_id, client.owner.as_deref())
 }
 
 pub(super) fn shell_job_visible_to_auth(
-    auth: Option<&crate::auth::AuthContext>,
+    access: Option<&RunnerAccess>,
     inner: &ShellClientRegistryInner,
     job: &ShellJobRecord,
 ) -> bool {
-    let Some(auth) = auth else {
+    let Some(access) = access else {
         return true;
     };
-    if auth.is_admin() {
+    if access.admin {
         return true;
     }
     if let Some(group) = job.auth_group.as_ref() {
-        return lightweight_group_matches(Some(auth), Some(group));
+        return lightweight_group_matches(Some(access), Some(group));
     }
     inner
         .clients
         .get(&job.client_id)
-        .map(|client| assert_shell_client_access(Some(auth), client).is_ok())
+        .map(|client| assert_shell_client_access(Some(access), client).is_ok())
         .unwrap_or(false)
 }
 
@@ -162,7 +199,7 @@ pub(crate) fn enforce_register_owner(
         return Ok(());
     }
     // Direct shared-key runners are authorized exclusively by the non-secret
-    // hash captured in `ShellClientAuthGroup`. The request owner is
+    // hash captured in `RunnerAccessGroup`. The request owner is
     // intentionally ignored so it cannot become an authorization input.
     if auth.is_shared_key() {
         return Ok(());
@@ -225,7 +262,7 @@ pub(crate) fn effective_register_owner(
 /// Enforce the agent transport boundary for poll/result/job_update endpoints.
 /// These endpoints accept bootstrap, direct shared keys, or agent tokens. An
 /// agent token must be bound to the request's `client_id`; shared keys are
-/// subsequently bound by the registry's `ShellClientAuthGroup` check.
+/// subsequently bound by the registry's `RunnerAccessGroup` check.
 ///
 /// This complements [`enforce_register_owner`] which handles the register
 /// endpoint. Poll/result/job_update do not carry an owner field; the registry

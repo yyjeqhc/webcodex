@@ -46,7 +46,7 @@ impl From<PendingRequestEnqueueError> for String {
 
 pub(crate) fn command_preview(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or_default().trim();
-    if crate::action_audit_sessions::secret_like_value(first_line) {
+    if webcodex_core::sensitive_text::secret_like_value(first_line) {
         "[redacted]".to_string()
     } else if first_line.chars().count() <= COMMAND_PREVIEW_MAX_CHARS {
         first_line.to_string()
@@ -122,7 +122,7 @@ pub(crate) fn process_preview<'a>(
             break;
         }
     }
-    if crate::action_audit_sessions::secret_like_value(&summary) {
+    if webcodex_core::sensitive_text::secret_like_value(&summary) {
         return "[redacted]".to_string();
     }
     if truncated {

@@ -29,6 +29,7 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use uuid::Uuid;
+use webcodex_runner_registry::DetachedInitiatorIdentity;
 
 #[derive(Clone, Copy)]
 struct ValidationProtocolError(&'static str);
@@ -502,40 +503,14 @@ fn validate_detached_idempotency_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn detached_idempotency_principal(
-    auth: Option<&crate::auth::AuthContext>,
-) -> Result<String, String> {
-    let Some(auth) = auth else {
-        return Ok("internal".to_string());
-    };
-    if auth.is_bootstrap() {
-        return Ok("bootstrap".to_string());
-    }
-    if auth.is_oauth_token() && !auth.is_oauth_shared_key_subject() {
-        let user_id = auth.user_id.as_deref().ok_or_else(|| {
-            "detached idempotency requires a stable OAuth user identity".to_string()
-        })?;
-        let client_id = auth
-            .allowed_client_id
-            .as_deref()
-            .unwrap_or("unknown-client");
-        return Ok(format!("oauth2:{user_id}:{client_id}"));
-    }
-    if let Some(api_key_id) = auth.api_key_id.as_deref() {
-        return Ok(format!("{}:{api_key_id}", auth.principal_kind()));
-    }
-    Err("detached idempotency requires a stable authenticated caller identity".to_string())
-}
-
 fn detached_job_id_for_key(
-    auth: Option<&crate::auth::AuthContext>,
+    initiator: &DetachedInitiatorIdentity,
     key: &str,
 ) -> Result<String, String> {
     validate_detached_idempotency_key(key)?;
-    let principal = detached_idempotency_principal(auth)?;
     let mut hasher = Sha256::new();
     hasher.update(b"webcodex-detached-initiation-v1\0");
-    hasher.update(principal.as_bytes());
+    hasher.update(initiator.as_stable_principal().as_bytes());
     hasher.update(b"\0");
     hasher.update(key.as_bytes());
     Ok(format!("detached_{:x}", hasher.finalize()))
@@ -557,16 +532,27 @@ impl ShellClientRegistry {
         requested_by: String,
         metadata: ShellJobStartMetadata,
     ) -> Result<ShellJobInfo, String> {
-        self.start_job_with_metadata_for_auth(body, requested_by, metadata, None)
-            .await
+        let detached_initiator = metadata
+            .detached_idempotency_key
+            .as_ref()
+            .map(|_| DetachedInitiatorIdentity::internal());
+        self.start_job_with_metadata_for_access(
+            body,
+            requested_by,
+            metadata,
+            None,
+            detached_initiator.as_ref(),
+        )
+        .await
     }
 
-    pub(crate) async fn start_job_with_metadata_for_auth(
+    pub(crate) async fn start_job_with_metadata_for_access(
         &self,
         body: ShellJobOpRequest,
         requested_by: String,
         metadata: ShellJobStartMetadata,
-        auth: Option<&crate::auth::AuthContext>,
+        access: Option<&webcodex_runner_registry::RunnerAccess>,
+        detached_initiator: Option<&DetachedInitiatorIdentity>,
     ) -> Result<ShellJobInfo, String> {
         let client_id = body
             .client_id
@@ -804,7 +790,13 @@ impl ShellClientRegistry {
             None
         };
         let job_id = match detached_idempotency_key {
-            Some(key) => detached_job_id_for_key(auth, key)?,
+            Some(key) => detached_job_id_for_key(
+                detached_initiator.ok_or_else(|| {
+                    "detached idempotency requires a stable authenticated caller identity"
+                        .to_string()
+                })?,
+                key,
+            )?,
             None => Uuid::new_v4().to_string(),
         };
         let validation_step_names = validation_steps
@@ -856,8 +848,8 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if auth.is_some() {
-            assert_shell_client_access(auth, client)?;
+        if access.is_some() {
+            assert_shell_client_access(access, client)?;
         }
         if !(client.runner_features.supports(RunnerFeature::AsyncJobs)
             || client
@@ -991,6 +983,7 @@ impl ShellClientRegistry {
             }
         }
         enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
             &mut inner,
             &client_id,
             request_id.clone(),
@@ -1092,7 +1085,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn get_hidden_job_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
@@ -1110,7 +1103,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn hidden_job_log_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
         tail_lines: Option<usize>,
     ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
@@ -1142,7 +1135,7 @@ impl ShellClientRegistry {
     pub(crate) fn record_hidden_cleanup_intent(
         &self,
         job_id: String,
-        auth: Option<crate::auth::AuthContext>,
+        auth: Option<webcodex_runner_registry::RunnerAccess>,
     ) {
         self.cleanup_intents
             .lock()
@@ -1188,7 +1181,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn cancel_hidden_job_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
     ) -> Result<bool, String> {
         validate_id(job_id, "job_id")?;
@@ -1256,6 +1249,7 @@ impl ShellClientRegistry {
                 persistent_shell: None,
             };
             enqueue_pending_request_locked(
+                self.telemetry.as_ref(),
                 &mut inner,
                 &job.client_id,
                 stop_request_id,
@@ -1362,7 +1356,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn get_job_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
@@ -1385,7 +1379,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn list_jobs_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         limit: Option<usize>,
     ) -> Vec<ShellJobInfo> {
         self.visible_job_records_for_auth(auth)
@@ -1403,7 +1397,7 @@ impl ShellClientRegistry {
     /// to `list_jobs_for_auth`.
     pub(crate) async fn list_all_jobs_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Vec<ShellJobInfo> {
         self.visible_job_records_for_auth(auth)
             .await
@@ -1414,7 +1408,7 @@ impl ShellClientRegistry {
 
     async fn visible_job_records_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
     ) -> Vec<ShellJobRecord> {
         let mut inner = self.inner.lock().await;
         let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
@@ -1437,7 +1431,7 @@ impl ShellClientRegistry {
     /// runtime project id and are intentionally excluded.
     pub(crate) async fn count_active_jobs_for_project(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         runtime_project_id: &str,
     ) -> usize {
         let mut inner = self.inner.lock().await;
@@ -1451,7 +1445,7 @@ impl ShellClientRegistry {
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| crate::tool_runtime::ACTIVE_JOB_STATUSES.contains(&job.status.as_str()))
+            .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
             .count()
     }
 
@@ -1459,7 +1453,7 @@ impl ShellClientRegistry {
     /// a runtime project. The fence remains until `end_project_unregister`.
     pub(crate) async fn begin_project_unregister(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         runtime_project_id: &str,
     ) -> Result<usize, String> {
         let mut inner = self.inner.lock().await;
@@ -1472,7 +1466,7 @@ impl ShellClientRegistry {
             .values()
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| crate::tool_runtime::ACTIVE_JOB_STATUSES.contains(&job.status.as_str()))
+            .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
             .count();
         if active == 0 {
             *inner
@@ -1551,7 +1545,7 @@ impl ShellClientRegistry {
     /// opaque observation token to change or for the job to become terminal.
     pub(crate) async fn job_log_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
         since_stdout_line: Option<usize>,
         since_stderr_line: Option<usize>,
@@ -1723,7 +1717,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn stop_job_for_auth(
         &self,
-        auth: Option<&crate::auth::AuthContext>,
+        auth: Option<&webcodex_runner_registry::RunnerAccess>,
         job_id: &str,
         requested_by: String,
     ) -> Result<ShellJobInfo, String> {
@@ -1788,6 +1782,7 @@ impl ShellClientRegistry {
                     persistent_shell: None,
                 };
                 enqueue_pending_request_locked(
+                    self.telemetry.as_ref(),
                     &mut inner,
                     &client_id,
                     stop_request_id,
@@ -1985,7 +1980,7 @@ impl ShellClientRegistry {
                         .to_string(),
                 );
             }
-            crate::tool_request_trace::capture_runner_job_update(
+            self.telemetry.runner_job_update_accepted(
                 body.request_id.as_deref(),
                 &body.job_id,
                 &body,
@@ -2092,10 +2087,8 @@ impl ShellClientRegistry {
             inner.jobs_by_id.remove(&body.job_id);
         }
         if is_final_job_status(&view.status) {
-            crate::tool_request_trace::finalize_runner_job_correlation(
-                body.request_id.as_deref(),
-                &body.job_id,
-            );
+            self.telemetry
+                .runner_job_finalized(body.request_id.as_deref(), &body.job_id);
         }
         Ok(view)
     }

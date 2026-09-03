@@ -207,29 +207,7 @@ pub fn secret_like_key(key: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-const WEBCODEX_SECRET_PREFIXES: &[&str] = &[
-    "wc_pat_",
-    "wc_agent_",
-    "wc_acct_",
-    "wc_oat_",
-    "wc_ort_",
-    "wc_csec_",
-    "wc_pair_",
-    "wc_boot_",
-];
-
-pub fn secret_like_value(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("-----begin")
-        || lower.contains("bearer ")
-        || lower.contains("api_key")
-        || lower.contains("token=")
-        || lower.contains("id_rsa")
-        || lower.contains("id_ed25519")
-        || WEBCODEX_SECRET_PREFIXES
-            .iter()
-            .any(|prefix| lower.contains(prefix))
-}
+pub use webcodex_core::sensitive_text::secret_like_value;
 
 pub fn summarize_command_text(kind: &str, text: &str) -> Value {
     let mut hasher = Sha256::new();
@@ -560,6 +538,7 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use webcodex_core::sensitive_text::WEBCODEX_SECRET_PREFIXES;
 
     #[test]
     fn audit_sanitize_value_redacts_webcodex_token_prefixes_in_strings() {

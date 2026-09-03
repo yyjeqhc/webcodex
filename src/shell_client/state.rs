@@ -1,4 +1,3 @@
-use super::auth::ShellClientAuthGroup;
 use super::{AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet};
 use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
@@ -15,6 +14,7 @@ use tokio::sync::{oneshot, watch, Notify};
 use webcodex_core::coding_agent::{
     CodingAgentProvider, CodingAgentResponse, CodingAgentRunInventory,
 };
+use webcodex_runner_registry::RunnerAccessGroup;
 
 #[derive(Debug, Clone)]
 pub(super) struct ProjectInventoryStaging {
@@ -74,7 +74,7 @@ pub(super) struct ShellClientRecord {
     pub(super) policy: Option<AgentPolicySummary>,
     /// Lightweight quick-start isolation group captured at registration. This
     /// is intentionally not exposed in `ShellClientView`.
-    pub(super) auth_group: Option<ShellClientAuthGroup>,
+    pub(super) auth_group: Option<RunnerAccessGroup>,
     /// When the current agent instance first registered under this client_id.
     /// Preserved across same-instance re-registrations (transport reconnects).
     pub(super) registered_at: i64,
@@ -270,7 +270,7 @@ pub(super) struct ShellJobRecord {
     /// Shared-key runners store only the existing key hash group, never the
     /// plaintext key. Keeping this on the Job preserves authorization after
     /// the originating client registration is removed.
-    pub(super) auth_group: Option<ShellClientAuthGroup>,
+    pub(super) auth_group: Option<RunnerAccessGroup>,
     /// Internal lease owner. Never exposed through public job tools.
     pub(super) agent_instance_id: String,
     pub(super) kind: String,

@@ -38,15 +38,15 @@ mod reconciliation;
 mod reconciliation_tests;
 mod requests;
 mod state;
+mod telemetry;
 mod validation;
 
 #[cfg(test)]
 pub(crate) use auth::assert_shell_client_owner;
-#[cfg(test)]
-pub(crate) use auth::ShellClientAuthGroup;
 pub(crate) use auth::{
-    effective_register_owner, enforce_agent_transport, enforce_register_owner,
-    requested_by_from_auth, require_agent_transport_scope,
+    detached_initiator_identity_from_auth, effective_register_owner, enforce_agent_transport,
+    enforce_register_owner, requested_by_from_auth, require_agent_transport_scope,
+    runner_access_from_auth,
 };
 #[cfg(test)]
 pub(crate) use capabilities::RunnerFeatureInference;
@@ -68,6 +68,7 @@ pub(crate) use reconciliation::recovery_timeout_sweep;
 pub(crate) use requests::EnqueueLspError;
 use state::ShellClientRegistryInner;
 pub(crate) use state::{ShellClientSemanticView, ShellJobVisibility};
+pub(crate) use telemetry::registry_with_tool_request_trace;
 use validation::sha256_hex;
 #[cfg(test)]
 use validation::{validate_file_request, validate_run_request, MAX_RUN_STDIN_BYTES};
@@ -191,19 +192,34 @@ pub struct ShellClientRegistry {
     inner: Arc<Mutex<ShellClientRegistryInner>>,
     observation_epoch: Arc<str>,
     shared_key_limits: SharedKeyRegistrationLimits,
+    telemetry: Arc<dyn webcodex_runner_registry::RunnerRegistryTelemetry>,
     /// Cancellation intents recorded synchronously by Drop guards before any
     /// asynchronous stop delivery. The periodic registry lifecycle drains this
     /// map, so cleanup does not depend on one detached task getting polled.
-    cleanup_intents:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, Option<crate::auth::AuthContext>>>>,
+    cleanup_intents: Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, Option<webcodex_runner_registry::RunnerAccess>>,
+        >,
+    >,
 }
 
 impl Default for ShellClientRegistry {
     fn default() -> Self {
+        Self::with_telemetry(Arc::new(
+            webcodex_runner_registry::NoopRunnerRegistryTelemetry,
+        ))
+    }
+}
+
+impl ShellClientRegistry {
+    pub fn with_telemetry(
+        telemetry: Arc<dyn webcodex_runner_registry::RunnerRegistryTelemetry>,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ShellClientRegistryInner::default())),
             observation_epoch: Arc::from(crate::job_observation::new_epoch()),
             shared_key_limits: SharedKeyRegistrationLimits::default(),
+            telemetry,
             cleanup_intents: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -246,8 +262,9 @@ async fn assert_registry_client_owner(
             format!("unknown shell client: {}", client_id),
         ));
     }
+    let access = runner_access_from_auth(auth);
     registry
-        .assert_client_access(auth, client_id)
+        .assert_client_access(access.as_ref(), client_id)
         .await
         .map_err(|e| {
             let status = if e.contains("unknown shell client") {
@@ -995,13 +1012,14 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         "list" => {
             let limit = body.limit.unwrap_or(20).clamp(1, 100);
             let mut jobs = Vec::new();
+            let access = runner_access_from_auth(auth.as_ref());
             for job in registry.list_jobs(Some(100)).await {
                 if auth.as_ref().map(|auth| auth.is_admin()).unwrap_or(false) {
                     jobs.push(job);
                     continue;
                 }
                 if registry
-                    .assert_client_access(auth.as_ref(), &job.client_id)
+                    .assert_client_access(access.as_ref(), &job.client_id)
                     .await
                     .is_ok()
                 {

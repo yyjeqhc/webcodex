@@ -1,6 +1,6 @@
 //! Server-side WebSocket Runner transport.
 //!
-//! This module implements the WebSocket endpoint that lets an agent stay
+//! This module implements the WebSocket endpoint that lets a Runner stay
 //! connected over a long-lived connection instead of polling. It is
 //! intentionally thin: every business operation (register, request routing,
 //! result recording, job updates) is delegated to the existing
@@ -10,9 +10,9 @@
 //! Request delivery model: after a successful register the server spawns a
 //! "request pump" task. The pump pops pending requests from the registry
 //! queue (the very same queue the polling endpoint serves) and pushes them to
-//! the agent as `Request` envelopes. When the queue is empty, the pump waits
+//! the Runner as `Request` envelopes. When the queue is empty, the pump waits
 //! on a [`Notify`] that the registry fires whenever a new request is
-//! enqueued. This means WebSocket and polling agents share one queue and one
+//! enqueued. This means WebSocket and polling Runners share one queue and one
 //! job state; there is no second business-logic path.
 //!
 //! Polling remains a fully supported fallback transport.
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 
-/// Maximum WebSocket text message size. Agent requests/results carry shell
+/// Maximum WebSocket text message size. Runner requests/results carry shell
 /// output which can be sizeable; 8 MiB matches the registry output cap head
 /// room while still bounding memory.
 const WS_MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
@@ -63,7 +63,7 @@ pub async fn runner_ws(req: &mut Request, depot: &mut Depot, res: &mut Response)
     }
 }
 
-/// Drive a single Runner WebSocket connection to completion (until the agent
+/// Drive a single Runner WebSocket connection to completion (until the Runner
 /// disconnects or a fatal protocol error occurs).
 async fn handle_runner_ws(
     mut ws: WebSocket,
@@ -475,7 +475,7 @@ mod tests {
         RunnerEnvelope::from_slice(text.as_bytes()).expect("valid envelope")
     }
 
-    /// Build a salvo router serving only the agent ws endpoint backed by a
+    /// Build a salvo router serving only the Runner WebSocket endpoint backed by a
     /// fresh registry. No auth middleware: the integration test exercises the
     /// protocol, not authentication.
     fn build_router(registry: Arc<RunnerRegistry>) -> Router {
@@ -917,7 +917,7 @@ mod tests {
     async fn ws_ping_refreshes_liveness_after_aging() {
         // Simulate the 60s online window elapsing with only keepalive traffic
         // by directly aging `last_seen`, then sending a Ping. The server must
-        // refresh liveness so the agent reads online again instead of decaying
+        // refresh liveness so the Runner reads online again instead of decaying
         // to stale. This avoids a real 60s sleep.
         let registry = Arc::new(RunnerRegistry::default());
         let addr = start_server(registry.clone()).await;
@@ -954,7 +954,7 @@ mod tests {
 
     #[tokio::test]
     async fn ws_pong_treated_as_keepalive_not_unexpected() {
-        // A Pong from the agent (e.g. a future server-initiated ping reply,
+        // A Pong from the Runner (e.g. a future server-initiated ping reply,
         // or a stray frame) must be treated as live traffic, never as an
         // unexpected envelope, and must refresh liveness. The connection must
         // stay open.
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[tokio::test]
     async fn ws_slow_consumer_does_not_deadlock() {
-        // The agent connects but never reads during the enqueue burst. The
+        // The Runner connects but never reads during the enqueue burst. The
         // server's enqueue path must not deadlock: `enqueue_run` never blocks
         // on the transport (the pump holds the registry lock only briefly,
         // never during a blocking send), and the registry queue cap rejects
@@ -1125,7 +1125,7 @@ mod tests {
         .unwrap();
         let _ = recv_envelope(&mut ws).await; // Registered
 
-        // Enqueue a burst while the agent reads nothing. The loop must
+        // Enqueue a burst while the Runner reads nothing. The loop must
         // complete whether the requests are absorbed by socket buffers or
         // rejected by the queue cap.
         let mut first_rx: Option<(
@@ -1240,7 +1240,7 @@ mod tests {
 
     #[tokio::test]
     async fn ws_duplicate_different_instance_is_rejected() {
-        // A WebSocket agent with client_id=oe, instance=A is online. A second
+        // A WebSocket Runner with client_id=oe, instance=A is online. A second
         // WebSocket registration with client_id=oe, instance=B must be rejected
         // (the server sends an error and closes the second socket). The first
         // connection stays online.
@@ -1305,7 +1305,7 @@ mod tests {
 
     #[tokio::test]
     async fn ws_same_instance_reconnect_stays_accepted() {
-        // A reconnect from the same agent instance (same client_id + same
+        // A reconnect from the same Runner instance (same client_id + same
         // instance id) must be accepted as a refresh, not rejected as a
         // duplicate. This mirrors a WebSocket reconnect from the same process.
         let registry = Arc::new(RunnerRegistry::default());

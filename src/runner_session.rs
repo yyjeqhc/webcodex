@@ -1,4 +1,4 @@
-//! Shared post-register agent session loop.
+//! Shared post-register Runner session loop.
 //!
 //! Both long-lived Runner transports — WebSocket (`runner_ws`) and custom QUIC
 //! (`runner_quic`) — run the *same* session once a connection is registered:
@@ -28,7 +28,7 @@ use tokio::sync::{mpsc, watch, Notify};
 use tokio::task::JoinHandle;
 
 /// Channel capacity for outgoing envelopes (requests + pongs). Provides
-/// backpressure if the agent reads slowly. Shared by both transports.
+/// backpressure if the Runner reads slowly. Shared by both transports.
 pub(crate) const OUTGOING_CHANNEL_CAPACITY: usize = 64;
 
 /// Bound post-session joins for the request pump and transport writer.
@@ -69,7 +69,7 @@ impl RegisterPreludeError {
     /// Wire error code shared by both prelude gates.
     pub(crate) const CODE: &'static str = "register_forbidden";
 
-    /// The human-readable message to send to the agent.
+    /// The human-readable message to send to the Runner.
     pub(crate) fn message(&self) -> &str {
         match self {
             Self::ForbiddenScope(m) | Self::ForbiddenOwner(m) => m,
@@ -129,7 +129,7 @@ pub(crate) trait RunnerReader {
 }
 
 /// Shared session context handed to [`run_runner_session`] after a transport
-/// has authenticated, registered, and acknowledged the agent.
+/// has authenticated, registered, and acknowledged the Runner.
 pub(crate) struct SessionContext<'a> {
     pub(crate) registry: &'a Arc<RunnerRegistry>,
     pub(crate) client_id: &'a str,
@@ -248,7 +248,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code,
-                    "agent {} request pump ended; terminating session",
+                    "runner {} request pump ended; terminating session",
                     transport_label
                 );
                 break;
@@ -264,7 +264,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code,
-                    "agent {} writer ended; terminating session",
+                    "runner {} writer ended; terminating session",
                     transport_label
                 );
                 break;
@@ -281,7 +281,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code,
-                    "agent {} session cancellation observed; terminating session",
+                    "runner {} session cancellation observed; terminating session",
                     transport_label
                 );
                 break;
@@ -323,7 +323,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code = "pump_join_timeout",
-                    "agent {} request pump join timed out after abort",
+                    "runner {} request pump join timed out after abort",
                     transport_label
                 );
             }
@@ -338,7 +338,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code = "writer_transport_failed_during_teardown",
-                    "agent {} writer failed during teardown",
+                    "runner {} writer failed during teardown",
                     transport_label
                 );
             }
@@ -351,7 +351,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code,
-                    "agent {} writer join failed during teardown",
+                    "runner {} writer join failed during teardown",
                     transport_label
                 );
             }
@@ -359,7 +359,7 @@ async fn run_runner_session_with_pump(
                 tracing::debug!(
                     client_id = client_id,
                     reason_code = "writer_join_timeout",
-                    "agent {} writer join timed out; aborting writer",
+                    "runner {} writer join timed out; aborting writer",
                     transport_label
                 );
                 writer_task.abort();
@@ -388,7 +388,7 @@ async fn dispatch_inbound(
             {
                 tracing::warn!(
                     client_id = client_id,
-                    "agent {} result rejected: envelope identity does not match registered connection",
+                    "runner {} result rejected: envelope identity does not match registered connection",
                     transport_label
                 );
                 return;
@@ -404,7 +404,7 @@ async fn dispatch_inbound(
                 tracing::warn!(
                     client_id = client_id,
                     error = %e,
-                    "agent {} result rejected",
+                    "runner {} result rejected",
                     transport_label
                 );
             }
@@ -413,7 +413,7 @@ async fn dispatch_inbound(
             if payload.client_id != client_id || payload.runner_instance_id != runner_instance_id {
                 tracing::warn!(
                     client_id = client_id,
-                    "agent {} persistent shell result rejected: envelope identity does not match registered connection",
+                    "runner {} persistent shell result rejected: envelope identity does not match registered connection",
                     transport_label
                 );
                 return;
@@ -425,7 +425,7 @@ async fn dispatch_inbound(
                 tracing::warn!(
                     client_id = client_id,
                     error = %e,
-                    "agent {} persistent shell result rejected",
+                    "runner {} persistent shell result rejected",
                     transport_label
                 );
             }
@@ -434,7 +434,7 @@ async fn dispatch_inbound(
             if payload.client_id != client_id || payload.runner_instance_id != runner_instance_id {
                 tracing::warn!(
                     client_id = client_id,
-                    "agent {} job_update rejected: envelope identity does not match registered connection",
+                    "runner {} job_update rejected: envelope identity does not match registered connection",
                     transport_label
                 );
                 return;
@@ -446,15 +446,15 @@ async fn dispatch_inbound(
                 tracing::warn!(
                     client_id = client_id,
                     error = %e,
-                    "agent {} job_update rejected",
+                    "runner {} job_update rejected",
                     transport_label
                 );
             }
         }
         RunnerEnvelope::Ping { ts } => {
-            // Keepalive: refresh liveness before replying so an idle agent (no
+            // Keepalive: refresh liveness before replying so an idle Runner (no
             // pending requests) is not aged out of the online window. Without
-            // this touch a connected-but-idle agent decays to "stale" even
+            // this touch a connected-but-idle Runner decays to "stale" even
             // though its socket is healthy.
             if let Err(e) = registry
                 .touch_runner_for_connection(client_id, runner_instance_id, connection_id)
@@ -463,13 +463,13 @@ async fn dispatch_inbound(
                 tracing::warn!(
                     client_id = client_id,
                     error = %e,
-                    "agent {} ping liveness touch failed",
+                    "runner {} ping liveness touch failed",
                     transport_label
                 );
             }
             // Pong is best-effort: never block the reader if the outbound
-            // channel is full (a slow agent must not stall inbound processing).
-            // try_send drops the pong when saturated; the agent treats a
+            // channel is full (a slow Runner must not stall inbound processing).
+            // try_send drops the pong when saturated; the Runner treats a
             // missing pong as a soft liveness signal, not a fatal error.
             if let Err(e) = out_tx.try_send(RunnerEnvelope::Pong { ts }) {
                 let reason = match e {
@@ -479,7 +479,7 @@ async fn dispatch_inbound(
                 tracing::debug!(
                     client_id = client_id,
                     reason,
-                    "agent {} pong send dropped",
+                    "runner {} pong send dropped",
                     transport_label
                 );
             }
@@ -496,7 +496,7 @@ async fn dispatch_inbound(
                 tracing::debug!(
                     client_id = client_id,
                     error = %e,
-                    "agent {} pong liveness touch failed",
+                    "runner {} pong liveness touch failed",
                     transport_label
                 );
             }
@@ -531,7 +531,7 @@ async fn dispatch_inbound(
                     tracing::debug!(
                         client_id = client_id,
                         error = %error,
-                        "agent project inventory page rejected by lease fence"
+                        "runner project inventory page rejected by lease fence"
                     );
                 }
             }
@@ -543,7 +543,7 @@ async fn dispatch_inbound(
             tracing::debug!(
                 client_id = client_id,
                 reason = reason.as_deref().unwrap_or("unspecified"),
-                "agent {} sent goodbye",
+                "runner {} sent goodbye",
                 transport_label
             );
             registry
@@ -557,7 +557,7 @@ async fn dispatch_inbound(
             tracing::debug!(
                 client_id = client_id,
                 kind = other.kind(),
-                "agent {} received unexpected envelope; ignoring",
+                "runner {} received unexpected envelope; ignoring",
                 transport_label
             );
         }

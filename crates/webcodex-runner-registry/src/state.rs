@@ -376,13 +376,13 @@ pub(super) struct RunnerRegistryInner {
     /// becomes stale.
     pub(super) retired_instances: HashMap<String, VecDeque<String>>,
     /// Runtime project ids temporarily fenced while unregister validates and
-    /// removes the Agent registry entry. Job enqueue checks this set while
+    /// removes the Runner registry entry. Job enqueue checks this set while
     /// holding the same registry mutex, closing the check/start TOCTOU window.
     pub(super) unregistering_projects: HashMap<String, usize>,
-    /// Optional push notifiers for agents connected over a long-lived
+    /// Optional push notifiers for Runners connected over a long-lived
     /// transport (WebSocket/QUIC). When a request is enqueued for a runner that
     /// has a registered notifier, the server pumps the request immediately
-    /// instead of waiting for the agent to poll. Polling agents never
+    /// instead of waiting for the Runner to poll. Polling Runners never
     /// register a notifier and are unaffected.
     ///
     /// The stored instance and connection ids record which concrete transport

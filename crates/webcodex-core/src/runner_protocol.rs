@@ -848,9 +848,9 @@ pub struct ShellProfileSummaryEntry {
     pub dialect: Option<String>,
 }
 
-/// Sanitized summary of an Runner's prepared-shell-profile configuration.
+/// Sanitized summary of a Runner's prepared-shell-profile configuration.
 /// Reported by the Runner at registration (carried inside `RunnerPolicySummary`)
-/// and exposed in `runtime_status` / `listAgents` / `listProjects` so users can
+/// and exposed in `runtime_status` / `list_runners` / `list_projects` so users can
 /// see which profiles are configured and which one a project resolves to.
 ///
 /// This summary NEVER includes: init_script bodies, env values, tokens,
@@ -916,7 +916,7 @@ pub struct ClaudeCodeProviderStatus {
 }
 
 /// Sanitized Runner policy summary. Carried in the registration payload and
-/// exposed in `runtime_status` / `listAgents`. Contains ONLY non-secret
+/// exposed in `runtime_status` / `list_runners`. Contains ONLY non-secret
 /// fields: it never includes the Agent Token, shell env values, init_script
 /// contents, or full Runner config contents. `allowed_roots` is intentionally
 /// exposed as a path-policy summary. `shell_profiles` carries the sanitized
@@ -1024,7 +1024,7 @@ pub struct RunnerRegisterRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_context: Option<RunnerHostContext>,
     /// Sanitized Runner policy summary. Older Runners that omit this field
-    /// register with `None`; `runtime_status` / `listAgents` then expose
+    /// register with `None`; `runtime_status` / `list_runners` then expose
     /// `null` for the policy so older/minimal payloads stay compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<RunnerPolicySummary>,

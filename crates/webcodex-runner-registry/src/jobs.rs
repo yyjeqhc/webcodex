@@ -664,10 +664,10 @@ pub(super) fn ensure_queue_capacity_locked(
 }
 
 /// Ensure a request target exists and is currently online before enqueueing
-/// work for the agent pump. Callers must already hold `inner`.
+/// work for the Runner request pump. Callers must already hold `inner`.
 ///
 /// Online is defined by `RUNNER_ONLINE_WINDOW_SECS` against `last_seen`. Without
-/// this gate, a registered-but-disconnected agent still accepts enqueues that
+/// this gate, a registered-but-disconnected Runner still accepts enqueues that
 /// can only fail after the caller's wait timeout (or pile up until
 /// `MAX_QUEUED_REQUESTS_PER_RUNNER` and then permanently reject new work for
 /// that runner until process restart) — a major amplifier of MCP "no reply".

@@ -634,7 +634,7 @@ impl RunnerRegistry {
 
     /// Refresh `last_seen` for a registered Runner to "now" without performing
     /// any business operation. Used by keepalive traffic to keep active
-    /// long-lived transports inside the online window. Polling agents have no
+    /// long-lived transports inside the online window. Polling Runners have no
     /// server-internal connection lease and use this path directly; long-lived
     /// transports use [`Self::touch_runner_for_connection`] instead so a stale
     /// same-instance connection cannot revive the new lease.
@@ -694,7 +694,7 @@ impl RunnerRegistry {
         Ok(())
     }
 
-    /// Apply sanitized provider metadata to the active agent record. Optional
+    /// Apply sanitized provider metadata to the active Runner record. Optional
     /// metadata is best-effort: malformed/unknown state is ignored by the
     /// normalizer and never changes transport or tool completion semantics.
     /// Polling-transport `RuntimeMetadata` uses this path.
@@ -819,7 +819,7 @@ impl RunnerRegistry {
             resolve_disconnected_sync_requests_locked(
                 inner,
                 client_id,
-                "agent went offline: shared-key runner registration expired",
+                "runner went offline: shared-key runner registration expired",
             );
         }
         for job_id in &job_ids {
@@ -1044,12 +1044,12 @@ impl RunnerRegistry {
         // Synchronous tool requests (run_shell/read_file/write/lsp/project ops)
         // carry a live oneshot waiter but no job_id, so the job loop above skips
         // them. Fail them fast here; otherwise the calling tool blocks until its
-        // own wait timeout (tens of seconds) after the agent has already gone,
+        // own wait timeout (tens of seconds) after the Runner has already gone,
         // which surfaces as an unresponsive MCP `tools/call`.
         resolve_disconnected_sync_requests_locked(
             &mut inner,
             client_id,
-            "agent went offline: transport disconnected before returning a result",
+            "runner went offline: transport disconnected before returning a result",
         );
     }
 

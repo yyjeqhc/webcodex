@@ -1,13 +1,13 @@
 //! Server-side custom QUIC Runner transport.
 //!
-//! This is a **custom QUIC stream transport** for agent connections, NOT
+//! This is a **custom QUIC stream transport** for Runner connections, NOT
 //! HTTP/3. It runs a separate `quinn` UDP listener in parallel with the HTTP
 //! server (which keeps serving GPT Actions over TCP 443 via Nginx unchanged).
 //! Nginx is not involved in QUIC.
 //!
-//! QUIC is an alternative transport for the existing agent envelope protocol.
+//! QUIC is an alternative transport for the existing Runner envelope protocol.
 //! It uses a length-prefixed JSON `RunnerEnvelope` stream over QUIC and is
-//! intended to mirror the WebSocket agent flow, not introduce a separate
+//! intended to mirror the WebSocket Runner flow, not introduce a separate
 //! application protocol.
 //!
 //! Authentication reuses [`crate::auth::authenticate_bearer`], which mirrors
@@ -40,7 +40,7 @@ fn rustls_provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
-/// Deadline for the agent to send its first `Register` frame after the QUIC
+/// Deadline for the Runner to send its first `Register` frame after the QUIC
 /// handshake. Mirrors the WebSocket `REGISTER_TIMEOUT`.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Maximum time to keep an error-path QUIC stream open while waiting for the
@@ -98,7 +98,7 @@ fn build_server_crypto(
         .map_err(|e| format!("failed to build quinn server crypto: {}", e))
 }
 
-/// Start the QUIC agent listener. Loads cert/key, binds the UDP endpoint, and
+/// Start the QUIC Runner listener. Loads cert/key, binds the UDP endpoint, and
 /// runs an accept loop in the caller's task. Per-connection errors are logged
 /// and the loop continues; only startup failures (bad cert, bind error) are
 /// returned. Runs forever once started.
@@ -174,7 +174,7 @@ pub(crate) async fn run_runner_quic_listener(
 
 /// Accept loop shared by the production listener and tests. Runs until the
 /// endpoint is closed. Each connection is handled in its own task so a slow or
-/// misbehaving agent cannot block acceptance of others.
+/// misbehaving Runner cannot block acceptance of others.
 async fn serve_quic_endpoint(
     endpoint: quinn::Endpoint,
     alpn: &str,
@@ -195,7 +195,7 @@ async fn serve_quic_endpoint(
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
-                        "quic agent connection handshake failed; check UDP reachability, certificate trust/SAN, and ALPN"
+                        "QUIC Runner connection handshake failed; check UDP reachability, certificate trust/SAN, and ALPN"
                     );
                 }
             }
@@ -203,7 +203,7 @@ async fn serve_quic_endpoint(
     }
 }
 
-/// Drive one QUIC agent connection to completion: register, ack, optional
+/// Drive one QUIC Runner connection to completion: register, ack, optional
 /// request dispatch, keepalive, and inbound result/job_update handling.
 async fn handle_quic_connection(
     conn: quinn::Connection,
@@ -218,14 +218,14 @@ async fn handle_quic_connection(
     // is needed; a mismatch fails the handshake (logged in the accept loop).
     let _ = alpn;
 
-    // The agent opens one bidirectional stream for all frames. Multiplexing
+    // The Runner opens one bidirectional stream for all frames. Multiplexing
     // is intentionally left to a later phase.
     let (mut send, mut recv) = match conn.accept_bi().await {
         Ok(pair) => pair,
         Err(e) => {
             tracing::debug!(
                 error = ?e,
-                "quic agent accept_bi failed before register frame"
+                "QUIC Runner accept_bi failed before register frame"
             );
             return;
         }
@@ -241,13 +241,13 @@ async fn handle_quic_connection(
                 tracing::debug!(
                     reason_code = "malformed_register",
                     error = %e,
-                    "quic agent first register frame rejected"
+                    "QUIC Runner first register frame rejected"
                 );
                 send_error(&mut send, &mut recv, "expected_register", &e.to_string()).await;
                 return;
             }
             Err(_) => {
-                tracing::debug!("quic agent register timed out waiting for first frame");
+                tracing::debug!("QUIC Runner register timed out waiting for first frame");
                 send_error(
                     &mut send,
                     &mut recv,
@@ -277,7 +277,7 @@ async fn handle_quic_connection(
                 "invalid or missing agent token",
             )
             .await;
-            tracing::warn!(client_id = %client_id, "quic agent register rejected: unauthorized");
+            tracing::warn!(client_id = %client_id, "QUIC Runner register rejected: unauthorized");
             return;
         }
     };
@@ -298,7 +298,7 @@ async fn handle_quic_connection(
         tracing::warn!(
             client_id = %client_id,
             error = e.message(),
-            "quic agent register rejected: {reason}"
+            "QUIC Runner register rejected: {reason}"
         );
         send_error(
             &mut send,
@@ -330,7 +330,7 @@ async fn handle_quic_connection(
             tracing::warn!(
                 client_id = %client_id,
                 error = %e,
-                "quic agent register failed in registry"
+                "QUIC Runner register failed in registry"
             );
             send_error(&mut send, &mut recv, "register_failed", &e).await;
             return;
@@ -350,7 +350,7 @@ async fn handle_quic_connection(
         tracing::debug!(
             client_id = %client_id,
             error = %e,
-            "quic agent registered ack send failed"
+            "QUIC Runner registered ack send failed"
         );
         registry
             .reconcile_disconnect_for_connection(&client_id, &runner_instance_id, &connection_id)
@@ -419,7 +419,7 @@ impl crate::runner_session::RunnerReader for QuicReader {
                 crate::runner_session::RecvOutcome::Closed
             }
             Err(e) => {
-                tracing::debug!(error = %e, "quic agent stream read ended");
+                tracing::debug!(error = %e, "QUIC Runner stream read ended");
                 crate::runner_session::RecvOutcome::Closed
             }
         }
@@ -889,7 +889,7 @@ mod tests {
             other => panic!("expected registered ack, got {:?}", other.kind()),
         }
 
-        // The registry shows the agent online over QUIC.
+        // The registry shows the Runner online over QUIC.
         let view = registry
             .get_runner_view("quic-rt")
             .await
@@ -1235,7 +1235,7 @@ mod tests {
         // and asserted pending_requests == 1 as a proxy for "notifier removed
         // so the pump no longer drains the queue". That proxy is no longer
         // valid: enqueue itself must fail fast rather than silently pile up
-        // against a dead agent. Notifier removal still happens in
+        // against a dead Runner. Notifier removal still happens in
         // reconcile_disconnect (covered above by pending cleanup + offline
         // connected flag); this asserts the post-disconnect contract.
         let err = registry
@@ -1251,7 +1251,7 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .expect_err("enqueue against a disconnected agent must fail");
+            .expect_err("enqueue against a disconnected Runner must fail");
         assert!(
             err.contains("offline"),
             "post-disconnect enqueue must fail as offline, got: {err}"
@@ -1506,7 +1506,7 @@ mod tests {
         conn.close(quinn::VarInt::from_u32(0), b"done");
     }
 
-    /// A QUIC-registered agent must surface protocol generation 2 and the
+    /// A QUIC-registered Runner must surface protocol generation 2 and the
     /// `quic` transport in `list_runners` (used by runtime_status / list_runners).
     #[tokio::test]
     async fn quic_runner_surfaces_transport_and_protocol_in_list() {

@@ -1,4 +1,4 @@
-/// Canonical Runner-registry definition of a broadly active Agent Job.
+/// Canonical Runner-registry definition of a broadly active Runner Job.
 ///
 /// `stop_requested` remains active until authoritative terminal truth arrives.
 pub fn job_status_is_active(status: &str) -> bool {

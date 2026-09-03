@@ -207,7 +207,7 @@ fn remove_request_from_queues_locked(inner: &mut RunnerRegistryInner, request_id
 /// `Sender` lives in the shared registry, not in the transport handler, so
 /// aborting the connection task does not drop it — without this drain the
 /// caller (e.g. an MCP `run_shell`/`read_file`) blocks for the full wait
-/// timeout (tens of seconds) after the agent goes away. Job-backed requests
+/// timeout (tens of seconds) after the Runner goes away. Job-backed requests
 /// are handled separately by `reconcile_disconnect` (they transition their job
 /// to `lost`) and are intentionally skipped here.
 pub(super) fn resolve_disconnected_sync_requests_locked(
@@ -925,7 +925,7 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue a structured `delete_project_files` agent file op. The
+    /// Enqueue a structured `delete_project_files` Runner file op. The
     /// generation-2 `structured_file_delete` baseline check and pending-request
     /// admission happen under the same registry lock. A baseline miss queues
     /// nothing and is reported as an invariant failure; there is no shell fallback.
@@ -1334,7 +1334,7 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
-    /// Cancel a pending synchronous request and report whether an Agent had
+    /// Cancel a pending synchronous request and report whether a Runner had
     /// already polled it. This lets timeout callers distinguish queue timeout
     /// from an actually started command without retaining expired requests.
     pub async fn cancel_request(&self, request_id: &str) -> bool {
@@ -1803,13 +1803,13 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue a project-management agent request (`register_project`,
+    /// Enqueue a project-management Runner request (`register_project`,
     /// `create_project`, or the internal path resolver). The JSON payload is
     /// carried in `stdin` so the
-    /// agent can parse it without shell interpolation. The `command` field is
-    /// empty (unused for these kinds); the agent dispatches on `kind` and
+    /// Runner can parse it without shell interpolation. The `command` field is
+    /// empty (unused for these kinds); the Runner dispatches on `kind` and
     /// reads the payload from `stdin`. Returns a oneshot receiver for the
-    /// `ShellRunResponse` (the agent returns structured JSON in `stdout`).
+    /// `ShellRunResponse` (the Runner returns structured JSON in `stdout`).
     pub async fn enqueue_project_op(
         &self,
         client_id: String,
@@ -2003,7 +2003,7 @@ impl RunnerRegistry {
     }
 
     /// Enqueue a typed read-only LSP navigation request. Never falls through
-    /// to shell execution: the agent dispatches exclusively on `kind = "lsp"`
+    /// to shell execution: the Runner dispatches exclusively on `kind = "lsp"`
     /// with a structured `lsp` payload.
     pub async fn enqueue_lsp(
         &self,
@@ -2014,7 +2014,7 @@ impl RunnerRegistry {
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), EnqueueLspError> {
         validate_id(&client_id, "client_id")
             .map_err(|message| EnqueueLspError::InvalidRequest { message })?;
-        // Capability gate before enqueue so old agents never receive unknown
+        // Capability gate before enqueue so old Runners never receive unknown
         // LSP kinds that could fall into shell fallback.
         let required_feature = if matches!(&payload.request, RunnerLspRequest::CallHierarchy { .. })
         {

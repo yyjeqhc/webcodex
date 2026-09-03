@@ -118,9 +118,9 @@ impl RunnerRegistry {
 
     /// Insert or replace a single project summary in the cached project list
     /// for `client_id`. Called by the runtime after a successful
-    /// `register_project` / `create_project` agent operation so that
+    /// `register_project` / `create_project` Runner operation so that
     /// `listProjects` sees the new project immediately, without waiting for
-    /// the agent's next register/poll cycle. If a project with the same id
+    /// the Runner's next register/poll cycle. If a project with the same id
     /// already exists it is replaced; otherwise the new summary is appended
     /// and the list is re-sorted by id (matching `normalize_project_summaries`).
     pub async fn upsert_runner_project_for_instance(

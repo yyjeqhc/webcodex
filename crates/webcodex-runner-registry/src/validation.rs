@@ -101,7 +101,7 @@ fn safe_provider_version(value: &str) -> Option<String> {
     .then(|| bounded_provider_text(value))
 }
 
-/// Normalize untrusted provider metadata without making agent traffic fail.
+/// Normalize untrusted provider metadata without making Runner traffic fail.
 /// Unknown fields are already discarded by serde; unknown enum-like values or
 /// unsafe strings drop the entire optional update so tool completion continues.
 pub(super) fn normalize_tool_providers(

@@ -393,7 +393,7 @@ impl RunnerRegistry {
     /// late, legitimately-dispatched result arriving on a stale
     /// same-instance connection (the request was polled before the
     /// transport reconnect) is still accepted — it belongs to the same
-    /// agent instance and is gated by request/job ownership — but it must
+    /// Runner instance and is gated by request/job ownership — but it must
     /// not refresh the new connection's `last_seen` liveness. Only the
     /// connection that currently holds the lease refreshes liveness.
     pub async fn complete_for_connection(

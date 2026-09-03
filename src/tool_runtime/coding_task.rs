@@ -895,7 +895,7 @@ impl ToolRuntime {
         // Continuation feedback for reused/resumed/restored sessions. Pure
         // read-only projection over existing session ledger, validation evidence,
         // bounded job metadata, and the message board. Never executes shell,
-        // reads project files, enqueues Agent requests, mutates the ledger,
+        // reads project files, enqueues Runner requests, mutates the ledger,
         // refreshes activity, or consumes guidance. `created` (fresh empty
         // session) surfaces a compact `not_applicable` verdict.
         let continuation_kind = if resume_requested {
@@ -1480,7 +1480,7 @@ impl ToolRuntime {
     /// (`validation_summary_from_events`, no job-status enrichment), jobs come
     /// from the bounded `active_jobs_summary` metadata, and guidance is read
     /// from the message board without marking anything read or resolved. No
-    /// shell, no file reads, no Agent requests, no ledger mutation.
+    /// shell, no file reads, no Runner requests, no ledger mutation.
     async fn startup_continuation_feedback(
         &self,
         summary: &sessions::SessionSummary,

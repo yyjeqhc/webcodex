@@ -16,7 +16,7 @@
 //! It is **not** an LLM summary, **not** an Agent loop, **not** a new
 //! pass/fail verdict, and **not** a second persisted attempt state. Every
 //! field is derived from existing state under the store's own bounds. The
-//! helpers never execute shell, read project files, enqueue Agent requests,
+//! helpers never execute shell, read project files, enqueue Runner requests,
 //! modify the ledger, refresh activity, consume guidance, or change any
 //! validation verdict. Where evidence is insufficient a stable `reason_code`
 //! is returned instead of a guess.

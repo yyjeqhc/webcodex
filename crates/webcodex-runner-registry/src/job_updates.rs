@@ -1388,7 +1388,7 @@ impl RunnerRegistry {
             .collect()
     }
 
-    /// Complete caller-visible Agent Job set for aggregate observability.
+    /// Complete caller-visible Runner Job set for aggregate observability.
     /// Unlike the public list projection, this has no display pagination:
     /// runtime counts must not silently drop an older active Job behind newer
     /// records. Authorization and public-visibility filtering are identical
@@ -1425,8 +1425,8 @@ impl RunnerRegistry {
     }
 
     /// Count active jobs for one exact runtime project without applying the
-    /// display-list pagination limit. Local-only jobs do not carry an agent
-    /// runtime project id and are intentionally excluded.
+    /// display-list pagination limit. Jobs without a runtime project id are
+    /// intentionally excluded.
     pub async fn count_active_jobs_for_project(
         &self,
         auth: Option<&crate::RunnerAccess>,

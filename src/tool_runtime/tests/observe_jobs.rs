@@ -293,6 +293,7 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
     );
     for required in [
+        "activity",
         "log_delta_status",
         "stdout_delta_reset",
         "stderr_delta_reset",
@@ -306,6 +307,11 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
             "observe_jobs item output must require {required}"
         );
     }
+    assert!(observation["properties"]["activity"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|schema| schema["type"] == "null"));
 
     let definition = super::super::tool_definition::lookup_tool_definition("observe_jobs").unwrap();
     assert!(definition.visibility.is_model_visible());

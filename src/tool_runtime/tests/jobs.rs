@@ -405,6 +405,8 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     assert_eq!(result.output["shell"], "bash");
     assert_eq!(result.output["cwd"], ".");
     assert!(result.output["observation_token"].is_string());
+    assert!(result.output.as_object().unwrap().contains_key("activity"));
+    assert!(result.output["activity"].is_null());
     assert_run_shell_result_matches_schema(&result);
     assert!(
         probe_patch_agent_request(&runtime, client_id)
@@ -437,16 +439,49 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["job_id"], job_id);
     assert_eq!(status.output["status"], "running");
+    assert!(status.output.as_object().unwrap().contains_key("activity"));
+    assert!(status.output["activity"].is_null());
 
     let log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(40), Some(&auth), None, None)
         .await;
     assert!(log.success, "{:?}", log.error);
     assert_eq!(log.output["job_id"], job_id);
+    assert!(log.output.as_object().unwrap().contains_key("activity"));
+    assert!(log.output["activity"].is_null());
     assert!(log.output["stdout_tail"]
         .as_str()
         .unwrap_or_default()
         .contains("durable-shell"));
+
+    let listed = runtime
+        .list_jobs_for_auth_with_filters(None, None, None, None, Some(&auth))
+        .await;
+    assert!(listed.success, "{:?}", listed.error);
+    let listed_job = listed.output["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["job_id"] == job_id)
+        .expect("durable shell Job in list_jobs");
+    assert!(listed_job.as_object().unwrap().contains_key("activity"));
+    assert!(listed_job["activity"].is_null());
+
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: job_id.clone(),
+                after_observation_token: None,
+            }],
+            40,
+            None,
+            Some(&auth),
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    let observed_job = &observed.output["items"][0]["output"];
+    assert!(observed_job.as_object().unwrap().contains_key("activity"));
+    assert!(observed_job["activity"].is_null());
 
     let stopped = runtime
         .dispatch_with_auth(

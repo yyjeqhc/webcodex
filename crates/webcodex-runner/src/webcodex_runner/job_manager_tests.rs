@@ -3387,6 +3387,286 @@ fn arbitrary_process_output_cannot_forge_cargo_activity() {
     );
 }
 
+#[test]
+fn cargo_activity_returns_to_validation_plan_after_fine_phase_ends() {
+    let manager = JobManager::new(1);
+    let step = ShellJobValidationStep {
+        name: "test".into(),
+        program: "cargo".into(),
+        args: vec!["test".into()],
+        env: Vec::new(),
+    };
+    let validation_activity = validation_step_activity(&step);
+    let mut snapshot = test_job_snapshot("cargo-current-activity");
+    snapshot.context.validation_steps = vec!["test".into()];
+    snapshot.validation_progress = Some(ShellJobValidationProgress {
+        completed: 0,
+        current_step: Some("test".into()),
+        failed_step: None,
+    });
+    snapshot.activity = Some(validation_activity);
+    lock_unpoison(&manager.jobs).insert(
+        snapshot.job_id.clone(),
+        RunningJob {
+            client_id: "test-agent".into(),
+            agent_instance_id: "test-instance".into(),
+            snapshot,
+            child: None,
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            slot_reserved: true,
+        },
+    );
+
+    let compiling = cargo_activity_from_stderr(&step, "Compiling webcodex v0.3.9\n").unwrap();
+    manager.record_update(
+        "cargo-current-activity",
+        RunnerJobDelta {
+            status: "running".into(),
+            activity: Some(compiling),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        manager
+            .inventory()
+            .jobs
+            .into_iter()
+            .find(|job| job.job_id == "cargo-current-activity")
+            .unwrap()
+            .activity,
+        Some(compiling)
+    );
+
+    let phase_ended = cargo_activity_from_stderr(
+        &step,
+        "Finished `test` profile [unoptimized] target(s) in 0.10s\nRunning unittests src/lib.rs\n",
+    )
+    .unwrap();
+    assert_eq!(phase_ended, validation_activity);
+    manager.record_update(
+        "cargo-current-activity",
+        RunnerJobDelta {
+            status: "running".into(),
+            activity: Some(phase_ended),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        manager
+            .inventory()
+            .jobs
+            .into_iter()
+            .find(|job| job.job_id == "cargo-current-activity")
+            .unwrap()
+            .activity,
+        Some(validation_activity)
+    );
+
+    manager.record_update(
+        "cargo-current-activity",
+        RunnerJobDelta {
+            status: "completed".into(),
+            exit_code: Some(0),
+            validation_progress: Some(ShellJobValidationProgress {
+                completed: 1,
+                current_step: None,
+                failed_step: None,
+            }),
+            finished: true,
+            ..Default::default()
+        },
+    );
+    let terminal = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|job| job.job_id == "cargo-current-activity")
+        .unwrap();
+    assert_eq!(terminal.status, "completed");
+    assert_eq!(terminal.activity, None);
+}
+
+#[test]
+fn activity_only_delivery_coalesces_without_consuming_required_semantic_queue() {
+    let manager = JobManager::new(1);
+    let check = ShellJobValidationStep {
+        name: "check".into(),
+        program: "cargo".into(),
+        args: vec!["check".into(), "--all-targets".into()],
+        env: Vec::new(),
+    };
+    let test = ShellJobValidationStep {
+        name: "test".into(),
+        program: "cargo".into(),
+        args: vec!["test".into()],
+        env: Vec::new(),
+    };
+    let mut snapshot = test_job_snapshot("activity-backpressure");
+    snapshot.context.validation_steps = vec!["check".into(), "test".into()];
+    snapshot.validation_progress = Some(ShellJobValidationProgress {
+        completed: 0,
+        current_step: Some("check".into()),
+        failed_step: None,
+    });
+    snapshot.activity = Some(validation_step_activity(&check));
+    lock_unpoison(&manager.jobs).insert(
+        snapshot.job_id.clone(),
+        RunningJob {
+            client_id: "test-agent".into(),
+            agent_instance_id: "test-instance".into(),
+            snapshot,
+            child: None,
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            slot_reserved: true,
+        },
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(AgentEnvelope::Ping { ts: 11 }).unwrap();
+    manager.install_sink(RunnerSink::WebSocket {
+        tx,
+        client_id: "test-agent".into(),
+        agent_instance_id: "test-instance".into(),
+    });
+
+    let compiling = ShellJobActivity {
+        state: ShellJobActivityState::Working,
+        phase: ShellJobActivityPhase::CargoCompiling,
+        source: ShellJobActivitySource::CargoOutput,
+    };
+    let checking = ShellJobActivity {
+        state: ShellJobActivityState::Working,
+        phase: ShellJobActivityPhase::CargoChecking,
+        source: ShellJobActivitySource::CargoOutput,
+    };
+    for index in 0..64 {
+        manager.update_and_send(
+            "activity-backpressure",
+            RunnerJobDelta {
+                status: "running".into(),
+                activity: Some(if index % 2 == 0 { compiling } else { checking }),
+                ..Default::default()
+            },
+        );
+    }
+    {
+        let pending = lock_unpoison(&manager.pending_job_updates);
+        let queue = pending
+            .get("activity-backpressure")
+            .expect("coalesced activity pending delivery");
+        assert!(queue.required.is_empty());
+        assert_eq!(queue.output_only.as_ref().unwrap().activity, Some(checking));
+        assert!(!queue.suspended_until_reconciliation);
+    }
+    assert_eq!(
+        manager
+            .inventory()
+            .jobs
+            .into_iter()
+            .find(|job| job.job_id == "activity-backpressure")
+            .unwrap()
+            .activity,
+        Some(checking)
+    );
+
+    manager.update_and_send(
+        "activity-backpressure",
+        RunnerJobDelta {
+            status: "running".into(),
+            validation_progress: Some(ShellJobValidationProgress {
+                completed: 1,
+                current_step: Some("test".into()),
+                failed_step: None,
+            }),
+            activity: Some(validation_step_activity(&test)),
+            ..Default::default()
+        },
+    );
+    {
+        let pending = lock_unpoison(&manager.pending_job_updates);
+        let queue = pending.get("activity-backpressure").unwrap();
+        assert_eq!(queue.required.len(), 1);
+        assert!(queue.output_only.is_none());
+        assert!(!queue.suspended_until_reconciliation);
+    }
+
+    for index in 0..64 {
+        manager.update_and_send(
+            "activity-backpressure",
+            RunnerJobDelta {
+                status: "running".into(),
+                activity: Some(if index % 2 == 0 { checking } else { compiling }),
+                ..Default::default()
+            },
+        );
+    }
+    {
+        let pending = lock_unpoison(&manager.pending_job_updates);
+        let queue = pending.get("activity-backpressure").unwrap();
+        assert_eq!(queue.required.len(), 1);
+        assert_eq!(
+            queue.output_only.as_ref().unwrap().activity,
+            Some(compiling)
+        );
+        assert!(!queue.suspended_until_reconciliation);
+    }
+    assert_eq!(
+        manager
+            .inventory()
+            .jobs
+            .into_iter()
+            .find(|job| job.job_id == "activity-backpressure")
+            .unwrap()
+            .activity,
+        Some(compiling)
+    );
+
+    manager.update_and_send(
+        "activity-backpressure",
+        RunnerJobDelta {
+            status: "completed".into(),
+            exit_code: Some(0),
+            validation_progress: Some(ShellJobValidationProgress {
+                completed: 2,
+                current_step: None,
+                failed_step: None,
+            }),
+            finished: true,
+            ..Default::default()
+        },
+    );
+    {
+        let pending = lock_unpoison(&manager.pending_job_updates);
+        let queue = pending.get("activity-backpressure").unwrap();
+        assert_eq!(queue.required.len(), 2);
+        assert!(queue.output_only.is_none());
+        assert!(!queue.suspended_until_reconciliation);
+    }
+    let terminal = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|job| job.job_id == "activity-backpressure")
+        .unwrap();
+    assert_eq!(terminal.status, "completed");
+    assert_eq!(terminal.activity, None);
+
+    assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 11 })));
+    let updates = collect_job_updates(&mut rx, Duration::from_secs(5));
+    assert_eq!(updates.len(), 2, "{updates:?}");
+    assert_eq!(
+        updates[0].validation_progress,
+        Some(ShellJobValidationProgress {
+            completed: 1,
+            current_step: Some("test".into()),
+            failed_step: None,
+        })
+    );
+    assert_eq!(updates[0].activity, Some(validation_step_activity(&test)));
+    assert_eq!(updates[1].status, "completed");
+    assert_eq!(updates[1].activity, None);
+    assert!(updates[1].finished);
+}
+
 #[cfg(unix)]
 #[test]
 fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure() {

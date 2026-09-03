@@ -411,17 +411,13 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
 async fn job_log_wait_recovery_transition_between_calls_is_immediate() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
-    registry
-        .update_job(wait_job_update(
-            "inst-wait",
-            &job.job_id,
-            1,
-            "running",
-            None,
-            false,
-        ))
-        .await
-        .unwrap();
+    let mut running = wait_job_update("inst-wait", &job.job_id, 1, "running", None, false);
+    running.activity = Some(crate::shell_protocol::ShellJobActivity {
+        state: crate::shell_protocol::ShellJobActivityState::Working,
+        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    });
+    registry.update_job(running).await.unwrap();
     let token = registry
         .get_job(&job.job_id)
         .await
@@ -437,6 +433,7 @@ async fn job_log_wait_recovery_transition_between_calls_is_immediate() {
     assert!(wait.changed);
     assert_eq!(info.status, "recovering");
     assert_eq!(info.recovery_state.as_deref(), Some("recovering"));
+    assert_eq!(info.activity, None);
 }
 
 #[tokio::test]
@@ -665,6 +662,26 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
             .load(std::sync::atomic::Ordering::Relaxed)
     };
     assert!(revision_after > revision_before);
+}
+
+#[tokio::test]
+async fn noncanonical_activity_fails_job_closed_without_retaining_activity() {
+    let registry = ShellClientRegistry::default();
+    let job = start_wait_job(&registry).await;
+    let mut update = wait_job_update("inst-wait", &job.job_id, 1, "running", None, false);
+    update.activity = Some(crate::shell_protocol::ShellJobActivity {
+        state: crate::shell_protocol::ShellJobActivityState::Waiting,
+        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    });
+
+    let failed = registry.update_job(update).await.unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.activity, None);
+    assert!(failed
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("job_activity_invalid")));
 }
 
 #[tokio::test]

@@ -195,6 +195,90 @@ fn tool_specs_structured_validation_schema_and_output() {
     );
 }
 
+fn schema_tree_requires_field(schema: &serde_json::Value, field: &str) -> bool {
+    match schema {
+        serde_json::Value::Object(object) => {
+            object.get("required").is_some_and(|required| {
+                required
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|name| name == field))
+            }) || object
+                .values()
+                .any(|value| schema_tree_requires_field(value, field))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| schema_tree_requires_field(value, field)),
+        _ => false,
+    }
+}
+
+#[test]
+fn job_activity_is_required_nullable_on_stable_model_surfaces() {
+    let specs = registered_tool_specs();
+    for name in [
+        "run_process",
+        "run_script",
+        "run_shell",
+        "cargo_fmt",
+        "cargo_check",
+        "cargo_test",
+        "go_test",
+        "job_status",
+        "job_log",
+        "list_jobs",
+        "observe_jobs",
+    ] {
+        let spec = spec_named(&specs, name);
+        assert!(
+            schema_tree_requires_field(&spec.output_schema, "activity"),
+            "{name} must require activity on its stable Job projection"
+        );
+    }
+
+    for name in ["job_status", "job_log"] {
+        let spec = spec_named(&specs, name);
+        let activity = &spec.output_schema["properties"]["output"]["properties"]["activity"];
+        assert!(activity["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|schema| schema["type"] == "null"));
+        let with_null = serde_json::json!({"success": true, "output": {"activity": null}});
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &with_null,
+            &spec.output_schema,
+        )
+        .unwrap_or_else(|error| panic!("{name} must accept activity=null: {error}"));
+        let missing = serde_json::json!({"success": true, "output": {}});
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &missing,
+                &spec.output_schema
+            )
+            .is_err(),
+            "{name} must reject a missing activity field"
+        );
+    }
+
+    let list = spec_named(&specs, "list_jobs");
+    let summary = &list.output_schema["properties"]["output"]["properties"]["jobs"]["items"];
+    assert!(summary["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "activity"));
+
+    let observe = spec_named(&specs, "observe_jobs");
+    let observation = &observe.output_schema["properties"]["output"]["anyOf"][0]["properties"]
+        ["items"]["items"]["properties"]["output"]["anyOf"][0];
+    assert!(observation["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "activity"));
+}
+
 #[test]
 fn tool_specs_schema_spot_checks() {
     let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![

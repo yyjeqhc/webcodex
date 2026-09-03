@@ -92,8 +92,9 @@ const RUNNER_POLL_PATH: &str = "/api/shell/agent/poll";
 /// finite bound.
 const RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES: usize = 32 * 1024 * 1024;
 
-/// At most the validated Job state machine's semantic transitions are retained
-/// for live delivery. Output-only updates are coalesced separately below.
+/// At most the validated Job state machine's required semantic transitions are
+/// retained for live delivery. Output and advisory current-activity-only
+/// updates are coalesced separately below.
 const JOB_UPDATE_REQUIRED_PENDING_MAX: usize = 8;
 const JOB_UPDATE_DELIVERY_RETRY: Duration = Duration::from_millis(JOB_UPDATE_INTERVAL_MS);
 
@@ -2706,8 +2707,10 @@ fn validation_step_activity(step: &ShellJobValidationStep) -> ShellJobActivity {
 }
 
 /// Recognize only a tiny bounded subset of Cargo's own stderr progress while a
-/// canonical structured Cargo validation step is running. This is advisory
-/// activity provenance, not validation/completion evidence.
+/// canonical structured Cargo validation step is running. Clear phase-boundary
+/// lines return to the step's canonical validation-plan activity so transient
+/// Cargo detail cannot remain sticky after that detail has ended. This is
+/// advisory activity provenance, not validation/completion evidence.
 fn cargo_activity_from_stderr(
     step: &ShellJobValidationStep,
     stderr: &str,
@@ -2715,32 +2718,40 @@ fn cargo_activity_from_stderr(
     if step.program != "cargo" || !step.is_canonical() {
         return None;
     }
+    let validation_activity = validation_step_activity(step);
     let mut observed = None;
     for line in stderr.lines() {
         let line = line.trim_start();
-        let (state, phase) = if line.contains("Blocking waiting for file lock on build directory") {
-            (
-                ShellJobActivityState::Waiting,
-                ShellJobActivityPhase::CargoWaitingForBuildLock,
-            )
+        let activity = if line.contains("Blocking waiting for file lock on build directory") {
+            ShellJobActivity {
+                state: ShellJobActivityState::Waiting,
+                phase: ShellJobActivityPhase::CargoWaitingForBuildLock,
+                source: ShellJobActivitySource::CargoOutput,
+            }
         } else if line.starts_with("Compiling ") {
-            (
-                ShellJobActivityState::Working,
-                ShellJobActivityPhase::CargoCompiling,
-            )
+            ShellJobActivity {
+                state: ShellJobActivityState::Working,
+                phase: ShellJobActivityPhase::CargoCompiling,
+                source: ShellJobActivitySource::CargoOutput,
+            }
         } else if line.starts_with("Checking ") {
-            (
-                ShellJobActivityState::Working,
-                ShellJobActivityPhase::CargoChecking,
-            )
+            ShellJobActivity {
+                state: ShellJobActivityState::Working,
+                phase: ShellJobActivityPhase::CargoChecking,
+                source: ShellJobActivitySource::CargoOutput,
+            }
+        } else if line.starts_with("Finished ")
+            || (step.name == "test"
+                && (line.starts_with("Running unittests ")
+                    || line.starts_with("Running tests/")
+                    || line.starts_with("Running benches/")
+                    || line.starts_with("Doc-tests ")))
+        {
+            validation_activity
         } else {
             continue;
         };
-        observed = Some(ShellJobActivity {
-            state,
-            phase,
-            source: ShellJobActivitySource::CargoOutput,
-        });
+        observed = Some(activity);
     }
     observed
 }
@@ -3355,7 +3366,6 @@ impl JobManager {
             }
             let previous_status = job.snapshot.status.clone();
             let previous_progress = job.snapshot.validation_progress.clone();
-            let previous_activity = job.snapshot.activity;
             let explicit_semantic =
                 delta.finished || delta.command_execution_state.is_some() || delta.error.is_some();
             let now = chrono::Utc::now().timestamp();
@@ -3416,12 +3426,12 @@ impl JobManager {
             }
             let semantic = explicit_semantic
                 || job.snapshot.status != previous_status
-                || job.snapshot.validation_progress != previous_progress
-                || job.snapshot.activity != previous_activity;
+                || job.snapshot.validation_progress != previous_progress;
             // Each sequenced update carries the current authoritative bounded
-            // tails. Delivery may coalesce output-only attempts, but semantic
-            // markers preserve their sequence while using the latest retained
-            // authoritative log snapshot at send time.
+            // tails and activity. Delivery may coalesce output/activity-only
+            // attempts, but required semantic markers preserve their sequence
+            // while using the latest retained authoritative snapshot at send
+            // time.
             (
                 job_update_from_snapshot(&job.client_id, &job.runner_instance_id, &job.snapshot),
                 semantic,

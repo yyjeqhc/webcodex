@@ -94,6 +94,13 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
             }
         },
         {
+            "if": {
+                "properties": {"promoted_to_job": {"const": true}},
+                "required": ["promoted_to_job"]
+            },
+            "then": {"required": ["activity"]}
+        },
+        {
             "if": {"required": ["async_handoff_available"]},
             "then": {
                 "if": {
@@ -460,7 +467,7 @@ fn observe_jobs_output_schema() -> Value {
             "log_delta_status", "stdout_delta_reset", "stderr_delta_reset",
             "observation_token", "cursor", "changed",
             "terminal", "executor", "cwd", "shell", "purpose", "command_summary",
-            "detected_summary", "validation"
+            "activity", "detected_summary", "validation"
         ]
     });
     let item = json!({
@@ -1026,7 +1033,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Ownership basis: project_and_session or unknown_session_project_only."),
             ),
         ])),
-        "job_status" => Some(wrapped_output_schema(vec![
+        "job_status" => {
+            let mut schema = wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
             ("project", nullable_schema("string", "Project id, when known.")),
             (
@@ -1143,9 +1151,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "command_preview_bounded",
                 schema_type("boolean", "True when command_preview is bounded and secret-like command text is replaced with [redacted]."),
             ),
-        ])),
+            ]);
+            schema["properties"]["output"]["required"] = json!(["activity"]);
+            Some(schema)
+        }
         "observe_jobs" => Some(observe_jobs_output_schema()),
-        "job_log" | "job_tail" => Some(wrapped_output_schema(vec![
+        "job_log" | "job_tail" => {
+            let mut schema = wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
             (
                 "session_id",
@@ -1314,7 +1326,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Compact detected operation/build/check/test summary from bounded evidence.",
                 ),
             ),
-        ])),
+            ]);
+            schema["properties"]["output"]["required"] = json!(["activity"]);
+            Some(schema)
+        }
         _ => None,
     }
 }
@@ -1486,7 +1501,8 @@ fn job_summary_schema() -> Value {
             "created_at",
             "started_at",
             "ended_at",
-            "exit_code"
+            "exit_code",
+            "activity"
         ],
         "additionalProperties": true
     })

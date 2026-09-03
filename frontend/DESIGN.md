@@ -99,13 +99,13 @@ Navigation answers “where am I?”, conversation answers “what was said?”,
 
 - The primary navigation exposes two task spaces: **Projects & Sessions** and **Runtime & Agents**. Server metrics, Runner diagnostics, Agent identity, inboxes, and durable conversations live in the second space instead of competing with a Session conversation.
 - The Session context inspector contains only evidence about the selected Session: identity, workspace path, validation, reported progress, and activity. Current work and attention stay near the top while raw evidence is disclosed one level deeper.
-- At `1600 px` and above, the otherwise empty right-side remainder becomes a persistent Session context rail. Below that breakpoint context is a non-blocking popover, then a full-width edge sheet on smaller screens.
+- At `1600 px` and above, the otherwise empty right-side remainder docks a Session context rail by default, but remains user-collapsible. Below that breakpoint context is a non-blocking popover, then a full-width edge sheet on smaller screens.
 - Runtime administration is a scrollable card grid with stable anchors for overview, Runner fleet, and Agent communication. On narrow screens it becomes a single column; it never shares the conversational composer or message canvas.
 
 ## Responsive behavior
 
 - At 900 px and below, navigation becomes a dismissible drawer and the main conversation remains full width.
-- At 1600 px and above, navigation, conversation, and context form a bounded three-column working surface; the context rail disappears before it can crowd the primary task.
+- At 1600 px and above, navigation, conversation, and context form a bounded three-column working surface when context is open; the context rail can be collapsed by the user or disappears before it can crowd the primary task.
 - At 600 px and below, optional labels collapse, controls wrap without horizontal scrolling, bubbles can use up to 92% width, and safe-area insets are respected.
 - At 600 px and below, language, appearance, refresh, and lock move into one labelled overflow menu. The menu closes on outside press and Escape and restores focus to its trigger.
 - Coarse pointers receive at least 44 px targets.

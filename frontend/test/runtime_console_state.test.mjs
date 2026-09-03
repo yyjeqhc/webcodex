@@ -45,6 +45,9 @@ import {
   runtimeCollaborationMutationRecovery,
   completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
+  resolveRunnerDisclosure,
+  resolveRuntimeContextState,
+  resolveRuntimeContextPresentationMode,
 } from "../dist/runtime_console_state.js";
 
 test("communication transcript window follows the latest bounded page", () => {
@@ -547,9 +550,9 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /\.session-identity/);
   assert.match(html, /class="session-evidence"/);
   assert.match(html, /Details &amp; activity/);
-  assert.doesNotMatch(html, /class="inspector-card overview-panel" open/);
   assert.match(html, /workspace path/);
-  assert.match(html, /Working &amp; Recently Updated Sessions/);
+  assert.match(html, /class="recent-panel-title">Recent Sessions<\/span>/);
+  assert.match(html, /id="runtime-inspector-close"[^>]*aria-label="Close session context"/);
   assert.match(html, /runtime-recent-session-list/);
   assert.match(html, /Runner Fleet/);
   assert.match(html, /runtime-runner-list/);
@@ -689,8 +692,8 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /function setMobileNavigationOpen/);
   assert.match(source, /function syncResponsiveNavigation/);
   assert.match(source, /WIDE_CONTEXT_MEDIA/);
-  assert.match(source, /classList\.toggle\("context-docked", contextDocked\)/);
-  assert.match(source, /contextDocked && inspector\) inspector\.open = true/);
+  assert.match(source, /classList\.toggle\("context-docked", resolved\.isDocked\)/);
+  assert.match(source, /inspector\.open = resolved\.visible/);
   assert.match(source, /event\.key === "Escape"/);
   assert.match(source, /visibleFocusableElements\(sidebar\)/);
   assert.match(source, /Reply target selected\. Your next message will reply to /);
@@ -803,4 +806,186 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(bootstrap, /runtimeCollaborationMutationRecovery\(state, request\)/);
   assert.match(bootstrap, /confirmCollaborationMutationDurability\(request, mutationRecovery, controller\)/);
   assert.match(bootstrap, /confirmCollaborationMutationDurability[\s\S]*setRuntimeCollaborationPhase\(state, request, "live"\);[\s\S]*setHumanJoinSendEnabled\(true\)/);
+});
+
+test("runner disclosure honors user collapse over selected project and auto-reveals on navigation", () => {
+  assert.equal(resolveRunnerDisclosure(null, true), true);
+  assert.equal(resolveRunnerDisclosure(null, false), false);
+  assert.equal(resolveRunnerDisclosure(false, true), false);
+  assert.equal(resolveRunnerDisclosure(true, false), true);
+
+  let storedRunner1 = true;
+  assert.equal(resolveRunnerDisclosure(storedRunner1, false), true);
+
+  storedRunner1 = false;
+  assert.equal(resolveRunnerDisclosure(storedRunner1, true), false, "rerender must not override manual collapse");
+
+  storedRunner1 = true;
+  assert.equal(resolveRunnerDisclosure(storedRunner1, false), true, "explicit navigation auto-reveals target runner");
+});
+
+test("runtime context resolution separates presentation mode from user visibility intent", () => {
+  assert.equal(resolveRuntimeContextPresentationMode(true, false), "docked");
+  assert.equal(resolveRuntimeContextPresentationMode(false, false), "popover");
+  assert.equal(resolveRuntimeContextPresentationMode(false, true), "sheet");
+  assert.equal(resolveRuntimeContextPresentationMode(true, true), "sheet");
+
+  const wideDefault = resolveRuntimeContextState({
+    userIntent: null,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideDefault.visible, true);
+  assert.equal(wideDefault.presentationMode, "docked");
+  assert.equal(wideDefault.isDocked, true);
+
+  const normalDefault = resolveRuntimeContextState({
+    userIntent: null,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(normalDefault.visible, false);
+  assert.equal(normalDefault.presentationMode, "popover");
+  assert.equal(normalDefault.isDocked, false);
+
+  const mobileDefault = resolveRuntimeContextState({
+    userIntent: null,
+    isWideViewport: false,
+    isMobileViewport: true,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(mobileDefault.visible, false);
+  assert.equal(mobileDefault.presentationMode, "sheet");
+  assert.equal(mobileDefault.isDocked, false);
+
+  const wideUserClosed = resolveRuntimeContextState({
+    userIntent: false,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideUserClosed.visible, false);
+  assert.equal(wideUserClosed.isDocked, false);
+
+  const wideAfterRefresh = resolveRuntimeContextState({
+    userIntent: false,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideAfterRefresh.visible, false);
+  assert.equal(wideAfterRefresh.isDocked, false);
+
+  const normalUserOpened = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(normalUserOpened.visible, true);
+  assert.equal(normalUserOpened.presentationMode, "popover");
+  assert.equal(normalUserOpened.isDocked, false);
+
+  const wideAfterResize = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideAfterResize.visible, true);
+  assert.equal(wideAfterResize.presentationMode, "docked");
+  assert.equal(wideAfterResize.isDocked, true);
+
+  const normalClosedResize = resolveRuntimeContextState({
+    userIntent: false,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(normalClosedResize.visible, false);
+  const wideClosedResize = resolveRuntimeContextState({
+    userIntent: false,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideClosedResize.visible, false);
+  assert.equal(wideClosedResize.isDocked, false);
+
+  const operationsView = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "operations",
+  });
+  assert.equal(operationsView.visible, false);
+  assert.equal(operationsView.isDocked, false);
+
+  const backToSessions = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(backToSessions.visible, true);
+  assert.equal(backToSessions.isDocked, true);
+
+  const noSession = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: false,
+    workspaceView: "sessions",
+  });
+  assert.equal(noSession.visible, false);
+  assert.equal(noSession.isDocked, false);
+
+  const sessionRestored = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(sessionRestored.visible, true);
+  assert.equal(sessionRestored.isDocked, true);
+});
+
+test("navigation and inspector source contracts maintain disclosure hierarchy and accessibility", async () => {
+  const [html, css, source] = await Promise.all([
+    readFile(new URL("../src/runtime.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/runtime.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/runtime.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /<span class="recent-panel-title">Recent Sessions<\/span>/);
+  assert.doesNotMatch(css, /\.sidebar-details > summary > span\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(css, /summary::before\s*\{\s*content:\s*"Show more"/);
+  assert.doesNotMatch(css, /summary\[open\]::before\s*\{\s*content:\s*"Recent Sessions"/);
+  assert.match(css, /\.recent-panel\s*\{[^}]*border-top:/);
+
+  assert.match(html, /id="runtime-inspector-close"[^>]*aria-label="Close session context"/);
+  assert.match(html, /id="runtime-inspector-backdrop"[^>]*aria-label="Close session context"/);
+  assert.match(source, /"Close session context": "关闭会话上下文"/);
+  assert.match(source, /el\("runtime-inspector-close"\)\?\.addEventListener\("click", \(\) => closeRuntimeInspector\(true, true\)\)/);
+  assert.match(source, /function isContextDocked/);
+  assert.match(source, /function syncContextUi/);
+
+  assert.match(source, /function revealRunner/);
+  assert.match(source, /function switchProject[\s\S]*if \(device\) revealRunner\(device\)/);
+  assert.match(source, /function selectRecentSession[\s\S]*if \(clientId\) revealRunner\(clientId\)/);
+  assert.match(source, /group\.open = resolveRunnerDisclosure\(storedDisclosure, defaultOpen\)/);
 });

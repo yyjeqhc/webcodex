@@ -136,10 +136,10 @@
             <p id="runtime-sessions-empty" class="muted small empty-copy" hidden>No retained Workflow Sessions for this project.</p>
           </section>
 
-          <details class="sidebar-details recent-panel">
-            <summary>
-              <span>Working &amp; Recently Updated Sessions</span>
-              <span id="runtime-recent-status" class="muted small">—</span>
+          <details id="runtime-recent-panel" class="sidebar-details recent-panel">
+            <summary class="recent-panel-summary">
+              <span class="recent-panel-title">Recent Sessions</span>
+              <span id="runtime-recent-status" class="muted small recent-panel-meta">—</span>
             </summary>
             <div id="runtime-recent-session-list" class="recent-session-list" role="group" aria-label="Working and recently updated Workflow Sessions"></div>
             <p id="runtime-recent-empty" class="muted small" hidden>No recent Workflow Sessions are visible.</p>
@@ -453,14 +453,19 @@
         <summary class="context-trigger" title="Session context" aria-label="Session context" aria-controls="runtime-inspector-panel">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.5" /><circle cx="16" cy="12" r="1.5" /><circle cx="10" cy="18" r="1.5" /></svg>
         </summary>
-        <button id="runtime-inspector-backdrop" class="inspector-backdrop" type="button" tabindex="-1" aria-label="Close runtime details"></button>
+        <button id="runtime-inspector-backdrop" class="inspector-backdrop" type="button" tabindex="-1" aria-label="Close session context"></button>
         <div id="runtime-inspector-panel" class="inspector-popover">
           <header class="inspector-header">
             <div>
               <span class="eyebrow">Context</span>
               <strong>Session context</strong>
             </div>
-            <span class="live-pill"><i aria-hidden="true"></i> Live</span>
+            <div class="inspector-header-actions">
+              <span class="live-pill"><i aria-hidden="true"></i> Live</span>
+              <button id="runtime-inspector-close" class="inspector-close" type="button" aria-label="Close session context" title="Close session context">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </div>
           </header>
 
           <div class="inspector-scroll">

@@ -573,3 +573,58 @@ export function adoptRuntimeWorkflowSessionDetail(state: any, request: any, deta
     detail
   );
 }
+
+export function resolveRunnerDisclosure(storedDisclosure: boolean | null, defaultOpen: boolean): boolean {
+  return storedDisclosure === null ? defaultOpen : storedDisclosure;
+}
+
+export type RuntimeContextPresentationMode = "docked" | "popover" | "sheet";
+
+export interface RuntimeContextLayoutOptions {
+  userIntent: boolean | null;
+  isWideViewport: boolean;
+  isMobileViewport: boolean;
+  hasSelectedSession: boolean;
+  workspaceView: "sessions" | "operations";
+}
+
+export interface RuntimeContextResolvedState {
+  visible: boolean;
+  presentationMode: RuntimeContextPresentationMode;
+  isDocked: boolean;
+}
+
+export function resolveRuntimeContextPresentationMode(
+  isWideViewport: boolean,
+  isMobileViewport: boolean
+): RuntimeContextPresentationMode {
+  if (isMobileViewport) return "sheet";
+  if (isWideViewport) return "docked";
+  return "popover";
+}
+
+export function resolveRuntimeContextState(
+  options: RuntimeContextLayoutOptions
+): RuntimeContextResolvedState {
+  const presentationMode = resolveRuntimeContextPresentationMode(
+    options.isWideViewport,
+    options.isMobileViewport
+  );
+  const sessionAvailable = options.hasSelectedSession && options.workspaceView === "sessions";
+  if (!sessionAvailable) {
+    return {
+      visible: false,
+      presentationMode,
+      isDocked: false,
+    };
+  }
+  const visible = options.userIntent !== null
+    ? options.userIntent
+    : options.isWideViewport;
+  const isDocked = visible && presentationMode === "docked";
+  return {
+    visible,
+    presentationMode,
+    isDocked,
+  };
+}

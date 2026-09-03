@@ -501,3 +501,33 @@ export function adoptRuntimeWorkflowSessionDetail(state, request, detail) {
         return false;
     return adoptWorkflowSessionDetail(state.workflow, { sessionId: request.sessionId, generation: request.generation }, detail);
 }
+export function resolveRunnerDisclosure(storedDisclosure, defaultOpen) {
+    return storedDisclosure === null ? defaultOpen : storedDisclosure;
+}
+export function resolveRuntimeContextPresentationMode(isWideViewport, isMobileViewport) {
+    if (isMobileViewport)
+        return "sheet";
+    if (isWideViewport)
+        return "docked";
+    return "popover";
+}
+export function resolveRuntimeContextState(options) {
+    const presentationMode = resolveRuntimeContextPresentationMode(options.isWideViewport, options.isMobileViewport);
+    const sessionAvailable = options.hasSelectedSession && options.workspaceView === "sessions";
+    if (!sessionAvailable) {
+        return {
+            visible: false,
+            presentationMode,
+            isDocked: false,
+        };
+    }
+    const visible = options.userIntent !== null
+        ? options.userIntent
+        : options.isWideViewport;
+    const isDocked = visible && presentationMode === "docked";
+    return {
+        visible,
+        presentationMode,
+        isDocked,
+    };
+}

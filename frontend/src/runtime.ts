@@ -50,6 +50,10 @@ import {
   runtimeCollaborationMutationRecovery,
   completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
+  resolveRunnerDisclosure,
+  resolveRuntimeContextState,
+  type RuntimeContextPresentationMode,
+  type RuntimeContextResolvedState,
 } from "./runtime_console_state.js";
 
 const API_BASE = "/api/runtime-console/";
@@ -65,6 +69,9 @@ const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webcodex.runtime.runner-open.v1.";
 const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
 const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
 const WIDE_CONTEXT_MEDIA = "(min-width: 1600px)";
+
+let contextUserIntent: boolean | null = null;
+let syncingContextDom = false;
 
 type AppearancePreference = "system" | "light" | "dark";
 type RuntimeLanguage = "en" | "zh-CN";
@@ -167,6 +174,7 @@ const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Runtime details": "运行时详情",
   "Session context": "会话上下文",
   "Close runtime details": "关闭运行时详情",
+  "Close session context": "关闭会话上下文",
   "Context": "上下文",
   "Live": "实时",
   "Session": "会话",
@@ -676,10 +684,6 @@ function applyWorkspaceView(view: RuntimeWorkspaceView, persist = true): void {
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  if (operations) {
-    const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
-    if (inspector) inspector.open = false;
-  }
   if (operations && token) void refreshCommunication(true);
   renderWorkspaceHeading();
   syncResponsiveNavigation();
@@ -751,12 +755,43 @@ function mobileNavigationViewport(): boolean {
   return window.matchMedia(MOBILE_NAVIGATION_MEDIA).matches;
 }
 
-function closeRuntimeInspector(restoreFocus = false): void {
-  if (el("runtime-console")?.classList.contains("context-docked")) return;
+function isContextDocked(): boolean {
+  return !!el("runtime-console")?.classList.contains("context-docked");
+}
+
+function syncContextUi(restoreFocus = false): void {
+  const shell = el("runtime-console");
   const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
-  if (!inspector?.open) return;
-  inspector.open = false;
-  if (restoreFocus) (inspector.querySelector(".context-trigger") as HTMLElement | null)?.focus();
+  const trigger = inspector?.querySelector(".context-trigger") as HTMLElement | null;
+  const resolved = resolveRuntimeContextState({
+    userIntent: contextUserIntent,
+    isWideViewport: window.matchMedia(WIDE_CONTEXT_MEDIA).matches,
+    isMobileViewport: mobileNavigationViewport(),
+    hasSelectedSession: !!state.workflow?.selectedSessionId,
+    workspaceView,
+  });
+
+  shell?.classList.toggle("context-docked", resolved.isDocked);
+  if (inspector && inspector.open !== resolved.visible) {
+    syncingContextDom = true;
+    try {
+      inspector.open = resolved.visible;
+    } finally {
+      syncingContextDom = false;
+    }
+  }
+  if (restoreFocus && !resolved.visible && trigger) {
+    trigger.focus();
+  }
+}
+
+function closeRuntimeInspector(restoreFocus = false, forceDocked = false): boolean {
+  if (isContextDocked() && !forceDocked) return false;
+  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+  if (!inspector?.open && !isContextDocked()) return false;
+  contextUserIntent = false;
+  syncContextUi(restoreFocus);
+  return true;
 }
 
 function setMobileNavigationOpen(open: boolean, restoreFocus = false): void {
@@ -786,14 +821,7 @@ function syncResponsiveNavigation(): void {
   const shell = el("runtime-console");
   const sidebar = el("runtime-sidebar");
   const toggle = el("runtime-mobile-nav-toggle") as HTMLButtonElement | null;
-  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
-  const wasContextDocked = !!shell?.classList.contains("context-docked");
-  const contextDocked = workspaceView === "sessions"
-    && !!state.workflow?.selectedSessionId
-    && window.matchMedia(WIDE_CONTEXT_MEDIA).matches;
-  shell?.classList.toggle("context-docked", contextDocked);
-  if (contextDocked && inspector) inspector.open = true;
-  else if (wasContextDocked && inspector) inspector.open = false;
+  syncContextUi();
   if (!mobileNavigationViewport()) {
     shell?.classList.remove("mobile-nav-open");
     sidebar?.removeAttribute("aria-hidden");
@@ -1138,6 +1166,13 @@ function storedDeviceDisclosure(clientId: string): boolean | null {
 function persistDeviceDisclosure(clientId: string, open: boolean): void {
   try { window.localStorage.setItem(deviceDisclosureStorageKey(clientId), open ? "open" : "closed"); }
   catch { /* Disclosure remains active for the current render. */ }
+}
+
+function revealRunner(clientId: string): void {
+  if (!clientId) return;
+  persistDeviceDisclosure(clientId, true);
+  const group = document.querySelector(`.device-group[data-runner-id="${CSS.escape(clientId)}"]`) as HTMLDetailsElement | null;
+  if (group) group.open = true;
 }
 
 function appendChip(parent: HTMLElement, text: string, extraClass = ""): HTMLElement {
@@ -1615,12 +1650,11 @@ function renderProjectSelectors(projects: any[], truncated: boolean): void {
     const connected = runner ? runner.connected !== false : deviceProjects.some((project) => project?.connected);
     const group = document.createElement("details");
     group.className = "device-group" + (connected ? " online" : " offline");
+    group.dataset.runnerId = clientId;
     group.setAttribute("aria-label", runtimeLanguage === "zh-CN" ? "设备 " + clientId : "Device " + clientId);
     const storedDisclosure = storedDeviceDisclosure(clientId);
-    const containsSelectedProject = deviceProjects.some((project) => String(project?.id || "") === String(state.selectedProject || ""));
-    group.open = containsSelectedProject || (storedDisclosure === null
-      ? (projectDeviceFilter ? true : String(state.selectedDevice || "") === clientId || clientId === visibleDevices[0])
-      : storedDisclosure);
+    const defaultOpen = projectDeviceFilter ? true : String(state.selectedDevice || "") === clientId || clientId === visibleDevices[0];
+    group.open = resolveRunnerDisclosure(storedDisclosure, defaultOpen);
     const deviceHead = document.createElement("summary"); deviceHead.className = "device-group-head";
     const deviceIcon = document.createElement("span"); deviceIcon.className = "device-group-icon"; deviceIcon.setAttribute("aria-hidden", "true"); deviceIcon.appendChild(runtimeIcon("monitor"));
     const deviceIdentity = document.createElement("div"); deviceIdentity.className = "device-group-identity";
@@ -1740,6 +1774,7 @@ function switchProject(device: string, project: string): void {
   abortProjectWork();
   collaborationReplyTo = "";
   clearSessionSurface();
+  if (device) revealRunner(device);
   const request = selectRuntimeProject(state, device, project);
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
@@ -1756,6 +1791,7 @@ function applyRunnerFilter(device: string): void {
   clearSessionSurface();
   selectedProjectSnapshot = null;
   projectDeviceFilter = device;
+  if (device) revealRunner(device);
   selectRuntimeRunnerFilter(state, device);
   renderProjectSelectors(projectRows, projectRowsTruncated);
   renderRunnerFleet(runnerRows);
@@ -1908,6 +1944,7 @@ function selectRecentSession(session: any): void {
   collaborationReplyTo = "";
   clearSessionSurface();
   setHumanJoinSendEnabled(false);
+  if (clientId) revealRunner(clientId);
   const location = selectRuntimeSessionLocation(state, clientId, projectId, sessionId);
   restoreCurrentDraft();
   renderProjectSelectors(projectRows, projectRowsTruncated);
@@ -3881,6 +3918,7 @@ el("runtime-mobile-nav-toggle")?.addEventListener("click", () => setMobileNaviga
 el("runtime-mobile-nav-close")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-mobile-nav-backdrop")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-inspector-backdrop")?.addEventListener("click", () => closeRuntimeInspector(true));
+el("runtime-inspector-close")?.addEventListener("click", () => closeRuntimeInspector(true, true));
 document.querySelectorAll<HTMLButtonElement>("[data-runtime-view]").forEach((button) => {
   button.addEventListener("click", () => applyWorkspaceView(workspaceViewPreference(button.dataset.runtimeView)));
 });
@@ -3940,8 +3978,20 @@ el("runtime-timeline")?.addEventListener("scroll", () => {
   updateWorkflowSessionFollowFromScroll(state.workflow, node.scrollTop, node.clientHeight, node.scrollHeight); syncFollowUi();
 });
 document.querySelector(".runtime-inspector")?.addEventListener("toggle", (event) => {
+  if (syncingContextDom) return;
   const inspector = event.currentTarget as HTMLDetailsElement | null;
-  if (inspector?.open) setMobileNavigationOpen(false, false);
+  if (!inspector) return;
+  contextUserIntent = inspector.open;
+  if (inspector.open && mobileNavigationViewport()) {
+    setMobileNavigationOpen(false, false);
+  }
+  const trigger = inspector.querySelector(".context-trigger") as HTMLElement | null;
+  const wasTriggerFocused = document.activeElement === trigger;
+  syncContextUi(false);
+  const shell = el("runtime-console");
+  if (shell?.classList.contains("context-docked") && wasTriggerFocused) {
+    el("runtime-inspector-close")?.focus();
+  }
 });
 document.addEventListener("keydown", (event) => {
   const shell = el("runtime-console");
@@ -3962,6 +4012,11 @@ document.addEventListener("keydown", (event) => {
     if (inspector?.open && !shell?.classList.contains("context-docked")) {
       event.preventDefault();
       closeRuntimeInspector(true);
+      return;
+    }
+    if (shell?.classList.contains("context-docked") && inspector?.open && inspector.contains(document.activeElement)) {
+      event.preventDefault();
+      closeRuntimeInspector(true, true);
       return;
     }
     if (shell?.classList.contains("mobile-nav-open")) {

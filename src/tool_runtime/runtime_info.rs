@@ -1521,6 +1521,7 @@ mod phase_e2_status_tests {
                 codex: None,
                 result: None,
                 validation_progress: None,
+                activity: None,
                 validation: None,
                 recovery_state: None,
                 recovered_after_server_restart: false,

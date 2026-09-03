@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    array_schema, cargo_test_count_assertion_schema, nullable_schema, permission_decision_schema,
-    recovery_kind_schema, schema_type, session_hint_schema, wrapped_output_schema,
+    array_schema, cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
+    permission_decision_schema, recovery_kind_schema, schema_type, session_hint_schema,
+    wrapped_output_schema,
 };
 
 fn validation_job_projection_schema() -> Value {
@@ -309,6 +310,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
                 "Current Job observation token when a continuation was exposed.",
             ),
         ),
+        ("activity", job_activity_schema()),
         (
             "effective_timeout_secs",
             schema_type(
@@ -391,6 +393,7 @@ fn observe_jobs_output_schema() -> Value {
             "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
             "command_execution_state": job_command_execution_state_schema(),
             "structured_execution": job_structured_execution_metadata_schema(),
+            "activity": job_activity_schema(),
             "stdout_tail": schema_type("string", "Bounded stdout baseline, delta, conservative partial-line replay, or reset-recovery tail. A previously observed unterminated final line may repeat until its line boundary is observed."),
             "stderr_tail": schema_type("string", "Bounded stderr baseline, delta, conservative partial-line replay, or reset-recovery tail. A previously observed unterminated final line may repeat until its line boundary is observed."),
             "stdout_lines": schema_type("integer", "Total observed stdout line count."),
@@ -427,8 +430,6 @@ fn observe_jobs_output_schema() -> Value {
                 },
                 "required": ["stdout", "stderr"]
             },
-            "wait_outcome": schema_type("string", "Canonical per-Job internal observation outcome; outer wake_reason is the batch wait fact."),
-            "waited_ms": schema_type("integer", "Canonical per-Job internal wait time. Final batch snapshots are non-waiting."),
             "changed": schema_type("boolean", "Whether the lifecycle revision or Server epoch differs from the item's supplied token. Token format upgrades alone do not set changed."),
             "terminal": schema_type("boolean", "Canonical terminal classification."),
             "executor": {
@@ -457,7 +458,7 @@ fn observe_jobs_output_schema() -> Value {
             "job_id", "status", "exit_code", "stdout_tail", "stderr_tail",
             "stdout_lines", "stderr_lines", "stdout_truncated", "stderr_truncated",
             "log_delta_status", "stdout_delta_reset", "stderr_delta_reset",
-            "observation_token", "cursor", "wait_outcome", "waited_ms", "changed",
+            "observation_token", "cursor", "changed",
             "terminal", "executor", "cwd", "shell", "purpose", "command_summary",
             "detected_summary", "validation"
         ]
@@ -506,11 +507,19 @@ fn observe_jobs_output_schema() -> Value {
             "succeeded_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "failed_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "items": {"type": "array", "maxItems": 8, "items": item},
-            "wake_reason": {
-                "type": "string",
-                "enum": ["immediate", "updated", "terminal", "item_error", "timeout"]
+            "wait": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["immediate", "updated", "terminal", "item_error", "timeout"]
+                    },
+                    "waited_ms": {"type": "integer", "minimum": 0}
+                },
+                "required": ["outcome", "waited_ms"],
+                "description": "The single shared-wait fact for this batch. Final item outputs are snapshots and do not expose a second wait outcome."
             },
-            "waited_ms": {"type": "integer", "minimum": 0},
             "changed_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "terminal_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "output_truncated": {"type": "boolean"},
@@ -520,7 +529,7 @@ fn observe_jobs_output_schema() -> Value {
         },
         "required": [
             "requested_count", "returned_count", "succeeded_count", "failed_count",
-            "items", "wake_reason", "waited_ms", "changed_count", "terminal_count",
+            "items", "wait", "changed_count", "terminal_count",
             "output_truncated", "next_index"
         ]
     });
@@ -1053,6 +1062,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "structured_execution",
                 job_structured_execution_metadata_schema(),
             ),
+            ("activity", job_activity_schema()),
             (
                 "recovery_state",
                 nullable_schema("string", "Bounded recovery state such as recovering or reconciled."),
@@ -1179,6 +1189,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "structured_execution",
                 job_structured_execution_metadata_schema(),
             ),
+            ("activity", job_activity_schema()),
             (
                 "stdout_tail",
                 schema_type("string", "Bounded stdout baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed."),
@@ -1459,6 +1470,7 @@ fn job_summary_schema() -> Value {
             "exit_code": nullable_schema("integer", "Process exit code, when available."),
             "command_execution_state": job_command_execution_state_schema(),
             "structured_execution": job_structured_execution_metadata_schema(),
+            "activity": job_activity_schema(),
             "recovery_state": nullable_schema("string", "Bounded recovery state, when applicable."),
             "recovered_after_server_restart": schema_type("boolean", "True when rebuilt from a same-runner inventory."),
             "reconciled_at": nullable_schema("integer", "Latest reconciliation timestamp."),

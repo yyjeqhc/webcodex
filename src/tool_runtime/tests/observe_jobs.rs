@@ -2,7 +2,11 @@
 
 use super::super::*;
 use super::support::*;
-use crate::runner_protocol::RunnerCapabilities;
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerRequest, ShellJobActivity,
+    ShellJobActivityPhase,
+    ShellJobActivitySource, ShellJobActivityState,
+};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -47,6 +51,69 @@ async fn register_and_start_agent_job(
     let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     (job_id, request, auth)
+}
+
+fn process_activity() -> ShellJobActivity {
+    ShellJobActivity {
+        state: ShellJobActivityState::Working,
+        phase: ShellJobActivityPhase::ProcessRunning,
+        source: ShellJobActivitySource::RunnerExecution,
+    }
+}
+
+async fn update_observed_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request: &RunnerRequest,
+    status: &str,
+    stdout_chunk: Option<&str>,
+    activity: Option<ShellJobActivity>,
+    finished: bool,
+) {
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: client_id.to_string(),
+            runner_instance_id: "inst".to_string(),
+            update_seq: None,
+            job_id: request.job_id.clone().expect("Job request id"),
+            request_id: Some(request.request_id.clone()),
+            status: status.to_string(),
+            stdout_chunk: stdout_chunk.map(str::to_string),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: finished.then_some(0),
+            duration_ms: finished.then_some(25),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            activity,
+            finished,
+        })
+        .await
+        .unwrap();
+}
+
+async fn observation_token(
+    runtime: &ToolRuntime,
+    job_id: &str,
+    auth: &crate::auth::AuthContext,
+) -> String {
+    runtime
+        .job_log_for_auth(job_id.to_string(), None, Some(40), Some(auth), None, None)
+        .await
+        .output["observation_token"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn assert_item_has_no_wait_metadata(item: &serde_json::Value) {
+    let output = item["output"].as_object().expect("successful Job snapshot");
+    assert!(!output.contains_key("wait_outcome"));
+    assert!(!output.contains_key("waited_ms"));
 }
 
 async fn start_owned_agent_job(
@@ -207,12 +274,16 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         spec.input_schema["properties"]["items"]["items"]["additionalProperties"],
         false
     );
+    let output = &spec.output_schema["properties"]["output"]["anyOf"][0];
     assert_eq!(
-        spec.output_schema["properties"]["output"]["anyOf"][0]["properties"]["wake_reason"]["enum"],
+        output["properties"]["wait"]["properties"]["outcome"]["enum"],
         json!(["immediate", "updated", "terminal", "item_error", "timeout"])
     );
-    let observation = &spec.output_schema["properties"]["output"]["anyOf"][0]["properties"]
-        ["items"]["items"]["properties"]["output"]["anyOf"][0];
+    assert!(output["properties"].get("wake_reason").is_none());
+    assert!(output["properties"].get("waited_ms").is_none());
+    let observation = &output["properties"]["items"]["items"]["properties"]["output"]["anyOf"][0];
+    assert!(observation["properties"].get("wait_outcome").is_none());
+    assert!(observation["properties"].get("waited_ms").is_none());
     assert_eq!(
         observation["properties"]["log_delta_status"]["enum"],
         json!(["baseline", "delta", "unchanged", "reset"])
@@ -356,6 +427,9 @@ async fn observe_jobs_mixed_success_result_matches_declared_output_schema_and_en
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["succeeded_count"], 1);
     assert_eq!(result.output["failed_count"], 1);
+    assert_eq!(result.output["wait"]["outcome"], "item_error");
+    assert_eq!(result.output["wait"]["waited_ms"], 0);
+    assert_item_has_no_wait_metadata(&result.output["items"][0]);
     assert!(probe_patch_agent_request(&runtime, "observe-no-enqueue")
         .await
         .is_none());
@@ -366,6 +440,226 @@ async fn observe_jobs_mixed_success_result_matches_declared_output_schema_and_en
         super::super::startup_brief::validate_schema_instance_for_test(&value, &schema).is_ok(),
         "mixed observe_jobs result did not satisfy output schema: {value}"
     );
+}
+
+#[tokio::test]
+async fn observe_jobs_missing_baseline_is_immediate_and_projects_activity_without_item_wait() {
+    let runtime = test_runtime();
+    let (job_id, request, auth) = register_and_start_agent_job(&runtime, "observe-immediate").await;
+    update_observed_job(
+        &runtime,
+        "observe-immediate",
+        &request,
+        "running",
+        None,
+        Some(process_activity()),
+        false,
+    )
+    .await;
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ObserveJobs {
+                items: vec![item(&job_id, None)],
+                tail_lines: 40,
+                wait_secs: Some(60),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "immediate");
+    assert_eq!(result.output["wait"]["waited_ms"], 0);
+    assert_eq!(result.output["items"][0]["output"]["status"], "running");
+    assert_eq!(
+        result.output["items"][0]["output"]["activity"],
+        serde_json::to_value(process_activity()).unwrap()
+    );
+    assert_item_has_no_wait_metadata(&result.output["items"][0]);
+}
+
+#[tokio::test]
+async fn observe_jobs_timeout_waits_once_for_multiple_active_jobs() {
+    let runtime = test_runtime();
+    let (job_a, request_a, auth) =
+        register_and_start_agent_job(&runtime, "observe-timeout-a").await;
+    let (job_b, request_b, _) = register_and_start_agent_job(&runtime, "observe-timeout-b").await;
+    let (job_c, request_c, _) = register_and_start_agent_job(&runtime, "observe-timeout-c").await;
+    for (client, request) in [
+        ("observe-timeout-a", &request_a),
+        ("observe-timeout-b", &request_b),
+        ("observe-timeout-c", &request_c),
+    ] {
+        update_observed_job(
+            &runtime,
+            client,
+            request,
+            "running",
+            None,
+            Some(process_activity()),
+            false,
+        )
+        .await;
+    }
+    let token_a = observation_token(&runtime, &job_a, &auth).await;
+    let token_b = observation_token(&runtime, &job_b, &auth).await;
+    let token_c = observation_token(&runtime, &job_c, &auth).await;
+
+    let started = Instant::now();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ObserveJobs {
+                items: vec![
+                    item(&job_a, Some(token_a)),
+                    item(&job_b, Some(token_b)),
+                    item(&job_c, Some(token_c)),
+                ],
+                tail_lines: 40,
+                wait_secs: Some(1),
+            },
+            Some(&auth),
+        )
+        .await;
+    let elapsed = started.elapsed();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "timeout");
+    assert!(result.output["wait"]["waited_ms"].as_u64().unwrap() > 0);
+    assert!(
+        elapsed < Duration::from_millis(2500),
+        "three Jobs must share one ~1s wait instead of multiplying it: {elapsed:?}"
+    );
+    assert_eq!(result.output["items"].as_array().unwrap().len(), 3);
+    for item in result.output["items"].as_array().unwrap() {
+        assert_eq!(item["output"]["status"], "running");
+        assert_item_has_no_wait_metadata(item);
+    }
+}
+
+#[tokio::test]
+async fn observe_jobs_one_item_update_wakes_shared_wait_and_refreshes_all_snapshots() {
+    let runtime = test_runtime();
+    let (job_a, request_a, auth) = register_and_start_agent_job(&runtime, "observe-update-a").await;
+    let (job_b, request_b, _) = register_and_start_agent_job(&runtime, "observe-update-b").await;
+    update_observed_job(
+        &runtime,
+        "observe-update-a",
+        &request_a,
+        "running",
+        None,
+        Some(process_activity()),
+        false,
+    )
+    .await;
+    update_observed_job(
+        &runtime,
+        "observe-update-b",
+        &request_b,
+        "running",
+        None,
+        Some(process_activity()),
+        false,
+    )
+    .await;
+    let token_a = observation_token(&runtime, &job_a, &auth).await;
+    let token_b = observation_token(&runtime, &job_b, &auth).await;
+
+    let waiting_runtime = runtime.clone();
+    let waiting_auth = auth.clone();
+    let waiting_a = job_a.clone();
+    let waiting_b = job_b.clone();
+    let task = tokio::spawn(async move {
+        waiting_runtime
+            .dispatch_with_auth(
+                ToolCall::ObserveJobs {
+                    items: vec![
+                        item(&waiting_a, Some(token_a)),
+                        item(&waiting_b, Some(token_b)),
+                    ],
+                    tail_lines: 40,
+                    wait_secs: Some(5),
+                },
+                Some(&waiting_auth),
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(75)).await;
+    update_observed_job(
+        &runtime,
+        "observe-update-b",
+        &request_b,
+        "running",
+        Some("second changed\n"),
+        Some(process_activity()),
+        false,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "updated");
+    assert!(result.output["wait"]["waited_ms"].as_u64().unwrap() < 5_000);
+    assert_eq!(result.output["items"][0]["output"]["status"], "running");
+    assert_eq!(result.output["items"][1]["output"]["status"], "running");
+    assert_eq!(result.output["items"][1]["output"]["changed"], true);
+    assert!(result.output["items"][1]["output"]["stdout_tail"]
+        .as_str()
+        .unwrap()
+        .contains("second changed"));
+    for item in result.output["items"].as_array().unwrap() {
+        assert_item_has_no_wait_metadata(item);
+    }
+}
+
+#[tokio::test]
+async fn observe_jobs_terminal_transition_wakes_shared_wait() {
+    let runtime = test_runtime();
+    let (job_id, request, auth) = register_and_start_agent_job(&runtime, "observe-terminal").await;
+    update_observed_job(
+        &runtime,
+        "observe-terminal",
+        &request,
+        "running",
+        None,
+        Some(process_activity()),
+        false,
+    )
+    .await;
+    let token = observation_token(&runtime, &job_id, &auth).await;
+
+    let waiting_runtime = runtime.clone();
+    let waiting_auth = auth.clone();
+    let waiting_job = job_id.clone();
+    let task = tokio::spawn(async move {
+        waiting_runtime
+            .dispatch_with_auth(
+                ToolCall::ObserveJobs {
+                    items: vec![item(&waiting_job, Some(token))],
+                    tail_lines: 40,
+                    wait_secs: Some(5),
+                },
+                Some(&waiting_auth),
+            )
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(75)).await;
+    update_observed_job(
+        &runtime,
+        "observe-terminal",
+        &request,
+        "completed",
+        None,
+        None,
+        true,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "terminal");
+    assert_eq!(result.output["terminal_count"], 1);
+    assert_eq!(result.output["items"][0]["output"]["terminal"], true);
+    assert!(result.output["items"][0]["output"]["activity"].is_null());
+    assert_item_has_no_wait_metadata(&result.output["items"][0]);
 }
 
 #[test]

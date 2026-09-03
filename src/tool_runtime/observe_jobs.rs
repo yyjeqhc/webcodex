@@ -96,11 +96,20 @@ fn observation_recovery(error_kind: &str) -> (RecoveryKind, Option<RecoveryTool>
 
 fn batch_item(observed: ObservedJob) -> Value {
     if observed.result.success {
+        let mut output = observed.result.output;
+        if let Some(output) = output.as_object_mut() {
+            // observe_jobs owns one shared wait for the batch. The final item
+            // refreshes are snapshots only; leaking job_log's internal
+            // non-waiting metadata would present a second, contradictory wait
+            // fact to the model.
+            output.remove("wait_outcome");
+            output.remove("waited_ms");
+        }
         json!({
             "index": observed.index,
             "job_id": observed.job_id,
             "success": true,
-            "output": observed.result.output,
+            "output": output,
             "error_kind": null,
             "error": null,
         })
@@ -168,8 +177,10 @@ fn batch_output(
         "succeeded_count": succeeded_count,
         "failed_count": returned_count - succeeded_count,
         "items": items,
-        "wake_reason": wake_reason.as_str(),
-        "waited_ms": waited_ms,
+        "wait": {
+            "outcome": wake_reason.as_str(),
+            "waited_ms": waited_ms,
+        },
         "changed_count": changed_count,
         "terminal_count": terminal_count,
         "output_truncated": output_truncated,
@@ -533,6 +544,8 @@ mod tests {
             "error": null,
         });
         let output = apply_output_budget(1, vec![item], WakeReason::Immediate, 0).unwrap();
+        assert_eq!(output["wait"]["outcome"], "immediate");
+        assert_eq!(output["wait"]["waited_ms"], 0);
         assert_eq!(output["returned_count"], 1);
         assert_eq!(output["items"][0]["success"], false);
         assert_eq!(output["items"][0]["error_kind"], "output_budget_exceeded");
@@ -570,6 +583,7 @@ mod tests {
         assert_eq!(output["returned_count"], 2);
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["next_index"], 2);
+        assert_eq!(output["wait"]["outcome"], "immediate");
         assert!(
             serde_json::to_vec(&ToolResult::ok(output)).unwrap().len()
                 <= MAX_SERIALIZED_OUTPUT_BYTES

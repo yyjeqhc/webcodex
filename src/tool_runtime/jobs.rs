@@ -9,6 +9,7 @@ use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
 use crate::runner_protocol::{
+    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
     ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationStep,
 };
 
@@ -37,6 +38,68 @@ pub(crate) fn detected_job_summary(
     exit_code: Option<i64>,
     stdout: &str,
     stderr: &str,
+) -> Value {
+    detected_job_summary_with_activity(
+        command_summary,
+        purpose,
+        status,
+        exit_code,
+        stdout,
+        stderr,
+        None,
+    )
+}
+
+fn activity_progress_projection(activity: &ShellJobActivity) -> Value {
+    let state = match activity.state {
+        ShellJobActivityState::Working => "working",
+        ShellJobActivityState::Waiting => "waiting",
+    };
+    let (reason_code, summary) = match activity.phase {
+        ShellJobActivityPhase::ProcessRunning => {
+            ("process_running", "Process execution in progress")
+        }
+        ShellJobActivityPhase::ValidationFormat => (
+            "validation_format",
+            "Structured format validation in progress",
+        ),
+        ShellJobActivityPhase::ValidationCheck => (
+            "validation_check",
+            "Structured check validation in progress",
+        ),
+        ShellJobActivityPhase::ValidationTest => {
+            ("validation_test", "Structured test validation in progress")
+        }
+        ShellJobActivityPhase::CargoWaitingForBuildLock => (
+            "cargo_waiting_for_build_lock",
+            "Waiting for Cargo build lock",
+        ),
+        ShellJobActivityPhase::CargoCompiling => {
+            ("cargo_compiling", "Cargo compilation in progress")
+        }
+        ShellJobActivityPhase::CargoChecking => ("cargo_checking", "Cargo checking in progress"),
+    };
+    let source = match activity.source {
+        ShellJobActivitySource::RunnerExecution => "runner_execution",
+        ShellJobActivitySource::ValidationPlan => "validation_plan",
+        ShellJobActivitySource::CargoOutput => "cargo_output",
+    };
+    json!({
+        "state": state,
+        "reason_code": reason_code,
+        "summary": summary,
+        "source": source,
+    })
+}
+
+pub(crate) fn detected_job_summary_with_activity(
+    command_summary: Option<&str>,
+    purpose: Option<&str>,
+    status: &str,
+    exit_code: Option<i64>,
+    stdout: &str,
+    stderr: &str,
+    activity: Option<&ShellJobActivity>,
 ) -> Value {
     let normalized = command_summary
         .unwrap_or_default()
@@ -75,7 +138,9 @@ pub(crate) fn detected_job_summary(
     if outcome == "in_progress" {
         let lower = format!("{stdout}\n{stderr}").to_ascii_lowercase();
         let cargo_command = normalized == "cargo" || normalized.starts_with("cargo ");
-        let progress = if cargo_command && lower.contains("blocking waiting for file lock") {
+        let progress = if let Some(activity) = activity {
+            Some(activity_progress_projection(activity))
+        } else if cargo_command && lower.contains("blocking waiting for file lock") {
             Some(json!({
                 "state": "waiting",
                 "reason_code": "cargo_build_lock",
@@ -124,7 +189,10 @@ pub(crate) fn detected_job_summary(
 
 #[cfg(test)]
 mod detected_summary_tests {
-    use super::detected_job_summary;
+    use super::{detected_job_summary, detected_job_summary_with_activity};
+    use crate::shell_protocol::{
+        ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
+    };
 
     #[test]
     fn cargo_progress_is_advisory_and_command_scoped() {
@@ -158,6 +226,30 @@ mod detected_summary_tests {
             "",
         );
         assert!(unrelated.get("progress").is_none());
+    }
+
+    #[test]
+    fn structured_activity_takes_precedence_over_conflicting_log_heuristics() {
+        let activity = ShellJobActivity {
+            state: ShellJobActivityState::Waiting,
+            phase: ShellJobActivityPhase::CargoWaitingForBuildLock,
+            source: ShellJobActivitySource::CargoOutput,
+        };
+        let detected = detected_job_summary_with_activity(
+            Some("cargo check -p webcodex"),
+            Some("validation"),
+            "running",
+            None,
+            "",
+            "Checking webcodex v0.3.9\n",
+            Some(&activity),
+        );
+        assert_eq!(detected["progress"]["state"], "waiting");
+        assert_eq!(
+            detected["progress"]["reason_code"],
+            "cargo_waiting_for_build_lock"
+        );
+        assert_eq!(detected["progress"]["source"], "cargo_output");
     }
 }
 
@@ -484,6 +576,7 @@ pub(crate) fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
         "exit_code": job.exit_code,
         "command_execution_state": job.command_execution_state,
         "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
+        "activity": job.activity,
         "recovery_state": job.recovery_state,
         "recovered_after_server_restart": job.recovered_after_server_restart,
         "reconciled_at": job.reconciled_at,
@@ -1010,6 +1103,7 @@ impl ToolRuntime {
                     "error": job.error,
                     "command_execution_state": job.command_execution_state,
                     "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
+                    "activity": job.activity,
                     "recovery_state": job.recovery_state,
                     "recovered_after_server_restart": job.recovered_after_server_restart,
                     "reconciled_at": job.reconciled_at,
@@ -1152,13 +1246,14 @@ impl ToolRuntime {
                 let stderr = stderr.unwrap_or_default();
                 let command_summary = job.command_preview.clone();
                 let purpose = job.purpose.clone().unwrap_or_else(|| "other".to_string());
-                let detected_summary = detected_job_summary(
+                let detected_summary = detected_job_summary_with_activity(
                     Some(&command_summary),
                     Some(&purpose),
                     &job.status,
                     job.exit_code.map(i64::from),
                     &wait.analysis_stdout,
                     &wait.analysis_stderr,
+                    job.activity.as_ref(),
                 );
                 let validation_tool = job
                     .validation
@@ -1194,6 +1289,7 @@ impl ToolRuntime {
                     "exit_code": job.exit_code,
                     "command_execution_state": job.command_execution_state,
                     "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
+                    "activity": job.activity,
                     "stdout_tail": stdout,
                     "stderr_tail": stderr,
                     "stdout_lines": next_stdout_line.saturating_sub(1),
@@ -2152,6 +2248,7 @@ mod recovery_projection_tests {
             codex: None,
             result: None,
             validation_progress: None,
+            activity: None,
             validation: None,
             recovery_state: None,
             recovered_after_server_restart: false,
@@ -2202,6 +2299,7 @@ mod recovery_projection_tests {
             codex: None,
             result: None,
             validation_progress: None,
+            activity: None,
             validation: None,
             recovery_state: Some("lost_after_reconcile".to_string()),
             recovered_after_server_restart: true,

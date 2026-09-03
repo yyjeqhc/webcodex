@@ -993,6 +993,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -1131,6 +1132,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: true,
         })
         .await

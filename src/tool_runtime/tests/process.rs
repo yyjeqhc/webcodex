@@ -4,7 +4,8 @@ use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
+    ShellJobActivitySource, ShellJobActivityState,
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
@@ -155,6 +156,13 @@ async fn update_process_job(
     stderr: Option<&str>,
     error: Option<&str>,
 ) {
+    let activity = (state.is_none() && matches!(status, "running" | "stop_requested")).then_some(
+        ShellJobActivity {
+            state: ShellJobActivityState::Working,
+            phase: ShellJobActivityPhase::ProcessRunning,
+            source: ShellJobActivitySource::RunnerExecution,
+        },
+    );
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
@@ -174,6 +182,7 @@ async fn update_process_job(
             error: error.map(str::to_string),
             command_execution_state: state,
             validation_progress: None,
+            activity,
             finished: state.is_some(),
         })
         .await
@@ -637,6 +646,11 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
                     stdout: Default::default(),
                     stderr: Default::default(),
                     validation_progress: None,
+                    activity: Some(ShellJobActivity {
+                        state: ShellJobActivityState::Working,
+                        phase: ShellJobActivityPhase::ProcessRunning,
+                        source: ShellJobActivitySource::RunnerExecution,
+                    }),
                 }],
             }),
             coding_agent_providers: None,
@@ -1137,6 +1151,18 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     assert_eq!(handoff.output["stdout_lines"], 1);
     assert_eq!(handoff.output["stdout_truncated"], false);
     assert_eq!(handoff.output["detected_summary"]["outcome"], "in_progress");
+    assert_eq!(
+        handoff.output["activity"],
+        json!({
+            "state": "working",
+            "phase": "process_running",
+            "source": "runner_execution"
+        })
+    );
+    assert_eq!(
+        handoff.output["detected_summary"]["progress"]["reason_code"],
+        "process_running"
+    );
     let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
@@ -1152,6 +1178,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["job_id"], job_id);
     assert_eq!(status.output["status"], "running");
+    assert_eq!(status.output["activity"], handoff.output["activity"]);
     assert!(status.output["command_execution_state"].is_null());
     assert_eq!(
         status.output["structured_execution"]["execution_source"],
@@ -1202,6 +1229,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         .await;
     assert!(terminal.success, "{:?}", terminal.error);
     assert_eq!(terminal.output["status"], "completed");
+    assert!(terminal.output["activity"].is_null());
     assert_eq!(terminal.output["command_execution_state"], "completed");
     assert_eq!(
         terminal.output["structured_execution"]["execution_source"],

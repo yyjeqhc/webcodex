@@ -244,14 +244,16 @@ impl ToolRuntime {
                     execution_state,
                     command_started,
                 }) => {
-                    let detected_summary = crate::tool_runtime::jobs::detected_job_summary(
-                        Some(&summary),
-                        Some(declared_purpose.as_str()),
-                        &observation.job.status,
-                        observation.job.exit_code.map(i64::from),
-                        &observation.stdout_tail,
-                        &observation.stderr_tail,
-                    );
+                    let detected_summary =
+                        crate::tool_runtime::jobs::detected_job_summary_with_activity(
+                            Some(&summary),
+                            Some(declared_purpose.as_str()),
+                            &observation.job.status,
+                            observation.job.exit_code.map(i64::from),
+                            &observation.stdout_tail,
+                            &observation.stderr_tail,
+                            observation.job.activity.as_ref(),
+                        );
                     ToolResult::ok(json!({
                         "execution_state": execution_state,
                         "command_started": command_started,
@@ -265,6 +267,7 @@ impl ToolRuntime {
                         "job_id": observation.job.job_id,
                         "job_status": observation.job.status,
                         "observation_token": observation.job.observation_token,
+                        "activity": observation.job.activity,
                         "effective_timeout_secs": timeout,
                         "sync_wait_secs": budget.sync_wait_secs,
                         "async_handoff_available": true,

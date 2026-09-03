@@ -12,7 +12,8 @@ use super::support::*;
 use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
+    ShellJobActivitySource, ShellJobActivityState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationProgress, ShellJobValidationStep, JOB_INVENTORY_MAX_TERMINAL_JOBS,
 };
 use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};
@@ -107,6 +108,19 @@ fn cargo_test_update(
     progress: ShellJobValidationProgress,
     finished: bool,
 ) -> RunnerJobUpdateRequest {
+    let activity = progress
+        .current_step
+        .as_deref()
+        .map(|step| ShellJobActivity {
+            state: ShellJobActivityState::Working,
+            phase: match step {
+                "format" => ShellJobActivityPhase::ValidationFormat,
+                "check" => ShellJobActivityPhase::ValidationCheck,
+                "test" => ShellJobActivityPhase::ValidationTest,
+                other => panic!("unexpected validation step: {other}"),
+            },
+            source: ShellJobActivitySource::ValidationPlan,
+        });
     RunnerJobUpdateRequest {
         client_id: client_id.to_string(),
         runner_instance_id: "inst".to_string(),
@@ -124,6 +138,7 @@ fn cargo_test_update(
         error: None,
         command_execution_state: None,
         validation_progress: Some(progress),
+        activity,
         finished,
     }
 }
@@ -782,11 +797,23 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
         .is_some_and(|tail| tail.contains("Checking demo v0.1.0")));
     assert_eq!(
         result.output["detected_summary"]["progress"]["reason_code"],
-        "cargo_checking"
+        "validation_check"
     );
     assert_eq!(
         result.output["detected_summary"]["progress"]["state"],
         "working"
+    );
+    assert_eq!(
+        result.output["detected_summary"]["progress"]["source"],
+        "validation_plan"
+    );
+    assert_eq!(
+        result.output["activity"],
+        json!({
+            "state": "working",
+            "phase": "validation_check",
+            "source": "validation_plan"
+        })
     );
     assert_eq!(result.output["job_id"], job_id);
     let observation_token = result.output["observation_token"]
@@ -806,6 +833,10 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["activity"],
+        result.output["activity"]
+    );
     assert_agent_observation_upgrades_without_changing_snapshot(
         &job_id,
         &observation_token,
@@ -885,6 +916,14 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     assert_eq!(result.output["promoted_to_job"], true);
     assert_eq!(result.output["execution_state"], "running");
     assert_eq!(result.output["job_status"], "running");
+    assert_eq!(
+        result.output["activity"],
+        json!({
+            "state": "working",
+            "phase": "validation_test",
+            "source": "validation_plan"
+        })
+    );
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["effective_timeout_secs"], 1800);
@@ -910,6 +949,10 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["activity"],
+        result.output["activity"]
+    );
     assert_agent_observation_upgrades_without_changing_snapshot(
         &job_id,
         &observation_token,
@@ -925,6 +968,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     assert!(status.success);
     assert_eq!(status.output["status"], "running");
     assert_eq!(status.output["active"], true);
+    assert_eq!(status.output["activity"], result.output["activity"]);
     assert_eq!(status.output["validation"]["tool"], "cargo_test");
     assert_eq!(status.output["validation"]["kind"], "test");
     assert_eq!(status.output["validation"]["state"], "running");
@@ -936,6 +980,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         .as_str()
         .unwrap_or("")
         .contains("running 1 test"));
+    assert_eq!(log.output["activity"], result.output["activity"]);
     assert_eq!(log.output["validation"], status.output["validation"]);
     let observed = runtime
         .observe_jobs_for_auth(
@@ -949,6 +994,10 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         )
         .await;
     assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(
+        observed.output["items"][0]["output"]["activity"],
+        result.output["activity"]
+    );
     assert_eq!(
         observed.output["items"][0]["output"]["validation"],
         log.output["validation"]

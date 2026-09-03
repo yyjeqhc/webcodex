@@ -932,6 +932,7 @@ pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -980,6 +981,7 @@ pub(in crate::tool_runtime::tests) async fn finish_session_projection_job(
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: true,
         })
         .await

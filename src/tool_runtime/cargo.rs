@@ -1104,13 +1104,14 @@ impl ToolRuntime {
             latest_status.as_str(),
             observation.job.started_at.is_some(),
         );
-        let detected_summary = crate::tool_runtime::jobs::detected_job_summary(
+        let detected_summary = crate::tool_runtime::jobs::detected_job_summary_with_activity(
             Some(&handoff.command_summary),
             Some(&handoff.purpose),
             &latest_status,
             observation.job.exit_code.map(i64::from),
             &observation.stdout_tail,
             &observation.stderr_tail,
+            observation.job.activity.as_ref(),
         );
         let payload = json!({
             "execution_source": handoff.execution_source,
@@ -1119,6 +1120,7 @@ impl ToolRuntime {
             "job_id": handoff.job_id,
             "job_status": latest_status,
             "observation_token": observation_token,
+            "activity": observation.job.activity,
             "promoted_to_job": true,
             "command_started": command_started,
             "command_completed": false,

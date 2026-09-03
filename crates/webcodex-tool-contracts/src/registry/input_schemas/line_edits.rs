@@ -192,7 +192,7 @@ pub fn apply_text_edits_input_schema() -> Value {
         "properties": {
             "project": {
                 "type": "string",
-                "description": "Agent-registered project id."
+                "description": "Runner-registered project id."
             },
             "changes": {
                 "type": "array",

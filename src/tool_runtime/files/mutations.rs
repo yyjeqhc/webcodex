@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 
-/// Maximum serialized batch payload sent to the owning agent. Host-only (the
+/// Maximum serialized batch payload sent to the owning Runner. Host-only (the
 /// agent enforces a per-file cap instead), so it stays local.
 pub(crate) const MAX_APPLY_FILE_CHANGES_BYTES: usize = 1024 * 1024;
 
@@ -1512,7 +1512,7 @@ impl ToolRuntime {
                 // undispatch, e.g. runner replacement before poll) or
                 // outcome_unknown (dispatched, or dispatch cannot be proven
                 // false — the Runner may already have deleted files).
-                let state = agent_command_lifecycle(&response, wait_timeout_secs);
+                let state = runner_command_lifecycle(&response, wait_timeout_secs);
                 match state {
                     ShellCommandExecutionState::Completed
                         if response.error.is_none() && response.exit_code == Some(0) =>
@@ -1661,7 +1661,7 @@ impl ToolRuntime {
             _ => {}
         }
 
-        // ---- Project resolution (agent-registered only) ----
+        // ---- Project resolution (Runner-registered only) ----
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),

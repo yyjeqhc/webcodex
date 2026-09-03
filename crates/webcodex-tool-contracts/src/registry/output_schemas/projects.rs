@@ -26,21 +26,21 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             "agent_project_id",
             schema_type(
                 "string",
-                "Project onboarding result metadata for registration or create-and-register responses. Agent-local project id written into the project registry.",
+                "Project onboarding result metadata for registration or create-and-register responses. Runner-local project id written into the project registry.",
             ),
         ),
         (
             "client_id",
             schema_type(
                 "string",
-                "Project onboarding result metadata for registration or create-and-register responses. Agent client id that handled the request.",
+                "Project onboarding result metadata for registration or create-and-register responses. Runner client id that handled the request.",
             ),
         ),
         (
             "name",
             schema_type(
                 "string",
-                "Project onboarding result metadata for registration or create-and-register responses. Project display name returned by the agent.",
+                "Project onboarding result metadata for registration or create-and-register responses. Project display name returned by the Runner.",
             ),
         ),
         (
@@ -54,7 +54,7 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             "description",
             nullable_schema(
                 "string",
-                "Project onboarding result metadata for registration or create-and-register responses. Optional project description returned by the agent, or null.",
+                "Project onboarding result metadata for registration or create-and-register responses. Optional project description returned by the Runner, or null.",
             ),
         ),
         (
@@ -89,7 +89,7 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             "allow_patch",
             schema_type(
                 "boolean",
-                "Project onboarding result metadata for registration or create-and-register responses. Patch permission flag recorded in the agent project config; this schema does not change permission behavior or allow arbitrary project writes and does not include file content.",
+                "Project onboarding result metadata for registration or create-and-register responses. Patch permission flag recorded in the Runner project config; this schema does not change permission behavior or allow arbitrary project writes and does not include file content.",
             ),
         ),
     ]

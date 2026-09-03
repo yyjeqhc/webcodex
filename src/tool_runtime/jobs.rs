@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::helpers::{
     command_rejected_message, explicit_shell_dispatch_command, is_safe_job_id,
-    project_relative_agent_cwd, resolve_agent_cwd, validate_raw_shell_command_length,
+    project_relative_runner_cwd, resolve_runner_cwd, validate_raw_shell_command_length,
 };
 use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -789,7 +789,7 @@ impl ToolRuntime {
             let display = remote_cwd.clone().unwrap_or_else(|| ".".to_string());
             (remote_cwd, display)
         } else {
-            let cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+            let cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                     Ok(cwd) => cwd,
                     Err(error) => {
                         return ToolResult::err(command_rejected_message(
@@ -799,7 +799,7 @@ impl ToolRuntime {
                     }
                 };
             let display =
-                project_relative_agent_cwd(&proj, &cwd).unwrap_or_else(|_| ".".to_string());
+                project_relative_runner_cwd(&proj, &cwd).unwrap_or_else(|_| ".".to_string());
             (Some(cwd), display)
         };
         let actual_shell = shell.map(ExecutionShell::as_str).unwrap_or(if remote {

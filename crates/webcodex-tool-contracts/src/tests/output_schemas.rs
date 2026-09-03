@@ -1128,7 +1128,7 @@ fn project_onboarding_output_schemas_include_result_metadata_fields() {
             "result metadata",
             "does not include file content",
             "does not expose environment, token, or secret values",
-            "does not bypass authorization, permission, allowed-root, or agent path policy",
+            "does not bypass authorization, permission, allowed-root, or runner path policy",
         ] {
             assert!(
                 descriptions.contains(phrase),

@@ -3,11 +3,11 @@ use std::time::Duration;
 
 use super::helpers::{
     bounded_tail, command_failed_message, command_outcome_unknown_message,
-    command_rejected_message, command_timeout_message, project_relative_agent_cwd,
-    resolve_agent_cwd, COMMAND_STDIO_TAIL_CHARS,
+    command_rejected_message, command_timeout_message, project_relative_runner_cwd,
+    resolve_runner_cwd, COMMAND_STDIO_TAIL_CHARS,
 };
 use super::shell::{
-    agent_command_lifecycle, command_execution_state_name, dispatch_uncertainty_lifecycle,
+    command_execution_state_name, dispatch_uncertainty_lifecycle, runner_command_lifecycle,
 };
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
@@ -394,7 +394,7 @@ impl ToolRuntime {
             }
         };
         let client_id = proj.client_id.clone();
-        let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+        let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => {
                 return process_tool_failure_result(
@@ -408,7 +408,7 @@ impl ToolRuntime {
             }
         };
         let resolved_cwd =
-            project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
+            project_relative_runner_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
         let features = match self.shell_clients.get_client_feature_set(&client_id).await {
             Ok(features) => features,
             Err(error) => {
@@ -649,7 +649,7 @@ impl ToolRuntime {
             }
         };
         let client_id = proj.client_id.clone();
-        let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+        let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     return process_tool_failure_result(
@@ -663,7 +663,7 @@ impl ToolRuntime {
                 }
             };
         let resolved_cwd =
-            project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
+            project_relative_runner_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
         // Generation-2 admission guarantees the complete typed structured
         // execution baseline. Only server-owned internal mutations may opt
         // out of model-facing durable Job handoff.
@@ -861,7 +861,7 @@ impl ToolRuntime {
         let mut result =
             match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), receiver).await {
                 Ok(Ok(response)) => {
-                    let state = agent_command_lifecycle(&response, timeout);
+                    let state = runner_command_lifecycle(&response, timeout);
                     let exit_code = response.exit_code;
                     let stdout = response.stdout.unwrap_or_default();
                     let stderr = response.stderr.unwrap_or_default();

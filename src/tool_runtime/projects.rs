@@ -1,7 +1,7 @@
-//! Agent-side project management tools: `register_project`, `unregister_project`,
+//! Runner-side project management tools: `register_project`, `unregister_project`,
 //! and `create_project`.
 //!
-//! Registration and creation route to the selected agent through the project-op
+//! Registration and creation route to the selected Runner through the project-op
 //! path. Unregistration reuses the shared project lifecycle path so the
 //! model-facing tool and `POST /api/projects/unregister` have the same revision
 //! CAS, active-Job fence, capability check, uncertain-delivery semantics, and
@@ -9,7 +9,7 @@
 //! project registration records in the Runner project registry.
 //!
 //! The server never writes project config files or creates directories on the
-//! agent host directly. OS permissions and agent policy
+//! Runner host directly. OS permissions and Runner policy
 //! (`allow_cwd_anywhere` / `allowed_roots`) remain the real boundary; there is
 //! no workspace abstraction.
 
@@ -24,7 +24,7 @@ use crate::shell_protocol::{
     ShellAgentProjectSummary, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
 };
 
-/// Maximum time the runtime waits for an agent project-op response. Project
+/// Maximum time the runtime waits for a Runner project-op response. Project
 /// operations are fast (write a small TOML, maybe create a directory + git
 /// init), so 30s is generous while still bounding the caller.
 const PROJECT_OP_WAIT_SECS: u64 = 32;
@@ -384,7 +384,7 @@ impl ToolRuntime {
         ToolResult::err_with_output(message, response.body)
     }
 
-    /// Create a new directory on the selected agent and register it as a
+    /// Create a new directory on the selected Runner and register it as a
     /// WebCodex project. See the `ToolCall::CreateProject` doc comment for the
     /// full contract.
     #[allow(clippy::too_many_arguments)]
@@ -497,8 +497,8 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         // -- basic server-side request shape validation ----------------------
-        // The agent does the authoritative path/policy validation, but the
-        // server rejects obviously malformed requests early so the agent is
+        // The Runner does the authoritative path/policy validation, but the
+        // server rejects obviously malformed requests early so the Runner is
         // never bothered with them.
         if let Err(e) = validate_project_op_id(&id) {
             return ToolResult::err(e);
@@ -606,13 +606,13 @@ impl ToolRuntime {
         }
         let stdout = response.stdout.as_deref().unwrap_or("");
         if stdout.is_empty() {
-            return ToolResult::err("agent returned empty project op result");
+            return ToolResult::err("Runner returned empty project op result");
         }
         let result: Value = match serde_json::from_str::<Value>(stdout) {
             Ok(value) => value,
             Err(error) => {
                 return ToolResult::err(format!(
-                    "failed to parse agent project op response: {} (stdout: {})",
+                    "failed to parse Runner project op response: {} (stdout: {})",
                     error,
                     truncate_for_error(stdout)
                 ))
@@ -774,12 +774,12 @@ fn smoke_project_capabilities(
 
 /// Resolve which shell profile a project uses and whether it is configured.
 /// Returns `(resolved_name, status)` where:
-/// - `resolved_name` = `project_shell_profile` (if set) else the agent's
+/// - `resolved_name` = `project_shell_profile` (if set) else the Runner's
 ///   `default_profile` (if any) else `None`.
-/// - `status` = `"configured"` if the resolved name exists in the agent's
+/// - `status` = `"configured"` if the resolved name exists in the Runner's
 ///   configured profiles; `"missing"` if a name resolved but is not
 ///   configured; `"not_configured"` if no profile resolves at all; and
-///   `"unknown"` if the agent did not report a shell-profiles summary so the
+///   `"unknown"` if the Runner did not report a shell-profiles summary so the
 ///   configured set cannot be checked.
 fn resolve_project_shell_profile(
     project_shell_profile: Option<&str>,
@@ -807,7 +807,7 @@ fn resolve_project_shell_profile(
 // Server-side request-shape validation helpers
 // =============================================================================
 
-/// Validate the project `id` field server-side. The agent does the
+/// Validate the project `id` field server-side. The Runner does the
 /// authoritative validation, but this rejects obviously malformed ids early.
 /// Rules: non-empty, <= 64 chars, ASCII letters/digits/dash/underscore only,
 /// no slash, no backslash, no dot-dot, no NUL.
@@ -900,7 +900,7 @@ fn truncate_for_error(s: &str) -> String {
     }
 }
 
-/// Parse a `ShellAgentProjectSummary` from the agent's project-op JSON
+/// Parse a `ShellAgentProjectSummary` from the Runner's project-op JSON
 /// response so the server can upsert it into the cached project list. The
 /// response includes `agent_project_id`, `client_id`, `name`, `path`, and
 /// `allow_patch` — enough to build a summary that `listProjects` can show

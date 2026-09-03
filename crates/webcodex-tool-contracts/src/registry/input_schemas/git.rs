@@ -6,14 +6,14 @@ pub fn git_diff_summary_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![(
         "project",
         "string",
-        "Agent-registered project id.",
+        "Runner-registered project id.",
         true,
     )]))
 }
 
 pub fn git_review_summary_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "base_commit",
             "string",
@@ -37,7 +37,7 @@ pub fn git_review_summary_input_schema() -> Value {
 
 pub fn show_changes_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "session_id",
             "string",
@@ -89,7 +89,7 @@ pub fn git_diff_input_schema() -> Value {
 
 pub fn git_diff_hunks_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "paths",
             "array",
@@ -172,7 +172,7 @@ pub fn git_diff_hunks_input_schema() -> Value {
 
 pub fn git_log_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "limit",
             "integer",

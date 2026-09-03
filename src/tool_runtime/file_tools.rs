@@ -169,7 +169,7 @@ impl ToolRuntime {
                         }
                         Some(Err(error)) => error.into_tool_result(),
                         None => ToolResult::err(
-                            "export_project_artifact requires an exact resolved agent project",
+                            "export_project_artifact requires an exact resolved Runner project",
                         ),
                     }
                 }

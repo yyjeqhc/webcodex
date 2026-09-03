@@ -179,7 +179,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Read bounded structured validation evidence already recorded in an explicit project-scoped session ledger. Does not run Cargo or shell commands, enqueue an agent request, read project files, mutate the workspace, or replace finish_coding_task.",
+        "Read bounded structured validation evidence already recorded in an explicit project-scoped session ledger. Does not run Cargo or shell commands, enqueue a Runner request, read project files, mutate the workspace, or replace finish_coding_task.",
         validation_summary_input_schema,
     )),
     requires_explicit_business_session(model_spec(

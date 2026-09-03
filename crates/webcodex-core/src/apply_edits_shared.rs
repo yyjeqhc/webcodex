@@ -332,7 +332,7 @@ impl ApplyFileChangeKind {
 }
 
 /// One file change in a transactional edit batch. Runtime validation enforces
-/// the fields allowed and required for each `kind` before the owning agent is
+/// the fields allowed and required for each `kind` before the owning Runner is
 /// contacted.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApplyFileChangeInput {

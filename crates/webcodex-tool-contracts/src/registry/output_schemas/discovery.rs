@@ -79,11 +79,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "projects",
-                open_object_schema("Project counts from the agent registry. Prefer projects.effective for model-facing status."),
+                open_object_schema("Project counts from the Runner registry. Prefer projects.effective for model-facing status."),
             ),
             (
                 "agents",
-                open_object_schema("Agent counts and client summaries. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
+                open_object_schema("Runner counts and client summaries. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
             ),
             (
                 "jobs",

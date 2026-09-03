@@ -6,7 +6,7 @@ pub fn lsp_status_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![(
         "project",
         "string",
-        "Full agent runtime project id (agent:<client_id>:<project_id>).",
+        "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
         true,
     )]))
 }
@@ -16,7 +16,7 @@ pub fn document_symbols_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -43,7 +43,7 @@ pub fn document_diagnostics_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -70,7 +70,7 @@ pub fn hover_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -97,7 +97,7 @@ pub fn workspace_symbols_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -126,7 +126,7 @@ pub fn goto_definition_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -162,7 +162,7 @@ pub fn find_references_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (
@@ -205,7 +205,7 @@ pub fn call_hierarchy_input_schema() -> Value {
         (
             "project",
             "string",
-            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            "Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).",
             true,
         ),
         (

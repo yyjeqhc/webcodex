@@ -361,7 +361,7 @@ impl ToolRuntime {
         let check = check.unwrap_or(false);
         // Both read-only and mutating structured Cargo formatting reject named
         // SSH resources before selecting an execution path. In particular, the
-        // mutating sync path must never fall back to the Agent project root.
+        // mutating sync path must never fall back to the Runner project root.
         if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource) {
             return result;
         }
@@ -875,7 +875,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let client_id = config.client_id.clone();
-        let effective_cwd = match super::helpers::resolve_agent_cwd(config, cwd) {
+        let effective_cwd = match super::helpers::resolve_runner_cwd(config, cwd) {
             Ok(cwd) => cwd,
             Err(error) => {
                 return ToolResult::err(command_rejected_message(
@@ -884,7 +884,7 @@ impl ToolRuntime {
                 ))
             }
         };
-        let resolved_cwd = super::helpers::project_relative_agent_cwd(config, &effective_cwd)
+        let resolved_cwd = super::helpers::project_relative_runner_cwd(config, &effective_cwd)
             .unwrap_or_else(|_| ".".to_string());
         let actual_shell = "configured";
         // The validation step is derived from the same options the tool would
@@ -1251,8 +1251,8 @@ impl ToolRuntime {
         let process_passed =
             execution_state == ShellCommandExecutionState::Completed && output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
-        let resolved_cwd = super::helpers::resolve_agent_cwd(config, cwd)
-            .and_then(|path| super::helpers::project_relative_agent_cwd(config, &path))
+        let resolved_cwd = super::helpers::resolve_runner_cwd(config, cwd)
+            .and_then(|path| super::helpers::project_relative_runner_cwd(config, &path))
             .unwrap_or_else(|_| ".".to_string());
         let shell = "configured";
         let executor = "agent";

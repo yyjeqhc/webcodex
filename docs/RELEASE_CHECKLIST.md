@@ -1,8 +1,8 @@
 # Release Readiness Checklist
 
-This checklist is for final release readiness before tagging, publishing artifacts, updating client schemas, or deploying a new WebCodex server/agent/runtime build.
+This checklist is for final release readiness before tagging, publishing artifacts, updating client schemas, or deploying a new WebCodex server/Runner/runtime build.
 
-It governs release/publish rollouts and deployment of published releases. An explicitly requested development/dogfood deployment of a reviewed commit is governed by [`AGENTS.md`](../AGENTS.md) and [Agent Release Process Notes](agent/release-process.md): it does not require the version/tag/publication/artifact steps below, but it still uses the focused post-deployment smoke in section 10 where applicable.
+It governs release/publish rollouts and deployment of published releases. An explicitly requested development/dogfood deployment of a reviewed commit is governed by [`AGENTS.md`](../AGENTS.md) and [Runner Release Process Notes](agent/release-process.md): it does not require the version/tag/publication/artifact steps below, but it still uses the focused post-deployment smoke in section 10 where applicable.
 
 Do not create tags, push commits, publish npm packages, create GitHub Releases, rewrite history, deploy, or touch secrets while running this checklist unless the operator explicitly requests that action.
 
@@ -38,10 +38,10 @@ Confirm the user-facing docs tell one story:
 
 - README states the product position in the first screen and clearly separates full daily use from temporary `share`.
 - Full Setup has one recommended regular Server + Runner path for ordinary daily use; Quick Trial stays focused on temporary single-project `share`.
-- Concepts explains server, agent, agent-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as an escape hatch.
-- Architecture starts with client/server/agent/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
+- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as an escape hatch.
+- Architecture starts with client/server/Runner/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
 - MCP and GPT Actions both say they call the same WebCodex ToolRuntime.
-- Security explains what the model can and cannot do, project access, agent trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
+- Security explains what the model can and cannot do, project access, Runner trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
 - The release PR / GitHub Release notes read like external release notes and include highlights, compatibility or breaking changes, known limitations, upgrade notes, and validation. Do not restore per-version release-note files as a second documentation source.
 - Roadmap stays short and does not promise a full IDE replacement, autonomous ops, arbitrary computer use, or universal client compatibility.
 
@@ -83,7 +83,7 @@ Confirm:
 - No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
 - `finish_coding_task` and `session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
 - `run_shell` is documented as a bounded escape hatch, not the default validation source.
-- Model-facing runtime docs keep admin, account, pairing, token-management, and agent-token management outside MCP and GPT Actions.
+- Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP and GPT Actions.
 
 ## 8. Packaging And Artifact Checks
 
@@ -123,12 +123,12 @@ For the normal path, the sequence below may be driven by one `release-init` + re
 
 ## 10. Post-Deployment Acceptance Smoke
 
-After deploying a new server, agent, or runtime build:
+After deploying a new server, Runner, or runtime build:
 
 1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
 2. Run compact `runtime_status`.
 3. Run focused tool discovery.
-4. Run `list_projects` and pick an agent-registered project marked appropriate for smoke when available.
+4. Run `list_projects` and pick a Runner-registered project marked appropriate for smoke when available.
 5. Run a read-only coding task: `work_on_project`, `read_file` or `search_project_text`, `show_changes(include_diff=false)`, `workspace_hygiene_check`, and `finish_coding_task(summary_only=true)`.
 6. Run one small reversible edit task on a safe project and review the diff before accepting it.
 

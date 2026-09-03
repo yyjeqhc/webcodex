@@ -153,7 +153,7 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
 }
 
 /// `POST /api/projects/git_diff` — thin GPT Actions wrapper over
-/// `ToolCall::GitDiff`. Read-only inspection routed to the owning agent.
+/// `ToolCall::GitDiff`. Read-only inspection routed to the owning Runner.
 #[handler]
 pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/git_diff", "getProjectGitDiff");

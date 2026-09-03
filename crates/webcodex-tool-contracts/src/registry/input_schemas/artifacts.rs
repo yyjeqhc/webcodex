@@ -6,7 +6,7 @@ use super::common::{
 
 pub fn save_project_artifact_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("path", "string", "Project-relative output path.", true),
         (
             "content_base64",
@@ -26,7 +26,7 @@ pub fn save_project_artifact_input_schema() -> Value {
 
 pub fn import_conversation_files_to_project_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "openaiFileIdRefs",
             "array",
@@ -86,7 +86,7 @@ pub fn import_conversation_files_to_project_input_schema() -> Value {
 
 pub fn export_project_artifact_input_schema() -> Value {
     object_schema(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("path", "string", "Project-relative artifact path.", true),
         (
             "session_id",
@@ -99,7 +99,7 @@ pub fn export_project_artifact_input_schema() -> Value {
 
 pub fn read_project_artifact_metadata_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("path", "string", "Project-relative artifact path.", true),
         (
             "allow_missing",
@@ -112,7 +112,7 @@ pub fn read_project_artifact_metadata_input_schema() -> Value {
 
 pub fn read_project_artifact_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("path", "string", "Project-relative artifact path.", true),
         (
             "encoding",
@@ -137,7 +137,7 @@ pub fn read_project_artifact_input_schema() -> Value {
 
 pub fn artifact_upload_begin_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("path", "string", "Project-relative output path.", true),
         (
             "expected_bytes",
@@ -163,7 +163,7 @@ pub fn artifact_upload_begin_input_schema() -> Value {
 
 pub fn artifact_upload_chunk_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "path",
             "string",
@@ -196,7 +196,7 @@ pub fn artifact_upload_abort_input_schema() -> Value {
 
 fn artifact_upload_followup_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "path",
             "string",

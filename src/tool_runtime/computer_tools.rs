@@ -1,5 +1,5 @@
 use super::files::{validate_artifact_file_path, validate_artifact_mime_for_path};
-use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
+use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::tool_call::ComputerSnapshotRegion;
 use super::{RecoveryKind, RecoveryTool, ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
@@ -884,7 +884,7 @@ impl ToolRuntime {
                 );
             }
         };
-        let state = agent_command_lifecycle(&response, wait_timeout);
+        let state = runner_command_lifecycle(&response, wait_timeout);
         if state == ShellCommandExecutionState::NotStarted {
             return computer_snapshot_artifact_lifecycle_failure(
                 "snapshot artifact write did not start",

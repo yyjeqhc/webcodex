@@ -41,8 +41,8 @@ struct RunShellRequest {
 
 /// `POST /api/projects/run_job` - thin REST wrapper over
 /// `ToolCall::RunJob`. Starts an async background shell job in an
-/// agent-registered project and returns a `job_id`. Execution with side
-/// effects; requires Bearer auth and the agent async shell job capability.
+/// Runner-registered project and returns a `job_id`. Execution with side
+/// effects; requires Bearer auth and the Runner async shell job capability.
 /// Dedicated GPT Action (`startProjectShellJob`); also reachable via
 /// callRuntimeTool / MCP tools/call. Poll with `getRuntimeJobStatus` and read
 /// output with `getRuntimeJobTail` / `getRuntimeJobLog`.

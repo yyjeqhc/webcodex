@@ -319,7 +319,7 @@ pub(crate) struct ContinuationFeedbackInput<'a> {
 impl ContinuationFeedback {
     /// Build the full continuation feedback projection from bounded
     /// snapshots. Pure read-only: no shell, no files, no ledger mutation,
-    /// no agent requests, no activity refresh, no guidance consumption.
+    /// no Runner requests, no activity refresh, no guidance consumption.
     pub(crate) fn from_snapshots(input: ContinuationFeedbackInput<'_>) -> Value {
         let events = &input.session_summary.events;
         if events.is_empty() {

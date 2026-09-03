@@ -40,7 +40,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "export_project_artifact" => Some(wrapped_output_schema(vec![
             (
                 "project",
-                schema_type("string", "Canonical agent-registered project id."),
+                schema_type("string", "Canonical Runner-registered project id."),
             ),
             (
                 "path",

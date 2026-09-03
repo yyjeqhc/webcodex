@@ -29,6 +29,30 @@ fn recommended_flows() -> Vec<&'static str> {
 }
 
 #[test]
+fn model_tool_contracts_do_not_teach_retired_runner_as_agent_prose() {
+    for spec in registered_tool_specs() {
+        let rendered = format!(
+            "{}\n{}\n{}",
+            spec.description, spec.input_schema, spec.output_schema
+        )
+        .to_ascii_lowercase();
+        for retired in [
+            "agent-registered",
+            "agent registry",
+            "owning registered agent",
+            "agent project config",
+            "an runner",
+        ] {
+            assert!(
+                !rendered.contains(retired),
+                "{} still exposes retired Runner-as-Agent prose: {retired}",
+                spec.name
+            );
+        }
+    }
+}
+
+#[test]
 fn list_tools_schema_exposes_bounded_discovery_fields() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "list_tools");

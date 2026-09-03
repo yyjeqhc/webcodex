@@ -4,7 +4,7 @@
 //! enters public ToolCall dispatch, starts a language server, or exposes the
 //! raw Runner transport/result envelope.
 
-use super::lsp_tools::agent_local_project_id;
+use super::lsp_tools::runner_local_project_id;
 use super::project_resolution::ResolvedProject;
 use super::ToolRuntime;
 use crate::lsp_bridge::{
@@ -318,7 +318,7 @@ impl ToolRuntime {
                 SemanticNavigationReasonCode::LspCapabilityNotAdvertised,
             );
         }
-        let Some(agent_project_id) = agent_local_project_id(&resolved.resolved_id) else {
+        let Some(agent_project_id) = runner_local_project_id(&resolved.resolved_id) else {
             return SemanticNavigationStartupSummary::supported_failure(
                 SemanticNavigationStartupStatus::ProbeFailed,
                 SemanticNavigationReasonCode::StatusProbeFailed,

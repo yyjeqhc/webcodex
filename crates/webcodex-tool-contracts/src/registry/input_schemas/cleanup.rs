@@ -4,7 +4,7 @@ use super::common::{object_schema, with_optional_session_id};
 
 pub fn delete_project_files_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "paths",
             "array",
@@ -16,7 +16,7 @@ pub fn delete_project_files_input_schema() -> Value {
 
 pub fn git_restore_paths_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "paths",
             "array",
@@ -28,7 +28,7 @@ pub fn git_restore_paths_input_schema() -> Value {
 
 pub fn discard_untracked_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "paths",
             "array",

@@ -1,4 +1,4 @@
-use super::helpers::{project_relative_agent_cwd, resolve_agent_cwd};
+use super::helpers::{project_relative_runner_cwd, resolve_runner_cwd};
 use super::{ExecutionPurpose, ExecutionShell, ToolResult, ToolRuntime};
 use crate::projects::ProjectConfig;
 use crate::shell_protocol::{
@@ -23,7 +23,7 @@ struct SessionShellRecord {
     executor: String,
     client_id: Option<String>,
     /// Named SSH resource this shell is bound to, if any. `None` for local and
-    /// plain agent shells. Bound at open and never re-derived from Session
+    /// plain Runner shells. Bound at open and never re-derived from Session
     /// context, so a later context change cannot redirect an open shell.
     resource: Option<String>,
     shell: String,
@@ -486,7 +486,7 @@ impl ToolRuntime {
             );
         }
         let client_id = project_config.client_id.clone();
-        let effective_cwd = match resolve_agent_cwd(&project_config, cwd.as_deref()) {
+        let effective_cwd = match resolve_runner_cwd(&project_config, cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => return shell_tool_error("persistent_shell_cwd_invalid", error, None),
         };
@@ -1068,7 +1068,7 @@ fn persistent_result_to_tool(
 
 fn relative_cwd(project: &ProjectConfig, cwd: Option<&str>) -> Option<String> {
     let cwd = cwd?;
-    project_relative_agent_cwd(project, cwd).ok()
+    project_relative_runner_cwd(project, cwd).ok()
 }
 
 fn shell_tool_error_from_message(message: String, shell_id: Option<&str>) -> ToolResult {

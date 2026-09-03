@@ -887,7 +887,7 @@ impl ToolRuntime {
             .and_then(|resolution| resolution.as_ref().ok());
         // Preserve the canonical project for activity attribution before the
         // session recorder consumes the resolved value below. Short aliases
-        // must not turn a real agent execution into a client-less row.
+        // must not turn a real Runner execution into a client-less row.
         let activity_project = resolved_project
             .as_ref()
             .map(|resolved| resolved.resolved_id.clone());

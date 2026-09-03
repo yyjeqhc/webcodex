@@ -594,7 +594,7 @@ pub(crate) fn read_optional_token(
 pub(crate) fn validate_user_api_token(token: &str) -> Result<(), String> {
     if token.trim().starts_with("wc_agent_") {
         return Err(
-            "This is an Runner transport token and cannot be used for project/runtime APIs. Use the generated webcodex-user-token instead."
+            "This is a Runner transport token and cannot be used for project/runtime APIs. Use the generated webcodex-user-token instead."
                 .to_string(),
         );
     }

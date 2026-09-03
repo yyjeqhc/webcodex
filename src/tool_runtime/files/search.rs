@@ -694,7 +694,7 @@ pub(crate) fn search_project_text_command_with_head_fallbacks(
 }
 
 fn search_request_dropped_tool_result(options: &SearchOptions) -> ToolResult {
-    let message = "search_project_text agent request was dropped";
+    let message = "search_project_text Runner request was dropped";
     search_failure_tool_result(
         options,
         "search_request_dropped",
@@ -1663,7 +1663,7 @@ impl ToolRuntime {
                     "agent_unavailable",
                     "agent_request",
                     "agent_request_failed",
-                    "search_project_text Agent request could not be started",
+                    "search_project_text Runner request could not be started",
                     None,
                     None,
                 )
@@ -1714,7 +1714,7 @@ impl ToolRuntime {
                         "search_execution_failed",
                         "agent_execution",
                         "agent_execution_failed",
-                        "search_project_text Agent execution failed",
+                        "search_project_text Runner execution failed",
                         backend_status
                             .marker_present
                             .then_some(backend_status.backend.as_str()),

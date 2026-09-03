@@ -4,7 +4,7 @@ use std::time::Duration;
 use super::helpers::{
     bounded_tail, command_failed_message, command_outcome_unknown_message,
     command_rejected_message, command_timeout_message, explicit_shell_dispatch_command,
-    looks_like_command_timeout, project_relative_agent_cwd, resolve_agent_cwd,
+    looks_like_command_timeout, project_relative_runner_cwd, resolve_runner_cwd,
     resolve_sync_timeout_secs, sync_timeout_out_of_range_result, validate_raw_shell_command_length,
     COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS,
     MIN_SYNC_TIMEOUT_SECS,
@@ -51,7 +51,7 @@ pub(crate) fn command_execution_state_name(
     }
 }
 
-pub(crate) fn agent_command_lifecycle(
+pub(crate) fn runner_command_lifecycle(
     response: &ShellRunResponse,
     timeout_secs: u64,
 ) -> ShellCommandExecutionState {
@@ -242,7 +242,7 @@ impl ToolRuntime {
         }
         let timeout = timeout_secs;
         let client_id = proj.client_id.clone();
-        let effective_cwd = Some(resolve_agent_cwd(&proj, cwd.as_deref())?);
+        let effective_cwd = Some(resolve_runner_cwd(&proj, cwd.as_deref())?);
         let wait_timeout = timeout;
         let (request_id, rx) = if internal_posix_script {
             self.shell_clients
@@ -272,7 +272,7 @@ impl ToolRuntime {
         };
         match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
             Ok(Ok(response)) => {
-                let execution_state = agent_command_lifecycle(&response, timeout);
+                let execution_state = runner_command_lifecycle(&response, timeout);
                 let exit_code = response.exit_code;
                 let stderr = response.stderr.unwrap_or_default();
                 Ok(ProjectCommandOutput {
@@ -494,7 +494,7 @@ impl ToolRuntime {
                 remote_cwd.unwrap_or(".").to_string(),
             )
         } else {
-            let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+            let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                     Ok(cwd) => cwd,
                     Err(e) => {
                         return Self::run_shell_tool_failure_result(
@@ -507,7 +507,7 @@ impl ToolRuntime {
                         )
                     }
                 };
-            let resolved_cwd = project_relative_agent_cwd(&proj, &effective_cwd)
+            let resolved_cwd = project_relative_runner_cwd(&proj, &effective_cwd)
                 .unwrap_or_else(|_| ".".to_string());
             (Some(effective_cwd), resolved_cwd)
         };
@@ -728,7 +728,7 @@ impl ToolRuntime {
         };
         match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
             Ok(Ok(response)) => {
-                let lifecycle = agent_command_lifecycle(&response, timeout);
+                let lifecycle = runner_command_lifecycle(&response, timeout);
                 let exit_code = response.exit_code;
                 let stdout = response.stdout.unwrap_or_default();
                 let stderr = response.stderr.unwrap_or_default();
@@ -806,7 +806,7 @@ impl ToolRuntime {
                     Self::run_shell_tool_failure_result(
                             command_rejected_message(
                                 "shell request waiter was dropped before the queued request was dispatched",
-                                "check agent connectivity, then retry or use run_job for recoverable long-running work.",
+                                "check Runner connectivity, then retry or use run_job for recoverable long-running work.",
                             ),
                             "runtime_error",
                             ShellCommandExecutionState::NotStarted,
@@ -826,9 +826,9 @@ impl ToolRuntime {
                     Self::run_shell_tool_failure_result(
                             command_rejected_message(
                                 format!(
-                                    "timed out waiting {wait_timeout} seconds before the queued agent request was dispatched"
+                                    "timed out waiting {wait_timeout} seconds before the queued Runner request was dispatched"
                                 ),
-                                "check agent connectivity and availability, then retry or use run_job for long-running work.",
+                                "check Runner connectivity and availability, then retry or use run_job for long-running work.",
                             ),
                             "timeout",
                             ShellCommandExecutionState::NotStarted,
@@ -861,7 +861,7 @@ fn decorate_execution_output(
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use super::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
+    use super::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
     use crate::shell_protocol::{ShellCommandExecutionState, ShellRunResponse};
 
     #[test]
@@ -897,7 +897,7 @@ mod lifecycle_tests {
             command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
         };
         assert_eq!(
-            agent_command_lifecycle(&response, 30),
+            runner_command_lifecycle(&response, 30),
             ShellCommandExecutionState::OutcomeUnknown
         );
     }

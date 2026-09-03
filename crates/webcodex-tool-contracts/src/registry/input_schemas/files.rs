@@ -4,7 +4,7 @@ use super::common::{object_schema, with_optional_session_id};
 
 pub fn list_project_files_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "path",
             "string",
@@ -22,7 +22,7 @@ pub fn list_project_files_input_schema() -> Value {
 
 pub fn list_project_tracked_files_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "path",
             "string",
@@ -66,7 +66,7 @@ pub fn list_project_tracked_files_input_schema() -> Value {
 
 pub fn project_overview_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Full agent runtime project id.", true),
+        ("project", "string", "Full Runner runtime project id (legacy agent:<client_id>:<project_id> identity).", true),
         (
             "path",
             "string",
@@ -93,7 +93,7 @@ pub fn project_overview_input_schema() -> Value {
 
 pub fn search_project_text_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "pattern",
             "string",
@@ -191,7 +191,7 @@ pub fn search_project_texts_input_schema() -> Value {
         .get_mut("pattern")
         .expect("search pattern schema")["minLength"] = json!(1);
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "queries",
             "array",

@@ -4,7 +4,7 @@ use super::common::{object_schema, with_optional_session_id, UNIFIED_DIFF_FIELD_
 
 pub fn apply_patch_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "patch",
             "string",
@@ -34,7 +34,7 @@ pub fn apply_patch_input_schema() -> Value {
 
 pub fn apply_unified_diff_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         ("diff", "string", UNIFIED_DIFF_FIELD_DESCRIPTION, true),
         (
             "deny_sensitive_paths",

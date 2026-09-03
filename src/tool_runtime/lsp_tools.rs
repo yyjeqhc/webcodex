@@ -202,36 +202,36 @@ impl ToolRuntime {
             .await
         else {
             return ToolResult::err(format!(
-                "{}: agent is not connected",
+                "{}: Runner is not connected",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         };
         if !client.view.connected {
             return ToolResult::err(format!(
-                "{}: agent is not connected",
+                "{}: Runner is not connected",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
         let call_hierarchy = matches!(&request, AgentLspRequest::CallHierarchy { .. });
         if call_hierarchy && !client.supports(RunnerFeature::LspCallHierarchy) {
             return ToolResult::err(format!(
-                "{}: agent does not support lsp_call_hierarchy",
+                "{}: Runner does not support lsp_call_hierarchy",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
         if !call_hierarchy && !client.supports(RunnerFeature::LspReadOnlyNavigation) {
             return ToolResult::err(format!(
-                "{}: agent does not support lsp_read_only_navigation",
+                "{}: Runner does not support lsp_read_only_navigation",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
-        // Server-resolved agent-local project id only — never trust a
-        // model-supplied free-form agent project id for bridge dispatch.
-        let agent_project_id = match agent_local_project_id(&resolved.resolved_id) {
+        // Server-resolved Runner-local project id only — never trust a
+        // model-supplied free-form Runner project id for bridge dispatch.
+        let agent_project_id = match runner_local_project_id(&resolved.resolved_id) {
             Some(id) => id.to_string(),
             None => {
                 return ToolResult::err(format!(
-                    "{}: could not derive agent project id from runtime id",
+                    "{}: could not derive Runner project id from runtime id",
                     error_codes::UNKNOWN_PROJECT
                 ))
             }
@@ -308,7 +308,7 @@ impl ToolRuntime {
                                 });
                         if !is_known_error_code(&err.code) {
                             return ToolResult::err(format!(
-                                "{}: agent result contained an unknown error code",
+                                "{}: Runner result contained an unknown error code",
                                 error_codes::MALFORMED_AGENT_LSP_RESULT
                             ));
                         }
@@ -325,12 +325,12 @@ impl ToolRuntime {
             }
             Ok(Err(_)) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                ToolResult::err("agent LSP waiter was dropped")
+                ToolResult::err("Runner LSP waiter was dropped")
             }
             Err(_) => {
                 self.shell_clients.cancel_request(&request_id).await;
                 ToolResult::err(format!(
-                    "{}: timed out waiting for agent LSP result",
+                    "{}: timed out waiting for Runner LSP result",
                     error_codes::LSP_REQUEST_TIMEOUT
                 ))
             }
@@ -380,13 +380,13 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
     }
     .map_err(|_| {
         format!(
-            "{}: agent result did not match the expected LSP result shape",
+            "{}: Runner result did not match the expected LSP result shape",
             error_codes::MALFORMED_AGENT_LSP_RESULT
         )
     })?;
     if contains_forbidden_path_material(&result) {
         return Err(format!(
-            "{}: agent result contained forbidden path material",
+            "{}: Runner result contained forbidden path material",
             error_codes::MALFORMED_AGENT_LSP_RESULT
         ));
     }
@@ -552,10 +552,10 @@ fn string_contains_forbidden_path_material(value: &str) -> bool {
         && matches!(bytes[2], b'/' | b'\\')
 }
 
-/// Derive the agent-local project id from a server-resolved runtime id.
+/// Derive the Runner-local project id from a server-resolved runtime id.
 /// Shared with the coding-startup semantic-navigation probe; never derived
 /// from model-supplied free-form ids.
-pub(crate) fn agent_local_project_id(resolved_id: &str) -> Option<&str> {
+pub(crate) fn runner_local_project_id(resolved_id: &str) -> Option<&str> {
     let rest = resolved_id.strip_prefix("agent:")?;
     let (_client, project_id) = rest.split_once(':')?;
     if project_id.is_empty() {
@@ -568,7 +568,7 @@ pub(crate) fn agent_local_project_id(resolved_id: &str) -> Option<&str> {
 fn map_agent_transport_error(error: String) -> ToolResult {
     let lower = error.to_ascii_lowercase();
     if lower.contains("unknown shell client") || lower.contains("not connected") {
-        return ToolResult::err(format!("agent unavailable: {error}"));
+        return ToolResult::err(format!("Runner unavailable: {error}"));
     }
     ToolResult::err(error)
 }

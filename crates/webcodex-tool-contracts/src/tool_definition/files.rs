@@ -57,7 +57,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "List files in an agent-registered project directory (bounded, read-only). Returns project-relative paths plus a file/dir kind. Routed to the owning registered agent; the server never reads the agent project path directly.",
+        "List files in a Runner-registered project directory (bounded, read-only). Returns project-relative paths plus a file/dir kind. Routed to the owning registered Runner; the server never reads the Runner project path directly.",
         list_project_files_input_schema,
     )),
     context_recovery_only(model_spec(
@@ -65,8 +65,8 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             "list_project_tracked_files",
             ModelVisible,
             TOOL_CATEGORY_FILE,
-            // Runs `git ls-files` on the agent, so the shell capability is what
-            // the agent must actually hold — not FileRead's directory op.
+            // Runs `git ls-files` on the Runner, so the shell capability is what
+            // the Runner must actually hold — not FileRead's directory op.
             Some(Shell),
             TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {

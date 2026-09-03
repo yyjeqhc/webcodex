@@ -63,7 +63,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             true,
             false,
             ),
-            "Import 1..10 current ChatGPT attachments into an agent project using openaiFileIdRefs from the host file-reference mechanism. Do not base64-transfer files, construct download URLs, or use local /mnt/data paths; Control downloads and saves them as project artifacts.",
+            "Import 1..10 current ChatGPT attachments into a Runner project using openaiFileIdRefs from the host file-reference mechanism. Do not base64-transfer files, construct download URLs, or use local /mnt/data paths; Control downloads and saves them as project artifacts.",
             import_conversation_files_to_project_input_schema,
         ),
         PERMISSION_RISK_ARTIFACT_WRITE,

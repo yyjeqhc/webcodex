@@ -7,7 +7,7 @@ use serde_json::Value;
 
 /// `POST /api/projects/register` — thin REST wrapper over
 /// `ToolCall::RegisterProject`. Mutation with side effects; registers an
-/// existing directory as a WebCodex project on the selected agent. Dedicated
+/// existing directory as a WebCodex project on the selected Runner. Dedicated
 /// GPT Action (`registerProject`); also reachable via callRuntimeTool / MCP
 /// tools/call.
 #[derive(Debug, Deserialize)]
@@ -26,7 +26,7 @@ struct RegisterProjectRequest {
 
 /// `POST /api/projects/create` — thin REST wrapper over
 /// `ToolCall::CreateProject`. Mutation with side effects; creates a new
-/// directory on the selected agent and registers it as a WebCodex project.
+/// directory on the selected Runner and registers it as a WebCodex project.
 /// Dedicated GPT Action (`createProject`); also reachable via callRuntimeTool
 /// / MCP tools/call.
 #[derive(Debug, Deserialize)]
@@ -92,8 +92,8 @@ pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Respo
 }
 
 /// `ToolCall::RegisterProject`. Registers an existing directory as a
-/// WebCodex project on the selected agent. Mutation with side effects; executes
-/// on the selected agent and is constrained by agent policy.
+/// WebCodex project on the selected Runner. Mutation with side effects; executes
+/// on the selected Runner and is constrained by Runner policy.
 #[handler]
 pub async fn projects_register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/register", "registerProject");
@@ -121,9 +121,9 @@ pub async fn projects_register(req: &mut Request, depot: &mut Depot, res: &mut R
     render_result(res, &audit, "register_project", None, result);
 }
 
-/// `ToolCall::CreateProject`. Creates a new directory on the selected agent
+/// `ToolCall::CreateProject`. Creates a new directory on the selected Runner
 /// and registers it as a WebCodex project. Mutation with side effects; executes
-/// on the selected agent and is constrained by agent policy.
+/// on the selected Runner and is constrained by Runner policy.
 #[handler]
 pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/create", "createProject");

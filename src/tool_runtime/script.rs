@@ -1,13 +1,13 @@
 use serde_json::json;
 use std::time::Duration;
 
-use super::helpers::{command_rejected_message, project_relative_agent_cwd, resolve_agent_cwd};
+use super::helpers::{command_rejected_message, project_relative_runner_cwd, resolve_runner_cwd};
 use super::process::{
     add_structured_continuation_facts, classify_process_failure, command_failure_result,
     outcome_unknown_result, process_tool_failure_result, success_output,
     terminal_structured_job_result,
 };
-use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
+use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::structured_execution::{
     await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
@@ -128,7 +128,7 @@ impl ToolRuntime {
             }
         };
         let client_id = proj.client_id.clone();
-        let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+        let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     return process_tool_failure_result(
@@ -142,7 +142,7 @@ impl ToolRuntime {
                 }
             };
         let resolved_cwd =
-            project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
+            project_relative_runner_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
         // Generation-2 admission guarantees async typed structured Jobs;
         // sync_wait_secs now controls projection timing, not Runner compatibility.
         let async_handoff_available = true;
@@ -318,7 +318,7 @@ impl ToolRuntime {
             .await
         {
             Ok(Ok(response)) => {
-                let state = agent_command_lifecycle(&response, timeout);
+                let state = runner_command_lifecycle(&response, timeout);
                 let exit_code = response.exit_code;
                 let stdout = response.stdout.unwrap_or_default();
                 let stderr = response.stderr.unwrap_or_default();

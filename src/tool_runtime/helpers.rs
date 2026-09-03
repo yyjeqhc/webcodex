@@ -195,7 +195,7 @@ fn reap_process_group(pgid: u32) {
 #[cfg(all(test, not(unix)))]
 fn reap_process_group(_pgid: u32) {}
 
-pub(crate) fn project_relative_agent_cwd(
+pub(crate) fn project_relative_runner_cwd(
     proj: &crate::projects::ProjectConfig,
     resolved: &str,
 ) -> Result<String, String> {
@@ -211,13 +211,13 @@ pub(crate) fn project_relative_agent_cwd(
     }
 }
 
-/// Resolve an Agent command cwd against the registered project root.
+/// Resolve a Runner command cwd against the registered project root.
 ///
-/// The server cannot canonicalize paths on a remote Agent host, so this
+/// The server cannot canonicalize paths on a remote Runner host, so this
 /// performs the project-relative/lexical boundary check before dispatch. The
 /// Agent remains responsible for canonicalizing the existing path against its
 /// configured `allowed_roots`, which rejects symlink escapes.
-pub(crate) fn resolve_agent_cwd(
+pub(crate) fn resolve_runner_cwd(
     proj: &crate::projects::ProjectConfig,
     cwd: Option<&str>,
 ) -> Result<String, String> {
@@ -452,7 +452,7 @@ pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
 
 pub(crate) const COMMAND_STDIO_TAIL_CHARS: usize = 12_000;
 
-/// Synchronous agent-wait tools share this hard upper bound with
+/// Synchronous Runner-wait tools share this hard upper bound with
 /// `shell_client` validation (`wait_timeout_secs` must be <= 120).
 pub(crate) const MIN_SYNC_TIMEOUT_SECS: u64 = 1;
 pub(crate) const MAX_SYNC_TIMEOUT_SECS: u64 = 120;

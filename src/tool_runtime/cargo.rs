@@ -64,6 +64,32 @@ pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) 
     (metadata.tests_passed, metadata.tests_failed)
 }
 
+#[cfg(test)]
+mod cargo_test_count_tests {
+    use super::parse_cargo_test_counts;
+
+    #[test]
+    fn parse_cargo_test_counts_aggregates_multiple_harness_summaries() {
+        let (passed, failed) = parse_cargo_test_counts(
+            "test result: ok. 2 passed; 0 failed; 1 ignored\n\
+             test result: FAILED. 3 passed; 1 failed; 0 ignored\n\
+             test result: ok. 0 passed; 0 failed; 2 ignored\n",
+        );
+        assert_eq!(passed, Some(5));
+        assert_eq!(failed, Some(1));
+    }
+
+    #[test]
+    fn parse_cargo_test_counts_does_not_use_last_summary_wins() {
+        let (passed, failed) = parse_cargo_test_counts(
+            "test result: FAILED. 10 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out\n\
+             test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        );
+        assert_eq!(passed, Some(11));
+        assert_eq!(failed, Some(4));
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CargoTestRunMetadata {
     pub(crate) tests_detected: bool,

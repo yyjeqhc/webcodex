@@ -21,5 +21,8 @@ pub mod skill_metadata;
 pub mod skill_store;
 pub mod validation_bridge;
 pub mod validation_evidence;
+
+#[cfg(test)]
+mod validation_evidence_tests;
 pub mod validation_identity;
 pub mod workflow_session_contract;

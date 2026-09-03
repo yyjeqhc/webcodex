@@ -49,7 +49,6 @@ mod unified_diff;
 mod validation_events;
 mod validation_handoff;
 mod validation_identity;
-mod validation_parser;
 mod validation_profile;
 mod validation_summary;
 mod work_on_project;

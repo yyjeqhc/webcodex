@@ -469,9 +469,25 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                                     "diff_byte_budget"
                                 ]
                             }
+                        },
+                        "suggested_call": {
+                            "type": "object",
+                            "description": "Ready-to-call worktree git_diff_hunks arguments. paths is currently empty to preserve whole-worktree coverage because show_changes does not publish authoritative per-hunk line-truncation provenance.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "project": {"type": "string"},
+                                "cached": {"type": "boolean", "const": false},
+                                "paths": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "max_hunks": {"type": "integer"},
+                                "max_hunk_lines": {"type": "integer"}
+                            },
+                            "required": ["project", "cached", "paths", "max_hunks", "max_hunk_lines"]
                         }
                     },
-                    "required": ["tool", "scope", "reason", "truncation_reasons"]
+                    "required": ["tool", "scope", "reason", "truncation_reasons", "suggested_call"]
                 }),
             ),
             (

@@ -3064,6 +3064,22 @@ fn show_changes_diff_respects_max_hunks() {
         output["diff_review_handoff"]["truncation_reasons"],
         json!(["diff_hunk_count_limit"])
     );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["project"],
+        "demo"
+    );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["cached"],
+        false
+    );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["paths"],
+        json!([])
+    );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["max_hunks"],
+        30
+    );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
         .iter()
@@ -3109,6 +3125,15 @@ fn show_changes_diff_respects_max_hunk_lines() {
         output["diff_review_handoff"]["truncation_reasons"],
         json!(["diff_hunk_line_limit"])
     );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["paths"],
+        json!([]),
+        "line truncation must not guess a narrower path without per-hunk provenance"
+    );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["max_hunk_lines"],
+        400
+    );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions.iter().any(|action| action
         == "increase git_diff_hunks.max_hunk_lines and/or narrow paths; continuation alone does not recover omitted lines from the same hunk"));
@@ -3149,6 +3174,11 @@ fn show_changes_combined_hunk_count_and_line_truncation_keeps_both_guidance_path
     assert!(handoff_reasons
         .iter()
         .any(|reason| reason == "diff_hunk_line_limit"));
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["paths"],
+        json!([]),
+        "combined page truncation must not narrow away later files"
+    );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions
         .iter()
@@ -3264,7 +3294,20 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
     );
     assert_eq!(
         handoff["required"],
-        json!(["tool", "scope", "reason", "truncation_reasons"])
+        json!([
+            "tool",
+            "scope",
+            "reason",
+            "truncation_reasons",
+            "suggested_call"
+        ])
+    );
+    let suggested = &handoff["properties"]["suggested_call"];
+    assert_eq!(suggested["additionalProperties"], false);
+    assert_eq!(suggested["properties"]["cached"]["const"], false);
+    assert_eq!(
+        suggested["required"],
+        json!(["project", "cached", "paths", "max_hunks", "max_hunk_lines"])
     );
 }
 

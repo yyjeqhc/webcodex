@@ -2086,11 +2086,31 @@ fn set_show_changes_verdict(output: &mut Value) {
         let hunk_line_truncated = diff_truncation_reasons
             .iter()
             .any(|reason| *reason == "diff_hunk_line_limit");
+        // show_changes currently reports line truncation at the aggregate diff
+        // level, not as authoritative per-hunk provenance. Keep whole-worktree
+        // scope rather than guessing which returned path owns the omitted lines.
+        let suggested_paths: Vec<String> = Vec::new();
+        let suggested_max_hunk_lines = if hunk_line_truncated {
+            MAX_MAX_HUNK_LINES
+        } else {
+            DEFAULT_MAX_HUNK_LINES
+        };
+        let project = output
+            .get("project")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         output["diff_review_handoff"] = json!({
             "tool": "git_diff_hunks",
             "scope": "worktree",
             "reason": "show_changes_diff_truncated",
             "truncation_reasons": diff_truncation_reasons,
+            "suggested_call": {
+                "project": project,
+                "cached": false,
+                "paths": suggested_paths,
+                "max_hunks": DEFAULT_MAX_HUNKS,
+                "max_hunk_lines": suggested_max_hunk_lines,
+            },
         });
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(

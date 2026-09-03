@@ -463,4 +463,6 @@ User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`
 
 编辑 `runner.toml` 后，reload 对应服务以应用 policy、shell 与 SSH 资源变更。
 身份、server/auth、传输与并发变更仍需要重启。无效 reload 会保留当前生效的
-generation。
+generation。对于可安全分类的 validation failure，reload status 只报告闭集、非 secret 的
+原子信息，例如 `field=max_concurrent_jobs` 与 `reason=out_of_range`；不会投影 raw TOML、
+配置值、路径、credential 或 parser 文本。

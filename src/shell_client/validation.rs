@@ -33,6 +33,8 @@ pub(super) fn normalize_config_reload(
     const RESULTS: &str = "not_attempted success partial failure unsupported";
     const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid reload_unsupported";
     const FIELDS: &str = "capabilities client_id display_name host_context hostname max_concurrent_jobs owner poll_interval_ms project_registry_dir projects_dir quic server_url token transport websocket_connect_timeout_secs";
+    const ERROR_FIELDS: &str = "max_concurrent_jobs shell.max_persistent_shells shell.persistent_shell_idle_timeout_secs acp.max_concurrent_runs acp.permission_timeout_secs mcp.request_timeout_secs";
+    const ERROR_REASONS: &str = "out_of_range";
     if status.generation == 0
         || !RESULTS
             .split_whitespace()
@@ -43,6 +45,25 @@ pub(super) fn normalize_config_reload(
             .is_some_and(|code| !ERRORS.split_whitespace().any(|v| v == code))
     {
         return None;
+    }
+    let diagnostic_valid = match (
+        status.last_reload_error_field.as_deref(),
+        status.last_reload_error_reason.as_deref(),
+    ) {
+        (None, None) => true,
+        (Some(field), Some(reason)) => {
+            ERROR_FIELDS.split_whitespace().any(|value| value == field)
+                && ERROR_REASONS
+                    .split_whitespace()
+                    .any(|value| value == reason)
+                && status.last_reload_error_code.as_deref() == Some("config_validation_failed")
+                && status.last_reload_result == "failure"
+        }
+        _ => false,
+    };
+    if !diagnostic_valid {
+        status.last_reload_error_field = None;
+        status.last_reload_error_reason = None;
     }
     status
         .restart_required_fields
@@ -779,6 +800,8 @@ mod provider_status_tests {
             generation: 3,
             last_reload_result: "partial".to_string(),
             last_reload_error_code: None,
+            last_reload_error_field: Some("not.safe".to_string()),
+            last_reload_error_reason: Some("raw_detail".to_string()),
             restart_required: false,
             restart_required_fields: vec![
                 "transport".to_string(),
@@ -794,6 +817,27 @@ mod provider_status_tests {
         assert_eq!(
             status.restart_required_fields,
             ["project_registry_dir", "token", "transport"]
+        );
+        assert!(status.last_reload_error_field.is_none());
+        assert!(status.last_reload_error_reason.is_none());
+
+        let diagnostic = normalize_config_reload(Some(AgentConfigReloadStatus {
+            generation: 4,
+            last_reload_result: "failure".to_string(),
+            last_reload_error_code: Some("config_validation_failed".to_string()),
+            last_reload_error_field: Some("max_concurrent_jobs".to_string()),
+            last_reload_error_reason: Some("out_of_range".to_string()),
+            restart_required: false,
+            restart_required_fields: vec![],
+        }))
+        .unwrap();
+        assert_eq!(
+            diagnostic.last_reload_error_field.as_deref(),
+            Some("max_concurrent_jobs")
+        );
+        assert_eq!(
+            diagnostic.last_reload_error_reason.as_deref(),
+            Some("out_of_range")
         );
         assert!(normalize_config_reload(Some(AgentConfigReloadStatus {
             last_reload_result: "raw error follows".to_string(),

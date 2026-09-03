@@ -634,4 +634,6 @@ uninstall. User scope uses `systemctl --user`; system scope uses
 After editing `runner.toml`, reload the matching service to apply policy,
 shell, and SSH-resource changes. Identity, server/auth, transport, and
 concurrency changes still require a restart. Invalid reloads keep the active
-generation.
+generation. When a validation failure is safely classifiable, reload status reports only
+closed non-secret atoms such as `field=max_concurrent_jobs` and `reason=out_of_range`;
+raw TOML, configured values, paths, credentials, and parser text are not projected.

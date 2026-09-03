@@ -184,9 +184,16 @@ fn failed_reload_keeps_generation_and_can_recover() {
         status.last_reload_error_code.as_deref(),
         Some("config_read_failed")
     );
+    assert!(status.last_reload_error_field.is_none());
+    assert!(status.last_reload_error_reason.is_none());
 
-    for (candidate, code) in [
-        ("{ invalid toml".to_string(), "config_parse_failed"),
+    for (candidate, code, field, reason) in [
+        (
+            "{ invalid toml".to_string(),
+            "config_parse_failed",
+            None,
+            None,
+        ),
         (
             reload_toml(
                 "oe",
@@ -200,6 +207,24 @@ fn failed_reload_keeps_generation_and_can_recover() {
                 "project_search_generation_1",
             ),
             "config_validation_failed",
+            None,
+            None,
+        ),
+        (
+            reload_toml(
+                "oe",
+                Some(999),
+                60,
+                1024,
+                "sh",
+                "native",
+                false,
+                "claude",
+                "project_search_generation_1",
+            ),
+            "config_validation_failed",
+            Some("max_concurrent_jobs"),
+            Some("out_of_range"),
         ),
         (
             reload_toml(
@@ -214,6 +239,8 @@ fn failed_reload_keeps_generation_and_can_recover() {
                 "project_search_generation_1",
             ),
             "provider_config_invalid",
+            None,
+            None,
         ),
     ] {
         std::fs::write(&path, candidate).unwrap();
@@ -221,11 +248,14 @@ fn failed_reload_keeps_generation_and_can_recover() {
         assert_eq!(status.generation, 1);
         assert_eq!(status.last_reload_result, "failure");
         assert_eq!(status.last_reload_error_code.as_deref(), Some(code));
+        assert_eq!(status.last_reload_error_field.as_deref(), field);
+        assert_eq!(status.last_reload_error_reason.as_deref(), reason);
     }
     assert_eq!(old.policy.max_timeout_secs, 60);
     let serialized = serde_json::to_string(&runtime.snapshot().reload_status()).unwrap();
     assert!(!serialized.contains(path.to_string_lossy().as_ref()));
     assert!(!serialized.contains("test-token"));
+    assert!(!serialized.contains("999"));
 
     std::fs::write(
         &path,
@@ -242,7 +272,10 @@ fn failed_reload_keeps_generation_and_can_recover() {
         ),
     )
     .unwrap();
-    assert_eq!(runtime.reload().generation, 2);
+    let recovered = runtime.reload();
+    assert_eq!(recovered.generation, 2);
+    assert!(recovered.last_reload_error_field.is_none());
+    assert!(recovered.last_reload_error_reason.is_none());
     assert_eq!(runtime.snapshot().policy.max_timeout_secs, 90);
 }
 

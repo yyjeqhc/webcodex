@@ -657,6 +657,13 @@ pub struct AgentConfigReloadStatus {
     pub last_reload_result: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reload_error_code: Option<String>,
+    /// Closed, non-secret field atom for a safely classifiable validation error.
+    /// Arbitrary config/parser text is never stored here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reload_error_field: Option<String>,
+    /// Closed, non-secret reason atom paired with last_reload_error_field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reload_error_reason: Option<String>,
     pub restart_required: bool,
     #[serde(default)]
     pub restart_required_fields: Vec<String>,
@@ -668,6 +675,8 @@ impl Default for AgentConfigReloadStatus {
             generation: 1,
             last_reload_result: "not_attempted".to_string(),
             last_reload_error_code: None,
+            last_reload_error_field: None,
+            last_reload_error_reason: None,
             restart_required: false,
             restart_required_fields: Vec::new(),
         }

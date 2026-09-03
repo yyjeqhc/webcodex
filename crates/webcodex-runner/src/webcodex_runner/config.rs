@@ -566,15 +566,24 @@ impl ReloadableRunnerConfig {
             Ok(candidate) => candidate,
             Err(error) => {
                 let code = reload_error_code(&error);
+                let (error_field, error_reason) = reload_error_diagnostic(&error);
                 let active = self.snapshot();
                 let status = {
                     let mut status = active.reload_status.lock().unwrap();
                     status.last_reload_result = "failure".to_string();
                     status.last_reload_error_code = Some(code.to_string());
+                    status.last_reload_error_field = error_field.map(str::to_string);
+                    status.last_reload_error_reason = error_reason.map(str::to_string);
                     status.clone()
                 };
                 active.external_tools.configuration_status_changed();
-                eprintln!("webcodex-runner config reload failed: {code}");
+                if let (Some(field), Some(reason)) = (error_field, error_reason) {
+                    eprintln!(
+                        "webcodex-runner config reload failed: {code} field={field} reason={reason}"
+                    );
+                } else {
+                    eprintln!("webcodex-runner config reload failed: {code}");
+                }
                 return status;
             }
         };
@@ -590,6 +599,8 @@ impl ReloadableRunnerConfig {
             }
             .to_string(),
             last_reload_error_code: None,
+            last_reload_error_field: None,
+            last_reload_error_reason: None,
             restart_required: !restart_required_fields.is_empty(),
             restart_required_fields,
         };
@@ -623,6 +634,44 @@ fn reload_error_code(error: &str) -> &'static str {
     } else {
         "config_validation_failed"
     }
+}
+
+#[cfg(any(unix, test))]
+fn reload_error_diagnostic(error: &str) -> (Option<&'static str>, Option<&'static str>) {
+    const OUT_OF_RANGE_FIELDS: &[(&str, &str)] = &[
+        (
+            "max_concurrent_jobs must be between ",
+            "max_concurrent_jobs",
+        ),
+        (
+            "shell.max_persistent_shells must be between ",
+            "shell.max_persistent_shells",
+        ),
+        (
+            "shell.persistent_shell_idle_timeout_secs must be between ",
+            "shell.persistent_shell_idle_timeout_secs",
+        ),
+        (
+            "acp.max_concurrent_runs must be between ",
+            "acp.max_concurrent_runs",
+        ),
+        (
+            "acp.permission_timeout_secs must be between ",
+            "acp.permission_timeout_secs",
+        ),
+        (
+            "mcp.request_timeout_secs must be between ",
+            "mcp.request_timeout_secs",
+        ),
+    ];
+    OUT_OF_RANGE_FIELDS
+        .iter()
+        .find_map(|(prefix, field)| {
+            error
+                .starts_with(prefix)
+                .then_some((Some(*field), Some("out_of_range")))
+        })
+        .unwrap_or((None, None))
 }
 
 #[cfg(any(unix, test))]

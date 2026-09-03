@@ -10,18 +10,13 @@
 
 use super::wire_models::FilesSearchInput;
 use super::{execution, ConnectorCallOutcome, CONNECTOR_SEARCH_WINDOW};
-use crate::auth::{
-    AuthContext, AuthKind, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
-    SCOPE_RUNTIME_READ,
-};
-use crate::client_window::ClientWindow;
+use crate::auth::AuthContext;
 use crate::db::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorTaskResult, ConnectorTaskSnapshot,
     ConnectorTaskStoreError, ConnectorWindowBinding,
 };
 use crate::project_context::{ContextRefreshSummary, ProjectContextFingerprint};
-use crate::tool_runtime::validation_profile::RecipeError;
-use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode, ToolResult};
+use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -33,11 +28,14 @@ use sha2::{Digest, Sha256};
 #[derive(Debug)]
 pub(super) enum KernelFailure {
     Scope {
-        required_scope: Option<&'static str>,
+        required_permission: Option<webcodex_connector_runtime::ConnectorPermission>,
         message: String,
     },
     Adapter(String),
-    Tool(ToolResult),
+    Tool {
+        error: Option<String>,
+        output: Value,
+    },
 }
 
 impl ConnectorCallOutcome {
@@ -508,7 +506,7 @@ pub(crate) fn approval_projection(approval: &ConnectorApproval) -> Value {
 
 pub(super) fn validation_recipe_error(
     task: &ConnectorTaskSnapshot,
-    error: RecipeError,
+    error: webcodex_connector_runtime::ConnectorValidationPlanError,
 ) -> ConnectorCallOutcome {
     ConnectorCallOutcome::error_for_task(
         409,
@@ -693,22 +691,18 @@ pub(super) fn paginate_search_output(
 
 /// Whether a kernel failure may have applied workspace changes.
 pub(super) fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
-    let KernelFailure::Tool(result) = error else {
+    let KernelFailure::Tool { error, output } = error else {
         return false;
     };
-    if result.output.get("execution_state").and_then(Value::as_str) == Some("outcome_unknown")
-        || result.output.get("failure_kind").and_then(Value::as_str) == Some("outcome_unknown")
-        || result.output.get("error_kind").and_then(Value::as_str) == Some("outcome_unknown")
-        || result
-            .output
-            .get("rollback_complete")
-            .and_then(Value::as_bool)
-            == Some(false)
-        || result.output.get("changed").and_then(Value::as_bool) == Some(true)
+    if output.get("execution_state").and_then(Value::as_str) == Some("outcome_unknown")
+        || output.get("failure_kind").and_then(Value::as_str) == Some("outcome_unknown")
+        || output.get("error_kind").and_then(Value::as_str) == Some("outcome_unknown")
+        || output.get("rollback_complete").and_then(Value::as_bool) == Some(false)
+        || output.get("changed").and_then(Value::as_bool) == Some(true)
     {
         return true;
     }
-    result.error.as_deref().is_some_and(|message| {
+    error.as_deref().is_some_and(|message| {
         let message = message.to_ascii_lowercase();
         [
             "timed out",
@@ -899,7 +893,7 @@ pub(super) fn context_refresh_payload(refresh: &ContextRefreshSummary) -> Value 
 }
 
 pub(super) fn connector_window_binding<'a>(
-    window: &'a ClientWindow,
+    window: &'a webcodex_connector_runtime::ConnectorWindowId,
     fingerprint: &'a ProjectContextFingerprint,
     now: i64,
 ) -> ConnectorWindowBinding<'a> {
@@ -997,39 +991,8 @@ pub(super) fn model_next_action(task_status: &str, host_action: &str) -> &'stati
     }
 }
 
-pub(super) fn required_scope(capability: &str) -> &'static str {
-    match capability {
-        "task_start" => SCOPE_RUNTIME_READ,
-        "files_read" | "files_search" | "code_navigate" | "code_impact" | "task_review"
-        | "task_list" | "task_resume" => SCOPE_PROJECT_READ,
-        "edits_apply" | "task_finish" => SCOPE_PROJECT_WRITE,
-        "checks_run" | "commands_run" | "task_cancel" => SCOPE_JOB_RUN,
-        _ => SCOPE_RUNTIME_READ,
-    }
-}
-
 pub(super) fn stable_subject_id(auth: &AuthContext) -> Result<String, String> {
-    if let Some(user_id) = auth.user_id.as_deref() {
-        return Ok(format!("user:{user_id}"));
-    }
-    if let Some(hash) = auth.shared_key_hash.as_deref() {
-        return Ok(format!("shared:{hash}"));
-    }
-    if let Some(grant_id) = auth.project_grant_id.as_deref() {
-        return Ok(format!("project:{grant_id}"));
-    }
-    match auth.kind {
-        AuthKind::Bootstrap => Ok("bootstrap".to_string()),
-        AuthKind::OpenAnonymous => Ok("open:anonymous".to_string()),
-        AuthKind::ApiToken
-        | AuthKind::OAuth2Token
-        | AuthKind::SharedKey
-        | AuthKind::ProjectCredential
-        | AuthKind::AgentToken
-        | AuthKind::AccountCredential => {
-            Err("authenticated identity has no stable connector subject".to_string())
-        }
-    }
+    super::integration::stable_subject_id(auth)
 }
 
 pub(super) fn validate_task_id(task_id: &str) -> Result<(), &'static str> {

@@ -11,10 +11,12 @@
 use crate::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
 };
-use crate::tool_runtime::validation_profile::{RecipeId, SemanticCheck};
 use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use webcodex_connector_runtime::{
+    ConnectorRecipeId as RecipeId, ConnectorSemanticCheck as SemanticCheck,
+};
 
 pub(super) fn sanitize_value(
     value: &mut Value,

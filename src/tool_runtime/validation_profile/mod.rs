@@ -9,7 +9,9 @@ mod rust;
 
 use super::validation_parser::ValidationDiagnostics;
 
-pub(crate) use recipe::{resolve_validation_recipe, RecipeError, RecipeId, SemanticCheck};
+#[cfg(test)]
+pub(crate) use recipe::RecipeError;
+pub(crate) use recipe::{resolve_validation_recipe, RecipeId, SemanticCheck};
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ValidationCommandOptions {

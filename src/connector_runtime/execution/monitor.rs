@@ -1,4 +1,5 @@
 use super::*;
+use webcodex_connector_runtime::ConnectorValidationEvidenceRequest;
 
 struct MonitorRegistration {
     execution_id: String,
@@ -18,7 +19,8 @@ impl ExecutionService {
         &self,
         task: ConnectorTaskSnapshot,
         execution_id: String,
-        auth: AuthContext,
+        host: Arc<dyn ConnectorExecutionHost>,
+        runner_access: RunnerAccess,
     ) -> bool {
         {
             let mut monitors = self.monitors.lock().unwrap();
@@ -36,12 +38,20 @@ impl ExecutionService {
         };
         tokio::spawn(async move {
             let _registration = registration;
-            service.monitor(task, execution_id, auth).await;
+            service
+                .monitor(task, execution_id, host, runner_access)
+                .await;
         });
         true
     }
 
-    async fn monitor(&self, task: ConnectorTaskSnapshot, execution_id: String, auth: AuthContext) {
+    async fn monitor(
+        &self,
+        task: ConnectorTaskSnapshot,
+        execution_id: String,
+        host: Arc<dyn ConnectorExecutionHost>,
+        runner_access: RunnerAccess,
+    ) {
         let mut status_failures = 0_u32;
         let mut first_status_failure = None;
         loop {
@@ -67,9 +77,12 @@ impl ExecutionService {
                 execution
             };
             if current.state == "cancel_requested" {
-                let _ = self.dispatch_cancel(&task, &current, &auth).await;
+                let _ = self.dispatch_cancel(&task, &current, host.as_ref()).await;
             }
-            match self.refresh_once(&task, &execution_id, &auth).await {
+            match self
+                .refresh_once(&task, &execution_id, host.as_ref(), &runner_access)
+                .await
+            {
                 Ok(updated) => {
                     status_failures = 0;
                     first_status_failure = None;
@@ -165,9 +178,9 @@ impl ExecutionService {
         &self,
         task: &ConnectorTaskSnapshot,
         execution_id: &str,
-        auth: &AuthContext,
+        host: &dyn ConnectorExecutionHost,
+        runner_access: &RunnerAccess,
     ) -> Result<ConnectorExecution, (&'static str, String)> {
-        let access = crate::shell_client::runner_access_from_auth(Some(auth));
         let execution = self
             .db
             .connector_execution(execution_id)
@@ -179,10 +192,9 @@ impl ExecutionService {
             )
         })?;
         let (job, _, _, stdout_cursor, stderr_cursor, _wait) = self
-            .tools
-            .shell_clients
+            .runner_registry
             .job_log_for_auth(
-                access.as_ref(),
+                Some(runner_access),
                 job_id,
                 Some(execution.stdout_cursor),
                 Some(execution.stderr_cursor),
@@ -199,7 +211,7 @@ impl ExecutionService {
                 "completed" | "stopped" | "cancelled" | "timeout" | "timed_out" | "lost" | "failed"
             );
         let mcp_task_output_tail = if terminal_candidate {
-            self.bounded_output_tail(&execution, auth).await
+            self.bounded_output_tail(&execution, runner_access).await
         } else {
             None
         };
@@ -226,19 +238,18 @@ impl ExecutionService {
         let failed_check = progress.and_then(|progress| progress.failed_step.as_deref());
         let assertion_evidence = if execution.kind == "check" && failed_check.is_some() {
             let (_, full_stdout, full_stderr, _, _, _) = self
-                .tools
-                .shell_clients
-                .job_log_for_auth(access.as_ref(), job_id, None, None, None, None, None)
+                .runner_registry
+                .job_log_for_auth(Some(runner_access), job_id, None, None, None, None, None)
                 .await
                 .unwrap_or_else(|_| (job.clone(), None, None, 1, 1, Default::default()));
             failed_check.map(|check| {
-                durable_assertion_evidence(
-                    check,
-                    execution.check_recipe.as_ref(),
-                    job.exit_code,
-                    full_stdout.as_deref().unwrap_or_default(),
-                    full_stderr.as_deref().unwrap_or_default(),
-                )
+                host.validation_failure_evidence(ConnectorValidationEvidenceRequest {
+                    check: check.to_string(),
+                    recipe_identity: execution.check_recipe.clone(),
+                    exit_code: job.exit_code,
+                    stdout: full_stdout.unwrap_or_default(),
+                    stderr: full_stderr.unwrap_or_default(),
+                })
             })
         } else {
             None
@@ -318,22 +329,15 @@ impl ExecutionService {
         &self,
         task: &ConnectorTaskSnapshot,
         execution: &ConnectorExecution,
-        auth: &AuthContext,
+        host: &dyn ConnectorExecutionHost,
     ) -> CancelDispatch {
         let Some(job_id) = execution.executor_reference.as_ref() else {
             return CancelDispatch::ReferencePending;
         };
-        if self
-            .tools
-            .stop_job_model_facing(
-                task.execution_executor_ref.clone(),
-                job_id.clone(),
-                None,
-                true,
-                Some(auth),
-            )
+        if host
+            .stop_execution_job(task.execution_executor_ref.clone(), job_id.clone())
             .await
-            .success
+            .is_ok()
         {
             CancelDispatch::Sent
         } else {

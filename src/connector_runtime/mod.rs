@@ -11,9 +11,11 @@ mod continuation_delivery_tests;
 mod execution;
 #[cfg(test)]
 pub(crate) mod execution_tests;
+mod host_adapter;
 #[cfg(test)]
 mod host_tests;
 pub(crate) mod http;
+mod integration;
 mod projections;
 pub(crate) mod surface;
 mod wire_models;
@@ -29,10 +31,10 @@ use projections::{
     command_action_hash, command_request_hash, connector_window_binding, context_refresh_payload,
     edit_operation_hash, host_review_projection, invalid_input, kernel_failure_may_have_applied,
     model_next_action, navigation_payload, paginate_search_output, parse_input,
-    parse_search_cursor, project_brief, project_brief_from_fingerprint, required_scope,
-    search_cursor_signature, short_oid, stable_subject_id, validate_operation_id, validate_path,
-    validate_task_id, validation_projection, validation_recipe_error, KernelFailure,
-    DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT,
+    parse_search_cursor, project_brief, project_brief_from_fingerprint, search_cursor_signature,
+    short_oid, stable_subject_id, validate_operation_id, validate_path, validate_task_id,
+    validation_projection, validation_recipe_error, KernelFailure, DEFAULT_TASK_LIST_LIMIT,
+    MAX_TASK_LIST_LIMIT,
 };
 use wire_models::{
     sanitize_value, ChecksRunInput, CodeImpactInput, CodeNavigateInput, CodeNavigateOperation,
@@ -75,16 +77,17 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
 };
-use crate::tool_runtime::kernel::{
-    ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
-};
-use crate::tool_runtime::validation_profile::resolve_validation_recipe;
 use crate::tool_runtime::{SearchResultMode, ToolRuntime};
 use crate::Database;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
+use webcodex_connector_runtime::{
+    ConnectorExecutionHost, ConnectorJobHostError, ConnectorPermission,
+    ConnectorProjectRegistration, ConnectorToolFailure, ConnectorToolRequest,
+    ConnectorValidationPlanRequest,
+};
 
 const MAX_EVENT_COUNT: usize = 50;
 /// Guidance messages delivered in one capability response. Bounded so a burst
@@ -104,6 +107,7 @@ pub(crate) struct ConnectorRuntimeSlot(pub(crate) Option<Arc<ConnectorRuntime>>)
 
 pub(crate) struct ConnectorRuntime {
     tools: Arc<ToolRuntime>,
+    runner_registry: Arc<webcodex_runner_registry::RunnerRegistry>,
     pub(crate) db: Arc<Database>,
     context: ConnectorContext,
     workspace: workspace::WorkspaceManager,
@@ -125,11 +129,11 @@ pub(crate) enum ConnectorTransport {
     Mcp,
 }
 
-impl From<ConnectorTransport> for ToolTransport {
+impl From<ConnectorTransport> for webcodex_connector_runtime::ConnectorTransport {
     fn from(value: ConnectorTransport) -> Self {
         match value {
-            ConnectorTransport::Api => ToolTransport::Api,
-            ConnectorTransport::Mcp => ToolTransport::Mcp,
+            ConnectorTransport::Api => webcodex_connector_runtime::ConnectorTransport::Api,
+            ConnectorTransport::Mcp => webcodex_connector_runtime::ConnectorTransport::Mcp,
         }
     }
 }
@@ -164,8 +168,12 @@ impl ConnectorRuntime {
             chrono::Utc::now().timestamp(),
         )
         .map_err(|error| format!("failed to recover local result decision: {error}"))?;
-        let executions =
-            execution::ExecutionService::new(tools.clone(), db.clone(), workspace.clone());
+        let runner_registry = tools.shell_clients.clone();
+        let executions = execution::ExecutionService::new(
+            runner_registry.clone(),
+            db.clone(),
+            workspace.clone(),
+        );
         let (runs_recovered, executions_recovered) = executions
             .reconcile_startup(&context.project_id, chrono::Utc::now().timestamp())
             .map_err(|error| format!("failed to recover connector runs: {error}"))?;
@@ -186,6 +194,7 @@ impl ConnectorRuntime {
         tools.observations.set_connector_configured();
         Ok(Self {
             tools,
+            runner_registry,
             db,
             context,
             workspace,
@@ -463,7 +472,12 @@ impl ConnectorRuntime {
     ) -> Result<ConnectorCallOutcome, ConnectorCallOutcome> {
         let (mut task, execution) = self.execution_for_auth(execution_id, auth)?;
         task.run_id = execution.run_id.clone();
-        let projection = self.executions.projection(&execution, auth, true).await;
+        let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+            .expect("authenticated Connector execution has Runner access");
+        let projection = self
+            .executions
+            .projection(&execution, &runner_access, true)
+            .await;
         let mut data = json!({ "execution": projection });
         self.attach_pending_guidance(&task, &mut data);
         Ok(ConnectorCallOutcome::success_blocking_at(
@@ -572,8 +586,14 @@ impl ConnectorRuntime {
         {
             return Err(Self::execution_task_not_found());
         }
+        let host: Arc<dyn ConnectorExecutionHost> = Arc::new(host_adapter::RootConnectorHost::new(
+            self.tools.clone(),
+            auth.clone(),
+        ));
+        let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+            .expect("authenticated Connector execution has Runner access");
         self.executions
-            .cancel_task(task.clone(), None, auth.clone())
+            .cancel_task(task.clone(), None, host, runner_access)
             .await
             .map(|_| ())
             .map_err(|error| store_error_outcome(error, Some(&task)))
@@ -652,24 +672,8 @@ impl ConnectorRuntime {
                 false,
             );
         };
-        if !self.project_access_allowed(auth) {
-            return ConnectorCallOutcome::error(
-                403,
-                "project_credential_rejected",
-                "the authenticated credential is not authorized for this project",
-                false,
-                true,
-                Some("Use the credential generated by setup for this project."),
-                None,
-                false,
-            );
-        }
-        let required_scope = required_scope(capability);
-        if !auth.has_scope(required_scope) {
-            return ConnectorCallOutcome::scope_denied(required_scope);
-        }
-        let subject_id = match stable_subject_id(auth) {
-            Ok(subject) => subject,
+        let access = match integration::connector_access(auth) {
+            Ok(access) => access,
             Err(message) => {
                 return ConnectorCallOutcome::error(
                     403,
@@ -683,6 +687,25 @@ impl ConnectorRuntime {
                 )
             }
         };
+        if !access.project_access_allowed(&self.context.project_grant_id) {
+            return ConnectorCallOutcome::error(
+                403,
+                "project_credential_rejected",
+                "the authenticated credential is not authorized for this project",
+                false,
+                true,
+                Some("Use the credential generated by setup for this project."),
+                None,
+                false,
+            );
+        }
+        let required_permission = ConnectorPermission::for_capability(capability);
+        if !access.allows(required_permission) {
+            return ConnectorCallOutcome::scope_denied(integration::permission_scope(
+                required_permission,
+            ));
+        }
+        let subject_id = access.principal.as_str().to_string();
 
         let now = chrono::Utc::now().timestamp();
         if let Err(error) = self.db.ensure_connector_binding(ConnectorBinding {
@@ -968,7 +991,11 @@ impl ConnectorRuntime {
                         goal,
                         mode,
                         now,
-                        connector_window_binding(window, &fingerprint, now),
+                        connector_window_binding(
+                            &integration::connector_window(window),
+                            &fingerprint,
+                            now,
+                        ),
                     ) {
                         Ok(cursor) => cursor,
                         Err(error) => return store_error_outcome(error, Some(&task)),
@@ -1029,10 +1056,13 @@ impl ConnectorRuntime {
             now,
         };
         let stored = match window {
-            Some(window) => self.db.start_connector_task_and_bind(
-                new_task,
-                connector_window_binding(window, &fingerprint, now),
-            ),
+            Some(window) => {
+                let window = integration::connector_window(window);
+                self.db.start_connector_task_and_bind(
+                    new_task,
+                    connector_window_binding(&window, &fingerprint, now),
+                )
+            }
             None => self.db.start_connector_task(new_task),
         };
         let task = match stored {
@@ -1177,24 +1207,26 @@ impl ConnectorRuntime {
             }
         };
         if prepared.isolated {
-            let registration = self
-                .tools
-                .register_project(
-                    prepared.agent_client_id.clone(),
-                    prepared.agent_project_id.clone(),
-                    format!("WebCodex {}", prepared.agent_project_id),
-                    prepared.execution_root.clone(),
-                    Some("WebCodex managed isolated task worktree".to_string()),
-                    true,
-                    false,
-                    Some(auth),
-                )
+            let host = host_adapter::RootConnectorHost::new(self.tools.clone(), auth.clone());
+            let registration = host
+                .register_isolated_project(ConnectorProjectRegistration {
+                    client_id: prepared.agent_client_id.clone(),
+                    project_id: prepared.agent_project_id.clone(),
+                    name: format!("WebCodex {}", prepared.agent_project_id),
+                    path: prepared.execution_root.clone(),
+                    description: Some("WebCodex managed isolated task worktree".to_string()),
+                })
                 .await;
-            if !registration.success {
+            if let Err(registration_error) = registration {
                 let cleanup = self
                     .workspace
                     .discard_prepared(&self.context.executor_root, &prepared);
-                if let Some(error) = registration.error.as_deref() {
+                let registration_message = match registration_error {
+                    ConnectorJobHostError::Rejected(message)
+                    | ConnectorJobHostError::OutcomeUnknown(message) => message,
+                    ConnectorJobHostError::Adapter(message) => Some(message),
+                };
+                if let Some(error) = registration_message.as_deref() {
                     tracing::warn!(
                         error = %self.sanitize_executor_string(error),
                         "temporary Runner project registration failed"
@@ -1272,7 +1304,7 @@ impl ConnectorRuntime {
                 workspace,
                 now,
             },
-            connector_window_binding(window, fingerprint, now),
+            connector_window_binding(&integration::connector_window(window), fingerprint, now),
         ) {
             Ok(continued) => continued,
             Err(error) => {
@@ -2017,13 +2049,17 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
-        let resolved = match resolve_validation_recipe(
-            Path::new(&task.execution_root),
-            input.cwd.as_deref(),
-            input.recipe,
-            &input.checks,
-            input.test_filter.as_deref(),
-        ) {
+        let host: Arc<dyn ConnectorExecutionHost> = Arc::new(host_adapter::RootConnectorHost::new(
+            self.tools.clone(),
+            auth.clone(),
+        ));
+        let resolved = match host.plan_validation(ConnectorValidationPlanRequest {
+            execution_root: task.execution_root.clone(),
+            cwd: input.cwd.clone(),
+            recipe: input.recipe,
+            checks: input.checks.clone(),
+            test_filter: input.test_filter.clone(),
+        }) {
             Ok(resolved) => resolved,
             Err(error) => return validation_recipe_error(&task, error),
         };
@@ -2052,7 +2088,7 @@ impl ConnectorRuntime {
                 }
             }
         }
-        let recipe_identity = resolved.durable_identity();
+        let recipe_identity = resolved.durable_identity.clone();
         let timeout_secs = input.timeout_secs.unwrap_or(120);
         let request_sha256 = check_request_hash(
             &task,
@@ -2087,8 +2123,7 @@ impl ConnectorRuntime {
                 let access = crate::shell_client::runner_access_from_auth(Some(auth));
                 let supports_structured_validation = match client_id {
                     Some(client_id) => self
-                        .tools
-                        .shell_clients
+                        .runner_registry
                         .client_supports_for_auth(
                             client_id,
                             SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
@@ -2116,8 +2151,7 @@ impl ConnectorRuntime {
                 if requires_go_test_json {
                     let supported = match client_id {
                         Some(client_id) => self
-                            .tools
-                            .shell_clients
+                            .runner_registry
                             .client_supports_for_auth(
                                 client_id,
                                 SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
@@ -2177,7 +2211,9 @@ impl ConnectorRuntime {
                     "structured validation".to_string(),
                     Some(execution_cwd),
                     timeout_secs,
-                    auth.clone(),
+                    host,
+                    crate::shell_client::runner_access_from_auth(Some(auth))
+                        .expect("authenticated Connector execution has Runner access"),
                     validation_steps,
                 )
                 .await,
@@ -2307,8 +2343,8 @@ impl ConnectorRuntime {
                     short_oid(&precondition),
                     crate::shell_client::command_preview(&input.command)
                 );
-                let authority = self.tools.permission_evaluator.config();
-                if authority.auto_authorize() {
+                let authority = integration::connector_execution_authority(&self.tools);
+                if authority.auto_authorize {
                     // Trusted agent authority: no human approval interruption
                     // and no pending approval record. The auto-authorization is
                     // still a durable audit fact on the task event stream.
@@ -2319,10 +2355,9 @@ impl ConnectorRuntime {
                             "action_kind": "commands_run",
                             "action_hash": action_hash,
                             "action_summary": action_summary,
-                            "authority_mode": authority.mode_name(),
-                            "authority_source": authority.source().as_str(),
-                            "resolved_rule":
-                                crate::tool_runtime::permissions::TRUSTED_AGENT_AUTO_REASON,
+                            "authority_mode": authority.mode,
+                            "authority_source": authority.source,
+                            "resolved_rule": authority.resolved_rule,
                             "risk": "shell",
                             "principal": subject_id,
                             "project": self.context.project_id,
@@ -2373,7 +2408,12 @@ impl ConnectorRuntime {
                     input.command,
                     input.cwd,
                     timeout_secs,
-                    auth.clone(),
+                    Arc::new(host_adapter::RootConnectorHost::new(
+                        self.tools.clone(),
+                        auth.clone(),
+                    )),
+                    crate::shell_client::runner_access_from_auth(Some(auth))
+                        .expect("authenticated Connector execution has Runner access"),
                     Vec::new(),
                 )
                 .await,
@@ -2396,7 +2436,12 @@ impl ConnectorRuntime {
             .unwrap_or_else(|_| task.clone());
         match result {
             Ok(execution) => {
-                let projection = self.executions.projection(&execution, auth, true).await;
+                let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+                    .expect("authenticated Connector execution has Runner access");
+                let projection = self
+                    .executions
+                    .projection(&execution, &runner_access, true)
+                    .await;
                 let mut data = json!({ "execution": projection });
                 if !defer_execution_guidance {
                     self.attach_pending_guidance(&current, &mut data);
@@ -2596,11 +2641,19 @@ impl ConnectorRuntime {
             .collect::<Vec<_>>();
         events.drain(..events.len().saturating_sub(max_events));
         let execution = match review.execution.as_ref() {
-            Some(execution) => Some(
-                self.executions
-                    .projection(execution, auth, input.include_output_tail.unwrap_or(false))
-                    .await,
-            ),
+            Some(execution) => {
+                let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+                    .expect("authenticated Connector execution has Runner access");
+                Some(
+                    self.executions
+                        .projection(
+                            execution,
+                            &runner_access,
+                            input.include_output_tail.unwrap_or(false),
+                        )
+                        .await,
+                )
+            }
             None => None,
         };
         let blocking = review
@@ -2902,9 +2955,20 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let host: Arc<dyn ConnectorExecutionHost> = Arc::new(host_adapter::RootConnectorHost::new(
+            self.tools.clone(),
+            auth.clone(),
+        ));
+        let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+            .expect("authenticated Connector execution has Runner access");
         let execution = match self
             .executions
-            .cancel_task(task.clone(), input.reason.as_deref(), auth.clone())
+            .cancel_task(
+                task.clone(),
+                input.reason.as_deref(),
+                host,
+                runner_access.clone(),
+            )
             .await
         {
             Ok(execution) => execution,
@@ -2912,7 +2976,11 @@ impl ConnectorRuntime {
         };
         let current = self.task(&task.task_id, subject_id).unwrap_or(task);
         let projection = match execution.as_ref() {
-            Some(execution) => Some(self.executions.projection(execution, auth, true).await),
+            Some(execution) => Some(
+                self.executions
+                    .projection(execution, &runner_access, true)
+                    .await,
+            ),
             None => None,
         };
         let blocking = execution
@@ -2968,7 +3036,12 @@ impl ConnectorRuntime {
             Err(error) => return store_error_outcome(error, Some(&visible_task)),
         };
         if let Some(execution) = blocker {
-            let projection = self.executions.projection(&execution, auth, true).await;
+            let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+                .expect("authenticated Connector execution has Runner access");
+            let projection = self
+                .executions
+                .projection(&execution, &runner_access, true)
+                .await;
             return ConnectorCallOutcome::error_for_task(
                 409,
                 "execution_not_terminal",
@@ -3526,44 +3599,26 @@ impl ConnectorRuntime {
         auth: &AuthContext,
         transport: ConnectorTransport,
     ) -> Result<Value, KernelFailure> {
-        let outcome = self
-            .tools
-            .call_tool_with_context(
-                KernelToolCallRequest {
-                    tool_name: tool_name.to_string(),
-                    arguments,
-                },
-                ToolCallContext {
-                    transport: transport.into(),
-                    session_id: None,
-                    auth: Some(auth),
-                    window: None,
-                    record_oauth_scope_denials: false,
-                    host_file_import_trust:
-                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
-                },
-            )
-            .await;
-        match outcome.error_status {
-            Some(ToolCallErrorStatus::InsufficientScope {
-                required_scope,
-                description,
-            }) => Err(KernelFailure::Scope {
-                required_scope,
-                message: description,
-            }),
-            Some(ToolCallErrorStatus::InvalidArguments { message }) => {
-                Err(KernelFailure::Adapter(message))
+        let host = host_adapter::RootConnectorHost::new(self.tools.clone(), auth.clone());
+        match host
+            .invoke_tool(ConnectorToolRequest {
+                tool_name: tool_name.to_string(),
+                arguments,
+                transport: transport.into(),
+            })
+            .await
+        {
+            Ok(output) => Ok(self.sanitize_task_value(task, output)),
+            Err(ConnectorToolFailure::Permission { required, message }) => {
+                Err(KernelFailure::Scope {
+                    required_permission: required,
+                    message,
+                })
             }
-            None => {
-                let result = outcome
-                    .result
-                    .expect("tool kernel outcome without error must include result");
-                if result.success {
-                    Ok(self.sanitize_task_value(task, result.output))
-                } else {
-                    Err(KernelFailure::Tool(result))
-                }
+            Err(ConnectorToolFailure::InvalidArguments(message))
+            | Err(ConnectorToolFailure::Adapter(message)) => Err(KernelFailure::Adapter(message)),
+            Err(ConnectorToolFailure::Tool { error, output }) => {
+                Err(KernelFailure::Tool { error, output })
             }
         }
     }
@@ -3581,7 +3636,7 @@ impl ConnectorRuntime {
         };
         match error {
             KernelFailure::Scope {
-                required_scope,
+                required_permission,
                 message,
             } => ConnectorCallOutcome::error_for_task_at_with_scope(
                 403,
@@ -3595,7 +3650,7 @@ impl ConnectorRuntime {
                 task,
                 cursor,
                 partial_data,
-                required_scope,
+                required_permission.map(integration::permission_scope),
             ),
             KernelFailure::Adapter(message) => ConnectorCallOutcome::error_for_task_at(
                 500,
@@ -3611,13 +3666,12 @@ impl ConnectorRuntime {
                 cursor,
                 partial_data,
             ),
-            KernelFailure::Tool(result) => {
-                let message = result
-                    .error
+            KernelFailure::Tool { error, output } => {
+                let message = error
                     .as_deref()
                     .map(|message| self.sanitize_task_string(task, message))
                     .unwrap_or_else(|| "executor rejected the capability".to_string());
-                let output = self.sanitize_task_value(task, result.output);
+                let output = self.sanitize_task_value(task, output);
                 ConnectorCallOutcome::error_for_task_at(
                     400,
                     "capability_failed",

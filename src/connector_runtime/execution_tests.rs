@@ -10,7 +10,7 @@ use crate::shell_protocol::{
     ShellClientRegisterRequest, ShellJobOpRequest, ShellJobValidationProgress,
     ShellJobValidationStep, VALIDATION_STEP_WAIT_FAILED_CODE,
 };
-use crate::tool_runtime::validation_profile::{RecipeId, SemanticCheck};
+use crate::tool_runtime::validation_profile::{resolve_validation_recipe, RecipeId, SemanticCheck};
 use crate::tool_runtime::ApplyFileChangeInput;
 use salvo::test::ResponseExt;
 use std::time::{Duration, Instant};
@@ -2282,21 +2282,20 @@ async fn failed_check_has_durable_bounded_sanitized_evidence_without_passed_prov
         .unwrap()
         .contains("/private/workspace"));
 
+    let runner_access = crate::test_support::runner_access(&fixture.owner);
     let without_tail = fixture
         .connector
         .executions
-        .projection(&durable, &fixture.owner, false)
+        .projection(&durable, &runner_access, false)
         .await;
     assert!(without_tail["output_tail"].is_null());
     assert_eq!(without_tail["assertion_evidence"]["failed_check"], "test");
     let unavailable_logs = execution::ExecutionService::new(
-        Arc::new(ToolRuntime::new_for_tests_with_shell_clients(Arc::new(
-            ShellClientRegistry::default(),
-        ))),
+        Arc::new(ShellClientRegistry::default()),
         fixture.connector.db.clone(),
         fixture.connector.workspace.clone(),
     )
-    .projection(&durable, &fixture.owner, true)
+    .projection(&durable, &runner_access, true)
     .await;
     assert!(unavailable_logs["output_tail"].is_null());
     assert_eq!(

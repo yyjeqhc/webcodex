@@ -5135,6 +5135,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webcodex-admin",
+ "webcodex-connector-runtime",
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-runner-config",
@@ -5204,6 +5205,16 @@ dependencies = [
  "windows",
  "windows-sys 0.61.2",
  "xcap",
+]
+
+[[package]]
+name = "webcodex-connector-runtime"
+version = "0.3.9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "webcodex-core",
+ "webcodex-runner-registry",
 ]
 
 [[package]]

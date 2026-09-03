@@ -2,6 +2,7 @@
 members = [
     "crates/webcodex-admin",
     "crates/webcodex-computer",
+    "crates/webcodex-connector-runtime",
     "crates/webcodex-runner-config",
     "crates/webcodex-cli",
     "crates/webcodex-core",
@@ -33,6 +34,7 @@ path = "src/bin/webcodex-server.rs"
 
 [dependencies]
 webcodex-admin = { path = "crates/webcodex-admin" }
+webcodex-connector-runtime = { path = "crates/webcodex-connector-runtime" }
 webcodex-runner-config = { path = "crates/webcodex-runner-config" }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry" }
 webcodex-core = { path = "crates/webcodex-core" }

@@ -3,19 +3,21 @@
 mod monitor;
 
 use super::workspace;
-use crate::auth::AuthContext;
 use crate::db::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, ConnectorTaskSnapshot, ConnectorTaskStoreError,
 };
 use crate::shell_protocol::ShellJobValidationStep;
-use crate::tool_runtime::ToolRuntime;
 use crate::Database;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::time::Instant;
+use webcodex_connector_runtime::{
+    ConnectorExecutionHost, ConnectorJobHostError, ConnectorJobRequest,
+};
+use webcodex_runner_registry::{RunnerAccess, RunnerRegistry};
 
 const DEFAULT_YIELD_MS: u64 = 8_000;
 const CANCEL_YIELD_MS: u64 = 5_000;
@@ -75,7 +77,7 @@ impl ExecutionAttachGate {
 
 #[derive(Clone)]
 pub(crate) struct ExecutionService {
-    tools: Arc<ToolRuntime>,
+    runner_registry: Arc<RunnerRegistry>,
     db: Arc<Database>,
     workspace: workspace::WorkspaceManager,
     yield_ms: u64,
@@ -96,12 +98,12 @@ pub(crate) struct ReviewState {
 
 impl ExecutionService {
     pub(crate) fn new(
-        tools: Arc<ToolRuntime>,
+        runner_registry: Arc<RunnerRegistry>,
         db: Arc<Database>,
         workspace: workspace::WorkspaceManager,
     ) -> Self {
         Self {
-            tools,
+            runner_registry,
             db,
             workspace,
             yield_ms: DEFAULT_YIELD_MS,
@@ -190,13 +192,19 @@ impl ExecutionService {
         command: String,
         cwd: Option<String>,
         timeout_secs: u64,
-        auth: AuthContext,
+        host: Arc<dyn ConnectorExecutionHost>,
+        runner_access: RunnerAccess,
         validation_steps: Vec<ShellJobValidationStep>,
     ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
         let execution = match reservation {
             ConnectorExecutionReservation::Existing(execution) => {
                 if execution.is_active() && execution.executor_reference.is_some() {
-                    self.spawn_monitor(task.clone(), execution.execution_id.clone(), auth.clone());
+                    self.spawn_monitor(
+                        task.clone(),
+                        execution.execution_id.clone(),
+                        host.clone(),
+                        runner_access.clone(),
+                    );
                 }
                 return self
                     .wait_for_terminal_or_arm_continuation(&execution.execution_id, self.yield_ms)
@@ -212,33 +220,39 @@ impl ExecutionService {
         if execution.state != "starting" {
             return Ok(execution);
         }
-        let result = self
-            .tools
-            .run_job_for_auth(
-                task.execution_executor_ref.clone(),
+        let submission = match host
+            .start_execution_job(ConnectorJobRequest {
+                project: task.execution_executor_ref.clone(),
                 command,
-                None,
-                Some(timeout_secs as i64),
+                timeout_secs,
                 cwd,
                 validation_steps,
-                Some(&auth),
-            )
-            .await;
-        if !result.success {
-            return self.db.finish_connector_execution(
-                &execution.execution_id,
-                ConnectorExecutionFailure::Submission("executor_rejected"),
-                chrono::Utc::now().timestamp(),
-            );
-        }
-        let Some(job_id) = result.output["job_id"].as_str() else {
-            return self.db.finish_connector_execution(
-                &execution.execution_id,
-                ConnectorExecutionFailure::Submission("execution_adapter_error"),
-                chrono::Utc::now().timestamp(),
-            );
+            })
+            .await
+        {
+            Ok(submission) => submission,
+            Err(ConnectorJobHostError::Rejected(_)) => {
+                return self.db.finish_connector_execution(
+                    &execution.execution_id,
+                    ConnectorExecutionFailure::Submission("executor_rejected"),
+                    chrono::Utc::now().timestamp(),
+                )
+            }
+            Err(ConnectorJobHostError::Adapter(_)) => {
+                return self.db.finish_connector_execution(
+                    &execution.execution_id,
+                    ConnectorExecutionFailure::Submission("execution_adapter_error"),
+                    chrono::Utc::now().timestamp(),
+                )
+            }
+            Err(ConnectorJobHostError::OutcomeUnknown(_)) => {
+                return self.db.finish_connector_execution(
+                    &execution.execution_id,
+                    ConnectorExecutionFailure::Unknown("submission_transport_unknown"),
+                    chrono::Utc::now().timestamp(),
+                )
+            }
         };
-        let status = result.output["status"].as_str().unwrap_or("queued");
         #[cfg(test)]
         if let Some(gate) = &self.attach_gate {
             gate.created.wait().await;
@@ -246,12 +260,12 @@ impl ExecutionService {
         }
         let attached = self.db.attach_connector_executor(
             &execution.execution_id,
-            job_id,
-            status,
+            &submission.job_id,
+            &submission.status,
             chrono::Utc::now().timestamp(),
         )?;
         if attached.state == "cancel_requested"
-            && self.dispatch_cancel(&task, &attached, &auth).await == CancelDispatch::Failed
+            && self.dispatch_cancel(&task, &attached, host.as_ref()).await == CancelDispatch::Failed
         {
             return self.db.finish_connector_execution(
                 &execution.execution_id,
@@ -262,7 +276,7 @@ impl ExecutionService {
         if attached.is_terminal() {
             return Ok(attached);
         }
-        self.spawn_monitor(task, execution.execution_id.clone(), auth);
+        self.spawn_monitor(task, execution.execution_id.clone(), host, runner_access);
         self.wait_for_terminal_or_arm_continuation(&execution.execution_id, self.yield_ms)
             .await
     }
@@ -271,7 +285,8 @@ impl ExecutionService {
         &self,
         task: ConnectorTaskSnapshot,
         reason: Option<&str>,
-        auth: AuthContext,
+        host: Arc<dyn ConnectorExecutionHost>,
+        runner_access: RunnerAccess,
     ) -> Result<Option<ConnectorExecution>, ConnectorTaskStoreError> {
         let requested = self.db.request_connector_execution_cancel(
             &task,
@@ -286,10 +301,12 @@ impl ExecutionService {
             self.release_cancelled_workspace(task).await;
             return Ok(Some(execution));
         }
-        match self.dispatch_cancel(&task, &execution, &auth).await {
+        match self.dispatch_cancel(&task, &execution, host.as_ref()).await {
             CancelDispatch::ReferencePending => return Ok(Some(execution)),
             CancelDispatch::Failed => {
-                if let Some(output_tail) = self.bounded_output_tail(&execution, &auth).await {
+                if let Some(output_tail) =
+                    self.bounded_output_tail(&execution, &runner_access).await
+                {
                     let _ = self.db.record_connector_mcp_task_output_tail(
                         &execution.execution_id,
                         &output_tail,
@@ -302,7 +319,12 @@ impl ExecutionService {
                 )?;
             }
             CancelDispatch::Sent => {
-                self.spawn_monitor(task.clone(), execution.execution_id.clone(), auth);
+                self.spawn_monitor(
+                    task.clone(),
+                    execution.execution_id.clone(),
+                    host,
+                    runner_access,
+                );
                 execution = self
                     .wait_for_terminal(&execution.execution_id, CANCEL_YIELD_MS)
                     .await?;
@@ -443,13 +465,19 @@ impl ExecutionService {
     pub(super) async fn bounded_output_tail(
         &self,
         execution: &ConnectorExecution,
-        auth: &AuthContext,
+        runner_access: &RunnerAccess,
     ) -> Option<Value> {
         let job_id = execution.executor_reference.as_deref()?;
-        let access = crate::shell_client::runner_access_from_auth(Some(auth));
-        self.tools
-            .shell_clients
-            .job_log_for_auth(access.as_ref(), job_id, None, None, Some(200), None, None)
+        self.runner_registry
+            .job_log_for_auth(
+                Some(runner_access),
+                job_id,
+                None,
+                None,
+                Some(200),
+                None,
+                None,
+            )
             .await
             .ok()
             .map(|(_, stdout, stderr, _, _, _)| {
@@ -464,11 +492,11 @@ impl ExecutionService {
     pub(crate) async fn projection(
         &self,
         execution: &ConnectorExecution,
-        auth: &AuthContext,
+        runner_access: &RunnerAccess,
         include_output_tail: bool,
     ) -> Value {
         let output_tail = if include_output_tail {
-            self.bounded_output_tail(execution, auth).await
+            self.bounded_output_tail(execution, runner_access).await
         } else {
             None
         };

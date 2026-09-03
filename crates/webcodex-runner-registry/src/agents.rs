@@ -140,7 +140,7 @@ struct StreamingSessionRegistration {
 }
 
 impl RunnerRegistry {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn register(
         &self,
         body: ShellClientRegisterRequest,
@@ -156,8 +156,8 @@ impl RunnerRegistry {
         self.register_session(body, auth, None).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn register_streaming_session(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub async fn register_streaming_session(
         &self,
         body: ShellClientRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
@@ -605,7 +605,7 @@ impl RunnerRegistry {
     /// Test-only hook for observability projections that need to model a
     /// transport without opening a real streaming connection. Production
     /// streaming registration commits its transport atomically.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn set_transport(
         &self,
         client_id: &str,
@@ -615,7 +615,7 @@ impl RunnerRegistry {
             .await
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     async fn set_transport_checked(
         &self,
         client_id: &str,
@@ -773,7 +773,7 @@ impl RunnerRegistry {
 
     /// Test-only hook to force a client's `last_seen` so liveness/stale
     /// behavior can be exercised without sleeping for the full online window.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn set_last_seen_for_test(&self, client_id: &str, ts: i64) {
         let mut inner = self.inner.lock().await;
         if let Some(client) = inner.clients.get_mut(client_id) {
@@ -922,7 +922,7 @@ impl RunnerRegistry {
 
     /// Reconcile state after an agent transport disconnects or sends a
     /// graceful offline notice.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn reconcile_disconnect(&self, client_id: &str, agent_instance_id: &str) {
         self.reconcile_disconnect_checked(client_id, agent_instance_id, None)
             .await;
@@ -1060,7 +1060,7 @@ impl RunnerRegistry {
         );
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn list_clients(&self) -> Vec<ShellClientView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
@@ -1215,8 +1215,8 @@ impl RunnerRegistry {
         Self::client_view_locked(&inner, client_id)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn get_client_view_for_connection(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub async fn get_client_view_for_connection(
         &self,
         client_id: &str,
         agent_instance_id: &str,

@@ -447,7 +447,10 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
     let request = wait_for_patch_agent_request(&runtime, "script-prestart-job").await;
     let queued = runtime
         .shell_clients
-        .get_hidden_job_for_auth(Some(&auth), request.job_id.as_deref().unwrap())
+        .get_hidden_job_for_auth(
+            Some(&crate::test_support::runner_access(&auth)),
+            request.job_id.as_deref().unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(queued.status, "agent_queued");

@@ -1,6 +1,6 @@
 use super::access_control::assert_runner_access as assert_shell_client_access;
 use super::project_inventory::reconcile_dynamic_projection;
-#[cfg(test)]
+#[cfg(any(test, feature = "root-test-support"))]
 use super::validation::validate_id;
 use super::validation::validate_project_summary;
 use super::{RunnerFeatureSet, RunnerRegistry};
@@ -101,7 +101,7 @@ impl RunnerRegistry {
     }
 
     /// Test-only accessor for projects registered to a shell client.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub async fn list_client_projects(
         &self,
         client_id: &str,

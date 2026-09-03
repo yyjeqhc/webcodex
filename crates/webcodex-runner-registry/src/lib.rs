@@ -22,6 +22,105 @@ mod state;
 mod telemetry;
 mod validation;
 
+#[cfg(test)]
+mod reconciliation_tests;
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+pub(crate) use webcodex_core::{
+    artifact_policy, job_observation, lsp_bridge, mcp_gateway, shell_protocol,
+};
+#[cfg(test)]
+pub(crate) type ShellClientRegistry = RunnerRegistry;
+#[cfg(test)]
+pub(crate) use registry::clamp_grace;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use crate::RunnerRegistry;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use webcodex_core::shell_protocol::{
+        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+        ShellProjectInventoryPage, AGENT_PROTOCOL_GENERATION_V2,
+        AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+        PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+    };
+
+    pub(crate) fn current_runner_capabilities(
+        capabilities: ShellClientCapabilities,
+    ) -> ShellClientCapabilities {
+        let mut value =
+            serde_json::to_value(capabilities).expect("serialize Runner test capabilities");
+        let object = value
+            .as_object_mut()
+            .expect("Runner test capabilities must serialize as an object");
+        for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
+            object.insert((*capability).to_string(), serde_json::Value::Bool(true));
+        }
+        serde_json::from_value(value).expect("deserialize canonical Runner test capabilities")
+    }
+
+    pub(crate) fn current_runner_registration(
+        mut registration: ShellClientRegisterRequest,
+    ) -> ShellClientRegisterRequest {
+        registration.agent_protocol_generation = AGENT_PROTOCOL_GENERATION_V2;
+        registration.capabilities = current_runner_capabilities(registration.capabilities);
+        registration
+    }
+
+    static TEST_PROJECT_INVENTORY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    pub(crate) async fn apply_project_inventory_snapshot(
+        registry: &RunnerRegistry,
+        client_id: &str,
+        agent_instance_id: &str,
+        projects: Vec<ShellAgentProjectSummary>,
+    ) {
+        let snapshot_sequence = TEST_PROJECT_INVENTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let generation = format!("test-inventory-{snapshot_sequence}");
+        let chunks = projects
+            .chunks(PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
+            .collect::<Vec<_>>();
+        if chunks.is_empty() {
+            registry
+                .apply_project_inventory_page(
+                    client_id,
+                    agent_instance_id,
+                    ShellProjectInventoryPage {
+                        generation,
+                        snapshot_sequence,
+                        page_index: 0,
+                        total_reported: 0,
+                        complete: true,
+                        projects: Vec::new(),
+                    },
+                )
+                .await
+                .expect("empty test project inventory snapshot");
+            return;
+        }
+        let last = chunks.len() - 1;
+        for (index, chunk) in chunks.into_iter().enumerate() {
+            registry
+                .apply_project_inventory_page(
+                    client_id,
+                    agent_instance_id,
+                    ShellProjectInventoryPage {
+                        generation: generation.clone(),
+                        snapshot_sequence,
+                        page_index: index as u32,
+                        total_reported: projects.len(),
+                        complete: index == last,
+                        projects: chunk.to_vec(),
+                    },
+                )
+                .await
+                .expect("test project inventory page");
+        }
+    }
+}
+
 pub use access::{DetachedInitiatorIdentity, RunnerAccess, RunnerAccessGroup};
 pub use capabilities::{RunnerFeature, RunnerFeatureSet};
 pub use job_status::job_status_is_active;

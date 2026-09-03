@@ -159,7 +159,7 @@ async fn register_computer_target_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -199,7 +199,7 @@ async fn register_application_target_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -236,7 +236,7 @@ async fn register_display_target_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -273,7 +273,7 @@ async fn register_pointer_target_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -312,7 +312,7 @@ async fn register_clipboard_target_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -398,7 +398,7 @@ async fn register_agent_projects_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();

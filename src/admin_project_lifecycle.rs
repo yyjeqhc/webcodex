@@ -916,26 +916,29 @@ mod tests {
 
         let alice = user_auth("alice");
         let bob = user_auth("bob");
+        let alice_access = crate::test_support::runner_access(&alice);
+        let bob_access = crate::test_support::runner_access(&bob);
         registry
-            .start_job_with_metadata_for_auth(
+            .start_job_with_metadata_for_access(
                 active_job_request("owned-runner", "sleep 60"),
                 "alice".to_string(),
                 ShellJobStartMetadata {
                     project_id: Some(target.to_string()),
                     ..Default::default()
                 },
-                Some(&alice),
+                Some(&alice_access),
+                None,
             )
             .await
             .unwrap();
         assert_eq!(
             registry
-                .count_active_jobs_for_project(Some(&alice), target)
+                .count_active_jobs_for_project(Some(&alice_access), target)
                 .await,
             1
         );
         assert_eq!(
-            registry.count_active_jobs_for_project(Some(&bob), target).await,
+            registry.count_active_jobs_for_project(Some(&bob_access), target).await,
             0,
             "the regression requires the cross-owner principal to be unable to see the owner's active Job"
         );
@@ -957,20 +960,21 @@ mod tests {
         assert_eq!(response.body["error"]["code"], "agent_unavailable");
 
         registry
-            .start_job_with_metadata_for_auth(
+            .start_job_with_metadata_for_access(
                 active_job_request("owned-runner", "echo still-allowed"),
                 "alice".to_string(),
                 ShellJobStartMetadata {
                     project_id: Some(target.to_string()),
                     ..Default::default()
                 },
-                Some(&alice),
+                Some(&alice_access),
+                None,
             )
             .await
             .expect("rejected cross-owner unregister must not leave an unregister fence behind");
         assert_eq!(
             registry
-                .begin_project_unregister(Some(&alice), target)
+                .begin_project_unregister(Some(&alice_access), target)
                 .await
                 .unwrap(),
             2,

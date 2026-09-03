@@ -462,7 +462,7 @@ impl RunnerFeatureSet {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     pub(crate) fn from_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
         Self {
             capabilities: capabilities.clone(),

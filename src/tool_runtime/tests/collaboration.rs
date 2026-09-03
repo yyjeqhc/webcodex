@@ -1522,7 +1522,9 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     shell_clients
         .set_last_seen_for_test("recycled-client", expired_at)
         .await;
-    let _ = shell_clients.list_clients_for_auth(Some(&alice)).await;
+    let _ = shell_clients
+        .list_clients_for_auth(Some(&crate::test_support::runner_access(&alice)))
+        .await;
     assert!(shell_clients
         .get_client_view("recycled-client")
         .await
@@ -1619,7 +1621,9 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     shell_clients
         .set_last_seen_for_test("recycled-client", expired_at)
         .await;
-    let _ = shell_clients.list_clients_for_auth(Some(&bob)).await;
+    let _ = shell_clients
+        .list_clients_for_auth(Some(&crate::test_support::runner_access(&bob)))
+        .await;
     assert!(shell_clients
         .get_client_view("recycled-client")
         .await

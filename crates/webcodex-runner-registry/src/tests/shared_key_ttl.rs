@@ -4,9 +4,9 @@ use super::*;
 async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_state() {
     let ttl_secs = 10;
     let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
-    let connected_auth = crate::auth::shared_key::shared_key_context("ttl-connected");
-    let fresh_auth = crate::auth::shared_key::shared_key_context("ttl-fresh");
-    let expired_auth = crate::auth::shared_key::shared_key_context("ttl-expired");
+    let connected_auth = shared_key_access("ttl-connected");
+    let fresh_auth = shared_key_access("ttl-fresh");
+    let expired_auth = shared_key_access("ttl-expired");
 
     registry
         .register_streaming_session(
@@ -198,7 +198,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             "repeated TTL prune must not publish a duplicate terminal update"
         );
     }
-    let other_key = crate::auth::shared_key::shared_key_context("ttl-other-key");
+    let other_key = shared_key_access("ttl-other-key");
     assert!(registry
         .get_job_for_auth(Some(&other_key), &job.job_id)
         .await
@@ -271,7 +271,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .terminal_observed_at =
             Some(now_ts() - crate::shell_protocol::JOB_TERMINAL_RETENTION_SECS);
     }
-    super::reconciliation::recovery_timeout_sweep(&registry).await;
+    crate::recovery_timeout_sweep(&registry).await;
     assert!(registry
         .get_job_for_auth(Some(&expired_auth), &job.job_id)
         .await

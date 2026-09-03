@@ -279,7 +279,7 @@ async fn register_shared_key_runner_with_capabilities(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
             },
-            Some(&auth),
+            Some(&crate::test_support::runner_access(&auth)),
         )
         .await
         .unwrap();

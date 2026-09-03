@@ -73,7 +73,7 @@ async fn enqueue_call_hierarchy_uses_only_its_distinct_capability() {
 async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
     let ttl_secs = 10;
     let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
-    let auth = crate::auth::shared_key::shared_key_context("ttl-lsp");
+    let auth = shared_key_access("ttl-lsp");
     let mut registration = runner_registration("ttl-lsp", "inst", Vec::new());
     registration.capabilities =
         crate::test_support::current_runner_capabilities(ShellClientCapabilities {

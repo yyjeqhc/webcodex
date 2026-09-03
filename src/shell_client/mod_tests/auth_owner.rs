@@ -12,25 +12,6 @@ fn requested_by_from_auth_uses_bootstrap_username_or_anonymous() {
 }
 
 #[test]
-fn assert_shell_client_owner_enforces_owner_boundary() {
-    let bootstrap = auth_context(None, true);
-    assert!(assert_shell_client_owner(Some(&bootstrap), "client-1", None).is_ok());
-
-    let alice = auth_context(Some("alice"), false);
-    assert!(assert_shell_client_owner(Some(&alice), "client-1", Some("alice")).is_ok());
-
-    let mismatch = assert_shell_client_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
-    assert!(mismatch.contains("owned by bob"));
-    assert!(mismatch.contains("belongs to alice"));
-
-    let missing = assert_shell_client_owner(Some(&alice), "client-1", None).unwrap_err();
-    assert_eq!(missing, "agent client client-1 has no owner");
-
-    let anonymous = assert_shell_client_owner(None, "client-1", Some("anonymous")).unwrap_err();
-    assert!(anonymous.contains("belongs to anonymous"));
-}
-
-#[test]
 fn enforce_register_owner_cases() {
     let bootstrap = auth_context(None, true);
     let user_alice = auth_context(Some("alice"), false);

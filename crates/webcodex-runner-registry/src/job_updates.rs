@@ -529,7 +529,7 @@ impl RunnerRegistry {
             .await
     }
 
-    pub(crate) async fn start_job_with_metadata(
+    pub async fn start_job_with_metadata(
         &self,
         body: ShellJobOpRequest,
         requested_by: String,
@@ -1047,8 +1047,8 @@ impl RunnerRegistry {
         ))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn hidden_job_ids_for_test(&self) -> Vec<String> {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub async fn hidden_job_ids_for_test(&self) -> Vec<String> {
         let inner = self.inner.lock().await;
         let mut ids = inner
             .jobs_by_id
@@ -1170,8 +1170,8 @@ impl RunnerRegistry {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn has_hidden_cleanup_intent_for_test(&self, job_id: &str) -> bool {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn has_hidden_cleanup_intent_for_test(&self, job_id: &str) -> bool {
         self.cleanup_intents
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1270,8 +1270,8 @@ impl RunnerRegistry {
     /// then fail harmlessly as "unknown shell job"). Also drops any still
     /// pending start request so a queued-but-never-run job leaves no request
     /// behind.
-    #[cfg(test)]
-    pub(crate) async fn remove_job_record(&self, job_id: &str) -> bool {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub async fn remove_job_record(&self, job_id: &str) -> bool {
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.remove(job_id) else {
             return false;

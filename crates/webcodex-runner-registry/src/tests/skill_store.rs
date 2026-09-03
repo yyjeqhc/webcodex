@@ -1,5 +1,4 @@
 use super::*;
-use crate::auth::{AuthContext, AuthKind};
 use crate::shell_protocol::{
     ShellAgentPollRequest, ShellClientRegisterRequest, ShellCommandExecutionState,
 };
@@ -33,10 +32,8 @@ fn skill_store_registration(
     })
 }
 
-fn alice() -> AuthContext {
-    let mut auth = AuthContext::new(AuthKind::ApiToken);
-    auth.username = Some("alice".to_string());
-    auth
+fn alice() -> RunnerAccess {
+    auth_context(Some("alice"), false)
 }
 
 #[tokio::test]

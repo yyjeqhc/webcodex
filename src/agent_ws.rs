@@ -578,11 +578,17 @@ mod tests {
         let auth_a = crate::auth::shared_key::shared_key_context("shared-key-a");
         let auth_b = crate::auth::shared_key::shared_key_context("shared-key-b");
         assert!(registry
-            .get_client_view_for_auth("shared-a", Some(&auth_a))
+            .get_client_view_for_auth(
+                "shared-a",
+                Some(&crate::test_support::runner_access(&auth_a))
+            )
             .await
             .is_some());
         assert!(registry
-            .get_client_view_for_auth("shared-a", Some(&auth_b))
+            .get_client_view_for_auth(
+                "shared-a",
+                Some(&crate::test_support::runner_access(&auth_b))
+            )
             .await
             .is_none());
 

@@ -1,5 +1,4 @@
 use super::*;
-use crate::auth::{AuthContext, AuthKind};
 use crate::mcp_gateway::{
     McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
     McpGatewayResponsePayload,
@@ -181,8 +180,7 @@ async fn bridge_enqueue_rechecks_owner_and_exact_runner_instance() {
     let registry = ShellClientRegistry::default();
     register_bridge_runner(&registry).await;
 
-    let mut bob = AuthContext::new(AuthKind::ApiToken);
-    bob.username = Some("bob".to_string());
+    let bob = auth_context(Some("bob"), false);
     assert!(registry
         .enqueue_mcp_gateway(
             "bridge-runner",
@@ -195,8 +193,7 @@ async fn bridge_enqueue_rechecks_owner_and_exact_runner_instance() {
         .unwrap_err()
         .contains("unavailable"));
 
-    let mut alice = AuthContext::new(AuthKind::ApiToken);
-    alice.username = Some("alice".to_string());
+    let alice = auth_context(Some("alice"), false);
     assert!(registry
         .enqueue_mcp_gateway(
             "bridge-runner",
@@ -230,8 +227,7 @@ async fn bridge_enqueue_rechecks_owner_and_exact_runner_instance() {
 async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
     let registry = ShellClientRegistry::default();
     register_bridge_runner(&registry).await;
-    let mut alice = AuthContext::new(AuthKind::ApiToken);
-    alice.username = Some("alice".to_string());
+    let alice = auth_context(Some("alice"), false);
     let (_request_id, receiver) = registry
         .enqueue_mcp_gateway(
             "bridge-runner",
@@ -275,8 +271,7 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
 async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change() {
     let registry = ShellClientRegistry::default();
     register_bridge_runner(&registry).await;
-    let mut alice = AuthContext::new(AuthKind::ApiToken);
-    alice.username = Some("alice".to_string());
+    let alice = auth_context(Some("alice"), false);
     let (_request_id, receiver) = registry
         .enqueue_mcp_gateway(
             "bridge-runner",
@@ -319,8 +314,7 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
 async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
     let registry = ShellClientRegistry::default();
     register_bridge_runner(&registry).await;
-    let mut alice = AuthContext::new(AuthKind::ApiToken);
-    alice.username = Some("alice".to_string());
+    let alice = auth_context(Some("alice"), false);
     let (request_id, receiver) = registry
         .enqueue_mcp_gateway(
             "bridge-runner",
@@ -375,8 +369,7 @@ async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
 async fn typed_bridge_result_is_correlated_once() {
     let registry = ShellClientRegistry::default();
     register_bridge_runner(&registry).await;
-    let mut alice = AuthContext::new(AuthKind::ApiToken);
-    alice.username = Some("alice".to_string());
+    let alice = auth_context(Some("alice"), false);
     let (request_id, receiver) = registry
         .enqueue_mcp_gateway(
             "bridge-runner",

@@ -25,8 +25,6 @@ use tokio::sync::Notify;
 
 mod auth;
 mod handlers;
-#[cfg(test)]
-mod reconciliation_tests;
 mod telemetry;
 
 pub(crate) use auth::{

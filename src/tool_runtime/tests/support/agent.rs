@@ -104,7 +104,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();
@@ -810,7 +810,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
                 capabilities: crate::test_support::current_runner_capabilities(caps),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();

@@ -2354,6 +2354,7 @@ mod tests {
         auth: Option<&AuthContext>,
     ) {
         let agent_instance_id = format!("inst-{client_id}");
+        let access = auth.map(crate::test_support::runner_access);
         runtime
             .shell_clients
             .register_with_auth(
@@ -2376,7 +2377,7 @@ mod tests {
                     ),
                     policy: None,
                 },
-                auth,
+                access.as_ref(),
             )
             .await
             .unwrap();

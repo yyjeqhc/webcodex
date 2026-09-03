@@ -604,7 +604,7 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
                 ),
                 policy: None,
             },
-            Some(&auth),
+            Some(&crate::test_support::runner_access(&auth)),
         )
         .await
         .unwrap();
@@ -1518,7 +1518,7 @@ async fn register_job_agent_for_auth(
                 capabilities: caps,
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();

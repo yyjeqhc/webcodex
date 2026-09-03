@@ -111,7 +111,7 @@ async fn register_target_agent_for_auth(
                 ),
                 policy: None,
             },
-            Some(auth),
+            Some(&crate::test_support::runner_access(auth)),
         )
         .await
         .unwrap();

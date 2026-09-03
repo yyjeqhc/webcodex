@@ -3,8 +3,8 @@ use super::*;
 #[tokio::test]
 async fn shared_key_runner_limit_is_per_group_and_reconnects_do_not_consume_capacity() {
     let registry = ShellClientRegistry::default();
-    let shared_a = crate::auth::shared_key::shared_key_context("shared-limit-a");
-    let shared_b = crate::auth::shared_key::shared_key_context("shared-limit-b");
+    let shared_a = shared_key_access("shared-limit-a");
+    let shared_b = shared_key_access("shared-limit-b");
 
     for index in 0..MAX_SHARED_KEY_RUNNERS_PER_GROUP {
         registry
@@ -100,9 +100,9 @@ async fn shared_key_global_runner_limit_excludes_reconnects_and_managed_runners(
         3,
         SHARED_KEY_OFFLINE_TTL_SECS,
     );
-    let shared_a = crate::auth::shared_key::shared_key_context("shared-global-a");
-    let shared_b = crate::auth::shared_key::shared_key_context("shared-global-b");
-    let shared_c = crate::auth::shared_key::shared_key_context("shared-global-c");
+    let shared_a = shared_key_access("shared-global-a");
+    let shared_b = shared_key_access("shared-global-b");
+    let shared_c = shared_key_access("shared-global-c");
 
     for (client_id, instance_id, auth) in [
         ("global-a-0", "global-a-instance-0", &shared_a),

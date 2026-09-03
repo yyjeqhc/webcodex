@@ -122,7 +122,7 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
                 ),
                 policy: None,
             },
-            Some(&grant_b),
+            Some(&crate::test_support::runner_access(&grant_b)),
         )
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn fixture_built(
                 ),
                 policy: None,
             },
-            Some(&owner),
+            Some(&crate::test_support::runner_access(&owner)),
         )
         .await
         .unwrap();
@@ -3940,7 +3940,7 @@ async fn read_only_commands_run_is_denied_even_when_agent_supports_shell() {
                 ),
                 policy: None,
             },
-            Some(&fixture.owner),
+            Some(&crate::test_support::runner_access(&fixture.owner)),
         )
         .await
         .unwrap();
@@ -4321,7 +4321,7 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                 ),
                 policy: None,
             },
-            Some(&owner),
+            Some(&crate::test_support::runner_access(&owner)),
         )
         .await
         .unwrap();

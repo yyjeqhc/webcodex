@@ -740,7 +740,10 @@ async fn coding_run_executes_then_reconciles_from_reopened_db_and_fresh_runtime(
     assert_eq!(fresh_project, project);
     let (_, inventory_run) = fresh_runtime
         .shell_clients
-        .coding_agent_run_for_auth(Some(&auth), &completed.run_id)
+        .coding_agent_run_for_auth(
+            Some(&crate::test_support::runner_access(&auth)),
+            &completed.run_id,
+        )
         .await
         .expect("fresh runtime must see the exact durable CodingAgentRun inventory entry");
     assert_eq!(inventory_run, completed);

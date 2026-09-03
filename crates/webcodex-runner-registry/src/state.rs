@@ -126,8 +126,8 @@ impl ShellClientSemanticView {
         self.runner_features.supports(feature)
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_public_view_for_test(view: ShellClientView) -> Self {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn from_public_view_for_test(view: ShellClientView) -> Self {
         let runner_features = RunnerFeatureSet::from_wire_for_test(&view.capabilities);
         Self {
             view,

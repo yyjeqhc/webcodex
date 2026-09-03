@@ -123,7 +123,7 @@ async fn register_agent_with_lsp_capabilities(
                 ),
                 policy: None,
             },
-            Some(&auth("u1")),
+            Some(&crate::test_support::runner_access(&auth("u1"))),
         )
         .await
         .unwrap();

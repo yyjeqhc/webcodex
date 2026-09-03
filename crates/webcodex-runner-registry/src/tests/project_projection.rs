@@ -54,7 +54,7 @@ async fn bounded_semantic_inventory_fails_closed_on_client_or_project_overflow()
 #[tokio::test]
 async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert() {
     let registry = ShellClientRegistry::default();
-    let shared = crate::auth::shared_key::shared_key_context("project-scale-shared");
+    let shared = shared_key_access("project-scale-shared");
     let projects = (0..65)
         .map(|index| project_summary(&format!("project-{index}"), "/tmp/project"))
         .collect::<Vec<_>>();
@@ -332,22 +332,17 @@ async fn registry_project_owner_check_enforces_boundary() {
     .await;
 
     let alice = auth_context(Some("alice"), false);
-    assert!(
-        assert_registry_client_owner(&registry, Some(&alice), "alice-client")
-            .await
-            .is_ok()
-    );
+    assert!(registry
+        .assert_client_access(Some(&alice), "alice-client")
+        .await
+        .is_ok());
     let projects = registry.list_client_projects("alice-client").await.unwrap();
     assert_eq!(projects.len(), 1);
 
-    let mismatch = assert_registry_client_owner(&registry, Some(&alice), "bob-client")
+    let mismatch = registry
+        .assert_client_access(Some(&alice), "bob-client")
         .await
         .unwrap_err();
-    assert_eq!(mismatch.0, StatusCode::BAD_REQUEST);
-    assert!(
-        mismatch.1.contains("unknown shell client"),
-        "{}",
-        mismatch.1
-    );
-    assert!(!mismatch.1.contains("owned by"), "{}", mismatch.1);
+    assert!(mismatch.contains("unknown shell client"), "{mismatch}");
+    assert!(!mismatch.contains("owned by"), "{mismatch}");
 }

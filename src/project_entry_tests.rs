@@ -282,7 +282,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 ),
                 policy: None,
             },
-            Some(&agent_auth),
+            Some(&crate::test_support::runner_access(&agent_auth)),
         )
         .await
         .unwrap();
@@ -1509,7 +1509,10 @@ async fn arbitrary_shared_key_cannot_access_project_connector() {
     };
     let pending = fixture
         .registry
-        .get_client_view_for_auth(&fixture.client_id, Some(&fixture.agent_auth))
+        .get_client_view_for_auth(
+            &fixture.client_id,
+            Some(&crate::test_support::runner_access(&fixture.agent_auth)),
+        )
         .await
         .unwrap()
         .pending_requests;
@@ -1626,7 +1629,10 @@ async fn connector_credential_cannot_cross_agent_auth_group() {
     };
     let agent = fixture
         .registry
-        .get_client_view_for_auth(&fixture.client_id, Some(&fixture.agent_auth))
+        .get_client_view_for_auth(
+            &fixture.client_id,
+            Some(&crate::test_support::runner_access(&fixture.agent_auth)),
+        )
         .await
         .unwrap();
     let serialized =

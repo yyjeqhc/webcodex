@@ -138,6 +138,13 @@ pub(crate) fn test_db() -> (tempfile::TempDir, Arc<crate::Database>) {
     (tmp, Arc::new(db))
 }
 
+pub(crate) fn runner_access(
+    auth: &crate::auth::AuthContext,
+) -> webcodex_runner_registry::RunnerAccess {
+    crate::shell_client::runner_access_from_auth(Some(auth))
+        .expect("authenticated root test context must project to RunnerAccess")
+}
+
 /// Upgrade a server-test Runner capability fixture to the current registration
 /// contract while preserving caller-selected RegistrationRequired features.
 /// Tests that exercise registration rejection should construct their wire

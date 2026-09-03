@@ -1506,6 +1506,7 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
         .expect("promoted fifth Job retains its record");
     assert_eq!(promoted.status, "running");
     assert_eq!(promoted.request_id, "request-default-5");
+    assert_eq!(promoted.activity, Some(process_running_activity()));
 
     for job in &jobs[1..] {
         job.release();
@@ -1521,6 +1522,7 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
             .unwrap();
         assert_eq!(snapshot.status, "completed");
         assert_eq!(snapshot.request_id, format!("request-{}", job.job_id));
+        assert!(snapshot.activity.is_none());
     }
 }
 

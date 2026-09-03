@@ -4439,6 +4439,7 @@ impl JobManager {
                     &started_job_id,
                     RunnerJobDelta {
                         status: "running".to_string(),
+                        activity: Some(process_running_activity()),
                         ..Default::default()
                     },
                 );

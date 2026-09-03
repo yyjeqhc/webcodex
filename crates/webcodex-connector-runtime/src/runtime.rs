@@ -33,9 +33,8 @@ use webcodex_core::lsp_bridge::{
     redact_absolute_paths, MAX_DOCUMENT_DIAGNOSTICS_LIMIT, MAX_DOCUMENT_SYMBOLS_LIMIT,
     MAX_FIND_REFERENCES_LIMIT, MAX_GOTO_DEFINITION_LIMIT, MAX_WORKSPACE_SYMBOLS_LIMIT,
 };
-use webcodex_core::shell_protocol::{
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+use webcodex_core::runner_protocol::{
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON, RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
 };
 use webcodex_runner_registry::{command_preview, RunnerRegistry};
 use webcodex_store::{
@@ -1863,7 +1862,7 @@ impl ConnectorRuntime {
                         .runner_registry
                         .runner_supports_for_auth(
                             client_id,
-                            SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+                            RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
                             access.as_ref(),
                         )
                         .await
@@ -1881,7 +1880,7 @@ impl ConnectorRuntime {
                         &task,
                         json!({
                             "required_capability":
-                                SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV
+                                RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV
                         }),
                     );
                 }
@@ -1891,7 +1890,7 @@ impl ConnectorRuntime {
                             .runner_registry
                             .runner_supports_for_auth(
                                 client_id,
-                                SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+                                RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
                                 access.as_ref(),
                             )
                             .await
@@ -1909,7 +1908,7 @@ impl ConnectorRuntime {
                             &task,
                             json!({
                                 "required_capability":
-                                    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON
+                                    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON
                             }),
                         );
                     }

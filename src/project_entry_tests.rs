@@ -1,10 +1,9 @@
 use super::*;
 use crate::connector_runtime::{ConnectorContext, ConnectorRuntime, ConnectorRuntimeSlot};
 use crate::runner_http::RunnerRegistry;
-use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentProjectSummary,
-    ShellAgentResultRequest, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellJobValidationProgress,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerProjectSummary,
+    RunnerRegisterRequest, RunnerRequest, RunnerResultRequest, ShellJobValidationProgress,
 };
 use crate::tool_runtime::ToolRuntime;
 use salvo::prelude::{affix_state, handler, Depot, Request, Router, Service, StatusCode};
@@ -260,7 +259,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
     let registry = Arc::new(RunnerRegistry::default());
     registry
         .register_with_auth(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -268,14 +267,14 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: config.executor_client_id.clone(),
-                agent_instance_id: "project-agent-instance".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "project-agent-instance".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some("configured project Agent".to_string()),
                 owner: Some("local-owner".to_string()),
                 hostname: Some("private-host".to_string()),
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
+                    RunnerCapabilities {
                         shell: true,
                         ..Default::default()
                     },
@@ -290,7 +289,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
         &registry,
         &config.executor_client_id,
         "project-agent-instance",
-        vec![ShellAgentProjectSummary {
+        vec![RunnerProjectSummary {
             id: config.executor_project_id.clone(),
             name: Some(config.project_name.clone()),
             path: config.root.to_string_lossy().into_owned(),
@@ -423,7 +422,7 @@ fn runner_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value)
                 "client_id": client_id,
                 "agent_instance_id": PROJECT_AGENT_INSTANCE,
                 "agent_protocol_generation": 2,
-                "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
+                "capabilities": crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
                 "owner": "local-owner"
             }),
         ),
@@ -499,7 +498,7 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
             "client_id": "bootstrap-client",
             "agent_instance_id": "bootstrap-instance",
             "agent_protocol_generation": 2,
-            "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default()),
+            "capabilities": crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
             "owner": "local-owner"
         }),
     )
@@ -508,16 +507,13 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
     assert_eq!(response["success"], true);
 }
 
-async fn next_project_agent_request(
-    registry: &RunnerRegistry,
-    client_id: &str,
-) -> ShellAgentShellRequest {
+async fn next_project_agent_request(registry: &RunnerRegistry, client_id: &str) -> RunnerRequest {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(request) = registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
+                runner_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
             })
             .await
             .unwrap()
@@ -535,15 +531,15 @@ async fn next_project_agent_request(
 async fn complete_project_agent_request(
     registry: &RunnerRegistry,
     client_id: &str,
-    request: ShellAgentShellRequest,
+    request: RunnerRequest,
     exit_code: i32,
     stdout: String,
     stderr: String,
 ) {
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
+            runner_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
             request_id: request.request_id,
             exit_code: Some(exit_code),
             stdout: Some(stdout),
@@ -555,11 +551,11 @@ async fn complete_project_agent_request(
         .unwrap();
 }
 
-fn record_agent_request(recorder: &Arc<Mutex<Vec<String>>>, request: &ShellAgentShellRequest) {
+fn record_agent_request(recorder: &Arc<Mutex<Vec<String>>>, request: &RunnerRequest) {
     recorder.lock().unwrap().push(request.kind.clone());
 }
 
-fn run_agent_shell_request(request: &ShellAgentShellRequest) -> (i32, String, String) {
+fn run_runner_shell_request(request: &RunnerRequest) -> (i32, String, String) {
     let mut command = Command::new(crate::tool_runtime::test_shell());
     command.args(["-lc", &request.command]);
     if let Some(cwd) = request.cwd.as_deref() {
@@ -576,14 +572,14 @@ fn run_agent_shell_request(request: &ShellAgentShellRequest) -> (i32, String, St
 async fn complete_project_job(
     registry: &RunnerRegistry,
     client_id: &str,
-    request: ShellAgentShellRequest,
+    request: RunnerRequest,
     validation: bool,
 ) {
     let job_id = request.job_id.expect("job dispatch must include job_id");
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
+            runner_instance_id: PROJECT_AGENT_INSTANCE.to_string(),
             update_seq: None,
             job_id,
             request_id: None,
@@ -712,7 +708,7 @@ async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
         let request = next_project_agent_request(&registry, &client_id).await;
         record_agent_request(&recorder, &request);
         assert_eq!(request.kind, "run_shell");
-        let (exit_code, stdout, stderr) = run_agent_shell_request(&request);
+        let (exit_code, stdout, stderr) = run_runner_shell_request(&request);
         complete_project_agent_request(&registry, &client_id, request, exit_code, stdout, stderr)
             .await;
     });
@@ -816,7 +812,7 @@ async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
         let request = next_project_agent_request(&registry, &client_id).await;
         record_agent_request(&recorder, &request);
         assert_eq!(request.kind, "start_validation_job");
-        let steps: Vec<crate::shell_protocol::ShellJobValidationStep> =
+        let steps: Vec<crate::runner_protocol::ShellJobValidationStep> =
             serde_json::from_str(&request.command).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].program, expected_program);

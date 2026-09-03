@@ -4,7 +4,7 @@ use super::*;
 async fn registry_rejects_enqueue_when_queue_full() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,14 +12,14 @@ async fn registry_rejects_enqueue_when_queue_full() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "full".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -71,7 +71,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
     // accepting work that can only time out (or fill the 256-deep queue).
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -79,14 +79,14 @@ async fn registry_rejects_enqueue_when_client_offline() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "stale".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))

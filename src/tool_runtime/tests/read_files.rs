@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+use crate::runner_protocol::{RunnerPollRequest, RunnerResultRequest};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -18,14 +18,14 @@ fn item(path: &str, start_line: Option<usize>, limit: Option<usize>) -> ReadFile
 async fn next_read_request(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> crate::shell_protocol::ShellAgentShellRequest {
+) -> crate::runner_protocol::RunnerRequest {
     wait_for_patch_agent_request(runtime, client_id).await
 }
 
 async fn complete_read(
     runtime: &ToolRuntime,
     client_id: &str,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    request: &crate::runner_protocol::RunnerRequest,
     content: &str,
 ) {
     complete_agent_ranged_file_read_request(runtime, client_id, request, content).await;
@@ -137,7 +137,7 @@ async fn read_files_returns_ordered_normalized_successes_after_out_of_order_comp
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-success";
     let runtime_project =
-        register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let first_content = "one\ntwo\nthree\nfour\n";
     let second_content = "main\n";
 
@@ -207,7 +207,7 @@ async fn read_file_dispatch_complete_success_is_sparse_after_session_recording()
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-sparse-single";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("sparse read".to_string()));
@@ -300,7 +300,7 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-partial-visible";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
     let content = "one\ntwo\nthree";
 
@@ -351,7 +351,7 @@ async fn read_file_dispatch_complete_explicit_range_keeps_full_range_metadata() 
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-explicit-range-visible";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
     let content = "one\ntwo";
 
@@ -404,7 +404,7 @@ async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-sparse-batch";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -500,7 +500,7 @@ async fn read_files_dispatch_large_default_batch_uses_sparse_fit_before_budget()
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-sparse-budget-order";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
     let paths = (0..8)
         .map(|index| format!("src/{index}.rs"))
@@ -558,7 +558,7 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-sparse-mixed";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let expected_project = project.clone();
     let auth = auth_context(None, true);
 
@@ -620,7 +620,7 @@ async fn read_files_isolates_mixed_failures_without_leaking_absolute_paths() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-mixed";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -689,7 +689,7 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-concurrency";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -712,9 +712,9 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
     let mut max_in_flight = active.len();
     let fifth_before_completion = runtime
         .runner_registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap();
@@ -750,7 +750,7 @@ async fn read_files_deadline_preserves_completed_results_and_cancels_unfinished_
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests().with_read_files_deadline(Duration::from_millis(75));
     let client_id = "batch-deadline";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -794,9 +794,9 @@ async fn read_files_deadline_preserves_completed_results_and_cancels_unfinished_
     {
         let late = runtime
             .runner_registry
-            .complete(ShellAgentResultRequest {
+            .complete(RunnerResultRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id: request.request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some(canonical_agent_file_read_output("late\n", 1)),
@@ -814,7 +814,7 @@ async fn read_files_records_one_outer_session_event_and_keeps_metadata_outer_onl
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-session";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("batch read".to_string()));
@@ -881,7 +881,7 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-direct-final-cap";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("direct final cap".to_string()));
@@ -951,7 +951,7 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-outer-sparse";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("outer sparse read".to_string()));
@@ -1032,7 +1032,7 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-overlay-bound";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("bounded recovery overlays".to_string()),
@@ -1262,7 +1262,7 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-final-cap";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("final response cap".to_string()),

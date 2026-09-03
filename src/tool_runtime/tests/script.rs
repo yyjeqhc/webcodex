@@ -2,9 +2,9 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
-    ShellClientCapabilities, ShellCommandExecutionState, ShellScriptLanguage, SCRIPT_MAX_BYTES,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
+    ShellCommandExecutionState, ShellScriptLanguage, SCRIPT_MAX_BYTES,
 };
 use crate::tool_runtime::activity::{ActivityRecord, ActivityRecorder};
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
@@ -57,7 +57,7 @@ async fn register_script_agent(
     root: &std::path::Path,
     structured_script_payload: bool,
 ) -> String {
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         structured_validation_argv: true,
         structured_process_argv: true,
@@ -72,7 +72,7 @@ async fn register_script_agent(
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
 }
 
 async fn register_script_job_agent(
@@ -80,7 +80,7 @@ async fn register_script_job_agent(
     client_id: &str,
     root: &std::path::Path,
 ) -> String {
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -98,13 +98,13 @@ async fn register_script_job_agent(
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
 }
 
 async fn update_script_job(
     runtime: &ToolRuntime,
     client_id: &str,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    request: &crate::runner_protocol::RunnerRequest,
     status: &str,
     state: Option<ShellCommandExecutionState>,
     exit_code: Option<i32>,
@@ -114,9 +114,9 @@ async fn update_script_job(
 ) {
     runtime
         .runner_registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             job_id: request.job_id.clone().expect("structured Job id"),
             request_id: Some(request.request_id.clone()),
             update_seq: None,
@@ -149,10 +149,10 @@ async fn complete_script_lifecycle(
 ) {
     runtime
         .runner_registry
-        .complete(ShellAgentResultPayload {
-            result: ShellAgentResultRequest {
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id,
                 exit_code,
                 stdout: Some(stdout.to_string()),

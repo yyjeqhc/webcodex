@@ -1,7 +1,7 @@
 use super::{ConnectorContext, ConnectorRuntime};
 use crate::runner_http::RunnerRegistry;
-use crate::shell_protocol::{
-    ShellClientCapabilities, ShellClientRegisterRequest, AGENT_PROTOCOL_GENERATION_V2,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerRegisterRequest, RUNNER_PROTOCOL_GENERATION_V2,
 };
 use crate::Database;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ async fn register_client(
 ) {
     registry
         .register_with_auth(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -70,14 +70,14 @@ async fn register_client(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: instance_id.to_string(),
-                agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: instance_id.to_string(),
+                runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities::default(),
+                    RunnerCapabilities::default(),
                 ),
                 policy: None,
             },

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::time::Instant;
-use webcodex_core::shell_protocol::ShellJobValidationStep;
+use webcodex_core::runner_protocol::ShellJobValidationStep;
 use webcodex_runner_registry::{RunnerAccess, RunnerRegistry};
 use webcodex_store::Database;
 use webcodex_store::{

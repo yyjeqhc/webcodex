@@ -20,7 +20,7 @@ fn default_wait_timeout_secs() -> u64 {
     30
 }
 
-fn default_agent_request_kind() -> String {
+fn default_runner_request_kind() -> String {
     "run_shell".to_string()
 }
 
@@ -28,7 +28,7 @@ fn default_shell_job_kind() -> String {
     "shell".to_string()
 }
 
-/// Default `transport` for `ShellClientView` when deserializing views that
+/// Default `transport` for `RunnerView` when deserializing views that
 /// predate the transport field (e.g. older snapshots). Polling is the legacy
 /// default.
 fn default_transport_polling() -> String {
@@ -116,9 +116,9 @@ pub const GO_TEST_PACKAGE_MAX_BYTES: usize = 256;
 /// guessed into a supported generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct AgentProtocolGenerationNumber(u16);
+pub struct RunnerProtocolGenerationNumber(u16);
 
-impl AgentProtocolGenerationNumber {
+impl RunnerProtocolGenerationNumber {
     pub const fn new(value: u16) -> Self {
         Self(value)
     }
@@ -128,183 +128,181 @@ impl AgentProtocolGenerationNumber {
     }
 }
 
-pub const AGENT_PROTOCOL_GENERATION_V2: AgentProtocolGenerationNumber =
-    AgentProtocolGenerationNumber::new(2);
+pub const RUNNER_PROTOCOL_GENERATION_V2: RunnerProtocolGenerationNumber =
+    RunnerProtocolGenerationNumber::new(2);
 
-pub const AGENT_QUIC_ALPN_V1: &str = "webcodex-runner/1";
+pub const RUNNER_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
-pub const SHELL_CLIENT_CAPABILITY_SHELL: &str = "shell";
-pub const SHELL_CLIENT_CAPABILITY_FILE_READ: &str = "file_read";
-pub const SHELL_CLIENT_CAPABILITY_FILE_WRITE: &str = "file_write";
+pub const RUNNER_CAPABILITY_SHELL: &str = "shell";
+pub const RUNNER_CAPABILITY_FILE_READ: &str = "file_read";
+pub const RUNNER_CAPABILITY_FILE_WRITE: &str = "file_write";
 /// The Runner implements a narrow internal project-artifact export chunk read
 /// that seeks and reads only the requested bounded segment. Missing on older
 /// Runners is false and must never be inferred from ordinary file_read.
-pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ: &str = "artifact_export_chunk_read";
+pub const RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ: &str = "artifact_export_chunk_read";
 /// The Runner computes artifact-export metadata for files above the whole-payload
 /// limit with bounded streaming I/O. This is separate from chunk-read support:
 /// older optimized-export Runners may advertise chunk reads while still
 /// materializing metadata up to the caller-provided bound.
-pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA: &str =
+pub const RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA: &str =
     "artifact_export_streaming_metadata";
 /// The Runner implements bounded, project-root-enforced structured file deletion.
 /// Missing on older Runners and false; never inferred from file_write, shell,
 /// protocol version, transport, or operating system.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE: &str = "structured_file_delete";
+pub const RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE: &str = "structured_file_delete";
 /// The Runner understands and enforces the optional 1-based exact occurrence
 /// selector in ApplyTextEditInput. Missing on older Runners is false and is
 /// never inferred from other file capabilities, protocol, build, transport, or OS.
-pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text_edit_occurrence";
+pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text_edit_occurrence";
 /// The Runner understands and enforces ApplyTextEditInput.line_scope as a
 /// 1-based inclusive full-match containment fence. Missing on older Runners is
 /// false and is never inferred from occurrence, protocol generation, file_write,
 /// version, transport, OS, or build identity.
-pub const SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
+pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
 /// Authoritative Runner-side Codex Patch parsing plus bounded transactional apply.
 /// Missing on older Runners is false and is never inferred from file_write or
 /// protocol generation, so a new Server cannot send this request kind to an old Runner.
-pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
+pub const RUNNER_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
 /// The Runner returns the complete trusted apply_patch patch-plan/match metadata
 /// required by the 0.4 success contract. Missing on older Runners is false; a
 /// current Server must reject apply_patch before dispatch rather than accepting a
 /// legacy success shape.
-pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA: &str = "apply_patch_match_metadata";
+pub const RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA: &str = "apply_patch_match_metadata";
 /// The Runner understands `strict_matching=true` for apply_patch and rejects
 /// any update chunk whose positioning is not exact and unique before writing.
 /// Missing on older Runners is false and is never inferred from apply_patch or
 /// apply_patch_match_metadata.
-pub const SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING: &str = "apply_patch_strict_matching";
-pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
-pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
-pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
-pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
+pub const RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING: &str = "apply_patch_strict_matching";
+pub const RUNNER_CAPABILITY_GIT: &str = "git";
+pub const RUNNER_CAPABILITY_JOBS: &str = "jobs";
+pub const RUNNER_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
+pub const RUNNER_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
 /// Runner-side one-shot/background SSH shell execution for Workflow Session
 /// resources. This is deliberately separate from persistent SSH support: older
 /// runners must reject such a Session-bound SSH request rather than silently
 /// running it on their local project checkout.
-pub const SHELL_CLIENT_CAPABILITY_SSH_SHELL: &str = "ssh_shell";
+pub const RUNNER_CAPABILITY_SSH_SHELL: &str = "ssh_shell";
 /// Command-oriented, long-lived shell processes owned by one Workflow Session.
 /// Missing on older runners and therefore fails closed.
-pub const SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
+pub const RUNNER_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
 /// Long-lived persistent shells opened on a Workflow Session's SSH resource.
 /// This is additive to `persistent_shell` and independent of the one-shot
 /// `ssh_shell` capability; older runners that predate it must reject the request
 /// rather than silently opening a local shell.
-pub const SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
+pub const RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
+pub const RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
 /// The Runner preserves the optional Cargo test-count postcondition in durable
 /// validation Job metadata and returns it unchanged through reconciliation.
 /// Missing on older Runners is false; Control must not start a validation Job
 /// whose assertion could disappear after a Server restart.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION: &str =
+pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION: &str =
     "structured_cargo_test_count_assertion";
 /// The Runner accepts the canonical machine-readable `go test -json` validation
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
+pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
 /// The Runner understands the first-class model-facing `go_test` tool identity
 /// and its durable `ShellJobValidationMetadata` contract. This is deliberately
 /// separate from Go JSON parsing support: older Runners may advertise
 /// `structured_go_test_json` for Connector validation without understanding
 /// first-class `validation.tool = "go_test"` metadata.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL: &str = "structured_go_test_tool";
+pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL: &str = "structured_go_test_tool";
 /// The Runner accepts the expanded first-class `go_test` argv shape with
 /// caller-selected bounded project-relative package patterns. Older Runners
 /// already advertised the JSON/tool capabilities for fixed `./...`, so this
 /// must remain a separate additive rolling-upgrade fence.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES: &str = "structured_go_test_packages";
+pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES: &str = "structured_go_test_packages";
 /// General model-facing native process execution with a typed executable and
 /// argv. This is deliberately independent from structured Cargo validation:
 /// older Runners may support validation argv without accepting arbitrary
 /// process argv.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_argv";
+pub const RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_argv";
 /// Model-facing bounded script content carried as typed protocol data. This is
 /// deliberately independent from raw shell and native process argv support:
 /// older Runners must fail closed rather than interpreting script text through
 /// the legacy command channel.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
+pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
 /// Runner-owned WebCodex-generated POSIX programs execute through an explicit
 /// internal runtime instead of the configured interactive shell. Missing on
 /// older Runners is false so Control never sends the dedicated request kind to
 /// a Runner that could fall through to legacy shell dispatch.
-pub const SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT: &str = "internal_posix_script";
+pub const RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT: &str = "internal_posix_script";
 /// Durable Job execution for both typed native processes and typed script
 /// payloads. This is deliberately independent from the synchronous structured
 /// execution and legacy async-shell capabilities: older B1/B2 Runners may
 /// advertise those capabilities without understanding typed Job starts.
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_execution_jobs";
+pub const RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_execution_jobs";
 /// Explicit authority for durable detached native-process Jobs whose payload tree is
 /// handed off to the detached supervisor. Missing on older Runners is false and
 /// is never inferred from structured process argv or ordinary durable Job support.
-pub const SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS: &str = "detached_process_jobs";
-/// Explicit capability for agent-side read-only LSP navigation. Missing on
-/// older agents and defaults to `false` so the server never dispatches typed
-/// LSP requests to agents that cannot handle them.
-pub const SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_only_navigation";
+pub const RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS: &str = "detached_process_jobs";
+/// Explicit capability for Runner-side read-only LSP navigation. Missing on
+/// older Runners and defaults to `false` so the server never dispatches typed
+/// LSP requests to Runners that cannot handle them.
+pub const RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_only_navigation";
 /// Bounded typed call-hierarchy traversal. Missing on older Runners and false;
 /// never inferred from general LSP navigation or protocol version.
-pub const SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
-pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
+pub const RUNNER_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
+pub const RUNNER_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 /// Resolve an absolute canonical project path to an existing registration or
 /// atomically persist a new project registration record. Missing on older runners and
 /// therefore fails closed.
-pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
+pub const RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
 /// Runner-global read-only operator-installed Skill store discovery/read.
 /// Missing on older Runners is false and is never inferred from file_read or
 /// project lifecycle support.
-pub const SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ: &str = "skill_store_read";
+pub const RUNNER_CAPABILITY_SKILL_STORE_READ: &str = "skill_store_read";
 /// Runner-global operator Skill store mutation. This is an independent
 /// consequential capability and is never inferred from Skill read support.
-pub const SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE: &str = "skill_store_manage";
+pub const RUNNER_CAPABILITY_SKILL_STORE_MANAGE: &str = "skill_store_manage";
 /// Same-process async job recovery across server restarts and transport
 /// reconnects. Missing on older runners and therefore defaults to `false`.
 /// Read-only native desktop/window observation. Missing on older Runners and
 /// false; never inferred from shell or file capabilities.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
+pub const RUNNER_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
 /// Bounded installed-application discovery. Missing on older Runners is false
 /// and is never inferred from desktop observation or launch authority.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY: &str =
-    "computer_application_discovery";
+pub const RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY: &str = "computer_application_discovery";
 /// Exact native application launch for a fresh opaque discovery handle. Missing
 /// on older Runners is false and is never inferred from discovery or control.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH: &str = "computer_application_launch";
+pub const RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH: &str = "computer_application_launch";
 /// Exact full-display discovery and snapshot observation. Missing on older
 /// Runners is false and is never inferred from window observation, region
 /// snapshots, or platform identity.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE: &str = "computer_display_observe";
+pub const RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE: &str = "computer_display_observe";
 /// Snapshot-fenced exact coordinate pointer input. Missing on older Runners is
 /// false and is never inferred from control, display observation, or platform.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL: &str = "computer_pointer_control";
+pub const RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL: &str = "computer_pointer_control";
 /// Native bounded Unicode-text clipboard observation. Missing is false and is never
 /// inferred from Computer read/control/platform capabilities.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ: &str = "computer_clipboard_read";
+pub const RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ: &str = "computer_clipboard_read";
 /// Native bounded Unicode-text clipboard replacement. Missing is false and is never
 /// inferred from clipboard read or other Computer effect capabilities.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE: &str = "computer_clipboard_write";
+pub const RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE: &str = "computer_clipboard_write";
 /// Bounded surface-relative region/downscale snapshot requests. Missing on older
 /// Runners is false and is never inferred from whole-window observation support.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
+pub const RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
 /// Native read-only semantic accessibility inspection. Missing on older Runners
 /// is false and is never inferred from screenshot/window observation.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str =
-    "computer_accessibility_observe";
+pub const RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str = "computer_accessibility_observe";
 /// Native read-only normalized state for one exact observed Accessibility element.
 /// Missing on older Runners is false and is never inferred from tree observation.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE: &str = "computer_element_state";
+pub const RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE: &str = "computer_element_state";
 /// Native bounded accessibility control. Missing on older Runners is false and
 /// is never inferred from either observation capability.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
+pub const RUNNER_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
 /// Native semantic scroll-to-visible on one exact observed Accessibility element.
 /// Missing on older Runners is false and is never inferred from computer_control.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT: &str = "computer_scroll_to_element";
+pub const RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT: &str = "computer_scroll_to_element";
 /// Native closed-vocabulary key input to one exact already-focused window surface.
 /// Missing on older Runners is false and is never inferred from computer_control.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT: &str = "computer_key_input";
+pub const RUNNER_CAPABILITY_COMPUTER_KEY_INPUT: &str = "computer_key_input";
 /// Native exact-window activation/raise. Missing on older Runners is false and
 /// is never inferred from accessibility control, observation, or platform.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
+pub const RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
 /// Native bounded Accessibility text input. Missing on older Runners is false
 /// and is never inferred from accessibility observation or computer control.
-pub const SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT: &str = "computer_text_input";
+pub const RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT: &str = "computer_text_input";
 /// Baseline bounded JSON payload size for typed computer requests carried in stdin.
 pub const SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES: usize = 4096;
 /// Text input needs a larger wire envelope because valid caller text may expand
@@ -323,91 +321,91 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
         SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES
     }
 }
-pub const SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
-pub const SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
+pub const RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
+pub const RUNNER_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
 /// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
 /// These explicit bools remain wire facts shared by Server and Runner, but a
 /// missing/false baseline bit rejects registration. Downstream consumers may
 /// retain atomic invariant checks; they must not select old-Runner fallbacks.
 /// Server authority still uses its typed RunnerFeature classification and verifies
 /// this list cannot drift.
-pub const AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
-    SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-    SHELL_CLIENT_CAPABILITY_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
-    SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+pub const RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
+    RUNNER_CAPABILITY_FILE_READ,
+    RUNNER_CAPABILITY_FILE_WRITE,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
+    RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+    RUNNER_CAPABILITY_JOBS,
+    RUNNER_CAPABILITY_ASYNC_JOBS,
+    RUNNER_CAPABILITY_ASYNC_SHELL_JOBS,
+    RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
+    RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
+    RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
+    RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
+    RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
 ];
 
-pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
-    SHELL_CLIENT_CAPABILITY_SHELL,
-    SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-    SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
-    SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
-    SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
-    SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
-    SHELL_CLIENT_CAPABILITY_GIT,
-    SHELL_CLIENT_CAPABILITY_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_SSH_SHELL,
-    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
-    SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
-    SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
-    SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ,
-    SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
-    SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
+    RUNNER_CAPABILITY_SHELL,
+    RUNNER_CAPABILITY_FILE_READ,
+    RUNNER_CAPABILITY_FILE_WRITE,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
+    RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+    RUNNER_CAPABILITY_APPLY_PATCH,
+    RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+    RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+    RUNNER_CAPABILITY_GIT,
+    RUNNER_CAPABILITY_JOBS,
+    RUNNER_CAPABILITY_ASYNC_JOBS,
+    RUNNER_CAPABILITY_ASYNC_SHELL_JOBS,
+    RUNNER_CAPABILITY_SSH_SHELL,
+    RUNNER_CAPABILITY_PERSISTENT_SHELL,
+    RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
+    RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
+    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
+    RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
+    RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
+    RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
+    RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
+    RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    RUNNER_CAPABILITY_SKILL_STORE_READ,
+    RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
+    RUNNER_CAPABILITY_COMPUTER_OBSERVE,
+    RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
+    RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
+    RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
+    RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL,
+    RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ,
+    RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
+    RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+    RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
+    RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE,
+    RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION,
+    RUNNER_CAPABILITY_CODING_AGENT_RUNS,
+    RUNNER_CAPABILITY_COMPUTER_CONTROL,
+    RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
+    RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+    RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT,
 ];
 
 /// Valid process-wide Runner Job execution concurrency advertised during
@@ -450,7 +448,7 @@ pub const PROJECT_INVENTORY_STAGING_TTL_SECS: i64 = 120;
 pub const PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellClientCapabilities {
+pub struct RunnerCapabilities {
     #[serde(default = "default_shell_true")]
     pub shell: bool,
     #[serde(default)]
@@ -513,7 +511,7 @@ pub struct ShellClientCapabilities {
     #[serde(default)]
     pub ssh_persistent_shell: bool,
     /// Validation plans use a fixed executable plus argv, never shell text.
-    /// Missing on older agents and therefore fail-closed.
+    /// Missing on older Runners and therefore fail-closed.
     #[serde(default)]
     pub structured_validation_argv: bool,
     /// Durable round-trip support for Cargo test-count postconditions.
@@ -534,12 +532,12 @@ pub struct ShellClientCapabilities {
     /// the existing Go JSON or first-class tool capabilities.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_go_test_packages: bool,
-    /// General native executable + argv requests. Missing on older agents and
+    /// General native executable + argv requests. Missing on older Runners and
     /// therefore false; the Server must fail closed without a shell fallback.
     #[serde(default)]
     pub structured_process_argv: bool,
     /// Bounded typed script payloads executed from Runner-owned temporary
-    /// files. Missing on older agents and therefore false; this is never
+    /// files. Missing on older Runners and therefore false; this is never
     /// inferred from shell, validation argv, or process argv support.
     #[serde(default)]
     pub structured_script_payload: bool,
@@ -549,7 +547,7 @@ pub struct ShellClientCapabilities {
     #[serde(default, skip_serializing_if = "is_false")]
     pub internal_posix_script: bool,
     /// Typed process and typed script requests can execute as durable Jobs.
-    /// Missing on older agents and therefore false; it is never inferred from
+    /// Missing on older Runners and therefore false; it is never inferred from
     /// any synchronous structured-execution or async-shell capability.
     #[serde(default)]
     pub structured_execution_jobs: bool,
@@ -559,7 +557,7 @@ pub struct ShellClientCapabilities {
     #[serde(default, skip_serializing_if = "is_false")]
     pub detached_process_jobs: bool,
     /// Read-only semantic navigation via constrained Runner language-server
-    /// profiles. Defaults to false for wire compatibility with older agents.
+    /// profiles. Defaults to false for wire compatibility with older Runners.
     #[serde(default)]
     pub lsp_read_only_navigation: bool,
     /// The Runner implements the bounded typed call-hierarchy operation.
@@ -650,9 +648,9 @@ pub struct ShellClientCapabilities {
     pub coding_agent_runs: bool,
 }
 
-/// Bounded, non-secret status for the agent's active configuration generation.
+/// Bounded, non-secret status for the Runner's active configuration generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentConfigReloadStatus {
+pub struct RunnerConfigReloadStatus {
     pub generation: u64,
     pub last_reload_result: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -669,7 +667,7 @@ pub struct AgentConfigReloadStatus {
     pub restart_required_fields: Vec<String>,
 }
 
-impl Default for AgentConfigReloadStatus {
+impl Default for RunnerConfigReloadStatus {
     fn default() -> Self {
         Self {
             generation: 1,
@@ -683,7 +681,7 @@ impl Default for AgentConfigReloadStatus {
     }
 }
 
-impl Default for ShellClientCapabilities {
+impl Default for RunnerCapabilities {
     fn default() -> Self {
         Self {
             shell: true,
@@ -742,7 +740,7 @@ impl Default for ShellClientCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentProjectSummary {
+pub struct RunnerProjectSummary {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -774,7 +772,7 @@ pub struct ShellAgentProjectSummary {
     pub updated_at: i64,
     /// Project-bound shell profile name (`project.shell_profile`). Non-secret:
     /// just a profile name. `None` means the project did not override the
-    /// profile, so the agent falls back to `shell.default_profile`. Carried so
+    /// profile, so the Runner falls back to `shell.default_profile`. Carried so
     /// `listProjects` / `runtime_status` can show which profile a project uses
     /// without exposing env values or init_script contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -796,7 +794,7 @@ pub struct ShellProjectInventoryPage {
     #[serde(default)]
     pub complete: bool,
     #[serde(default)]
-    pub projects: Vec<ShellAgentProjectSummary>,
+    pub projects: Vec<RunnerProjectSummary>,
 }
 
 /// Compact, path-free synchronization status projected by a new Server. Its
@@ -845,13 +843,13 @@ pub struct ShellProfileSummaryEntry {
     pub program: String,
     pub args_count: usize,
     /// Shell dialect for this profile derived from the resolved program
-    /// basename: `sh`, `bash`, or `custom`. Older agents omit it.
+    /// basename: `sh`, `bash`, or `custom`. Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialect: Option<String>,
 }
 
-/// Sanitized summary of an agent's prepared-shell-profile configuration.
-/// Reported by the agent at registration (carried inside `AgentPolicySummary`)
+/// Sanitized summary of an Runner's prepared-shell-profile configuration.
+/// Reported by the Runner at registration (carried inside `RunnerPolicySummary`)
 /// and exposed in `runtime_status` / `listAgents` / `listProjects` so users can
 /// see which profiles are configured and which one a project resolves to.
 ///
@@ -859,7 +857,7 @@ pub struct ShellProfileSummaryEntry {
 /// Authorization headers, full Runner config, the full env snapshot, or stderr
 /// tails. `prepared_cache_count` reflects the number of prepared snapshots at
 /// the last registration (snapshots are prepared lazily on first use, so this
-/// is typically 0 right after agent start; it is not a live counter).
+/// is typically 0 right after Runner start; it is not a live counter).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellProfilesSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -869,23 +867,23 @@ pub struct ShellProfilesSummary {
     pub profiles: Vec<ShellProfileSummaryEntry>,
     /// Dialect of the default execution path when no explicit `shell` is
     /// selected: `sh`, `bash`, or `custom`. Reported by the runner from its
-    /// actual configuration; the server never guesses. Older agents omit it.
+    /// actual configuration; the server never guesses. Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_dialect: Option<String>,
     /// Dialects an explicit `shell=` selection can resolve to on this runner
     /// (always includes `sh` and `bash`; configured custom profiles add
-    /// `custom`). Older agents omit it.
+    /// `custom`). Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available_dialects: Option<Vec<String>>,
 }
 
-/// Bounded, non-secret snapshot of the agent's experimental tool providers.
+/// Bounded, non-secret snapshot of the Runner's experimental tool providers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolProvidersStatus {
     pub strategy: String,
     pub claude_code: ClaudeCodeProviderStatus,
     #[serde(default)]
-    pub config_reload: AgentConfigReloadStatus,
+    pub config_reload: RunnerConfigReloadStatus,
 }
 
 /// Bounded evidence for the most recent allowlisted external-provider route.
@@ -917,16 +915,16 @@ pub struct ClaudeCodeProviderStatus {
     pub last_call: Option<ProviderCallSummary>,
 }
 
-/// Sanitized agent policy summary. Carried in the registration payload and
+/// Sanitized Runner policy summary. Carried in the registration payload and
 /// exposed in `runtime_status` / `listAgents`. Contains ONLY non-secret
-/// fields: it never includes the agent token, shell env values, init_script
+/// fields: it never includes the Agent Token, shell env values, init_script
 /// contents, or full Runner config contents. `allowed_roots` is intentionally
 /// exposed as a path-policy summary. `shell_profiles` carries the sanitized
 /// prepared-shell-profile configuration summary (profile names, default
 /// profile, counts) so observability can show which profile a project uses;
 /// it never carries env values or init_script bodies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentPolicySummary {
+pub struct RunnerPolicySummary {
     #[serde(default = "default_shell_true")]
     pub allow_raw_shell: bool,
     #[serde(default)]
@@ -937,11 +935,11 @@ pub struct AgentPolicySummary {
     pub max_timeout_secs: u64,
     #[serde(default = "default_policy_max_output_bytes")]
     pub max_output_bytes: usize,
-    /// Sanitized prepared-shell-profile summary. `None` for older agents that
+    /// Sanitized prepared-shell-profile summary. `None` for older Runners that
     /// did not report one. Never carries env values or init_script bodies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_profiles: Option<ShellProfilesSummary>,
-    /// Read-only provider state captured when the agent registers/reconnects.
+    /// Read-only provider state captured when the Runner registers/reconnects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
     /// Bounded, non-secret inventory of exact Runner-owned MCP provider
@@ -952,7 +950,7 @@ pub struct AgentPolicySummary {
     pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
 }
 
-impl Default for AgentPolicySummary {
+impl Default for RunnerPolicySummary {
     fn default() -> Self {
         Self {
             allow_raw_shell: true,
@@ -977,7 +975,7 @@ fn default_policy_max_output_bytes() -> usize {
 
 fn deserialize_registration_capabilities<'de, D>(
     deserializer: D,
-) -> Result<ShellClientCapabilities, D::Error>
+) -> Result<RunnerCapabilities, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -994,19 +992,21 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientRegisterRequest {
+pub struct RunnerRegisterRequest {
     pub client_id: String,
-    /// Stable per-process identity for the registering agent. Generated once
+    /// Stable per-process identity for the registering Runner. Generated once
     /// by `webcodex-runner` at startup and reused for the whole process
     /// lifetime (including WebSocket reconnects). The server treats this as
-    /// the active agent lease identity: a second agent process with the same
+    /// the active Runner lease identity: a second Runner process with the same
     /// `client_id` but a different `agent_instance_id` is rejected while the
     /// first is online, and a stale/replaced instance can no longer poll or
     /// submit results. It is not a secret.
-    pub agent_instance_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
     /// Canonical Runner protocol generation. This is registration identity, not a
     /// capability bit, and is required at every 0.4 registration ingress.
-    pub agent_protocol_generation: AgentProtocolGenerationNumber,
+    #[serde(rename = "agent_protocol_generation")]
+    pub runner_protocol_generation: RunnerProtocolGenerationNumber,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
@@ -1017,26 +1017,26 @@ pub struct ShellClientRegisterRequest {
     /// required, and `shell` must be explicitly present so 0.4 registration never
     /// inherits the pre-0.4 missing-field=true behavior.
     #[serde(deserialize_with = "deserialize_registration_capabilities")]
-    pub capabilities: ShellClientCapabilities,
+    pub capabilities: RunnerCapabilities,
     /// Optional bounded planning context declared by the Runner configuration.
     /// This is descriptive metadata only: it never grants authority or proves
     /// current host/service/network state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_context: Option<AgentHostContext>,
-    /// Sanitized agent policy summary. Older agents that omit this field
+    pub host_context: Option<RunnerHostContext>,
+    /// Sanitized Runner policy summary. Older Runners that omit this field
     /// register with `None`; `runtime_status` / `listAgents` then expose
     /// `null` for the policy so older/minimal payloads stay compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy: Option<AgentPolicySummary>,
-    /// Unix timestamp when the agent process started. Reported by the runner
+    pub policy: Option<RunnerPolicySummary>,
+    /// Unix timestamp when the Runner process started. Reported by the runner
     /// itself so `runner_process` observations come from the process, not
-    /// from server-side inference. Older agents omit it.
+    /// from server-side inference. Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_started_at: Option<i64>,
     /// Runner build metadata (crate version and optional git commit). Used
     /// for mixed-version diagnostics; never carries paths or environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build: Option<AgentBuildInfo>,
+    pub build: Option<RunnerBuildInfo>,
     /// Effective static Job execution concurrency configured for this Runner
     /// process. Older Runners omit it, so the Server must preserve `None`
     /// rather than infer a value from capabilities or observed Jobs.
@@ -1059,7 +1059,7 @@ pub struct ShellClientRegisterRequest {
 
 /// Non-secret runner build identity for mixed-version diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentBuildInfo {
+pub struct RunnerBuildInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1070,9 +1070,9 @@ pub struct AgentBuildInfo {
     pub git_dirty: Option<bool>,
 }
 
-pub const AGENT_HOST_CONTEXT_ROLE_MAX_BYTES: usize = 64;
-pub const AGENT_HOST_CONTEXT_TEXT_MAX_BYTES: usize = 512;
-pub const AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES: usize = 1_536;
+pub const RUNNER_HOST_CONTEXT_ROLE_MAX_BYTES: usize = 64;
+pub const RUNNER_HOST_CONTEXT_TEXT_MAX_BYTES: usize = 512;
+pub const RUNNER_HOST_CONTEXT_TOTAL_MAX_BYTES: usize = 1_536;
 
 /// Small, closed planning context attached to one Runner registration.
 ///
@@ -1082,7 +1082,7 @@ pub const AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES: usize = 1_536;
 /// projections rather than accepted from Runner configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentHostContext {
+pub struct RunnerHostContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1095,7 +1095,7 @@ pub struct AgentHostContext {
     pub architecture: Option<String>,
 }
 
-impl AgentHostContext {
+impl RunnerHostContext {
     /// Validate and canonicalize untrusted/configured host guidance. Errors name
     /// only the invalid field and bound; they never echo configured values.
     pub fn normalized(mut self) -> Result<Self, String> {
@@ -1120,9 +1120,9 @@ impl AgentHostContext {
             .flatten()
             .map(|value| value.len())
             .sum::<usize>();
-        if total > AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES {
+        if total > RUNNER_HOST_CONTEXT_TOTAL_MAX_BYTES {
             return Err(format!(
-                "host_context content must be at most {AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES} UTF-8 bytes total"
+                "host_context content must be at most {RUNNER_HOST_CONTEXT_TOTAL_MAX_BYTES} UTF-8 bytes total"
             ));
         }
         Ok(self)
@@ -1134,9 +1134,9 @@ fn normalize_host_role(value: Option<String>) -> Result<Option<String>, String> 
         return Ok(None);
     };
     let value = value.trim();
-    if value.is_empty() || value.len() > AGENT_HOST_CONTEXT_ROLE_MAX_BYTES {
+    if value.is_empty() || value.len() > RUNNER_HOST_CONTEXT_ROLE_MAX_BYTES {
         return Err(format!(
-            "host_context.role must be 1..={AGENT_HOST_CONTEXT_ROLE_MAX_BYTES} UTF-8 bytes"
+            "host_context.role must be 1..={RUNNER_HOST_CONTEXT_ROLE_MAX_BYTES} UTF-8 bytes"
         ));
     }
     if !value
@@ -1159,9 +1159,9 @@ fn normalize_host_context_text(
         return Ok(None);
     };
     let value = value.trim();
-    if value.is_empty() || value.len() > AGENT_HOST_CONTEXT_TEXT_MAX_BYTES {
+    if value.is_empty() || value.len() > RUNNER_HOST_CONTEXT_TEXT_MAX_BYTES {
         return Err(format!(
-            "host_context.{field} must be 1..={AGENT_HOST_CONTEXT_TEXT_MAX_BYTES} UTF-8 bytes"
+            "host_context.{field} must be 1..={RUNNER_HOST_CONTEXT_TEXT_MAX_BYTES} UTF-8 bytes"
         ));
     }
     if value.chars().any(char::is_control) {
@@ -1173,12 +1173,12 @@ fn normalize_host_context_text(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientView {
+pub struct RunnerView {
     pub client_id: String,
-    /// Active agent process identity (UUID) for this client. Empty for views
+    /// Active Runner process identity (UUID) for this client. Empty for views
     /// that predate the instance id field. Not a secret.
-    #[serde(default)]
-    pub agent_instance_id: String,
+    #[serde(default, rename = "agent_instance_id")]
+    pub runner_instance_id: String,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
@@ -1188,10 +1188,10 @@ pub struct ShellClientView {
     pub status: String,
     /// Bounded descriptive planning context from Runner configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_context: Option<AgentHostContext>,
+    pub host_context: Option<RunnerHostContext>,
     pub connected: bool,
     pub last_seen: i64,
-    pub capabilities: ShellClientCapabilities,
+    pub capabilities: RunnerCapabilities,
     /// Bounded sanitized startup-owned ACP provider inventory. Logical ids are
     /// model-visible planning metadata; executable/argv/env/PID/private ACP ids
     /// never enter this view.
@@ -1199,24 +1199,25 @@ pub struct ShellClientView {
     pub coding_agent_providers: Option<Vec<crate::coding_agent::CodingAgentProvider>>,
     pub pending_requests: usize,
     #[serde(default)]
-    pub projects: Vec<ShellAgentProjectSummary>,
+    pub projects: Vec<RunnerProjectSummary>,
     /// Project inventory synchronization health. Missing means this Server
     /// predates paged inventory synchronization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory: Option<ShellProjectInventoryStatus>,
     /// Canonical Runner protocol generation accepted by the Server at registration.
-    pub agent_protocol_generation: AgentProtocolGenerationNumber,
-    /// Transport the agent is currently connected over: `"polling"`,
+    #[serde(rename = "agent_protocol_generation")]
+    pub runner_protocol_generation: RunnerProtocolGenerationNumber,
+    /// Transport the Runner is currently connected over: `"polling"`,
     /// `"websocket"`, or `"quic"`. Defaults to `"polling"` for older
-    /// agents/views.
+    /// Runners/views.
     #[serde(default = "default_transport_polling")]
     pub transport: String,
-    /// Sanitized agent policy summary reported at registration. `None`
-    /// (serialized as `null`/omitted) for older agents that did not report a
+    /// Sanitized Runner policy summary reported at registration. `None`
+    /// (serialized as `null`/omitted) for older Runners that did not report a
     /// policy. Never contains token/env/init_script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy: Option<AgentPolicySummary>,
-    /// When this client_id first registered its current agent instance.
+    pub policy: Option<RunnerPolicySummary>,
+    /// When this client_id first registered its current Runner instance.
     #[serde(default)]
     pub registered_at: i64,
     /// When the current transport connection was established (register or
@@ -1232,7 +1233,7 @@ pub struct ShellClientView {
     pub process_started_at: Option<i64>,
     /// Runner-reported build identity, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build: Option<AgentBuildInfo>,
+    pub build: Option<RunnerBuildInfo>,
     /// Runner-reported effective static Job execution concurrency. `None` for
     /// older Runners; the Server never infers this value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1240,10 +1241,10 @@ pub struct ShellClientView {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ShellClientRegisterResponse {
+pub struct RunnerRegisterResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client: Option<ShellClientView>,
+    pub client: Option<RunnerView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1263,7 +1264,7 @@ pub struct ShellRunRequest {
 }
 
 /// Structured native process representation carried end-to-end. This is the
-/// execution source of truth for `run_process`; `ShellAgentShellRequest.command`
+/// execution source of truth for `run_process`; `RunnerRequest.command`
 /// stays empty and is never populated by quoting or JSON-encoding this value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellProcessArgv {
@@ -1303,7 +1304,7 @@ impl ShellScriptLanguage {
 
 /// Structured script representation carried end-to-end. This is the
 /// execution source of truth for `run_script`;
-/// `ShellAgentShellRequest.command` stays empty and is never populated by
+/// `RunnerRequest.command` stays empty and is never populated by
 /// quoting or JSON-encoding this value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellScriptPayload {
@@ -1524,19 +1525,20 @@ pub struct ShellRunResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentPollRequest {
+pub struct RunnerPollRequest {
     pub client_id: String,
-    /// Active agent process identity. Must match the instance that currently
+    /// Active Runner process identity. Must match the instance that currently
     /// holds the lease for `client_id`; a stale/replaced instance is rejected.
-    pub agent_instance_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
 }
 
-/// Polling transport wrapper. Current agents may attach changed-only sanitized
+/// Polling transport wrapper. Current Runners may attach changed-only sanitized
 /// runtime metadata and one bounded project-inventory page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentPollPayload {
+pub struct RunnerPollPayload {
     #[serde(flatten)]
-    pub request: ShellAgentPollRequest,
+    pub request: RunnerPollRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
     /// Optional bounded project inventory page for the canonical paged inventory protocol.
@@ -1545,14 +1547,14 @@ pub struct ShellAgentPollPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobStatusRequest {
+pub struct RunnerJobStatusRequest {
     #[serde(default)]
     pub client_id: Option<String>,
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobLogRequest {
+pub struct RunnerJobLogRequest {
     #[serde(default)]
     pub client_id: Option<String>,
     pub job_id: String,
@@ -1565,14 +1567,14 @@ pub struct ShellClientJobLogRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobStopRequest {
+pub struct RunnerJobStopRequest {
     #[serde(default)]
     pub client_id: Option<String>,
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobsListRequest {
+pub struct RunnerJobsListRequest {
     pub client_id: String,
     #[serde(default)]
     pub status: Option<String>,
@@ -1581,10 +1583,10 @@ pub struct ShellClientJobsListRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentShellRequest {
+pub struct RunnerRequest {
     pub request_id: String,
     pub client_id: String,
-    #[serde(default = "default_agent_request_kind")]
+    #[serde(default = "default_runner_request_kind")]
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
@@ -1632,7 +1634,7 @@ pub struct ShellAgentShellRequest {
     /// Typed read-only LSP navigation payload. Present only for `kind = "lsp"`.
     /// Defaults to `None` so older request bodies continue to deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lsp: Option<crate::lsp_bridge::AgentLspPayload>,
+    pub lsp: Option<crate::lsp_bridge::RunnerLspPayload>,
     /// Server-derived safe execution metadata. Async jobs retain it for
     /// same-process recovery; Session-bound SSH shell requests use only the
     /// workflow session/resource fields. It never contains raw command text,
@@ -1654,10 +1656,10 @@ pub struct ShellAgentShellRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ShellAgentPollResponse {
+pub struct RunnerPollResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request: Option<ShellAgentShellRequest>,
+    pub request: Option<RunnerRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Current inventory status/acknowledgement. Missing on old Servers.
@@ -1666,11 +1668,12 @@ pub struct ShellAgentPollResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentResultRequest {
+pub struct RunnerResultRequest {
     pub client_id: String,
-    /// Active agent process identity. Must match the instance that currently
+    /// Active Runner process identity. Must match the instance that currently
     /// holds the lease for `client_id`; a stale/replaced instance is rejected.
-    pub agent_instance_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
     pub request_id: String,
     #[serde(default)]
     pub exit_code: Option<i32>,
@@ -1701,9 +1704,9 @@ pub enum ShellCommandExecutionState {
 /// existing HTTP/WebSocket/QUIC JSON shape and adds only optional shell-command
 /// lifecycle evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentResultPayload {
+pub struct RunnerResultPayload {
     #[serde(flatten)]
-    pub result: ShellAgentResultRequest,
+    pub result: RunnerResultRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_execution_state: Option<ShellCommandExecutionState>,
     /// Typed MCP gateway result. Present only for a request whose
@@ -1716,8 +1719,8 @@ pub struct ShellAgentResultPayload {
     pub coding_agent: Option<crate::coding_agent::CodingAgentResponse>,
 }
 
-impl From<ShellAgentResultRequest> for ShellAgentResultPayload {
-    fn from(result: ShellAgentResultRequest) -> Self {
+impl From<RunnerResultRequest> for RunnerResultPayload {
+    fn from(result: RunnerResultRequest) -> Self {
         Self {
             result,
             command_execution_state: None,
@@ -1728,7 +1731,7 @@ impl From<ShellAgentResultRequest> for ShellAgentResultPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ShellAgentResultResponse {
+pub struct RunnerResultResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -1803,26 +1806,28 @@ pub struct PersistentShellResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentPersistentShellResultRequest {
+pub struct RunnerPersistentShellResultRequest {
     pub client_id: String,
-    pub agent_instance_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
     pub request_id: String,
     pub result: PersistentShellResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentPersistentShellResultResponse {
+pub struct RunnerPersistentShellResultResponse {
     pub success: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentJobUpdateRequest {
+pub struct RunnerJobUpdateRequest {
     pub client_id: String,
-    /// Active agent process identity. Must match the instance that currently
+    /// Active Runner process identity. Must match the instance that currently
     /// holds the lease for `client_id`; a stale/replaced instance is rejected.
-    pub agent_instance_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
     pub job_id: String,
     #[serde(default)]
     pub request_id: Option<String>,
@@ -1862,7 +1867,7 @@ pub struct ShellAgentJobUpdateRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ShellAgentJobUpdateResponse {
+pub struct RunnerJobUpdateResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job: Option<ShellJobInfo>,
@@ -1982,7 +1987,7 @@ pub struct ShellJobValidationStep {
     pub args: Vec<String>,
     /// Cache-steering variables applied at spawn (e.g. CARGO_TARGET_DIR so
     /// the shared build cache survives slot resets). Key-allowlisted by
-    /// `is_canonical`; omitted from the wire when empty so older agents keep
+    /// `is_canonical`; omitted from the wire when empty so older Runners keep
     /// parsing unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<(String, String)>,
@@ -2431,7 +2436,7 @@ impl ShellJobStructuredExecutionMetadata {
 }
 
 /// Safe server-derived metadata needed to reconstruct a job record after a
-/// server restart. This is an internal agent protocol model, not a public
+/// server restart. This is an internal Runner protocol model, not a public
 /// `run_job` input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellJobContext {
@@ -2501,7 +2506,7 @@ pub struct ShellJobLogSnapshot {
 }
 
 /// Runner-authoritative same-process job state used only during registration
-/// reconciliation. Raw command, stdin, environment, tokens, and agent config
+/// reconciliation. Raw command, stdin, environment, tokens, and Runner config
 /// are intentionally absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellJobSnapshot {
@@ -2545,7 +2550,7 @@ pub struct ShellJobInventory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentShellJobResult {
+pub struct RunnerShellJobResult {
     #[serde(default)]
     pub cwd: Option<String>,
     pub command_preview: String,
@@ -2558,9 +2563,9 @@ pub struct ShellAgentShellJobResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellAgentJobResult {
+pub struct RunnerJobResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shell: Option<ShellAgentShellJobResult>,
+    pub shell: Option<RunnerShellJobResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2608,7 +2613,7 @@ pub struct ShellJobInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<ShellJobCodexMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<ShellAgentJobResult>,
+    pub result: Option<RunnerJobResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_progress: Option<ShellJobValidationProgress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2656,7 +2661,7 @@ pub struct ShellJobOpResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobStatusResponse {
+pub struct RunnerJobStatusResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
@@ -2671,7 +2676,7 @@ pub struct ShellClientJobStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<ShellAgentJobResult>,
+    pub result: Option<RunnerJobResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<ShellJobInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2679,7 +2684,7 @@ pub struct ShellClientJobStatusResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobLogResponse {
+pub struct RunnerJobLogResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
@@ -2700,7 +2705,7 @@ pub struct ShellClientJobLogResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobStopResponse {
+pub struct RunnerJobStopResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
@@ -2713,7 +2718,7 @@ pub struct ShellClientJobStopResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobsListResponse {
+pub struct RunnerJobsListResponse {
     pub success: bool,
     pub client_id: String,
     pub jobs: Vec<ShellJobInfo>,
@@ -2722,12 +2727,12 @@ pub struct ShellClientJobsListResponse {
 }
 
 // ============================================================================
-// Transport-neutral agent message envelope
+// Transport-neutral Runner message envelope
 // ============================================================================
 //
-// A single message format used by the WebSocket agent transport (and future
+// A single message format used by the WebSocket Runner transport (and future
 // QUIC transport). It wraps the existing polling protocol payloads so the
-// server and agent never duplicate business logic: register/request/result/
+// server and Runner never duplicate business logic: register/request/result/
 // job_update reuse the same structs as the HTTP polling endpoints.
 //
 // Wire format is JSON with an internal `type` tag:
@@ -2745,93 +2750,93 @@ pub struct ShellClientJobsListResponse {
 // The envelope is transport-neutral: it carries no WebSocket-specific fields
 // and could be framed over QUIC streams unchanged.
 
-/// One agent transport message. Used by both the server WebSocket handler and
+/// One Runner transport message. Used by both the server WebSocket handler and
 /// the `webcodex-runner` WebSocket client mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentEnvelope {
-    /// Agent -> server registration application envelope. WebSocket sends this
+pub enum RunnerEnvelope {
+    /// Runner -> server registration application envelope. WebSocket sends this
     /// after its authenticated HTTP handshake. QUIC keeps authentication in its
     /// transport-specific first-register codec and enters the shared envelope
     /// lifecycle only after transport authentication succeeds.
     Register {
         #[serde(flatten)]
-        payload: ShellClientRegisterRequest,
+        payload: RunnerRegisterRequest,
     },
-    /// Server -> agent. Acknowledgement of `Register`.
+    /// Server -> Runner. Acknowledgement of `Register`.
     Registered {
         success: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        client: Option<ShellClientView>,
+        client: Option<RunnerView>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Server -> agent. A pending shell/file/job request pushed to the agent.
+    /// Server -> Runner. A pending shell/file/job request pushed to the Runner.
     /// Same payload as the `request` field of the polling response.
     Request {
         #[serde(flatten)]
-        request: ShellAgentShellRequest,
+        request: RunnerRequest,
     },
-    /// Agent -> server. Result of a synchronous shell/file request. Same
+    /// Runner -> server. Result of a synchronous shell/file request. Same
     /// payload as `POST /api/shell/agent/result`.
     Result {
         #[serde(flatten)]
-        payload: ShellAgentResultPayload,
+        payload: RunnerResultPayload,
     },
-    /// Agent -> server. Incremental or final update for an async job. Same
+    /// Runner -> server. Incremental or final update for an async job. Same
     /// payload as `POST /api/shell/agent/job_update`.
     JobUpdate {
         #[serde(flatten)]
-        payload: ShellAgentJobUpdateRequest,
+        payload: RunnerJobUpdateRequest,
     },
-    /// Agent -> server result for a persistent-shell lifecycle request.
+    /// Runner -> server result for a persistent-shell lifecycle request.
     PersistentShellResult {
         #[serde(flatten)]
-        payload: ShellAgentPersistentShellResultRequest,
+        payload: RunnerPersistentShellResultRequest,
     },
     /// Either direction. Liveness keepalive.
     Ping { ts: i64 },
-    /// Agent -> server changed-only sanitized runtime metadata. It reuses the
+    /// Runner -> server changed-only sanitized runtime metadata. It reuses the
     /// active transport and never requires an acknowledgement round trip.
     RuntimeMetadata { tool_providers: ToolProvidersStatus },
-    /// Agent -> Server bounded page of one project-inventory snapshot. New
+    /// Runner -> Server bounded page of one project-inventory snapshot. New
     /// Runners send this only after the Registered view proved support.
     ProjectInventoryPage {
         #[serde(flatten)]
         page: ShellProjectInventoryPage,
     },
-    /// Server -> Agent status acknowledgement for a project inventory page.
+    /// Server -> Runner status acknowledgement for a project inventory page.
     ProjectInventoryStatus { status: ShellProjectInventoryStatus },
     /// Either direction. Reply to `Ping`.
     Pong { ts: i64 },
-    /// Agent -> server. Best-effort graceful shutdown notice. Older agents do
+    /// Runner -> server. Best-effort graceful shutdown notice. Older Runners do
     /// not send this frame; transports still reconcile on observed disconnect.
     Goodbye {
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-    /// Server -> agent. Fatal protocol error; the agent should reconnect.
+    /// Server -> Runner. Fatal protocol error; the Runner should reconnect.
     Error { code: String, message: String },
 }
 
-impl AgentEnvelope {
+impl RunnerEnvelope {
     /// Short discriminator string for a variant, e.g. `"register"`. Useful
     /// for logging and tests.
     pub fn kind(&self) -> &'static str {
         match self {
-            AgentEnvelope::Register { .. } => "register",
-            AgentEnvelope::Registered { .. } => "registered",
-            AgentEnvelope::Request { .. } => "request",
-            AgentEnvelope::Result { .. } => "result",
-            AgentEnvelope::JobUpdate { .. } => "job_update",
-            AgentEnvelope::PersistentShellResult { .. } => "persistent_shell_result",
-            AgentEnvelope::Ping { .. } => "ping",
-            AgentEnvelope::RuntimeMetadata { .. } => "runtime_metadata",
-            AgentEnvelope::ProjectInventoryPage { .. } => "project_inventory_page",
-            AgentEnvelope::ProjectInventoryStatus { .. } => "project_inventory_status",
-            AgentEnvelope::Pong { .. } => "pong",
-            AgentEnvelope::Goodbye { .. } => "goodbye",
-            AgentEnvelope::Error { .. } => "error",
+            RunnerEnvelope::Register { .. } => "register",
+            RunnerEnvelope::Registered { .. } => "registered",
+            RunnerEnvelope::Request { .. } => "request",
+            RunnerEnvelope::Result { .. } => "result",
+            RunnerEnvelope::JobUpdate { .. } => "job_update",
+            RunnerEnvelope::PersistentShellResult { .. } => "persistent_shell_result",
+            RunnerEnvelope::Ping { .. } => "ping",
+            RunnerEnvelope::RuntimeMetadata { .. } => "runtime_metadata",
+            RunnerEnvelope::ProjectInventoryPage { .. } => "project_inventory_page",
+            RunnerEnvelope::ProjectInventoryStatus { .. } => "project_inventory_status",
+            RunnerEnvelope::Pong { .. } => "pong",
+            RunnerEnvelope::Goodbye { .. } => "goodbye",
+            RunnerEnvelope::Error { .. } => "error",
         }
     }
 
@@ -2857,7 +2862,7 @@ pub struct QuicRegisterFrame {
     #[serde(rename = "type")]
     frame_type: QuicRegisterFrameType,
     #[serde(flatten)]
-    payload: ShellClientRegisterRequest,
+    payload: RunnerRegisterRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     auth_token: Option<String>,
 }
@@ -2869,7 +2874,7 @@ enum QuicRegisterFrameType {
 }
 
 impl QuicRegisterFrame {
-    pub fn new(payload: ShellClientRegisterRequest, auth_token: Option<String>) -> Self {
+    pub fn new(payload: RunnerRegisterRequest, auth_token: Option<String>) -> Self {
         Self {
             frame_type: QuicRegisterFrameType::Register,
             payload,
@@ -2877,11 +2882,11 @@ impl QuicRegisterFrame {
         }
     }
 
-    pub fn payload_mut(&mut self) -> &mut ShellClientRegisterRequest {
+    pub fn payload_mut(&mut self) -> &mut RunnerRegisterRequest {
         &mut self.payload
     }
 
-    pub fn into_parts(self) -> (ShellClientRegisterRequest, Option<String>) {
+    pub fn into_parts(self) -> (RunnerRegisterRequest, Option<String>) {
         (self.payload, self.auth_token)
     }
 }
@@ -2890,7 +2895,7 @@ impl QuicRegisterFrame {
 // QUIC length-prefixed frame codec
 // ============================================================================
 //
-// The custom QUIC agent transport frames each [`AgentEnvelope`] as:
+// The custom QUIC Runner transport frames each [`RunnerEnvelope`] as:
 //
 //   u32_be length (big-endian)
 //   JSON bytes
@@ -2959,18 +2964,18 @@ fn encode_quic_json<T: Serialize>(value: &T) -> Result<Vec<u8>, QuicFrameError> 
 }
 
 /// Encode an envelope as a length-prefixed frame: `u32_be(len) || json`.
-pub fn encode_quic_frame(env: &AgentEnvelope) -> Result<Vec<u8>, QuicFrameError> {
+pub fn encode_quic_frame(env: &RunnerEnvelope) -> Result<Vec<u8>, QuicFrameError> {
     encode_quic_json(env)
 }
 
 /// Encode the QUIC-v1 transport-owned register frame without routing its
-/// credential through [`AgentEnvelope`].
+/// credential through [`RunnerEnvelope`].
 pub fn encode_quic_register_frame(frame: &QuicRegisterFrame) -> Result<Vec<u8>, QuicFrameError> {
     encode_quic_json(frame)
 }
 
 /// Write a single length-prefixed frame to an async sink.
-pub async fn write_quic_frame<W>(w: &mut W, env: &AgentEnvelope) -> Result<(), QuicFrameError>
+pub async fn write_quic_frame<W>(w: &mut W, env: &RunnerEnvelope) -> Result<(), QuicFrameError>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -3027,12 +3032,12 @@ where
 }
 
 /// Read a single length-prefixed shared application envelope.
-pub async fn read_quic_frame<R>(r: &mut R) -> Result<AgentEnvelope, QuicFrameError>
+pub async fn read_quic_frame<R>(r: &mut R) -> Result<RunnerEnvelope, QuicFrameError>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let buf = read_quic_frame_body(r).await?;
-    AgentEnvelope::from_slice(&buf).map_err(QuicFrameError::Json)
+    RunnerEnvelope::from_slice(&buf).map_err(QuicFrameError::Json)
 }
 
 /// Read the transport-owned first QUIC-v1 registration frame. A structurally
@@ -3050,8 +3055,8 @@ where
 mod envelope_tests {
     use super::*;
 
-    fn sample_process_request() -> ShellAgentShellRequest {
-        ShellAgentShellRequest {
+    fn sample_process_request() -> RunnerRequest {
+        RunnerRequest {
             request_id: "req-process-1".to_string(),
             client_id: "ws-1".to_string(),
             kind: "run_process".to_string(),
@@ -3088,7 +3093,7 @@ mod envelope_tests {
         }
     }
 
-    fn sample_process_job_request() -> ShellAgentShellRequest {
+    fn sample_process_job_request() -> RunnerRequest {
         let mut request = sample_process_request();
         request.kind = "start_process_job".to_string();
         request.job_id = Some("job-process-1".to_string());
@@ -3117,8 +3122,8 @@ mod envelope_tests {
         request
     }
 
-    fn sample_script_request() -> ShellAgentShellRequest {
-        ShellAgentShellRequest {
+    fn sample_script_request() -> RunnerRequest {
+        RunnerRequest {
             request_id: "req-script-1".to_string(),
             client_id: "ws-1".to_string(),
             kind: "run_script".to_string(),
@@ -3152,7 +3157,7 @@ mod envelope_tests {
         }
     }
 
-    fn sample_script_job_request() -> ShellAgentShellRequest {
+    fn sample_script_job_request() -> RunnerRequest {
         let mut request = sample_script_request();
         request.kind = "start_script_job".to_string();
         request.job_id = Some("job-script-1".to_string());
@@ -3182,8 +3187,8 @@ mod envelope_tests {
     }
 
     #[test]
-    fn agent_host_context_is_closed_normalized_and_bounded() {
-        let context = AgentHostContext {
+    fn runner_host_context_is_closed_normalized_and_bounded() {
+        let context = RunnerHostContext {
             role: Some(" server_host ".to_string()),
             runtime: Some(" Prefer the local Runner for host operations. ".to_string()),
             service: None,
@@ -3198,43 +3203,43 @@ mod envelope_tests {
             Some("Prefer the local Runner for host operations.")
         );
 
-        let unknown = serde_json::from_value::<AgentHostContext>(serde_json::json!({
+        let unknown = serde_json::from_value::<RunnerHostContext>(serde_json::json!({
             "role": "server_host",
             "arbitrary": "not an extension point"
         }));
         assert!(unknown.is_err());
-        assert!(AgentHostContext {
+        assert!(RunnerHostContext {
             role: Some("Server Host".to_string()),
             ..Default::default()
         }
         .normalized()
         .unwrap_err()
         .contains("host_context.role"));
-        assert!(AgentHostContext {
-            runtime: Some("x".repeat(AGENT_HOST_CONTEXT_TEXT_MAX_BYTES + 1)),
+        assert!(RunnerHostContext {
+            runtime: Some("x".repeat(RUNNER_HOST_CONTEXT_TEXT_MAX_BYTES + 1)),
             ..Default::default()
         }
         .normalized()
         .unwrap_err()
         .contains("host_context.runtime"));
-        assert!(AgentHostContext::default()
+        assert!(RunnerHostContext::default()
             .normalized()
             .unwrap_err()
             .contains("at least one field"));
     }
 
-    fn sample_register() -> ShellClientRegisterRequest {
-        ShellClientRegisterRequest {
+    fn sample_register() -> RunnerRegisterRequest {
+        RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             client_id: "ws-1".to_string(),
-            agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: Some("WS Agent".to_string()),
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 file_write: false,
@@ -3311,27 +3316,27 @@ mod envelope_tests {
                 last_error_code: None,
                 last_call: None,
             },
-            config_reload: AgentConfigReloadStatus::default(),
+            config_reload: RunnerConfigReloadStatus::default(),
         }
     }
 
     #[test]
     fn register_envelope_round_trips_with_type_tag() {
-        let env = AgentEnvelope::Register {
+        let env = RunnerEnvelope::Register {
             payload: sample_register(),
         };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"register""#), "json was: {json}");
         assert!(json.contains(r#""client_id":"ws-1""#));
         assert!(!json.contains(r#""auth_token""#), "json was: {json}");
-        let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
+        let back = RunnerEnvelope::from_slice(json.as_bytes()).unwrap();
         match back {
-            AgentEnvelope::Register { payload, .. } => {
+            RunnerEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.client_id, "ws-1");
                 assert_eq!(payload.job_concurrency_limit, Some(4));
                 assert_eq!(
-                    payload.agent_protocol_generation,
-                    AGENT_PROTOCOL_GENERATION_V2
+                    payload.runner_protocol_generation,
+                    RUNNER_PROTOCOL_GENERATION_V2
                 );
                 let caps = payload.capabilities;
                 assert!(caps.shell);
@@ -3345,15 +3350,15 @@ mod envelope_tests {
     #[test]
     fn raw_protocol_generation_number_preserves_future_wire_values_for_ingress_rejection() {
         let mut payload = sample_register();
-        payload.agent_protocol_generation = AgentProtocolGenerationNumber::new(u16::MAX);
+        payload.runner_protocol_generation = RunnerProtocolGenerationNumber::new(u16::MAX);
         let json = serde_json::to_string(&payload).unwrap();
-        let decoded: ShellClientRegisterRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.agent_protocol_generation.get(), u16::MAX);
+        let decoded: RunnerRegisterRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.runner_protocol_generation.get(), u16::MAX);
     }
 
     #[test]
     fn legacy_capabilities_default_persistent_shell_to_false() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"shell":true,"jobs":true}"#).unwrap();
         assert!(capabilities.shell);
         assert!(capabilities.jobs);
@@ -3374,28 +3379,28 @@ mod envelope_tests {
         assert!(!capabilities.computer_control);
         assert!(!capabilities.computer_key_input);
         assert!(!capabilities.computer_window_activate);
-        assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
+        assert!(!RunnerCapabilities::default().ssh_persistent_shell);
         assert!(!capabilities.computer_text_input);
-        assert!(!ShellClientCapabilities::default().project_path_registration);
-        assert!(!ShellClientCapabilities::default().computer_observe);
-        assert!(!ShellClientCapabilities::default().computer_application_discovery);
-        assert!(!ShellClientCapabilities::default().computer_application_launch);
-        assert!(!ShellClientCapabilities::default().computer_accessibility_observe);
-        assert!(!ShellClientCapabilities::default().computer_element_state);
-        assert!(!ShellClientCapabilities::default().computer_control);
-        assert!(!ShellClientCapabilities::default().computer_key_input);
-        assert!(!ShellClientCapabilities::default().computer_window_activate);
-        assert!(!ShellClientCapabilities::default().computer_text_input);
-        assert!(!ShellClientCapabilities::default().artifact_export_streaming_metadata);
+        assert!(!RunnerCapabilities::default().project_path_registration);
+        assert!(!RunnerCapabilities::default().computer_observe);
+        assert!(!RunnerCapabilities::default().computer_application_discovery);
+        assert!(!RunnerCapabilities::default().computer_application_launch);
+        assert!(!RunnerCapabilities::default().computer_accessibility_observe);
+        assert!(!RunnerCapabilities::default().computer_element_state);
+        assert!(!RunnerCapabilities::default().computer_control);
+        assert!(!RunnerCapabilities::default().computer_key_input);
+        assert!(!RunnerCapabilities::default().computer_window_activate);
+        assert!(!RunnerCapabilities::default().computer_text_input);
+        assert!(!RunnerCapabilities::default().artifact_export_streaming_metadata);
     }
 
     #[test]
     fn artifact_export_streaming_metadata_capability_deserializes_only_when_present() {
-        let missing: ShellClientCapabilities =
+        let missing: RunnerCapabilities =
             serde_json::from_str(r#"{"artifact_export_chunk_read":true}"#).unwrap();
         assert!(missing.artifact_export_chunk_read);
         assert!(!missing.artifact_export_streaming_metadata);
-        let present: ShellClientCapabilities = serde_json::from_str(
+        let present: RunnerCapabilities = serde_json::from_str(
             r#"{"artifact_export_chunk_read":true,"artifact_export_streaming_metadata":true}"#,
         )
         .unwrap();
@@ -3404,23 +3409,23 @@ mod envelope_tests {
 
     #[test]
     fn structured_file_delete_capability_deserializes_only_when_present() {
-        let missing: ShellClientCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
+        let missing: RunnerCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
         assert!(!missing.structured_file_delete);
-        let present: ShellClientCapabilities =
+        let present: RunnerCapabilities =
             serde_json::from_str(r#"{"structured_file_delete":true}"#).unwrap();
         assert!(present.structured_file_delete);
     }
 
     #[test]
     fn project_path_registration_capability_deserializes_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"project_path_registration":true}"#).unwrap();
         assert!(capabilities.project_path_registration);
     }
 
     #[test]
     fn computer_observe_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
         assert!(capabilities.computer_observe);
         assert!(!capabilities.file_read);
@@ -3428,7 +3433,7 @@ mod envelope_tests {
 
     #[test]
     fn computer_application_capabilities_are_additive_and_default_false() {
-        let legacy: ShellClientCapabilities =
+        let legacy: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_observe":true,"computer_control":true}"#).unwrap();
         assert!(legacy.computer_observe);
         assert!(legacy.computer_control);
@@ -3439,7 +3444,7 @@ mod envelope_tests {
         assert!(!legacy.computer_clipboard_read);
         assert!(!legacy.computer_clipboard_write);
 
-        let discovery: ShellClientCapabilities =
+        let discovery: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_application_discovery":true}"#).unwrap();
         assert!(discovery.computer_application_discovery);
         assert!(!discovery.computer_application_launch);
@@ -3448,7 +3453,7 @@ mod envelope_tests {
         assert!(!discovery.computer_display_observe);
         assert!(!discovery.computer_pointer_control);
 
-        let launch: ShellClientCapabilities =
+        let launch: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_application_launch":true}"#).unwrap();
         assert!(launch.computer_application_launch);
         assert!(!launch.computer_application_discovery);
@@ -3457,7 +3462,7 @@ mod envelope_tests {
         assert!(!launch.computer_display_observe);
         assert!(!launch.computer_pointer_control);
 
-        let display: ShellClientCapabilities =
+        let display: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_display_observe":true}"#).unwrap();
         assert!(display.computer_display_observe);
         assert!(!display.computer_observe);
@@ -3466,7 +3471,7 @@ mod envelope_tests {
         assert!(!display.computer_application_launch);
         assert!(!display.computer_pointer_control);
 
-        let pointer: ShellClientCapabilities =
+        let pointer: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_pointer_control":true}"#).unwrap();
         assert!(pointer.computer_pointer_control);
         assert!(!pointer.computer_control);
@@ -3475,7 +3480,7 @@ mod envelope_tests {
         assert!(!pointer.computer_clipboard_read);
         assert!(!pointer.computer_clipboard_write);
 
-        let clipboard_read: ShellClientCapabilities =
+        let clipboard_read: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_clipboard_read":true}"#).unwrap();
         assert!(clipboard_read.computer_clipboard_read);
         assert!(!clipboard_read.computer_clipboard_write);
@@ -3483,35 +3488,29 @@ mod envelope_tests {
         assert!(!clipboard_read.computer_observe);
         assert!(!clipboard_read.computer_pointer_control);
 
-        let clipboard_write: ShellClientCapabilities =
+        let clipboard_write: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_clipboard_write":true}"#).unwrap();
         assert!(clipboard_write.computer_clipboard_write);
         assert!(!clipboard_write.computer_clipboard_read);
         assert!(!clipboard_write.computer_control);
         assert!(!clipboard_write.computer_display_observe);
 
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY));
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH));
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE));
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL));
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ));
-        assert!(SHELL_CLIENT_CAPABILITY_NAMES
-            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ));
+        assert!(RUNNER_CAPABILITY_NAMES.contains(&RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE));
     }
 
     #[test]
     fn computer_snapshot_region_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
         assert!(capabilities.computer_observe);
         assert!(!capabilities.computer_snapshot_region);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_snapshot_region":true}"#).unwrap();
         assert!(capabilities.computer_snapshot_region);
         assert!(!capabilities.computer_observe);
@@ -3520,7 +3519,7 @@ mod envelope_tests {
 
     #[test]
     fn computer_accessibility_observe_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_accessibility_observe":true}"#).unwrap();
         assert!(capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_observe);
@@ -3528,12 +3527,12 @@ mod envelope_tests {
 
     #[test]
     fn computer_element_state_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_accessibility_observe":true}"#).unwrap();
         assert!(capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_element_state);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_element_state":true}"#).unwrap();
         assert!(capabilities.computer_element_state);
         assert!(!capabilities.computer_accessibility_observe);
@@ -3542,7 +3541,7 @@ mod envelope_tests {
 
     #[test]
     fn computer_control_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_observe);
@@ -3551,12 +3550,12 @@ mod envelope_tests {
 
     #[test]
     fn computer_scroll_to_element_capability_is_distinct_from_control() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_scroll_to_element);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_scroll_to_element":true}"#).unwrap();
         assert!(capabilities.computer_scroll_to_element);
         assert!(!capabilities.computer_control);
@@ -3565,12 +3564,12 @@ mod envelope_tests {
 
     #[test]
     fn computer_key_input_capability_is_distinct_from_control() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_key_input);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_key_input":true}"#).unwrap();
         assert!(capabilities.computer_key_input);
         assert!(!capabilities.computer_control);
@@ -3579,12 +3578,12 @@ mod envelope_tests {
 
     #[test]
     fn computer_window_activate_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_window_activate);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_window_activate":true}"#).unwrap();
         assert!(capabilities.computer_window_activate);
         assert!(!capabilities.computer_control);
@@ -3593,12 +3592,12 @@ mod envelope_tests {
 
     #[test]
     fn computer_text_input_capability_deserializes_only_when_present() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_text_input);
 
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_text_input":true}"#).unwrap();
         assert!(capabilities.computer_text_input);
         assert!(!capabilities.computer_control);
@@ -3652,18 +3651,17 @@ mod envelope_tests {
         polling.capabilities.job_state_reconciliation = true;
         polling.job_inventory = Some(inventory.clone());
         let polling_json = serde_json::to_vec(&polling).unwrap();
-        let polling_back: ShellClientRegisterRequest =
-            serde_json::from_slice(&polling_json).unwrap();
+        let polling_back: RunnerRegisterRequest = serde_json::from_slice(&polling_json).unwrap();
         assert_eq!(polling_back.job_inventory.as_ref(), Some(&inventory));
         assert_eq!(polling_back.job_concurrency_limit, Some(4));
 
         let websocket = polling.clone();
-        let websocket_json = AgentEnvelope::Register { payload: websocket }
+        let websocket_json = RunnerEnvelope::Register { payload: websocket }
             .to_json()
             .unwrap();
-        let websocket_back = AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap();
+        let websocket_back = RunnerEnvelope::from_slice(websocket_json.as_bytes()).unwrap();
         match websocket_back {
-            AgentEnvelope::Register { payload, .. } => {
+            RunnerEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.job_inventory.as_ref(), Some(&inventory));
                 assert_eq!(payload.job_concurrency_limit, Some(4));
             }
@@ -3688,7 +3686,7 @@ mod envelope_tests {
 
     #[test]
     fn request_envelope_flattens_shell_request_fields() {
-        let request = ShellAgentShellRequest {
+        let request = RunnerRequest {
             request_id: "req-1".to_string(),
             client_id: "ws-1".to_string(),
             kind: "run_shell".to_string(),
@@ -3716,16 +3714,16 @@ mod envelope_tests {
             coding_agent: None,
             persistent_shell: None,
         };
-        let env = AgentEnvelope::Request { request };
+        let env = RunnerEnvelope::Request { request };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"request""#));
         assert!(json.contains(r#""request_id":"req-1""#));
         assert!(json.contains(r#""kind":"run_shell""#));
         assert!(json.contains(r#""command":"echo hi""#));
         assert!(json.contains(r#""stdin":"input""#));
-        let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
+        let back = RunnerEnvelope::from_slice(json.as_bytes()).unwrap();
         match back {
-            AgentEnvelope::Request { request } => {
+            RunnerEnvelope::Request { request } => {
                 assert_eq!(request.request_id, "req-1");
                 assert_eq!(request.command, "echo hi");
             }
@@ -3736,8 +3734,8 @@ mod envelope_tests {
     #[tokio::test]
     async fn structured_process_request_round_trips_polling_websocket_and_quic() {
         let request = sample_process_request();
-        let polling: ShellAgentPollResponse = serde_json::from_value(
-            serde_json::to_value(ShellAgentPollResponse {
+        let polling: RunnerPollResponse = serde_json::from_value(
+            serde_json::to_value(RunnerPollResponse {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
@@ -3750,13 +3748,13 @@ mod envelope_tests {
         assert_eq!(polling.request.as_ref().unwrap().command, "");
         assert_eq!(polling.request.as_ref().unwrap().kind, "run_process");
 
-        let websocket_json = AgentEnvelope::Request {
+        let websocket_json = RunnerEnvelope::Request {
             request: request.clone(),
         }
         .to_json()
         .unwrap();
-        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+        match RunnerEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "run_process");
@@ -3764,13 +3762,13 @@ mod envelope_tests {
             other => panic!("expected request, got {:?}", other.kind()),
         }
 
-        let frame = encode_quic_frame(&AgentEnvelope::Request {
+        let frame = encode_quic_frame(&RunnerEnvelope::Request {
             request: request.clone(),
         })
         .unwrap();
         let mut reader = frame.as_slice();
         match read_quic_frame(&mut reader).await.unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "run_process");
@@ -3782,8 +3780,8 @@ mod envelope_tests {
     #[tokio::test]
     async fn structured_process_job_request_round_trips_polling_websocket_and_quic() {
         let request = sample_process_job_request();
-        let polling: ShellAgentPollResponse = serde_json::from_value(
-            serde_json::to_value(ShellAgentPollResponse {
+        let polling: RunnerPollResponse = serde_json::from_value(
+            serde_json::to_value(RunnerPollResponse {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
@@ -3797,13 +3795,13 @@ mod envelope_tests {
         assert_eq!(polling.request.as_ref().unwrap().kind, "start_process_job");
         assert!(polling.request.as_ref().unwrap().script.is_none());
 
-        let websocket_json = AgentEnvelope::Request {
+        let websocket_json = RunnerEnvelope::Request {
             request: request.clone(),
         }
         .to_json()
         .unwrap();
-        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+        match RunnerEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "start_process_job");
@@ -3812,13 +3810,13 @@ mod envelope_tests {
             other => panic!("expected request, got {:?}", other.kind()),
         }
 
-        let frame = encode_quic_frame(&AgentEnvelope::Request {
+        let frame = encode_quic_frame(&RunnerEnvelope::Request {
             request: request.clone(),
         })
         .unwrap();
         let mut reader = frame.as_slice();
         match read_quic_frame(&mut reader).await.unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "start_process_job");
@@ -3831,8 +3829,8 @@ mod envelope_tests {
     #[tokio::test]
     async fn structured_script_request_round_trips_polling_websocket_and_quic() {
         let request = sample_script_request();
-        let polling: ShellAgentPollResponse = serde_json::from_value(
-            serde_json::to_value(ShellAgentPollResponse {
+        let polling: RunnerPollResponse = serde_json::from_value(
+            serde_json::to_value(RunnerPollResponse {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
@@ -3846,14 +3844,14 @@ mod envelope_tests {
         assert_eq!(polling.request.as_ref().unwrap().kind, "run_script");
         assert!(polling.request.as_ref().unwrap().process.is_none());
 
-        let websocket_json = AgentEnvelope::Request {
+        let websocket_json = RunnerEnvelope::Request {
             request: request.clone(),
         }
         .to_json()
         .unwrap();
         assert!(!websocket_json.contains(r#""command":"printf"#));
-        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+        match RunnerEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "run_script");
@@ -3862,13 +3860,13 @@ mod envelope_tests {
             other => panic!("expected request, got {:?}", other.kind()),
         }
 
-        let frame = encode_quic_frame(&AgentEnvelope::Request {
+        let frame = encode_quic_frame(&RunnerEnvelope::Request {
             request: request.clone(),
         })
         .unwrap();
         let mut reader = frame.as_slice();
         match read_quic_frame(&mut reader).await.unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "run_script");
@@ -3881,8 +3879,8 @@ mod envelope_tests {
     #[tokio::test]
     async fn structured_script_job_request_round_trips_polling_websocket_and_quic() {
         let request = sample_script_job_request();
-        let polling: ShellAgentPollResponse = serde_json::from_value(
-            serde_json::to_value(ShellAgentPollResponse {
+        let polling: RunnerPollResponse = serde_json::from_value(
+            serde_json::to_value(RunnerPollResponse {
                 success: true,
                 request: Some(request.clone()),
                 error: None,
@@ -3896,14 +3894,14 @@ mod envelope_tests {
         assert_eq!(polling.request.as_ref().unwrap().kind, "start_script_job");
         assert!(polling.request.as_ref().unwrap().process.is_none());
 
-        let websocket_json = AgentEnvelope::Request {
+        let websocket_json = RunnerEnvelope::Request {
             request: request.clone(),
         }
         .to_json()
         .unwrap();
         assert!(!websocket_json.contains(r#""command":"printf"#));
-        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+        match RunnerEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "start_script_job");
@@ -3912,13 +3910,13 @@ mod envelope_tests {
             other => panic!("expected request, got {:?}", other.kind()),
         }
 
-        let frame = encode_quic_frame(&AgentEnvelope::Request {
+        let frame = encode_quic_frame(&RunnerEnvelope::Request {
             request: request.clone(),
         })
         .unwrap();
         let mut reader = frame.as_slice();
         match read_quic_frame(&mut reader).await.unwrap() {
-            AgentEnvelope::Request { request: decoded } => {
+            RunnerEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
                 assert_eq!(decoded.kind, "start_script_job");
@@ -3930,7 +3928,7 @@ mod envelope_tests {
 
     #[test]
     fn b2_capabilities_do_not_imply_structured_execution_jobs() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(
                 r#"{"shell":true,"async_jobs":true,"structured_validation_argv":true,"structured_process_argv":true,"structured_script_payload":true}"#,
             )
@@ -3941,13 +3939,13 @@ mod envelope_tests {
         assert!(capabilities.structured_script_payload);
         assert!(capabilities.async_jobs);
         assert!(!capabilities.structured_execution_jobs);
-        assert!(!ShellClientCapabilities::default().structured_script_payload);
-        assert!(!ShellClientCapabilities::default().structured_execution_jobs);
+        assert!(!RunnerCapabilities::default().structured_script_payload);
+        assert!(!RunnerCapabilities::default().structured_execution_jobs);
     }
 
     #[test]
     fn legacy_capabilities_do_not_imply_structured_process_argv() {
-        let capabilities: ShellClientCapabilities =
+        let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"shell":true,"structured_validation_argv":true}"#).unwrap();
         assert!(capabilities.structured_validation_argv);
         assert!(!capabilities.structured_go_test_json);
@@ -4114,7 +4112,7 @@ mod envelope_tests {
 
     #[test]
     fn persistent_shell_request_and_result_envelopes_round_trip() {
-        let request: ShellAgentShellRequest = serde_json::from_value(serde_json::json!({
+        let request: RunnerRequest = serde_json::from_value(serde_json::json!({
             "request_id": "req-shell-1",
             "client_id": "ws-1",
             "kind": "persistent_shell",
@@ -4133,9 +4131,9 @@ mod envelope_tests {
             }
         }))
         .unwrap();
-        let request_json = AgentEnvelope::Request { request }.to_json().unwrap();
-        match AgentEnvelope::from_slice(request_json.as_bytes()).unwrap() {
-            AgentEnvelope::Request { request } => {
+        let request_json = RunnerEnvelope::Request { request }.to_json().unwrap();
+        match RunnerEnvelope::from_slice(request_json.as_bytes()).unwrap() {
+            RunnerEnvelope::Request { request } => {
                 let operation = request.persistent_shell.unwrap();
                 assert_eq!(operation.action, "exec");
                 assert_eq!(operation.shell_id, "wc_shell_1234");
@@ -4170,10 +4168,10 @@ mod envelope_tests {
             error_code: None,
             error: None,
         };
-        let result_json = AgentEnvelope::PersistentShellResult {
-            payload: ShellAgentPersistentShellResultRequest {
+        let result_json = RunnerEnvelope::PersistentShellResult {
+            payload: RunnerPersistentShellResultRequest {
                 client_id: "ws-1".to_string(),
-                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+                runner_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
                 request_id: "req-shell-1".to_string(),
                 result: result.clone(),
             },
@@ -4181,8 +4179,8 @@ mod envelope_tests {
         .to_json()
         .unwrap();
         assert!(result_json.contains(r#""type":"persistent_shell_result""#));
-        match AgentEnvelope::from_slice(result_json.as_bytes()).unwrap() {
-            AgentEnvelope::PersistentShellResult { payload } => {
+        match RunnerEnvelope::from_slice(result_json.as_bytes()).unwrap() {
+            RunnerEnvelope::PersistentShellResult { payload } => {
                 assert_eq!(payload.request_id, "req-shell-1");
                 assert_eq!(payload.result, result);
             }
@@ -4192,11 +4190,11 @@ mod envelope_tests {
 
     #[test]
     fn result_and_job_update_envelopes_round_trip() {
-        let result_env = AgentEnvelope::Result {
-            payload: ShellAgentResultPayload {
-                result: ShellAgentResultRequest {
+        let result_env = RunnerEnvelope::Result {
+            payload: RunnerResultPayload {
+                result: RunnerResultRequest {
                     client_id: "ws-1".to_string(),
-                    agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+                    runner_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
                     request_id: "req-1".to_string(),
                     exit_code: Some(0),
                     stdout: Some("hi".to_string()),
@@ -4211,8 +4209,8 @@ mod envelope_tests {
         };
         let json = result_env.to_json().unwrap();
         assert!(json.contains(r#""type":"result""#));
-        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::Result { payload } => {
+        match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
+            RunnerEnvelope::Result { payload } => {
                 assert_eq!(payload.result.exit_code, Some(0));
                 assert_eq!(
                     payload.command_execution_state,
@@ -4222,10 +4220,10 @@ mod envelope_tests {
             other => panic!("expected result, got {:?}", other.kind()),
         }
 
-        let job_env = AgentEnvelope::JobUpdate {
-            payload: ShellAgentJobUpdateRequest {
+        let job_env = RunnerEnvelope::JobUpdate {
+            payload: RunnerJobUpdateRequest {
                 client_id: "ws-1".to_string(),
-                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+                runner_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
                 job_id: "job-1".to_string(),
                 request_id: Some("req-1".to_string()),
                 update_seq: None,
@@ -4245,15 +4243,15 @@ mod envelope_tests {
         };
         let json = job_env.to_json().unwrap();
         assert!(json.contains(r#""type":"job_update""#));
-        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::JobUpdate { payload } => assert_eq!(payload.job_id, "job-1"),
+        match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
+            RunnerEnvelope::JobUpdate { payload } => assert_eq!(payload.job_id, "job-1"),
             other => panic!("expected job_update, got {:?}", other.kind()),
         }
     }
 
     #[test]
     fn legacy_job_update_and_snapshot_default_structured_lifecycle_to_absent() {
-        let update: ShellAgentJobUpdateRequest = serde_json::from_value(serde_json::json!({
+        let update: RunnerJobUpdateRequest = serde_json::from_value(serde_json::json!({
             "client_id": "ws-1",
             "agent_instance_id": "11111111-1111-1111-1111-111111111111",
             "job_id": "job-legacy",
@@ -4273,22 +4271,22 @@ mod envelope_tests {
 
     #[test]
     fn ping_pong_error_envelopes_round_trip() {
-        let ping = AgentEnvelope::Ping { ts: 1700000000 };
+        let ping = RunnerEnvelope::Ping { ts: 1700000000 };
         let json = ping.to_json().unwrap();
         assert_eq!(json, r#"{"type":"ping","ts":1700000000}"#);
-        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::Ping { ts } => assert_eq!(ts, 1700000000),
+        match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
+            RunnerEnvelope::Ping { ts } => assert_eq!(ts, 1700000000),
             other => panic!("expected ping, got {:?}", other.kind()),
         }
 
-        let err = AgentEnvelope::Error {
+        let err = RunnerEnvelope::Error {
             code: "bad_request".to_string(),
             message: "nope".to_string(),
         };
         let json = err.to_json().unwrap();
         assert!(json.contains(r#""type":"error""#));
-        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::Error { code, message } => {
+        match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
+            RunnerEnvelope::Error { code, message } => {
                 assert_eq!(code, "bad_request");
                 assert_eq!(message, "nope");
             }
@@ -4298,55 +4296,55 @@ mod envelope_tests {
 
     #[test]
     fn runtime_metadata_and_legacy_poll_payloads_round_trip() {
-        let env = AgentEnvelope::RuntimeMetadata {
+        let env = RunnerEnvelope::RuntimeMetadata {
             tool_providers: sample_tool_providers(),
         };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"runtime_metadata""#));
         assert!(json.contains(r#""last_error_code":null"#));
         assert!(matches!(
-            AgentEnvelope::from_slice(json.as_bytes()).unwrap(),
-            AgentEnvelope::RuntimeMetadata { .. }
+            RunnerEnvelope::from_slice(json.as_bytes()).unwrap(),
+            RunnerEnvelope::RuntimeMetadata { .. }
         ));
 
         let legacy = r#"{"client_id":"oe","agent_instance_id":"inst","projects":null}"#;
-        let payload: ShellAgentPollPayload = serde_json::from_str(legacy).unwrap();
+        let payload: RunnerPollPayload = serde_json::from_str(legacy).unwrap();
         assert_eq!(payload.request.client_id, "oe");
         assert!(payload.tool_providers.is_none());
     }
 
     #[test]
     fn goodbye_envelope_round_trips_and_reason_is_optional() {
-        let env = AgentEnvelope::Goodbye {
+        let env = RunnerEnvelope::Goodbye {
             reason: Some("shutdown".to_string()),
         };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"goodbye""#));
         assert!(json.contains(r#""reason":"shutdown""#));
-        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::Goodbye { reason } => assert_eq!(reason.as_deref(), Some("shutdown")),
+        match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
+            RunnerEnvelope::Goodbye { reason } => assert_eq!(reason.as_deref(), Some("shutdown")),
             other => panic!("expected goodbye, got {:?}", other.kind()),
         }
 
-        let env = AgentEnvelope::Goodbye { reason: None };
+        let env = RunnerEnvelope::Goodbye { reason: None };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"goodbye""#));
         assert!(!json.contains(r#""reason""#));
         assert!(matches!(
-            AgentEnvelope::from_slice(json.as_bytes()).unwrap(),
-            AgentEnvelope::Goodbye { reason: None }
+            RunnerEnvelope::from_slice(json.as_bytes()).unwrap(),
+            RunnerEnvelope::Goodbye { reason: None }
         ));
     }
 
     #[test]
     fn invalid_envelope_type_is_rejected() {
         let json = r#"{"type":"not_a_real_variant"}"#;
-        assert!(AgentEnvelope::from_slice(json.as_bytes()).is_err());
+        assert!(RunnerEnvelope::from_slice(json.as_bytes()).is_err());
     }
 
     #[test]
     fn registered_envelope_omits_none_fields() {
-        let env = AgentEnvelope::Registered {
+        let env = RunnerEnvelope::Registered {
             success: true,
             client: None,
             error: None,
@@ -4360,13 +4358,116 @@ mod envelope_tests {
     }
 
     #[test]
+    fn runner_rust_fields_preserve_historical_transport_wire_keys() {
+        let request = sample_register();
+        let value = serde_json::to_value(&request).unwrap();
+        let object = value
+            .as_object()
+            .expect("registration must serialize as object");
+        assert_eq!(object.get("client_id"), Some(&serde_json::json!("ws-1")));
+        assert_eq!(
+            object.get("agent_instance_id"),
+            Some(&serde_json::json!("11111111-1111-1111-1111-111111111111"))
+        );
+        assert_eq!(
+            object.get("agent_protocol_generation"),
+            Some(&serde_json::json!(2))
+        );
+        assert!(!object.contains_key("runner_instance_id"));
+        assert!(!object.contains_key("runner_protocol_generation"));
+
+        let legacy = r#"{
+            "client_id": "legacy-runner",
+            "agent_instance_id": "legacy-instance",
+            "agent_protocol_generation": 2,
+            "capabilities": {"shell": true}
+        }"#;
+        let decoded: RunnerRegisterRequest = serde_json::from_str(legacy).unwrap();
+        assert_eq!(decoded.client_id, "legacy-runner");
+        assert_eq!(decoded.runner_instance_id, "legacy-instance");
+        assert_eq!(
+            decoded.runner_protocol_generation,
+            RUNNER_PROTOCOL_GENERATION_V2
+        );
+
+        let register = serde_json::to_value(RunnerEnvelope::Register { payload: request }).unwrap();
+        assert_eq!(register["type"], "register");
+        let request = serde_json::to_value(RunnerEnvelope::Request {
+            request: sample_process_request(),
+        })
+        .unwrap();
+        assert_eq!(request["type"], "request");
+    }
+
+    #[test]
+    fn runner_protocol_compatibility_literals_are_exact() {
+        assert_eq!(RUNNER_QUIC_ALPN_V1, "webcodex-runner/1");
+        assert_eq!(
+            RUNNER_CAPABILITY_NAMES,
+            &[
+                "shell",
+                "file_read",
+                "file_write",
+                "artifact_export_chunk_read",
+                "artifact_export_streaming_metadata",
+                "structured_file_delete",
+                "apply_text_edit_occurrence",
+                "apply_text_edit_line_scope",
+                "apply_patch",
+                "apply_patch_match_metadata",
+                "apply_patch_strict_matching",
+                "git",
+                "jobs",
+                "async_jobs",
+                "async_shell_jobs",
+                "ssh_shell",
+                "persistent_shell",
+                "ssh_persistent_shell",
+                "structured_validation_argv",
+                "structured_cargo_test_count_assertion",
+                "structured_go_test_json",
+                "structured_go_test_tool",
+                "structured_go_test_packages",
+                "structured_process_argv",
+                "structured_script_payload",
+                "internal_posix_script",
+                "structured_execution_jobs",
+                "detached_process_jobs",
+                "lsp_read_only_navigation",
+                "lsp_call_hierarchy",
+                "project_lifecycle",
+                "project_path_registration",
+                "skill_store_read",
+                "skill_store_manage",
+                "computer_observe",
+                "computer_application_discovery",
+                "computer_application_launch",
+                "computer_display_observe",
+                "computer_pointer_control",
+                "computer_clipboard_read",
+                "computer_clipboard_write",
+                "computer_snapshot_region",
+                "computer_accessibility_observe",
+                "computer_element_state",
+                "job_state_reconciliation",
+                "coding_agent_runs",
+                "computer_control",
+                "computer_scroll_to_element",
+                "computer_key_input",
+                "computer_window_activate",
+                "computer_text_input",
+            ]
+        );
+    }
+
+    #[test]
     fn register_request_round_trips_agent_instance_id() {
         let req = sample_register();
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains(r#""agent_instance_id":"11111111-1111-1111-1111-111111111111""#));
-        let back: ShellClientRegisterRequest = serde_json::from_str(&json).unwrap();
+        let back: RunnerRegisterRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            back.agent_instance_id,
+            back.runner_instance_id,
             "11111111-1111-1111-1111-111111111111"
         );
     }
@@ -4379,38 +4480,38 @@ mod envelope_tests {
             "agent_protocol_generation": 2,
             "capabilities": {"shell": true}
         }"#;
-        let request: ShellClientRegisterRequest = serde_json::from_str(json).unwrap();
+        let request: RunnerRegisterRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.job_concurrency_limit, None);
     }
 
     #[test]
     fn register_request_without_agent_instance_id_is_rejected() {
-        // An old agent that omits agent_instance_id must be rejected at
+        // An old Runner that omits agent_instance_id must be rejected at
         // deserialization: the field is now required for correctness.
         let json = r#"{
             "client_id": "oe",
             "capabilities": {"shell": true}
         }"#;
-        let err = serde_json::from_str::<ShellClientRegisterRequest>(json);
+        let err = serde_json::from_str::<RunnerRegisterRequest>(json);
         assert!(err.is_err(), "missing agent_instance_id must be rejected");
     }
 
     #[test]
     fn poll_result_job_update_round_trip_agent_instance_id() {
-        let poll = ShellAgentPollRequest {
+        let poll = RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            runner_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
         };
         let json = serde_json::to_string(&poll).unwrap();
-        let back: ShellAgentPollRequest = serde_json::from_str(&json).unwrap();
+        let back: RunnerPollRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            back.agent_instance_id,
+            back.runner_instance_id,
             "22222222-2222-2222-2222-222222222222"
         );
 
-        let result = ShellAgentResultRequest {
+        let result = RunnerResultRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            runner_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
             request_id: "req-1".to_string(),
             exit_code: Some(0),
             stdout: None,
@@ -4419,15 +4520,15 @@ mod envelope_tests {
             error: None,
         };
         let json = serde_json::to_string(&result).unwrap();
-        let back: ShellAgentResultRequest = serde_json::from_str(&json).unwrap();
+        let back: RunnerResultRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            back.agent_instance_id,
+            back.runner_instance_id,
             "22222222-2222-2222-2222-222222222222"
         );
 
-        let job = ShellAgentJobUpdateRequest {
+        let job = RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            runner_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
             job_id: "job-1".to_string(),
             request_id: None,
             update_seq: None,
@@ -4445,21 +4546,21 @@ mod envelope_tests {
             finished: false,
         };
         let json = serde_json::to_string(&job).unwrap();
-        let back: ShellAgentJobUpdateRequest = serde_json::from_str(&json).unwrap();
+        let back: RunnerJobUpdateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            back.agent_instance_id,
+            back.runner_instance_id,
             "22222222-2222-2222-2222-222222222222"
         );
     }
 
     #[test]
     fn poll_result_job_update_without_agent_instance_id_are_rejected() {
-        assert!(serde_json::from_str::<ShellAgentPollRequest>(r#"{"client_id":"oe"}"#).is_err());
-        assert!(serde_json::from_str::<ShellAgentResultRequest>(
+        assert!(serde_json::from_str::<RunnerPollRequest>(r#"{"client_id":"oe"}"#).is_err());
+        assert!(serde_json::from_str::<RunnerResultRequest>(
             r#"{"client_id":"oe","request_id":"r1"}"#
         )
         .is_err());
-        assert!(serde_json::from_str::<ShellAgentJobUpdateRequest>(
+        assert!(serde_json::from_str::<RunnerJobUpdateRequest>(
             r#"{"client_id":"oe","job_id":"j1","status":"running"}"#
         )
         .is_err());
@@ -4467,7 +4568,7 @@ mod envelope_tests {
 
     #[test]
     fn quic_frame_encode_prefixes_u32_be_length() {
-        let env = AgentEnvelope::Ping { ts: 42 };
+        let env = RunnerEnvelope::Ping { ts: 42 };
         let frame = encode_quic_frame(&env).unwrap();
         // First 4 bytes are the big-endian JSON length.
         let len = u32::from_be_bytes(frame[0..4].try_into().unwrap()) as usize;
@@ -4482,13 +4583,13 @@ mod envelope_tests {
     #[tokio::test]
     async fn quic_frame_round_trips_through_read_write() {
         use tokio::io::AsyncReadExt;
-        let env = AgentEnvelope::Pong { ts: 99 };
+        let env = RunnerEnvelope::Pong { ts: 99 };
         let mut buf: Vec<u8> = Vec::new();
         write_quic_frame(&mut buf, &env).await.unwrap();
         // Drain the written bytes through a slice reader.
         let mut reader: &[u8] = &buf;
         let back = read_quic_frame(&mut reader).await.unwrap();
-        assert!(matches!(back, AgentEnvelope::Pong { ts: 99 }));
+        assert!(matches!(back, RunnerEnvelope::Pong { ts: 99 }));
         // The stream is fully consumed.
         let mut tail = Vec::new();
         let n = reader.read_to_end(&mut tail).await.unwrap();
@@ -4542,16 +4643,16 @@ mod envelope_tests {
 
     #[tokio::test]
     async fn quic_register_codec_round_trips_current_wire_shape() {
-        let payload = ShellClientRegisterRequest {
+        let payload = RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             client_id: "q-1".to_string(),
-            agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
-            capabilities: ShellClientCapabilities::default(),
+            capabilities: RunnerCapabilities::default(),
             host_context: None,
             policy: None,
             job_concurrency_limit: None,
@@ -4584,8 +4685,8 @@ mod envelope_tests {
             .into_parts();
         assert_eq!(decoded.client_id, "q-1");
         assert_eq!(
-            decoded.agent_protocol_generation,
-            AGENT_PROTOCOL_GENERATION_V2
+            decoded.runner_protocol_generation,
+            RUNNER_PROTOCOL_GENERATION_V2
         );
         assert!(decoded.capabilities.shell);
         assert_eq!(token.as_deref(), Some("wc_agent_secret"));
@@ -4865,7 +4966,7 @@ mod filter_canonical_tests {
     #[test]
     fn cargo_test_filter_arm_is_the_fail_closed_boundary() {
         // The reported failure and its variants: a Cargo option or control
-        // bytes smuggled in as a "filter". The Agent-facing canonical contract
+        // bytes smuggled in as a "filter". The Runner-facing canonical contract
         // must reject them independently of the planner so an old server,
         // forged request, or protocol drift cannot redirect the manifest.
         let too_long = "a".repeat(RUST_TEST_FILTER_MAX_BYTES + 1);

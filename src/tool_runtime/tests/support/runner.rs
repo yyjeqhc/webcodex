@@ -1,11 +1,10 @@
 use super::auth::auth_context;
 use super::runtime::test_runtime;
 use crate::runner_http::RunnerRegistry;
-use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentJobUpdateRequest, ShellAgentPollRequest,
-    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentShellRequest,
-    ShellClientCapabilities, ShellClientRegisterRequest, ShellProfileSummaryEntry,
-    EXTERNAL_SEARCH_REQUEST_PREFIX,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, RunnerPollRequest,
+    RunnerProjectSummary, RunnerRegisterRequest, RunnerRequest, RunnerResultRequest,
+    ShellProfileSummaryEntry, EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolResult, ToolRuntime};
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
@@ -14,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
+pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path(
     runtime: &ToolRuntime,
     client_id: &str,
     project_id: &str,
@@ -23,7 +22,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
     let project_path = root.to_string_lossy().to_string();
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -31,22 +30,20 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities {
-                    shell: true,
-                    git: true,
-                    file_read: true,
-                    file_write: true,
-                    internal_posix_script: true,
-                    ..Default::default()
-                },
-            ),
+            capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
+                shell: true,
+                git: true,
+                file_read: true,
+                file_write: true,
+                internal_posix_script: true,
+                ..Default::default()
+            }),
             policy: None,
         })
         .await
@@ -64,10 +61,10 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
         )],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
-pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_auth(
+pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path_with_auth(
     runtime: &ToolRuntime,
     client_id: &str,
     project_id: &str,
@@ -78,7 +75,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
     runtime
         .runner_registry
         .register_with_auth(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -86,14 +83,14 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "inst".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
+                    RunnerCapabilities {
                         shell: true,
                         git: true,
                         file_read: true,
@@ -121,26 +118,26 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
         )],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
-pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
-    req: &ShellAgentShellRequest,
+pub(in crate::tool_runtime::tests) fn run_runner_shell_request_locally(
+    req: &RunnerRequest,
 ) -> (i32, String, String) {
     if req.kind == "file_read" {
-        return run_agent_file_read_request_locally(req);
+        return run_runner_file_read_request_locally(req);
     }
     if req.kind == "file_list" {
-        return run_agent_file_list_request_locally(req);
+        return run_runner_file_list_request_locally(req);
     }
     if req.kind == "file_project_overview" {
-        return run_agent_project_overview_request_locally(req);
+        return run_runner_project_overview_request_locally(req);
     }
     if req.kind == "file_skill_list_packages" {
-        return run_agent_skill_list_packages_locally(req);
+        return run_runner_skill_list_packages_locally(req);
     }
     if req.kind == "file_skill_read_file" {
-        return run_agent_skill_read_file_locally(req);
+        return run_runner_skill_read_file_locally(req);
     }
     let structured_process = if req.kind == "run_process" {
         assert!(req.command.is_empty());
@@ -160,7 +157,7 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
             .expect("internal POSIX request must carry a script payload");
         assert_eq!(
             payload.language,
-            crate::shell_protocol::ShellScriptLanguage::Sh
+            crate::runner_protocol::ShellScriptLanguage::Sh
         );
         assert!(payload.args.is_empty());
         assert!(req.command.is_empty());
@@ -231,7 +228,7 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     )
 }
 
-fn run_agent_file_list_request_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+fn run_runner_file_list_request_locally(req: &RunnerRequest) -> (i32, String, String) {
     let Some(cwd) = req.cwd.as_deref() else {
         return (-1, String::new(), "file_list missing cwd".to_string());
     };
@@ -253,7 +250,7 @@ fn run_agent_file_list_request_locally(req: &ShellAgentShellRequest) -> (i32, St
     (0, format!("{}\n", names.join("\n")), String::new())
 }
 
-fn run_agent_file_read_request_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+fn run_runner_file_read_request_locally(req: &RunnerRequest) -> (i32, String, String) {
     use webcodex_workspace::file_read_range::{self, EffectiveRange};
 
     let Some(cwd) = req.cwd.as_deref() else {
@@ -284,7 +281,7 @@ fn run_agent_file_read_request_locally(req: &ShellAgentShellRequest) -> (i32, St
     }
 }
 
-fn run_agent_skill_list_packages_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+fn run_runner_skill_list_packages_locally(req: &RunnerRequest) -> (i32, String, String) {
     let root = request_root(req);
     let limit = req
         .content
@@ -333,7 +330,7 @@ fn run_agent_skill_list_packages_locally(req: &ShellAgentShellRequest) -> (i32, 
     )
 }
 
-fn run_agent_skill_read_file_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+fn run_runner_skill_read_file_locally(req: &RunnerRequest) -> (i32, String, String) {
     use webcodex_workspace::file_read_range::{self, EffectiveRange};
     let Some(cwd) = req.cwd.as_deref() else {
         return (-1, String::new(), "skill_path_invalid".to_string());
@@ -423,9 +420,7 @@ fn run_agent_skill_read_file_locally(req: &ShellAgentShellRequest) -> (i32, Stri
     )
 }
 
-fn run_agent_project_overview_request_locally(
-    req: &ShellAgentShellRequest,
-) -> (i32, String, String) {
+fn run_runner_project_overview_request_locally(req: &RunnerRequest) -> (i32, String, String) {
     let Some(cwd) = req.cwd.as_deref() else {
         return (
             -1,
@@ -453,9 +448,9 @@ fn run_agent_project_overview_request_locally(
 pub(in crate::tool_runtime::tests) async fn complete_agent_request_by_running_locally(
     runtime: &ToolRuntime,
     client_id: &str,
-    req: ShellAgentShellRequest,
+    req: RunnerRequest,
 ) {
-    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&req);
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -470,7 +465,7 @@ pub(in crate::tool_runtime::tests) async fn complete_agent_request_by_running_lo
 pub(in crate::tool_runtime::tests) async fn complete_project_overview_agent_request_locally(
     runtime: &ToolRuntime,
     client_id: &str,
-    req: &ShellAgentShellRequest,
+    req: &RunnerRequest,
 ) {
     assert_eq!(req.kind, "file_project_overview");
     let options = req
@@ -496,8 +491,8 @@ pub(in crate::tool_runtime::tests) async fn complete_project_overview_agent_requ
     .await;
 }
 
-pub(in crate::tool_runtime::tests) fn run_agent_checkpoint_request_locally(
-    req: &ShellAgentShellRequest,
+pub(in crate::tool_runtime::tests) fn run_runner_checkpoint_request_locally(
+    req: &RunnerRequest,
 ) -> (i32, String, String) {
     let root = request_root(req);
     let payload = req
@@ -522,7 +517,7 @@ pub(in crate::tool_runtime::tests) fn run_agent_checkpoint_request_locally(
     (0, serde_json::to_string(&output).unwrap(), String::new())
 }
 
-fn request_root(req: &ShellAgentShellRequest) -> PathBuf {
+fn request_root(req: &RunnerRequest) -> PathBuf {
     let path = req.path.as_deref().unwrap_or(".");
     let raw = PathBuf::from(path);
     if raw.is_absolute() {
@@ -555,7 +550,7 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
             break request;
         }
         if Instant::now() >= deadline {
-            panic!("checkpoint Agent request readiness failed for client {client_id} within 10 seconds");
+            panic!("checkpoint Runner request readiness failed for client {client_id} within 10 seconds");
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     };
@@ -579,7 +574,7 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
         "checkpoint native request must not use a shell command: {}",
         req.command
     );
-    let (exit_code, stdout, stderr) = run_agent_checkpoint_request_locally(&req);
+    let (exit_code, stdout, stderr) = run_runner_checkpoint_request_locally(&req);
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -604,11 +599,11 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
     runtime: &ToolRuntime,
     client_id: &str,
     owner: Option<&str>,
-    caps: ShellClientCapabilities,
+    caps: RunnerCapabilities,
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -616,8 +611,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
@@ -637,7 +632,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
 }
 
 pub(in crate::tool_runtime::tests) fn agent_test_project_id(client_id: &str) -> String {
-    crate::tool_runtime::agent_project_runtime_id(client_id, "agent-proj")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "agent-proj")
 }
 
 /// Register an agent under an explicit `agent_instance_id`. `register_agent`
@@ -646,13 +641,13 @@ pub(in crate::tool_runtime::tests) fn agent_test_project_id(client_id: &str) -> 
 pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
     runtime: &ToolRuntime,
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     owner: Option<&str>,
-    caps: ShellClientCapabilities,
+    caps: RunnerCapabilities,
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -660,8 +655,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: agent_instance_id.to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: runner_instance_id.to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
@@ -674,7 +669,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
     crate::test_support::apply_project_inventory_snapshot(
         &runtime.runner_registry,
         client_id,
-        agent_instance_id,
+        runner_instance_id,
         vec![registered_project("agent-proj", "/tmp/agent-proj")],
     )
     .await;
@@ -697,8 +692,8 @@ pub(in crate::tool_runtime::tests) fn runtime_with_local_project(
 pub(in crate::tool_runtime::tests) fn registered_project(
     id: &str,
     path: &str,
-) -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
+) -> RunnerProjectSummary {
+    RunnerProjectSummary {
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),
@@ -723,9 +718,9 @@ pub(in crate::tool_runtime::tests) fn named_registered_project(
     name: &str,
     path: &str,
     updated_at: i64,
-) -> ShellAgentProjectSummary {
+) -> RunnerProjectSummary {
     let _ = client_id;
-    ShellAgentProjectSummary {
+    RunnerProjectSummary {
         id: id.to_string(),
         name: Some(name.to_string()),
         path: path.to_string(),
@@ -748,13 +743,13 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
     runtime: &ToolRuntime,
     client_id: &str,
     owner: Option<&str>,
-    caps: ShellClientCapabilities,
-    projects: Vec<ShellAgentProjectSummary>,
+    caps: RunnerCapabilities,
+    projects: Vec<RunnerProjectSummary>,
 ) {
-    let agent_instance_id = format!("inst-{client_id}");
+    let runner_instance_id = format!("inst-{client_id}");
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -762,8 +757,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: agent_instance_id.clone(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: runner_instance_id.clone(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
@@ -776,7 +771,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
     crate::test_support::apply_project_inventory_snapshot(
         &runtime.runner_registry,
         client_id,
-        &agent_instance_id,
+        &runner_instance_id,
         projects,
     )
     .await;
@@ -786,14 +781,14 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
     auth: &crate::auth::AuthContext,
-    caps: ShellClientCapabilities,
-    projects: Vec<ShellAgentProjectSummary>,
+    caps: RunnerCapabilities,
+    projects: Vec<RunnerProjectSummary>,
 ) {
-    let agent_instance_id = format!("inst-{client_id}");
+    let runner_instance_id = format!("inst-{client_id}");
     runtime
         .runner_registry
         .register_with_auth(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -801,8 +796,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: agent_instance_id.clone(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: runner_instance_id.clone(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -817,7 +812,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
     crate::test_support::apply_project_inventory_snapshot(
         &runtime.runner_registry,
         client_id,
-        &agent_instance_id,
+        &runner_instance_id,
         projects,
     )
     .await;
@@ -826,21 +821,21 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
 pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_client(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> Option<ShellAgentShellRequest> {
+) -> Option<RunnerRequest> {
     probe_agent_request_for_instance(runtime, client_id, &format!("inst-{}", client_id)).await
 }
 
 pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
     runtime: &ToolRuntime,
     client_id: &str,
-    agent_instance_id: &str,
-) -> Option<ShellAgentShellRequest> {
+    runner_instance_id: &str,
+) -> Option<RunnerRequest> {
     for _ in 0..20 {
         let req = runtime
             .runner_registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: agent_instance_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
             })
             .await
             .unwrap();
@@ -852,18 +847,18 @@ pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
     None
 }
 
-pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
+pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_instance(
     runtime: &ToolRuntime,
     client_id: &str,
-    agent_instance_id: &str,
-) -> ShellAgentShellRequest {
+    runner_instance_id: &str,
+) -> RunnerRequest {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(request) = runtime
             .runner_registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: agent_instance_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
             })
             .await
             .unwrap()
@@ -872,18 +867,18 @@ pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
         }
         if Instant::now() >= deadline {
             panic!(
-                "Agent request readiness failed for client {client_id} instance {agent_instance_id} within 10 seconds"
+                "Runner request readiness failed for client {client_id} instance {runner_instance_id} within 10 seconds"
             );
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
-pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_client(
+pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_client(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> ShellAgentShellRequest {
-    wait_for_agent_request_for_instance(runtime, client_id, &format!("inst-{client_id}")).await
+) -> RunnerRequest {
+    wait_for_runner_request_for_instance(runtime, client_id, &format!("inst-{client_id}")).await
 }
 
 /// Start one real Runner-owned session Job and drive it to the requested
@@ -916,13 +911,13 @@ pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
         .await;
     assert!(started.success, "{:?}", started.error);
     let job_id = started.output["job_id"].as_str().unwrap().to_string();
-    let request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
+    let request = wait_for_runner_request_for_instance(runtime, client_id, "inst").await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     runtime
         .runner_registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             job_id: job_id.clone(),
             request_id: Some(request.request_id),
             update_seq: None,
@@ -948,7 +943,7 @@ pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
             .await
             .unwrap();
         assert_eq!(stopped.status, "stop_requested");
-        let stop_request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
+        let stop_request = wait_for_runner_request_for_instance(runtime, client_id, "inst").await;
         assert_eq!(stop_request.kind, "stop_job");
         assert_eq!(stop_request.job_id.as_deref(), Some(job_id.as_str()));
     }
@@ -968,9 +963,9 @@ pub(in crate::tool_runtime::tests) async fn finish_session_projection_job(
     let current = runtime.runner_registry.get_job(job_id).await.unwrap();
     runtime
         .runner_registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             job_id: job_id.to_string(),
             request_id: current.request_id,
             update_seq: None,
@@ -993,7 +988,7 @@ pub(in crate::tool_runtime::tests) async fn finish_session_projection_job(
 
 pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> ToolRuntime {
     let runtime = test_runtime();
-    let file_caps = ShellClientCapabilities {
+    let file_caps = RunnerCapabilities {
         file_read: true,
         git: true,
         shell: true,
@@ -1050,13 +1045,13 @@ pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> 
 pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> Option<ShellAgentShellRequest> {
+) -> Option<RunnerRequest> {
     for _ in 0..20 {
         let req = runtime
             .runner_registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
             })
             .await
             .unwrap();
@@ -1076,12 +1071,12 @@ pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
 pub(in crate::tool_runtime::tests) async fn wait_for_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> ShellAgentShellRequest {
-    wait_for_agent_request_for_instance(runtime, client_id, "inst").await
+) -> RunnerRequest {
+    wait_for_runner_request_for_instance(runtime, client_id, "inst").await
 }
 
 pub(in crate::tool_runtime::tests) fn assert_internal_posix_script_contains(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     needle: &str,
 ) {
     assert_eq!(request.kind, "run_internal_posix_script");
@@ -1093,7 +1088,7 @@ pub(in crate::tool_runtime::tests) fn assert_internal_posix_script_contains(
         .expect("internal POSIX request must carry a typed script payload");
     assert_eq!(
         payload.language,
-        crate::shell_protocol::ShellScriptLanguage::Sh
+        crate::runner_protocol::ShellScriptLanguage::Sh
     );
     assert!(payload.args.is_empty());
     assert!(
@@ -1120,7 +1115,7 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request(
 pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_instance(
     runtime: &ToolRuntime,
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     request_id: &str,
     exit_code: i32,
     stdout: &str,
@@ -1128,9 +1123,9 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_ins
 ) {
     runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: agent_instance_id.to_string(),
+            runner_instance_id: runner_instance_id.to_string(),
             request_id: request_id.to_string(),
             exit_code: Some(exit_code),
             stdout: Some(stdout.to_string()),
@@ -1145,7 +1140,7 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_ins
 pub(in crate::tool_runtime::tests) async fn complete_agent_ranged_file_read_request(
     runtime: &ToolRuntime,
     client_id: &str,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     content: &str,
 ) {
     let start = request
@@ -1170,12 +1165,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
     runtime: &ToolRuntime,
     client_id: &str,
     owner: Option<&str>,
-    caps: ShellClientCapabilities,
-    projects: Vec<ShellAgentProjectSummary>,
+    caps: RunnerCapabilities,
+    projects: Vec<RunnerProjectSummary>,
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -1183,8 +1178,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
@@ -1209,12 +1204,12 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
 pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
     runtime: &ToolRuntime,
     client_id: &str,
-    policy: Option<AgentPolicySummary>,
-    projects: Vec<ShellAgentProjectSummary>,
+    policy: Option<RunnerPolicySummary>,
+    projects: Vec<RunnerProjectSummary>,
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -1222,14 +1217,14 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy,
         })

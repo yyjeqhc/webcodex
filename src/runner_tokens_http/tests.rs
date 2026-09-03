@@ -539,7 +539,7 @@ async fn http_runner_tokens_register_hash_enforces_transport_and_client_id_bindi
             "client_id": "alice-laptop",
             "agent_instance_id": "inst-1",
             "agent_protocol_generation": 2,
-            "capabilities": crate::test_support::current_runner_capabilities(crate::shell_protocol::ShellClientCapabilities::default()),
+            "capabilities": crate::test_support::current_runner_capabilities(crate::runner_protocol::RunnerCapabilities::default()),
             "owner": "alice",
         }))
         .send(&service)
@@ -556,7 +556,7 @@ async fn http_runner_tokens_register_hash_enforces_transport_and_client_id_bindi
             "client_id": "other-laptop",
             "agent_instance_id": "inst-2",
             "agent_protocol_generation": 2,
-            "capabilities": crate::test_support::current_runner_capabilities(crate::shell_protocol::ShellClientCapabilities::default()),
+            "capabilities": crate::test_support::current_runner_capabilities(crate::runner_protocol::RunnerCapabilities::default()),
             "owner": "alice",
         }))
         .send(&service)

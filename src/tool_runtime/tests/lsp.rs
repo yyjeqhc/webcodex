@@ -1,14 +1,14 @@
 use super::support::*;
 use crate::lsp_bridge::{
-    error_codes, parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest,
-    AgentLspResultEnvelope, CallHierarchyDirection, CallHierarchyEdgeDirection,
-    CallHierarchyResult, DocumentDiagnosticsResult, DocumentDiagnosticsStatus,
-    DocumentSymbolsResult, HoverResult, LocationsResult, LspAvailabilityStatus, LspStatusResult,
-    PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic, PublicHover,
-    PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
+    error_codes, parse_runner_lsp_result_envelope, CallHierarchyDirection,
+    CallHierarchyEdgeDirection, CallHierarchyResult, DocumentDiagnosticsResult,
+    DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult, LocationsResult,
+    LspAvailabilityStatus, LspStatusResult, PublicCallHierarchyEdge, PublicCallHierarchySymbol,
+    PublicDiagnostic, PublicHover, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    PublicWorkspaceSymbol, RunnerLspPayload, RunnerLspRequest, RunnerLspResultEnvelope,
     WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
 };
-use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
+use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest};
 use crate::tool_runtime::tool_definition::{
     lookup_tool_definition, model_visible_tool_definitions, RunnerCapabilityRequirement,
     TOOL_CATEGORY_LSP,
@@ -346,7 +346,7 @@ async fn register_lsp_agent_capabilities(
     runtime
         .runner_registry
         .register(crate::test_support::current_runner_registration(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -354,13 +354,13 @@ async fn register_lsp_agent_capabilities(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "inst".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: ShellClientCapabilities {
+                capabilities: RunnerCapabilities {
                     shell: true,
                     file_read: true,
                     file_write: true,
@@ -380,7 +380,7 @@ async fn register_lsp_agent_capabilities(
         vec![registered_project(project_id, &project_path)],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
 async fn complete_lsp_agent_request(
@@ -392,7 +392,7 @@ async fn complete_lsp_agent_request(
     assert_eq!(req.kind, AGENT_LSP_REQUEST_KIND);
     assert!(req.lsp.is_some());
     assert!(req.command.is_empty());
-    let envelope = AgentLspResultEnvelope::ok(result);
+    let envelope = RunnerLspResultEnvelope::ok(result);
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -671,7 +671,7 @@ async fn call_hierarchy_dispatch_uses_typed_bridge_and_validates_bounds() {
     let request = wait_for_patch_agent_request(&runtime, "hierarchy-agent").await;
     assert_eq!(
         request.lsp.as_ref().map(|payload| &payload.request),
-        Some(&AgentLspRequest::CallHierarchy {
+        Some(&RunnerLspRequest::CallHierarchy {
             path: "src/main.rs".into(),
             line: 1,
             column: 4,
@@ -680,7 +680,7 @@ async fn call_hierarchy_dispatch_uses_typed_bridge_and_validates_bounds() {
             limit: 50,
         })
     );
-    let envelope = AgentLspResultEnvelope::ok(call_hierarchy_result("src/main.rs"));
+    let envelope = RunnerLspResultEnvelope::ok(call_hierarchy_result("src/main.rs"));
     complete_patch_agent_request(
         &runtime,
         "hierarchy-agent",
@@ -1422,21 +1422,21 @@ async fn read_only_session_allows_lsp_tools() {
 
 #[test]
 fn malformed_agent_envelope_is_rejected() {
-    assert!(parse_agent_lsp_result_envelope("hello").is_err());
+    assert!(parse_runner_lsp_result_envelope("hello").is_err());
     assert!(
-        parse_agent_lsp_result_envelope(r#"{"format":"nope","success":true,"result":{}}"#).is_err()
+        parse_runner_lsp_result_envelope(r#"{"format":"nope","success":true,"result":{}}"#)
+            .is_err()
     );
-    let ok = AgentLspResultEnvelope::ok(json!({"ok": true}));
-    let parsed = parse_agent_lsp_result_envelope(&ok.to_stdout_json()).unwrap();
+    let ok = RunnerLspResultEnvelope::ok(json!({"ok": true}));
+    let parsed = parse_runner_lsp_result_envelope(&ok.to_stdout_json()).unwrap();
     assert!(parsed.success);
 }
 
 #[test]
 fn typed_payload_rejects_arbitrary_operation() {
     let bad = r#"{"project_id":"p","request":{"operation":"arbitrary_passthrough","method":"workspace/symbol"}}"#;
-    assert!(serde_json::from_str::<AgentLspPayload>(bad).is_err());
+    assert!(serde_json::from_str::<RunnerLspPayload>(bad).is_err());
     let old_request = r#"{"request_id":"r","client_id":"c","command":"echo","timeout_secs":1,"requested_by":"t","created_at":1}"#;
-    let req: crate::shell_protocol::ShellAgentShellRequest =
-        serde_json::from_str(old_request).unwrap();
+    let req: crate::runner_protocol::RunnerRequest = serde_json::from_str(old_request).unwrap();
     assert!(req.lsp.is_none());
 }

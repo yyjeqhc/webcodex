@@ -51,8 +51,8 @@ async fn polling_http_register_accepts_generation_two() {
         .json(&json!({
             "client_id": "polling-generation-two",
             "agent_instance_id": "inst",
-            "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
-            "capabilities": crate::test_support::current_runner_capabilities(ShellClientCapabilities::default())
+            "agent_protocol_generation": RUNNER_PROTOCOL_GENERATION_V2.get(),
+            "capabilities": crate::test_support::current_runner_capabilities(RunnerCapabilities::default())
         }))
         .send(&service)
         .await;
@@ -66,7 +66,10 @@ async fn polling_http_register_accepts_generation_two() {
         .get_runner_view("polling-generation-two")
         .await
         .unwrap();
-    assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
+    assert_eq!(
+        view.runner_protocol_generation,
+        RUNNER_PROTOCOL_GENERATION_V2
+    );
     assert_eq!(view.transport, TRANSPORT_POLLING);
     assert!(view.projects.is_empty());
     assert_eq!(

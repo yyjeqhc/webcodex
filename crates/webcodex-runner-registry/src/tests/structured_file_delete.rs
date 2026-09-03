@@ -2,7 +2,7 @@ use super::*;
 
 async fn register_structured_delete_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -10,13 +10,13 @@ async fn register_structured_delete_runner(registry: &RunnerRegistry, client_id:
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities::default(),
+            capabilities: RunnerCapabilities::default(),
             policy: None,
         }))
         .await
@@ -27,12 +27,12 @@ async fn register_structured_delete_instance(
     registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
-) -> Result<ShellClientView, String> {
+) -> Result<RunnerView, String> {
     register_instance_with_capabilities(
         registry,
         client_id,
         instance,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
     )
     .await
 }
@@ -70,9 +70,9 @@ async fn enqueue_structured_file_delete_queues_when_capability_advertised() {
         .expect("capable client should accept the structured delete request");
 
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "structured-delete-on".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -163,7 +163,7 @@ async fn same_instance_structured_file_delete_reconnect_allowed() {
         .get_runner_view("monotonic-reconnect")
         .await
         .unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
+    assert_eq!(view.runner_instance_id, "inst-a");
     assert!(view.capabilities.structured_file_delete);
 }
 
@@ -188,9 +188,9 @@ async fn same_instance_reconnect_keeps_queued_structured_delete_dispatchable() {
         .await
         .unwrap();
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "reconnect-keeps".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
         })
         .await
         .unwrap()
@@ -244,9 +244,9 @@ async fn instance_replacement_drains_sync_requests_before_installing_new_lease()
 
     // The replacement Runner polls no inherited file_delete_project_files.
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "replace-drain".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
         })
         .await
         .unwrap();
@@ -266,7 +266,7 @@ async fn instance_replacement_keeps_job_reconciliation_contract_unchanged() {
         &registry,
         "replace-job-sync",
         "inst-a",
-        ShellClientCapabilities {
+        RunnerCapabilities {
             jobs: true,
             async_jobs: true,
             async_shell_jobs: true,
@@ -310,7 +310,7 @@ async fn instance_replacement_keeps_job_reconciliation_contract_unchanged() {
         &registry,
         "replace-job-sync",
         "inst-b",
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
     )
     .await
     .unwrap();
@@ -334,9 +334,9 @@ async fn instance_replacement_keeps_job_reconciliation_contract_unchanged() {
     );
     // The replacement polls no inherited structured delete and nothing leaks.
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "replace-job-sync".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
         })
         .await
         .unwrap();

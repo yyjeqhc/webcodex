@@ -3,7 +3,7 @@
 use super::super::*;
 use super::support::*;
 use crate::auth::AuthContext;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use crate::tool_runtime::handoff::{
     apply_compact_workflow_outcomes, VALIDATION_IDENTITY_REUSE_ACTION,
 };
@@ -188,7 +188,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
         &runtime,
         "handoff-fail",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -223,7 +223,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "handoff-fail", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "handoff-fail", "inst").await;
     // Return an error to simulate a failed read.
     complete_patch_agent_request(
         &runtime,
@@ -275,7 +275,7 @@ async fn expected_stop_job_failures_are_classified_without_permission_noise() {
         &runtime,
         "expected-stop",
         &auth,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![
             registered_project("alpha", "/tmp/expected-stop-alpha"),
             registered_project("beta", "/tmp/expected-stop-beta"),
@@ -604,7 +604,7 @@ async fn expectation_mismatch_and_unexpected_success_are_visible() {
         &runtime,
         "expect-mismatch",
         &auth,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![registered_project("demo", "/tmp/expect-mismatch-demo")],
     )
     .await;
@@ -690,7 +690,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         &runtime,
         "direct-expected-stop",
         &auth,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![
             registered_project("alpha", "/tmp/direct-expected-stop-alpha"),
             registered_project("beta", "/tmp/direct-expected-stop-beta"),
@@ -823,7 +823,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "direct-mixed", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "direct-mixed", "demo", tmp.path()).await;
     let auth = bootstrap_auth_context();
     let session = runtime
         .sessions
@@ -968,7 +968,7 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "cargo-expected-kind", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "cargo-expected-kind", "demo", tmp.path()).await;
     let auth = bootstrap_auth_context();
     let session = runtime.sessions.start_session(
         Some(project.clone()),
@@ -1052,7 +1052,7 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "cargo validation Agent request readiness timed out"
+                "cargo validation Runner request readiness timed out"
             );
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         };
@@ -1124,7 +1124,7 @@ async fn public_failure_expectation_preserves_raw_cargo_failure_as_expected_vali
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "cargo-public-expectation", "demo", tmp.path())
+        register_runner_project_at_path(&runtime, "cargo-public-expectation", "demo", tmp.path())
             .await;
     let auth = bootstrap_auth_context();
     let session = runtime.sessions.start_session(
@@ -1167,7 +1167,7 @@ async fn public_failure_expectation_preserves_raw_cargo_failure_as_expected_vali
         );
         assert!(
             std::time::Instant::now() < deadline,
-            "cargo_test Agent request readiness timed out"
+            "cargo_test Runner request readiness timed out"
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     };
@@ -1233,7 +1233,7 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "cargo-zero-tests", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "cargo-zero-tests", "demo", tmp.path()).await;
     let auth = bootstrap_auth_context();
     let session = runtime
         .sessions
@@ -1275,7 +1275,7 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
         );
         assert!(
             std::time::Instant::now() < deadline,
-            "cargo_test Agent request readiness timed out"
+            "cargo_test Runner request readiness timed out"
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     };
@@ -1395,7 +1395,7 @@ async fn generic_call_runtime_tool_preserves_flattened_failure_expectations() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "generic-expect", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "generic-expect", "demo", tmp.path()).await;
     let auth = bootstrap_auth_context();
     let session = runtime.sessions.start_session(
         Some(project.clone()),
@@ -1556,7 +1556,7 @@ async fn generic_call_runtime_tool_recording_session_preserves_failure_expectati
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "generic-recording", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "generic-recording", "demo", tmp.path()).await;
     let auth = bootstrap_auth_context();
     let business_session = runtime
         .sessions
@@ -1869,7 +1869,7 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     let client_id = "handoff-jobs";
     let auth = auth_context(None, true);
     let project =
-        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
+        register_runner_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
             .await;
     let session = runtime
         .sessions
@@ -1925,7 +1925,7 @@ async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
     let client_id = "handoff-stop-pending";
     let auth = auth_context(None, true);
     let project =
-        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
+        register_runner_project_at_path_with_auth(&runtime, client_id, "demo", temp.path(), &auth)
             .await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
@@ -2269,7 +2269,7 @@ async fn session_handoff_summary_with_workspace_clean_project() {
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "hw", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "hw", "demo", tmp.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("workspace handoff".to_string()));
@@ -2298,7 +2298,8 @@ async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_fai
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "handoff-clean-verdict", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "handoff-clean-verdict", "demo", tmp.path())
+            .await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("clean handoff".to_string()));
@@ -2330,9 +2331,13 @@ async fn session_handoff_does_not_resolve_a_different_validation_identity() {
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project =
-        register_agent_project_at_path(&runtime, "handoff-resolved-validation", "demo", tmp.path())
-            .await;
+    let project = register_runner_project_at_path(
+        &runtime,
+        "handoff-resolved-validation",
+        "demo",
+        tmp.path(),
+    )
+    .await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("resolved validation handoff".to_string()),
@@ -2422,7 +2427,7 @@ async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout()
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(
+    let project = register_runner_project_at_path(
         &runtime,
         "handoff-current-evidence-pass",
         "demo",
@@ -2519,7 +2524,7 @@ async fn session_handoff_stale_validation_after_content_change_warns_without_blo
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(
+    let project = register_runner_project_at_path(
         &runtime,
         "handoff-current-evidence-stale",
         "demo",
@@ -2600,7 +2605,7 @@ async fn session_handoff_command_derived_unresolved_does_not_claim_original_asse
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(
+    let project = register_runner_project_at_path(
         &runtime,
         "handoff-command-derived-unresolved",
         "demo",
@@ -2679,7 +2684,7 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(
+    let project = register_runner_project_at_path(
         &runtime,
         "handoff-resolved-unexpected-test",
         "demo",
@@ -2851,7 +2856,7 @@ async fn session_handoff_summary_only_keeps_cargo_test_failure_blocking_after_ze
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(
+    let project = register_runner_project_at_path(
         &runtime,
         "handoff-zero-tests-does-not-resolve",
         "demo",
@@ -3105,7 +3110,7 @@ async fn session_handoff_summary_non_git_project_does_not_fail_whole_tool() {
     let tmp = tempfile::tempdir().unwrap();
     // Intentionally do NOT init a git repo.
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "ng", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "ng", "demo", tmp.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("non-git handoff".to_string()));
@@ -3150,7 +3155,7 @@ async fn session_handoff_summary_includes_latest_last_known_good_checkpoint() {
 
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-handoff", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-handoff", "agent-proj", root).await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("checkpoint handoff".to_string()),

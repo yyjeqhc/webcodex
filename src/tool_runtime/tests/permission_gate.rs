@@ -4,7 +4,7 @@ use super::super::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use super::super::permissions::{AuthorityMode, EffectiveAuthorityConfig, PermissionEvaluator};
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ async fn register_write_agent(runtime: &ToolRuntime, client_id: &str) {
         runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             shell: true,
             git: true,
@@ -277,7 +277,7 @@ async fn observe_tool_skips_permission_evaluator() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },

@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
-use webcodex_core::shell_protocol::{
+use webcodex_core::runner_protocol::{
     validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
-    AgentConfigReloadStatus, ProviderCallSummary, ShellAgentProjectSummary, ShellFileOpRequest,
+    ProviderCallSummary, RunnerConfigReloadStatus, RunnerProjectSummary, ShellFileOpRequest,
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
@@ -27,8 +27,8 @@ const MAX_PROVIDER_TEXT_CHARS: usize = 120;
 const MAX_PROVIDER_TOOL_NAMES: usize = 64;
 
 pub(super) fn normalize_config_reload(
-    status: Option<AgentConfigReloadStatus>,
-) -> Option<AgentConfigReloadStatus> {
+    status: Option<RunnerConfigReloadStatus>,
+) -> Option<RunnerConfigReloadStatus> {
     let mut status = status?;
     const RESULTS: &str = "not_attempted success partial failure unsupported";
     const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid reload_unsupported";
@@ -210,7 +210,7 @@ pub(super) fn validate_id(value: &str, field: &str) -> Result<(), String> {
 /// also any short alphanumeric/dash string so future identity formats keep
 /// working, but we reject empty / oversized / control-char values. This is not
 /// a secret, so the value itself may appear in logs and `runtime_status`.
-pub(super) fn validate_agent_instance_id(value: &str) -> Result<(), String> {
+pub(super) fn validate_runner_instance_id(value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err("agent_instance_id must not be empty".to_string());
     }
@@ -622,9 +622,7 @@ pub(super) fn trim_string(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-pub(super) fn validate_project_summary(
-    project: &ShellAgentProjectSummary,
-) -> Result<(), &'static str> {
+pub(super) fn validate_project_summary(project: &RunnerProjectSummary) -> Result<(), &'static str> {
     if project.id.is_empty()
         || project.id.len() > 64
         || !project
@@ -690,7 +688,7 @@ pub(super) fn validate_project_summary(
 }
 
 pub(super) fn validate_project_summary_batch(
-    projects: &[ShellAgentProjectSummary],
+    projects: &[RunnerProjectSummary],
 ) -> Result<usize, &'static str> {
     for project in projects {
         validate_project_summary(project)?;
@@ -731,7 +729,7 @@ fn validate_sha256(value: &Option<String>) -> Result<(), String> {
 mod provider_status_tests {
     use super::*;
     use std::collections::BTreeMap;
-    use webcodex_core::shell_protocol::ClaudeCodeProviderStatus;
+    use webcodex_core::runner_protocol::ClaudeCodeProviderStatus;
 
     fn provider_status() -> ToolProvidersStatus {
         ToolProvidersStatus {
@@ -796,7 +794,7 @@ mod provider_status_tests {
 
     #[test]
     fn config_reload_status_is_whitelisted_sorted_and_bounded() {
-        let status = normalize_config_reload(Some(AgentConfigReloadStatus {
+        let status = normalize_config_reload(Some(RunnerConfigReloadStatus {
             generation: 3,
             last_reload_result: "partial".to_string(),
             last_reload_error_code: None,
@@ -821,7 +819,7 @@ mod provider_status_tests {
         assert!(status.last_reload_error_field.is_none());
         assert!(status.last_reload_error_reason.is_none());
 
-        let diagnostic = normalize_config_reload(Some(AgentConfigReloadStatus {
+        let diagnostic = normalize_config_reload(Some(RunnerConfigReloadStatus {
             generation: 4,
             last_reload_result: "failure".to_string(),
             last_reload_error_code: Some("config_validation_failed".to_string()),
@@ -839,9 +837,9 @@ mod provider_status_tests {
             diagnostic.last_reload_error_reason.as_deref(),
             Some("out_of_range")
         );
-        assert!(normalize_config_reload(Some(AgentConfigReloadStatus {
+        assert!(normalize_config_reload(Some(RunnerConfigReloadStatus {
             last_reload_result: "raw error follows".to_string(),
-            ..AgentConfigReloadStatus::default()
+            ..RunnerConfigReloadStatus::default()
         }))
         .is_none());
     }

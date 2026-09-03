@@ -426,7 +426,8 @@ struct RuntimeConsoleRunnerSummary {
     connected: bool,
     status: Option<String>,
     transport: Option<String>,
-    agent_protocol_generation: Option<u64>,
+    #[serde(rename = "agent_protocol_generation")]
+    runner_protocol_generation: Option<u64>,
     last_seen_age_secs: Option<i64>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -470,8 +471,8 @@ struct RuntimeConsoleRunnerProject {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     connected: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    agent_status: Option<String>,
+    #[serde(rename = "agent_status", skip_serializing_if = "Option::is_none")]
+    runner_status: Option<String>,
     sessions: WorkflowSessionConsoleAggregate,
 }
 
@@ -551,8 +552,8 @@ struct RuntimeConsoleProject {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     connected: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    agent_status: Option<String>,
+    #[serde(rename = "agent_status", skip_serializing_if = "Option::is_none")]
+    runner_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sessions: Option<WorkflowSessionConsoleAggregate>,
 }
@@ -1044,22 +1045,22 @@ fn scan_runtime_home(
 }
 
 fn runner_fleet_rows(
-    agents: &Value,
+    runners: &Value,
     status_clients: &[Value],
     scan: &RuntimeConsoleHomeScan,
 ) -> Vec<RuntimeConsoleRunnerSummary> {
-    let mut rows = agents
+    let mut rows = runners
         .get("agents")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|agent| {
-            let client_id = safe_string(agent.get("client_id"), MAX_CLIENT_ID_CHARS)?;
+        .filter_map(|runner_value| {
+            let client_id = safe_string(runner_value.get("client_id"), MAX_CLIENT_ID_CHARS)?;
             let status = status_clients.iter().find(|candidate| {
                 candidate.get("client_id").and_then(Value::as_str) == Some(client_id.as_str())
             });
-            let build = agent.get("build").unwrap_or(&Value::Null);
-            let concurrency = agent.get("job_concurrency").unwrap_or(&Value::Null);
+            let build = runner_value.get("build").unwrap_or(&Value::Null);
+            let concurrency = runner_value.get("job_concurrency").unwrap_or(&Value::Null);
             let projects_scanned = scan
                 .runner_projects_scanned
                 .get(&client_id)
@@ -1073,13 +1074,15 @@ fn runner_fleet_rows(
             sessions.sessions_truncated |= scan.project_scan_truncated;
             Some(RuntimeConsoleRunnerSummary {
                 client_id: client_id.clone(),
-                connected: safe_bool(agent.get("connected")),
-                status: safe_string(agent.get("status"), MAX_STATUS_CHARS),
-                transport: safe_string(agent.get("transport"), MAX_STATUS_CHARS),
-                agent_protocol_generation: agent
+                connected: safe_bool(runner_value.get("connected")),
+                status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
+                transport: safe_string(runner_value.get("transport"), MAX_STATUS_CHARS),
+                runner_protocol_generation: runner_value
                     .get("agent_protocol_generation")
                     .and_then(Value::as_u64),
-                last_seen_age_secs: agent.get("last_seen_age_secs").and_then(Value::as_i64),
+                last_seen_age_secs: runner_value
+                    .get("last_seen_age_secs")
+                    .and_then(Value::as_i64),
                 version: safe_string(build.get("version"), 80),
                 build_git_commit: status
                     .and_then(|value| safe_string(value.get("build_git_commit"), 80))
@@ -1099,7 +1102,7 @@ fn runner_fleet_rows(
                 version_matches_server: status
                     .and_then(|value| value.get("version_matches_server"))
                     .and_then(Value::as_bool),
-                active_jobs: safe_usize(agent.get("active_jobs")),
+                active_jobs: safe_usize(runner_value.get("active_jobs")),
                 job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
                 jobs_running: safe_usize(concurrency.get("running")),
                 jobs_queued: safe_usize(concurrency.get("queued")),
@@ -1182,7 +1185,7 @@ fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
             .get("connected")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        agent_status: value
+        runner_status: value
             .get("agent_status")
             .and_then(|value| bounded_text(value, MAX_STATUS_CHARS)),
         sessions: None,
@@ -1436,8 +1439,8 @@ async fn overview_for_auth(
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
     let status = runtime_status_value(runtime, auth, None).await?;
-    let agents = list_runners_value(runtime, auth, None).await?;
-    let summary = agents.get("summary").unwrap_or(&Value::Null);
+    let runners_value = list_runners_value(runtime, auth, None).await?;
+    let summary = runners_value.get("summary").unwrap_or(&Value::Null);
     let build = status.get("build").unwrap_or(&Value::Null);
     let status_clients = status
         .get("agents")
@@ -1488,7 +1491,7 @@ async fn overview_for_auth(
         },
         |visible| scan_runtime_home(runtime, visible, &running_jobs),
     );
-    let runners = runner_fleet_rows(&agents, &status_clients, &home);
+    let runners = runner_fleet_rows(&runners_value, &status_clients, &home);
     let runner_count = safe_usize(summary.get("count")).max(runners.len());
     let online = safe_usize(summary.get("online"));
     let stale = safe_usize(summary.get("stale"));
@@ -1532,16 +1535,16 @@ async fn runner_for_auth(
     {
         return Err(RuntimeConsoleError::Invalid);
     }
-    let agents = list_runners_value(runtime, auth, Some(client_id.to_string())).await?;
-    let agent = agents
+    let runners = list_runners_value(runtime, auth, Some(client_id.to_string())).await?;
+    let runner_value = runners
         .get("agents")
         .and_then(Value::as_array)
         .and_then(|values| values.first())
         .ok_or(RuntimeConsoleError::NotFound)?;
     let status = runtime_status_value(runtime, auth, Some(client_id.to_string())).await?;
     let focus = status.get("focus").unwrap_or(&Value::Null);
-    let build = agent.get("build").unwrap_or(&Value::Null);
-    let concurrency = agent.get("job_concurrency").unwrap_or(&Value::Null);
+    let build = runner_value.get("build").unwrap_or(&Value::Null);
+    let concurrency = runner_value.get("job_concurrency").unwrap_or(&Value::Null);
     let project_access = project_read_available(auth);
     let project_limit = project_limit
         .unwrap_or(DEFAULT_RUNNER_PROJECT_LIMIT)
@@ -1571,18 +1574,18 @@ async fn runner_for_auth(
             name: project.name,
             path: project.path,
             connected: project.connected,
-            agent_status: project.agent_status,
+            runner_status: project.runner_status,
             sessions: aggregate_console_list(&list),
         });
     }
     let projects_returned = project_summaries.len();
     Ok(RuntimeConsoleRunner {
         client_id: client_id.to_string(),
-        connected: agent
+        connected: runner_value
             .get("connected")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        status: safe_string(agent.get("status"), MAX_STATUS_CHARS),
+        status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
         version: safe_string(build.get("version"), 80),
         build_git_commit: safe_string(build.get("git_commit"), 80),
         build_git_dirty: build.get("git_dirty").and_then(Value::as_bool),
@@ -1592,7 +1595,7 @@ async fn runner_for_auth(
                 .and_then(|value| value.get("status")),
             MAX_STATUS_CHARS,
         ),
-        active_jobs: safe_usize(agent.get("active_jobs")),
+        active_jobs: safe_usize(runner_value.get("active_jobs")),
         job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
         jobs_running: safe_usize(concurrency.get("running")),
         jobs_queued: safe_usize(concurrency.get("queued")),
@@ -2314,9 +2317,7 @@ async fn communication_inbox_consume(req: &mut Request, depot: &mut Depot, res: 
 mod tests {
     use super::*;
     use crate::auth::AuthKind;
-    use crate::shell_protocol::{
-        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
-    };
+    use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
     use crate::tool_runtime::sessions::{
         CompleteSessionMessageInput, PostSessionMessageInput, SessionCreateOptions, SessionGuards,
         SessionMessageKind, SessionMessagePriority,
@@ -2326,8 +2327,8 @@ mod tests {
     use salvo::Service;
     use serde_json::json;
 
-    fn project(id: &str, private_path: &str) -> ShellAgentProjectSummary {
-        ShellAgentProjectSummary {
+    fn project(id: &str, private_path: &str) -> RunnerProjectSummary {
+        RunnerProjectSummary {
             id: id.to_string(),
             name: Some(format!("Project {id}")),
             path: private_path.to_string(),
@@ -2353,12 +2354,12 @@ mod tests {
         private_path: &str,
         auth: Option<&AuthContext>,
     ) {
-        let agent_instance_id = format!("inst-{client_id}");
+        let runner_instance_id = format!("inst-{client_id}");
         let access = auth.map(crate::test_support::runner_access);
         runtime
             .runner_registry
             .register_with_auth(
-                ShellClientRegisterRequest {
+                RunnerRegisterRequest {
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,
@@ -2366,14 +2367,15 @@ mod tests {
                     coding_agent_providers: None,
                     coding_agent_inventory: None,
                     client_id: client_id.to_string(),
-                    agent_instance_id: agent_instance_id.clone(),
-                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                    runner_instance_id: runner_instance_id.clone(),
+                    runner_protocol_generation:
+                        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                     display_name: Some(format!("Device {client_id}")),
                     owner: auth.and_then(|auth| auth.username.clone()),
                     hostname: Some(format!("private-host-{client_id}")),
                     host_context: None,
                     capabilities: crate::test_support::current_runner_capabilities(
-                        ShellClientCapabilities::default(),
+                        RunnerCapabilities::default(),
                     ),
                     policy: None,
                 },
@@ -2384,7 +2386,7 @@ mod tests {
         crate::test_support::apply_project_inventory_snapshot(
             &runtime.runner_registry,
             client_id,
-            &agent_instance_id,
+            &runner_instance_id,
             vec![project(project_id, private_path)],
         )
         .await;
@@ -2687,7 +2689,7 @@ mod tests {
                     name: Some(format!("Project {index}")),
                     path: None,
                     connected: true,
-                    agent_status: Some("online".to_string()),
+                    runner_status: Some("online".to_string()),
                     sessions: None,
                 })
                 .collect(),
@@ -2732,7 +2734,7 @@ mod tests {
                 name: Some("Busy".to_string()),
                 path: Some("/root/git/busy".to_string()),
                 connected: true,
-                agent_status: Some("online".to_string()),
+                runner_status: Some("online".to_string()),
                 sessions: None,
             }],
             total: 1,
@@ -2775,7 +2777,7 @@ mod tests {
             runner_projects_scanned: HashMap::from([("runner-a".to_string(), 4)]),
             project_scan_truncated: false,
         };
-        let agents = serde_json::json!({
+        let runners = serde_json::json!({
             "agents": [{
                 "client_id": "runner-a",
                 "connected": true,
@@ -2795,7 +2797,7 @@ mod tests {
             "version_matches_server": false,
             "source_alignment": {"status": "different"}
         })];
-        let rows = runner_fleet_rows(&agents, &status, &scan);
+        let rows = runner_fleet_rows(&runners, &status, &scan);
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
         assert_eq!(row.client_id, "runner-a");
@@ -2814,7 +2816,7 @@ mod tests {
         assert_eq!(row.source_alignment.as_deref(), Some("different"));
         assert_eq!(row.version_matches_server, Some(false));
         assert_eq!(row.transport.as_deref(), Some("websocket"));
-        assert_eq!(row.agent_protocol_generation, Some(2));
+        assert_eq!(row.runner_protocol_generation, Some(2));
     }
 
     #[test]

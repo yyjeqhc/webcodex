@@ -48,7 +48,7 @@ async fn dispatch_with_context_and_local_agent(
             "context projection fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -182,9 +182,11 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
     std::fs::write(bravo_root.path().join("AGENTS.md"), bravo_rules).unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let alpha =
-        register_agent_project_at_path(&runtime, "context-alpha", "alpha", alpha_root.path()).await;
+        register_runner_project_at_path(&runtime, "context-alpha", "alpha", alpha_root.path())
+            .await;
     let bravo =
-        register_agent_project_at_path(&runtime, "context-bravo", "bravo", bravo_root.path()).await;
+        register_runner_project_at_path(&runtime, "context-bravo", "bravo", bravo_root.path())
+            .await;
 
     let result = dispatch_with_context_and_local_agent(
         &runtime,
@@ -301,7 +303,7 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
     .unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "context-provider-fail", "demo", root.path())
+        register_runner_project_at_path(&runtime, "context-provider-fail", "demo", root.path())
             .await;
     let auth = auth_context(None, true);
     let task = tokio::spawn({
@@ -351,7 +353,7 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
                 failed_instruction_reads += 1;
             } else {
                 assert!(!main_observed, "main GitStatus should execute once");
-                let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+                let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
                 assert_eq!(
                     exit_code, 0,
                     "main GitStatus fixture must succeed: {stderr}"
@@ -399,7 +401,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
     .unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "context-write", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "context-write", "demo", root.path()).await;
     let auth = auth_context(None, true);
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -456,7 +458,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
                 "only post-tool instruction observation may follow the write: {}",
                 request.kind
             );
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 &runtime,
                 "context-write",

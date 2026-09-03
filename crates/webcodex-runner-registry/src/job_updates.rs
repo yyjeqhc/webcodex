@@ -12,7 +12,7 @@ use super::requests::{
     remove_pending_request_locked,
 };
 use super::state::{DetachedIdempotencyIntent, ShellJobRecord, ShellJobVisibility};
-use super::validation::{validate_agent_instance_id, validate_id, validate_run_request};
+use super::validation::{validate_id, validate_run_request, validate_runner_instance_id};
 use super::{
     now_ts, RunnerFeature, RunnerRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
     DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
@@ -23,10 +23,10 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use uuid::Uuid;
-use webcodex_core::shell_protocol::{
+use webcodex_core::runner_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
-    ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellCommandExecutionState,
-    ShellJobContext, ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
+    RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobContext,
+    ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
     ShellJobValidationMetadata, ShellJobValidationStep, ShellProcessArgv, ShellRunRequest,
     ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES,
     PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
@@ -287,7 +287,7 @@ struct JobPublicMutationSignature {
     exit_code: Option<i32>,
     duration_ms: Option<u64>,
     command_execution_state: Option<ShellCommandExecutionState>,
-    validation_progress: Option<webcodex_core::shell_protocol::ShellJobValidationProgress>,
+    validation_progress: Option<webcodex_core::runner_protocol::ShellJobValidationProgress>,
     recovered_after_server_restart: bool,
     reconciled_at: Option<i64>,
 }
@@ -318,7 +318,7 @@ fn invalid_progress(code: &'static str) -> Result<(), ValidationProtocolError> {
 
 fn validate_validation_progress(
     job: &ShellJobRecord,
-    update: &ShellAgentJobUpdateRequest,
+    update: &RunnerJobUpdateRequest,
 ) -> Result<(), ValidationProtocolError> {
     if job.validation_steps.is_empty() {
         return if update.validation_progress.is_none() {
@@ -399,7 +399,7 @@ fn validate_validation_progress(
 
 fn validate_command_execution_state(
     job: &ShellJobRecord,
-    update: &ShellAgentJobUpdateRequest,
+    update: &RunnerJobUpdateRequest,
 ) -> Result<(), ValidationProtocolError> {
     let status = update.status.trim();
     let terminal = is_final_job_status(status);
@@ -818,7 +818,7 @@ impl RunnerRegistry {
             validation: validation.clone(),
             structured_execution: structured_metadata.clone(),
         };
-        let request = ShellAgentShellRequest {
+        let request = RunnerRequest {
             request_id: request_id.clone(),
             client_id: client_id.clone(),
             kind: request_kind.to_string(),
@@ -920,7 +920,7 @@ impl RunnerRegistry {
         }
         if validation_steps
             .iter()
-            .any(webcodex_core::shell_protocol::ShellJobValidationStep::is_structured_go_test_json)
+            .any(webcodex_core::runner_protocol::ShellJobValidationStep::is_structured_go_test_json)
             && !runner
                 .runner_features
                 .supports(RunnerFeature::StructuredGoTestJson)
@@ -960,7 +960,7 @@ impl RunnerRegistry {
         {
             return Err("project_unregister_in_progress".to_string());
         }
-        let agent_instance_id = runner.agent_instance_id.clone();
+        let runner_instance_id = runner.runner_instance_id.clone();
         let auth_group = runner.auth_group.clone();
         if let Some(intent) = detached_intent.as_ref() {
             if let Some(existing) = inner.jobs_by_id.get(&job_id) {
@@ -998,7 +998,7 @@ impl RunnerRegistry {
             request_id: Some(request_id.clone()),
             client_id: client_id.clone(),
             auth_group,
-            agent_instance_id,
+            runner_instance_id,
             kind: job_kind.to_string(),
             project_id: metadata.project_id,
             session_id: metadata.session_id,
@@ -1218,7 +1218,7 @@ impl RunnerRegistry {
         ) && job.status != "stop_requested"
         {
             let stop_request_id = next_request_id();
-            let request = ShellAgentShellRequest {
+            let request = RunnerRequest {
                 request_id: stop_request_id.clone(),
                 client_id: job.client_id.clone(),
                 kind: "stop_job".to_string(),
@@ -1308,7 +1308,7 @@ impl RunnerRegistry {
             return false;
         }
         let client_id = job.client_id.clone();
-        let agent_instance_id = job.agent_instance_id.clone();
+        let runner_instance_id = job.runner_instance_id.clone();
         // Preserve same-instance reconnect suppression whenever the exact
         // Runner lease is still current. If that lease disappeared or was
         // replaced after the terminal snapshot was already projected, do not
@@ -1319,7 +1319,7 @@ impl RunnerRegistry {
         if let Some(runner) = inner
             .runners
             .get_mut(&client_id)
-            .filter(|runner| runner.agent_instance_id == agent_instance_id)
+            .filter(|runner| runner.runner_instance_id == runner_instance_id)
         {
             // The suppression store predates raw-shell/validation hidden
             // handoff, but its proof is only the exact
@@ -1751,7 +1751,7 @@ impl RunnerRegistry {
             "agent_queued" | "running" | "stop_requested" => {
                 let stop_request_id = next_request_id();
                 let client_id = job.client_id.clone();
-                let request = ShellAgentShellRequest {
+                let request = RunnerRequest {
                     request_id: stop_request_id.clone(),
                     client_id: client_id.clone(),
                     kind: "stop_job".to_string(),
@@ -1807,10 +1807,7 @@ impl RunnerRegistry {
     /// Polling-transport job update entry point. Job ownership and update
     /// sequence rules decide acceptance; this path refreshes `last_seen` for
     /// the active instance. Used by the HTTP `/job_update` handler.
-    pub async fn update_job(
-        &self,
-        body: ShellAgentJobUpdateRequest,
-    ) -> Result<ShellJobInfo, String> {
+    pub async fn update_job(&self, body: RunnerJobUpdateRequest) -> Result<ShellJobInfo, String> {
         self.update_job_checked(body, None).await
     }
 
@@ -1822,7 +1819,7 @@ impl RunnerRegistry {
     /// however, must not refresh the new connection's `last_seen` liveness.
     pub async fn update_job_for_connection(
         &self,
-        body: ShellAgentJobUpdateRequest,
+        body: RunnerJobUpdateRequest,
         connection_id: &str,
     ) -> Result<ShellJobInfo, String> {
         self.update_job_checked(body, Some(connection_id)).await
@@ -1830,12 +1827,12 @@ impl RunnerRegistry {
 
     async fn update_job_checked(
         &self,
-        body: ShellAgentJobUpdateRequest,
+        body: RunnerJobUpdateRequest,
         expected_connection_id: Option<&str>,
     ) -> Result<ShellJobInfo, String> {
         validate_id(&body.client_id, "client_id")?;
         validate_id(&body.job_id, "job_id")?;
-        validate_agent_instance_id(&body.agent_instance_id)?;
+        validate_runner_instance_id(&body.runner_instance_id)?;
         if let Some(snapshot) = body.log_snapshot.as_ref() {
             validate_stream_snapshot(&snapshot.stdout, "job update stdout snapshot")?;
             validate_stream_snapshot(&snapshot.stderr, "job update stderr snapshot")?;
@@ -1853,7 +1850,7 @@ impl RunnerRegistry {
         let mut inner = self.inner.lock().await;
         // Reject job updates from a stale/replaced instance before refreshing
         // liveness or mutating job state.
-        assert_active_instance_locked(&inner, &body.client_id, &body.agent_instance_id)?;
+        assert_active_instance_locked(&inner, &body.client_id, &body.runner_instance_id)?;
         let sequenced = inner.runners.get(&body.client_id).is_some_and(|runner| {
             runner
                 .runner_features
@@ -1939,7 +1936,7 @@ impl RunnerRegistry {
             if job.client_id != body.client_id {
                 return Err("job_id does not belong to client_id".to_string());
             }
-            if job.agent_instance_id != body.agent_instance_id {
+            if job.runner_instance_id != body.runner_instance_id {
                 return Err("job_id belongs to a replaced runner instance".to_string());
             }
             if body

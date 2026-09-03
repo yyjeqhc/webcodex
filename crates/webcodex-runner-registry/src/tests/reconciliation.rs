@@ -8,10 +8,10 @@ use super::{
     clamp_grace, job_recovery_grace_secs, now_ts, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS,
     JOB_RECOVERY_GRACE_SECS, MAX_OUTPUT_BYTES,
 };
-use crate::shell_protocol::{
-    PersistentShellResult, ShellAgentJobUpdateRequest, ShellAgentPollRequest,
-    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
+use crate::runner_protocol::{
+    PersistentShellResult, RunnerJobUpdateRequest, RunnerPollRequest,
+    RunnerProjectSummary, RunnerRequest, RunnerCapabilities,
+    RunnerRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot,
     ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
     ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, JOB_INVENTORY_MAX_TERMINAL_JOBS,
@@ -25,8 +25,8 @@ const PROJECT_ID: &str = "demo";
 const RUNTIME_PROJECT_ID: &str = "agent:oe:demo";
 const SESSION_ID: &str = "wc_sess_job_reconciliation";
 
-fn reconciliation_capabilities() -> ShellClientCapabilities {
-    ShellClientCapabilities {
+fn reconciliation_capabilities() -> RunnerCapabilities {
+    RunnerCapabilities {
         jobs: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -41,8 +41,8 @@ fn reconciliation_capabilities() -> ShellClientCapabilities {
     }
 }
 
-fn project_summary() -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
+fn project_summary() -> RunnerProjectSummary {
+    RunnerProjectSummary {
         id: PROJECT_ID.to_string(),
         name: Some("Demo".to_string()),
         path: "/srv/demo".to_string(),
@@ -68,11 +68,11 @@ fn empty_inventory() -> ShellJobInventory {
     }
 }
 
-fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClientRegisterRequest {
-    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
+fn register_request(instance: &str, inventory: ShellJobInventory) -> RunnerRegisterRequest {
+    crate::test_support::current_runner_registration(RunnerRegisterRequest {
         client_id: CLIENT_ID.to_string(),
-        agent_instance_id: instance.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: instance.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: Some("reconciliation test runner".to_string()),
         owner: Some("tester".to_string()),
         hostname: None,
@@ -115,8 +115,8 @@ async fn start_and_take_over(
     registry: &RunnerRegistry,
     instance: &str,
 ) -> (
-    crate::shell_protocol::ShellJobInfo,
-    crate::shell_protocol::ShellAgentShellRequest,
+    crate::runner_protocol::ShellJobInfo,
+    crate::runner_protocol::RunnerRequest,
 ) {
     let job = registry
         .start_job_with_metadata(
@@ -134,9 +134,9 @@ async fn start_and_take_over(
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: instance.to_string(),
+            runner_instance_id: instance.to_string(),
         })
         .await
         .unwrap()
@@ -164,8 +164,8 @@ fn stream(tail: &str, first_retained_line: usize, truncated: bool) -> ShellJobSt
 }
 
 fn snapshot_from_request(
-    job: &crate::shell_protocol::ShellJobInfo,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    job: &crate::runner_protocol::ShellJobInfo,
+    request: &crate::runner_protocol::RunnerRequest,
     status: &str,
     update_seq: u64,
     stdout: ShellJobStreamSnapshot,
@@ -200,10 +200,10 @@ fn update(
     status: &str,
     stdout_chunk: Option<&str>,
     finished: bool,
-) -> ShellAgentJobUpdateRequest {
-    ShellAgentJobUpdateRequest {
+) -> RunnerJobUpdateRequest {
+    RunnerJobUpdateRequest {
         client_id: CLIENT_ID.to_string(),
-        agent_instance_id: instance.to_string(),
+        runner_instance_id: instance.to_string(),
         job_id: job_id.to_string(),
         request_id: None,
         update_seq: Some(sequence),
@@ -263,9 +263,9 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -277,9 +277,9 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
                              completed: usize,
                              current_step: Option<&str>,
                              finished: bool| {
-        ShellAgentJobUpdateRequest {
+        RunnerJobUpdateRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
             job_id: job.job_id.clone(),
             request_id: Some(request.request_id.clone()),
             update_seq: Some(sequence),
@@ -364,9 +364,9 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
         .await
         .unwrap();
     let request = registry_a
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -531,9 +531,9 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
         .await
         .unwrap();
     let request = registry_a
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -582,9 +582,9 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
     );
     assert!(
         registry_b
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -630,9 +630,9 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
     assert_eq!(stderr.as_deref(), Some("retained process stderr\n"));
     assert!(
         registry_b
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -691,9 +691,9 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
     assert_eq!(registry_c.list_jobs(Some(10)).await.len(), 1);
     assert!(
         registry_c
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -741,9 +741,9 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
         .await
         .unwrap();
     let request = registry_a
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -828,9 +828,9 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
     assert_eq!(registry_b.list_jobs(Some(10)).await.len(), 1);
     assert!(
         registry_b
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -865,9 +865,9 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -946,9 +946,9 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
     assert!(registry.list_jobs(Some(10)).await.is_empty());
     assert!(
         registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -1016,9 +1016,9 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
     assert_eq!(fresh_registry.list_jobs(Some(10)).await.len(), 1);
     assert!(
         fresh_registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()
@@ -1051,9 +1051,9 @@ async fn projected_hidden_raw_shell_terminal_does_not_resurrect_on_same_instance
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -1150,9 +1150,9 @@ async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -1390,7 +1390,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
 
     let original_request_id = request.request_id.clone();
     let control_request_id = format!("control-{}", job.job_id);
-    let mut control_request: ShellAgentShellRequest = request.clone();
+    let mut control_request: RunnerRequest = request.clone();
     control_request.request_id = control_request_id.clone();
     control_request.kind = "stop_job".to_string();
     control_request.job_id = Some(job.job_id.clone());
@@ -1409,7 +1409,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 expected_runner_owner: None,
                 expected_project_id: None,
                 expected_project_cwd: None,
-                expected_mcp_gateway_agent_instance_id: None,
+                expected_mcp_gateway_runner_instance_id: None,
                 skill_store_fence: None,
                 dispatched: true,
                 expected_mcp_gateway_provider_id: None,
@@ -1428,7 +1428,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 expected_runner_owner: None,
                 expected_project_id: None,
                 expected_project_cwd: None,
-                expected_mcp_gateway_agent_instance_id: None,
+                expected_mcp_gateway_runner_instance_id: None,
                 skill_store_fence: None,
                 dispatched: false,
                 expected_mcp_gateway_provider_id: None,
@@ -1939,9 +1939,9 @@ async fn job_reconciliation_instance_replacement_does_not_redispatch_server_queu
         Some("runner_instance_replaced")
     );
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_B.to_string(),
+            runner_instance_id: INSTANCE_B.to_string(),
         })
         .await
         .unwrap()
@@ -2061,9 +2061,9 @@ async fn job_reconciliation_stop_restored_job_targets_original_id() {
         .unwrap();
     assert_eq!(requested.status, "stop_requested");
     let stop = registry_b
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -2457,7 +2457,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .contains("requires job_inventory"));
     let mut unexpected_inventory = register_request(INSTANCE_A, empty_inventory());
     unexpected_inventory.capabilities =
-        crate::test_support::current_runner_capabilities(ShellClientCapabilities::default());
+        crate::test_support::current_runner_capabilities(RunnerCapabilities::default());
     assert!(mismatch_registry
         .register(unexpected_inventory)
         .await
@@ -2467,7 +2467,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
     register(&downgrade_registry, INSTANCE_A, empty_inventory()).await;
     let mut downgraded = register_request(INSTANCE_A, empty_inventory());
     downgraded.capabilities =
-        crate::test_support::current_runner_capabilities(ShellClientCapabilities::default());
+        crate::test_support::current_runner_capabilities(RunnerCapabilities::default());
     downgraded.job_inventory = None;
     assert!(downgrade_registry
         .register(downgraded)
@@ -2478,7 +2478,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
     let registry = RunnerRegistry::default();
     let mut request = register_request(INSTANCE_A, empty_inventory());
     request.capabilities =
-        crate::test_support::current_runner_capabilities(ShellClientCapabilities {
+        crate::test_support::current_runner_capabilities(RunnerCapabilities {
             jobs: true,
             async_jobs: true,
             async_shell_jobs: true,
@@ -2491,9 +2491,9 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .await
         .unwrap();
     registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: CLIENT_ID.to_string(),
-            agent_instance_id: INSTANCE_A.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
         })
         .await
         .unwrap()
@@ -2758,9 +2758,9 @@ async fn recovery_sweep_pass_cap_bounds_a_single_pass() {
             .await
             .unwrap();
         let request = registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: CLIENT_ID.to_string(),
-                agent_instance_id: INSTANCE_A.to_string(),
+                runner_instance_id: INSTANCE_A.to_string(),
             })
             .await
             .unwrap()

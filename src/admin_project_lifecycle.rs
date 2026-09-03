@@ -1,7 +1,7 @@
 use crate::auth::AuthContext;
 use crate::db::AdminProjectAudit;
 use crate::runner_http::{RunnerFeature, RunnerRegistry};
-use crate::shell_protocol::ShellAgentProjectSummary;
+use crate::runner_protocol::RunnerProjectSummary;
 use crate::tool_runtime::{ToolResult, ToolRuntime};
 use crate::Database;
 use serde::{Deserialize, Serialize};
@@ -349,7 +349,7 @@ impl AdminProjectLifecycleService {
                 .runner_registry
                 .remove_runner_project_for_instance(
                     &client_id,
-                    &client.view.agent_instance_id,
+                    &client.view.runner_instance_id,
                     &project_id,
                 )
                 .await
@@ -377,7 +377,7 @@ impl AdminProjectLifecycleService {
                 .runner_registry
                 .upsert_runner_project_for_instance(
                     &client_id,
-                    &client.view.agent_instance_id,
+                    &client.view.runner_instance_id,
                     summary,
                 )
                 .await
@@ -671,8 +671,8 @@ fn map_create_result(
     })
 }
 
-fn lifecycle_summary(output: &Value, id: &str) -> Option<ShellAgentProjectSummary> {
-    Some(ShellAgentProjectSummary {
+fn lifecycle_summary(output: &Value, id: &str) -> Option<RunnerProjectSummary> {
+    Some(RunnerProjectSummary {
         id: id.to_string(),
         name: output
             .get("name")
@@ -844,9 +844,7 @@ mod tests {
     use super::*;
     use crate::auth::AuthKind;
     use crate::runner_http::ShellJobStartMetadata;
-    use crate::shell_protocol::{
-        ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest,
-    };
+    use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest, ShellJobOpRequest};
 
     fn user_auth(username: &str) -> AuthContext {
         AuthContext {
@@ -887,15 +885,16 @@ mod tests {
         let target = "agent:owned-runner:demo";
         registry
             .register(crate::test_support::current_runner_registration(
-                ShellClientRegisterRequest {
+                RunnerRegisterRequest {
                     client_id: "owned-runner".to_string(),
-                    agent_instance_id: "instance-owned".to_string(),
-                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                    runner_instance_id: "instance-owned".to_string(),
+                    runner_protocol_generation:
+                        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: Some("alice".to_string()),
                     hostname: None,
                     host_context: None,
-                    capabilities: ShellClientCapabilities {
+                    capabilities: RunnerCapabilities {
                         jobs: true,
                         async_jobs: true,
                         async_shell_jobs: true,

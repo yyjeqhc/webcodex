@@ -4,7 +4,7 @@ use super::*;
 async fn registry_allows_session_scoped_run_without_ssh_resource() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,14 +12,14 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "xrh".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))

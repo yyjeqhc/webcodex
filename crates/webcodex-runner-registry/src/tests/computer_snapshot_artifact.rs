@@ -27,7 +27,7 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         wait_timeout_secs: 60,
     }
     };
-    let register = |client_id: &str, instance_id: &str| ShellClientRegisterRequest {
+    let register = |client_id: &str, instance_id: &str| RunnerRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -35,13 +35,13 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         coding_agent_providers: None,
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
-        agent_instance_id: instance_id.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: instance_id.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
         host_context: None,
-        capabilities: crate::test_support::current_runner_capabilities(ShellClientCapabilities {
+        capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
             shell: true,
             ..Default::default()
         }),
@@ -70,9 +70,9 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .await
         .unwrap();
     let queued = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-artifact-write".to_string(),
-            agent_instance_id: "artifact-inst".to_string(),
+            runner_instance_id: "artifact-inst".to_string(),
         })
         .await
         .unwrap()
@@ -117,9 +117,9 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
     )
     .await;
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-artifact-poll-change".to_string(),
-            agent_instance_id: "artifact-poll-inst".to_string(),
+            runner_instance_id: "artifact-poll-inst".to_string(),
         })
         .await
         .unwrap()
@@ -171,9 +171,9 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
     changed_owner.owner = Some("bob".to_string());
     registry.register(changed_owner).await.unwrap();
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-artifact-owner-change".to_string(),
-            agent_instance_id: "artifact-owner-inst".to_string(),
+            runner_instance_id: "artifact-owner-inst".to_string(),
         })
         .await
         .unwrap()
@@ -231,9 +231,9 @@ async fn computer_snapshot_artifact_rechecks_current_target_project_and_authorit
         .unwrap_err();
     assert!(error.contains("stale_project"), "{error}");
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-artifact-replaced".to_string(),
-            agent_instance_id: "artifact-replaced-inst".to_string(),
+            runner_instance_id: "artifact-replaced-inst".to_string(),
         })
         .await
         .unwrap()

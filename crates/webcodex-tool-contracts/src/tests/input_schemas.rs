@@ -1,5 +1,5 @@
 use super::*;
-use webcodex_core::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES;
+use webcodex_core::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES;
 
 macro_rules! assert_schema_fields {
     (

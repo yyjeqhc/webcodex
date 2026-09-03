@@ -8,7 +8,7 @@ use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationStep,
 };
 
@@ -1699,7 +1699,7 @@ mod recovery_projection_tests {
         job_recovering_stop_result, job_stop_forbidden_result, recovery_reason_text,
         validation_job_projection,
     };
-    use crate::shell_protocol::ShellJobInfo;
+    use crate::runner_protocol::ShellJobInfo;
     use serde_json::json;
 
     #[test]
@@ -2116,7 +2116,7 @@ mod recovery_projection_tests {
 
     #[test]
     fn agent_job_summary_hides_internal_validation_correlation_metadata() {
-        use crate::shell_protocol::{ShellJobInfo, ShellJobStructuredExecutionMetadata};
+        use crate::runner_protocol::{ShellJobInfo, ShellJobStructuredExecutionMetadata};
         let job = ShellJobInfo {
             job_id: "job-validation-summary".to_string(),
             request_id: Some("req-validation-summary".to_string()),
@@ -2175,7 +2175,7 @@ mod recovery_projection_tests {
 
     #[test]
     fn agent_job_summary_includes_recovery_reason() {
-        use crate::shell_protocol::ShellJobInfo;
+        use crate::runner_protocol::ShellJobInfo;
         let job = ShellJobInfo {
             job_id: "job-1".to_string(),
             request_id: Some("req-1".to_string()),

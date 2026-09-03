@@ -4,7 +4,7 @@ fn apply_text_edits_request(
     cwd: &Path,
     path: &str,
     mut payload: serde_json::Value,
-) -> ShellAgentShellRequest {
+) -> RunnerRequest {
     if payload.get("changes").is_none() {
         let expected_sha256 = payload
             .get("expected_file_sha256")
@@ -23,7 +23,7 @@ fn apply_text_edits_request(
             }]
         });
     }
-    ShellAgentShellRequest {
+    RunnerRequest {
         request_id: "req-apply-text-edits".to_string(),
         client_id: "agent-1".to_string(),
         kind: "file_apply_text_edits".to_string(),

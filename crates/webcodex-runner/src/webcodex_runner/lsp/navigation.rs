@@ -19,17 +19,17 @@ use super::supervisor::{
 };
 use crate::lsp_bridge::{
     bound_error_message, error_codes, redact_absolute_paths, validate_call_hierarchy_bounds,
-    AgentLspPayload, AgentLspRequest, AgentLspResultEnvelope, CallHierarchyDirection,
-    CallHierarchyEdgeDirection, CallHierarchyResult, DocumentDiagnosticsResult,
-    DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult, LocationsResult,
-    LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult, PublicCallHierarchyEdge,
-    PublicCallHierarchySymbol, PublicDiagnostic, PublicHover, PublicLocation, PublicPosition,
-    PublicRange, PublicSymbol, PublicWorkspaceSymbol, WorkspaceSymbolsResult,
+    CallHierarchyDirection, CallHierarchyEdgeDirection, CallHierarchyResult,
+    DocumentDiagnosticsResult, DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult,
+    LocationsResult, LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult,
+    PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic, PublicHover,
+    PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
+    RunnerLspPayload, RunnerLspRequest, RunnerLspResultEnvelope, WorkspaceSymbolsResult,
     AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
     MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE, MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
     MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY, MAX_CALL_HIERARCHY_ROOTS,
 };
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -54,7 +54,7 @@ pub(crate) fn handle_lsp_request(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
     supervisor: &LspSupervisor,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
 ) -> CommandResult {
     let start = Instant::now();
     let Some(payload) = request.lsp.as_ref() else {
@@ -97,28 +97,28 @@ fn execute_lsp(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
     supervisor: &LspSupervisor,
-    payload: &AgentLspPayload,
+    payload: &RunnerLspPayload,
     operation_deadline: Instant,
-) -> Result<AgentLspResultEnvelope, AgentLspResultEnvelope> {
+) -> Result<RunnerLspResultEnvelope, RunnerLspResultEnvelope> {
     let project = resolve_runner_project(project_registry_dir, &payload.project_id)?;
     let project_root = validate_project_root(policy, &project.path)?;
     match &payload.request {
-        AgentLspRequest::Status => Ok(AgentLspResultEnvelope::ok(lsp_status(
+        RunnerLspRequest::Status => Ok(RunnerLspResultEnvelope::ok(lsp_status(
             &payload.project_id,
             &project_root,
             supervisor,
         ))),
-        AgentLspRequest::DocumentSymbols { path, limit } => {
+        RunnerLspRequest::DocumentSymbols { path, limit } => {
             let result =
                 document_symbols(&payload.project_id, &project_root, supervisor, path, *limit)?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::DocumentDiagnostics { path, limit } => {
+        RunnerLspRequest::DocumentDiagnostics { path, limit } => {
             let result =
                 document_diagnostics(&payload.project_id, &project_root, supervisor, path, *limit)?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::Hover { path, line, column } => {
+        RunnerLspRequest::Hover { path, line, column } => {
             let result = hover(
                 &payload.project_id,
                 &project_root,
@@ -127,9 +127,9 @@ fn execute_lsp(
                 *line,
                 *column,
             )?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::WorkspaceSymbols { query, limit } => {
+        RunnerLspRequest::WorkspaceSymbols { query, limit } => {
             let result = workspace_symbols(
                 &payload.project_id,
                 &project_root,
@@ -138,9 +138,9 @@ fn execute_lsp(
                 *limit,
                 operation_deadline,
             )?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::GotoDefinition {
+        RunnerLspRequest::GotoDefinition {
             path,
             line,
             column,
@@ -155,9 +155,9 @@ fn execute_lsp(
                 *column,
                 *limit,
             )?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::FindReferences {
+        RunnerLspRequest::FindReferences {
             path,
             line,
             column,
@@ -174,9 +174,9 @@ fn execute_lsp(
                 *include_declaration,
                 *limit,
             )?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
-        AgentLspRequest::CallHierarchy {
+        RunnerLspRequest::CallHierarchy {
             path,
             line,
             column,
@@ -196,7 +196,7 @@ fn execute_lsp(
                 *limit,
                 operation_deadline,
             )?;
-            Ok(AgentLspResultEnvelope::ok(result))
+            Ok(RunnerLspResultEnvelope::ok(result))
         }
     }
 }
@@ -208,17 +208,17 @@ struct ResolvedProject {
 fn resolve_runner_project(
     project_registry_dir: &Path,
     project_id: &str,
-) -> Result<ResolvedProject, AgentLspResultEnvelope> {
+) -> Result<ResolvedProject, RunnerLspResultEnvelope> {
     let id = project_id.trim();
     if id.is_empty() {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::UNKNOWN_PROJECT,
             "project_id cannot be empty",
         ));
     }
     let projects = load_runner_project_summaries_from_dir(project_registry_dir);
     let project = projects.into_iter().find(|p| p.id == id).ok_or_else(|| {
-        AgentLspResultEnvelope::err(error_codes::UNKNOWN_PROJECT, "unknown agent project")
+        RunnerLspResultEnvelope::err(error_codes::UNKNOWN_PROJECT, "unknown agent project")
     })?;
     Ok(ResolvedProject {
         path: PathBuf::from(project.path),
@@ -228,15 +228,15 @@ fn resolve_runner_project(
 fn validate_project_root(
     policy: &RunnerPolicy,
     path: &Path,
-) -> Result<PathBuf, AgentLspResultEnvelope> {
+) -> Result<PathBuf, RunnerLspResultEnvelope> {
     cwd_allowed(policy, path).map_err(|message| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             sanitize_path_message(message),
         )
     })?;
     fs::canonicalize(path).map_err(|_| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "project root is not accessible",
         )
@@ -307,18 +307,18 @@ fn lsp_server_status_entry(
 /// `didOpen` only after the whole file is already resident in agent memory;
 /// checking metadata first keeps a model-chosen giant `.rs` file from forcing
 /// that allocation. See `MAX_LSP_DOCUMENT_BYTES` for the race caveat.
-fn read_document_text(file: &Path) -> Result<String, AgentLspResultEnvelope> {
+fn read_document_text(file: &Path) -> Result<String, RunnerLspResultEnvelope> {
     let metadata = fs::metadata(file).map_err(|_| {
-        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
+        RunnerLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
     })?;
     if metadata.len() > MAX_LSP_DOCUMENT_BYTES {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::DOCUMENT_TOO_LARGE,
             "file exceeds the LSP navigation document size limit",
         ));
     }
     fs::read_to_string(file).map_err(|_| {
-        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
+        RunnerLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
     })
 }
 
@@ -328,7 +328,7 @@ fn document_symbols(
     supervisor: &LspSupervisor,
     relative_path: &str,
     limit: usize,
-) -> Result<DocumentSymbolsResult, AgentLspResultEnvelope> {
+) -> Result<DocumentSymbolsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 500);
     let ResolvedSourceFile {
         path: file,
@@ -390,7 +390,7 @@ fn document_diagnostics(
     supervisor: &LspSupervisor,
     relative_path: &str,
     limit: usize,
-) -> Result<DocumentDiagnosticsResult, AgentLspResultEnvelope> {
+) -> Result<DocumentDiagnosticsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
     let ResolvedSourceFile {
         path: file,
@@ -509,7 +509,7 @@ fn hover(
     relative_path: &str,
     line: usize,
     column: usize,
-) -> Result<HoverResult, AgentLspResultEnvelope> {
+) -> Result<HoverResult, RunnerLspResultEnvelope> {
     let ResolvedSourceFile {
         path: file,
         profile,
@@ -521,7 +521,7 @@ fn hover(
         .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
-        .map_err(|message| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
+        .map_err(|message| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
     let value = supervisor
         .request_with_document(
             project_root,
@@ -554,16 +554,16 @@ fn workspace_symbols(
     query: &str,
     limit: usize,
     operation_deadline: Instant,
-) -> Result<WorkspaceSymbolsResult, AgentLspResultEnvelope> {
+) -> Result<WorkspaceSymbolsResult, RunnerLspResultEnvelope> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > 200 {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_ARGUMENTS,
             "query must contain 1..200 non-whitespace characters",
         ));
     }
     if redact_absolute_paths(query) != query {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_ARGUMENTS,
             "query must not contain absolute path material",
         ));
@@ -609,7 +609,7 @@ fn goto_definition(
     line: usize,
     column: usize,
     limit: usize,
-) -> Result<LocationsResult, AgentLspResultEnvelope> {
+) -> Result<LocationsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 100);
     let ResolvedSourceFile {
         path: file,
@@ -622,7 +622,7 @@ fn goto_definition(
         .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
-        .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
+        .map_err(|msg| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
         .request_with_document(
             project_root,
@@ -663,7 +663,7 @@ fn find_references(
     column: usize,
     include_declaration: bool,
     limit: usize,
-) -> Result<LocationsResult, AgentLspResultEnvelope> {
+) -> Result<LocationsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
     let ResolvedSourceFile {
         path: file,
@@ -676,7 +676,7 @@ fn find_references(
         .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
-        .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
+        .map_err(|msg| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
         .request_with_document(
             project_root,
@@ -744,15 +744,15 @@ fn call_hierarchy(
     depth: usize,
     limit: usize,
     operation_deadline: Instant,
-) -> Result<CallHierarchyResult, AgentLspResultEnvelope> {
+) -> Result<CallHierarchyResult, RunnerLspResultEnvelope> {
     if line < 1 || column < 1 {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_ARGUMENTS,
             "line and column must be >= 1",
         ));
     }
     if let Err(message) = validate_call_hierarchy_bounds(depth, limit) {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_ARGUMENTS,
             message,
         ));
@@ -766,7 +766,7 @@ fn call_hierarchy(
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let query_path = project_relative_path(project_root, &file).ok_or_else(|| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "path resolves outside project root",
         )
@@ -785,7 +785,7 @@ fn call_hierarchy(
         )
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, provisional_encoding)
-        .map_err(|message| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
+        .map_err(|message| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
     let (prepared, prepare_encoding) = supervisor
         .prepare_call_hierarchy(
             project_root,
@@ -975,9 +975,11 @@ fn call_hierarchy(
     })
 }
 
-fn ensure_call_hierarchy_budget(operation_deadline: Instant) -> Result<(), AgentLspResultEnvelope> {
+fn ensure_call_hierarchy_budget(
+    operation_deadline: Instant,
+) -> Result<(), RunnerLspResultEnvelope> {
     if Instant::now() >= operation_deadline {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::LSP_REQUEST_TIMEOUT,
             "language server request timed out",
         ));
@@ -988,12 +990,12 @@ fn ensure_call_hierarchy_budget(operation_deadline: Instant) -> Result<(), Agent
 fn call_hierarchy_array<'a>(
     value: &'a Value,
     operation: &str,
-) -> Result<&'a [Value], AgentLspResultEnvelope> {
+) -> Result<&'a [Value], RunnerLspResultEnvelope> {
     if value.is_null() {
         return Ok(&[]);
     }
     value.as_array().map(Vec::as_slice).ok_or_else(|| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::LSP_PROTOCOL_ERROR,
             format!("malformed {operation} result"),
         )
@@ -1013,7 +1015,7 @@ fn normalize_call_hierarchy_calls(
     external_results_omitted: &mut usize,
     invalid_results_omitted: &mut usize,
     truncated: &mut bool,
-) -> Result<(), AgentLspResultEnvelope> {
+) -> Result<(), RunnerLspResultEnvelope> {
     let operation = match direction {
         CallHierarchyEdgeDirection::Incoming => "callHierarchy/incomingCalls",
         CallHierarchyEdgeDirection::Outgoing => "callHierarchy/outgoingCalls",
@@ -1238,7 +1240,7 @@ fn finish_locations_result(
     external_results_omitted: usize,
     invalid_results_omitted: usize,
     limit: usize,
-) -> Result<LocationsResult, AgentLspResultEnvelope> {
+) -> Result<LocationsResult, RunnerLspResultEnvelope> {
     locations.sort_by(|a, b| {
         (
             a.path.as_str(),
@@ -1287,10 +1289,10 @@ struct ResolvedSourceFile {
 fn resolve_source_file(
     project_root: &Path,
     relative_path: &str,
-) -> Result<ResolvedSourceFile, AgentLspResultEnvelope> {
+) -> Result<ResolvedSourceFile, RunnerLspResultEnvelope> {
     let path = relative_path.trim();
     if path.is_empty() {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "path cannot be empty",
         ));
@@ -1309,7 +1311,7 @@ fn resolve_source_file(
             )
         })
     {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "path must be project-relative",
         ));
@@ -1318,7 +1320,7 @@ fn resolve_source_file(
         .components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "path must not contain '..'",
         ));
@@ -1328,7 +1330,7 @@ fn resolve_source_file(
         .and_then(|ext| ext.to_str())
         .and_then(route_extension)
         .ok_or_else(|| {
-            AgentLspResultEnvelope::err(
+            RunnerLspResultEnvelope::err(
                 error_codes::UNSUPPORTED_LANGUAGE,
                 format!(
                     "unsupported file extension for LSP navigation (supported: {})",
@@ -1338,15 +1340,15 @@ fn resolve_source_file(
         })?;
     let joined = project_root.join(raw);
     let canonical = fs::canonicalize(&joined)
-        .map_err(|_| AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "file not found"))?;
+        .map_err(|_| RunnerLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "file not found"))?;
     if !canonical.starts_with(project_root) {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::INVALID_PROJECT_PATH,
             "path resolves outside project root",
         ));
     }
     if !canonical.is_file() {
-        return Err(AgentLspResultEnvelope::err(
+        return Err(RunnerLspResultEnvelope::err(
             error_codes::FILE_NOT_FOUND,
             "path is not a regular file",
         ));
@@ -1358,11 +1360,11 @@ fn resolve_source_file(
     })
 }
 
-fn file_uri(path: &Path) -> Result<String, AgentLspResultEnvelope> {
+fn file_uri(path: &Path) -> Result<String, RunnerLspResultEnvelope> {
     Url::from_file_path(path)
         .map(|url| url.to_string())
         .map_err(|_| {
-            AgentLspResultEnvelope::err(error_codes::INVALID_PROJECT_PATH, "invalid file path")
+            RunnerLspResultEnvelope::err(error_codes::INVALID_PROJECT_PATH, "invalid file path")
         })
 }
 
@@ -1380,21 +1382,21 @@ fn normalize_hover(
     value: &Value,
     text: &str,
     encoding: PositionEncoding,
-) -> Result<(Option<PublicHover>, bool, bool), AgentLspResultEnvelope> {
+) -> Result<(Option<PublicHover>, bool, bool), RunnerLspResultEnvelope> {
     if value.is_null() {
         return Ok((None, false, false));
     }
     let object = value.as_object().ok_or_else(|| {
-        AgentLspResultEnvelope::err(error_codes::LSP_PROTOCOL_ERROR, "malformed hover result")
+        RunnerLspResultEnvelope::err(error_codes::LSP_PROTOCOL_ERROR, "malformed hover result")
     })?;
     let contents = object.get("contents").ok_or_else(|| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::LSP_PROTOCOL_ERROR,
             "hover result is missing contents",
         )
     })?;
     let (kind, raw_value) = normalize_hover_contents(contents).ok_or_else(|| {
-        AgentLspResultEnvelope::err(
+        RunnerLspResultEnvelope::err(
             error_codes::LSP_PROTOCOL_ERROR,
             "hover contents use an unsupported shape",
         )
@@ -2092,7 +2094,7 @@ fn take_symbol_budget(
     out
 }
 
-fn map_lsp_error(error: LspError) -> AgentLspResultEnvelope {
+fn map_lsp_error(error: LspError) -> RunnerLspResultEnvelope {
     let (code, message) = match &error {
         LspError::ServerUnavailable => (
             error_codes::LSP_SERVER_UNAVAILABLE,
@@ -2135,7 +2137,7 @@ fn map_lsp_error(error: LspError) -> AgentLspResultEnvelope {
             bound_error_message(other.to_string()),
         ),
     };
-    AgentLspResultEnvelope::err(code, sanitize_path_message(message))
+    RunnerLspResultEnvelope::err(code, sanitize_path_message(message))
 }
 
 fn sanitize_path_message(message: impl Into<String>) -> String {
@@ -2147,7 +2149,7 @@ fn sanitize_path_message(message: impl Into<String>) -> String {
 }
 
 fn lsp_error_cmd(start: Instant, code: &str, message: &str) -> CommandResult {
-    let envelope = AgentLspResultEnvelope::err(code, message);
+    let envelope = RunnerLspResultEnvelope::err(code, message);
     CommandResult {
         exit_code: Some(0),
         stdout: Some(envelope.to_stdout_json()),

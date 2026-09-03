@@ -1,4 +1,4 @@
-use crate::shell_protocol::{RAW_SHELL_COMMAND_MAX_BYTES, RAW_SHELL_WIRE_MAX_BYTES};
+use crate::runner_protocol::{RAW_SHELL_COMMAND_MAX_BYTES, RAW_SHELL_WIRE_MAX_BYTES};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 #[cfg(test)]

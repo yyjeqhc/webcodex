@@ -1,6 +1,6 @@
 use super::{err_cmd, ok_cmd, CommandResult};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
-use crate::shell_protocol::{shell_computer_request_payload_max_bytes, ShellAgentShellRequest};
+use crate::runner_protocol::{shell_computer_request_payload_max_bytes, RunnerRequest};
 use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -75,7 +75,7 @@ fn optional_snapshot_dimension(payload: &Value, field: &str) -> Result<Option<u3
     }
 }
 
-pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> CommandResult {
+pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult {
     let start = Instant::now();
     let payload_max_bytes = shell_computer_request_payload_max_bytes(&request.kind);
     let payload = match request.stdin.as_deref() {

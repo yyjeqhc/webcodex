@@ -17,12 +17,10 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 use super::tool_result::{RecoveryKind, ToolResult};
-use super::{agent_project_runtime_id, ToolRuntime};
+use super::{runner_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{RunnerFeature, RunnerSemanticView};
-use crate::shell_protocol::{
-    ShellAgentProjectSummary, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
-};
+use crate::runner_protocol::{RunnerProjectSummary, RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION};
 
 /// Maximum time the runtime waits for a Runner project-op response. Project
 /// operations are fast (write a small TOML, maybe create a directory + git
@@ -118,7 +116,7 @@ fn project_candidates(
             continue;
         }
         for (project_index, project) in view.projects.iter().enumerate() {
-            let runtime_id = agent_project_runtime_id(&view.client_id, &project.id);
+            let runtime_id = runner_project_runtime_id(&view.client_id, &project.id);
             if options
                 .project
                 .as_deref()
@@ -169,7 +167,7 @@ impl ToolRuntime {
         &self,
         auth: Option<&AuthContext>,
         options: ListProjectsOptions,
-        clients: &[crate::shell_protocol::ShellClientView],
+        clients: &[crate::runner_protocol::RunnerView],
     ) -> ToolResult {
         let (query, limit) = match validate_list_projects_options(&options) {
             Ok(validated) => validated,
@@ -215,7 +213,7 @@ impl ToolRuntime {
         {
             // Extract only one selected Project and the small Runner fields used by
             // its projection before awaiting Job state. Candidate staging above
-            // never owns or clones a ShellClientView (and therefore never clones
+            // never owns or clones a RunnerView (and therefore never clones
             // the Runner's complete projects Vec per match).
             let (
                 client_id,
@@ -460,7 +458,7 @@ impl ToolRuntime {
                         "error_kind": "agent_capability_unavailable",
                         "failure_kind": "capability_unavailable",
                         "reason_code": "runner_generation_baseline_invariant",
-                        "capability": SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+                        "capability": RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
                         "state_changed": false,
                     }),
                 )
@@ -552,7 +550,7 @@ impl ToolRuntime {
                 client_id
             ));
         };
-        let expected_agent_instance_id = client_view.agent_instance_id.clone();
+        let expected_runner_instance_id = client_view.runner_instance_id.clone();
         if let Err(e) = self
             .runner_registry
             .assert_runner_access(access.as_ref(), &client_id)
@@ -634,19 +632,19 @@ impl ToolRuntime {
         let Some(project) = parse_project_summary_from_result(&result, &client_id) else {
             return project_projection_reconcile_required(
                 &client_id,
-                &expected_agent_instance_id,
+                &expected_runner_instance_id,
                 &result,
                 "authoritative_project_summary_missing",
             );
         };
         if let Err(error) = self
             .runner_registry
-            .upsert_runner_project_for_instance(&client_id, &expected_agent_instance_id, project)
+            .upsert_runner_project_for_instance(&client_id, &expected_runner_instance_id, project)
             .await
         {
             return project_projection_reconcile_required(
                 &client_id,
-                &expected_agent_instance_id,
+                &expected_runner_instance_id,
                 &result,
                 if error.contains("stale or replaced") {
                     "runner_instance_changed_before_projection"
@@ -662,7 +660,7 @@ impl ToolRuntime {
 
 fn project_projection_reconcile_required(
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     result: &Value,
     reason_code: &str,
 ) -> ToolResult {
@@ -686,7 +684,7 @@ fn project_projection_reconcile_required(
             "reason_code": reason_code,
             "state_changed": state_changed,
             "client_id": client_id,
-            "agent_instance_id": agent_instance_id,
+            "agent_instance_id": runner_instance_id,
             "agent_project_id": project_id.clone(),
             "revision": revision.clone(),
             "authoritative_outcome": result.get("outcome").cloned().unwrap_or(Value::Null),
@@ -699,11 +697,7 @@ fn project_projection_reconcile_required(
     )
 }
 
-fn project_query_matches(
-    needle: &str,
-    runtime_id: &str,
-    project: &ShellAgentProjectSummary,
-) -> bool {
+fn project_query_matches(needle: &str, runtime_id: &str, project: &RunnerProjectSummary) -> bool {
     [
         Some(runtime_id),
         Some(project.id.as_str()),
@@ -716,7 +710,7 @@ fn project_query_matches(
     .any(|value| value.to_lowercase().contains(needle))
 }
 
-fn project_source(project: &ShellAgentProjectSummary) -> &'static str {
+fn project_source(project: &RunnerProjectSummary) -> &'static str {
     match project.registration_source.as_deref() {
         Some(AUTO_REGISTERED_PROJECT_SOURCE) => AUTO_REGISTERED_PROJECT_SOURCE,
         // A present additive provenance field is authoritative. Known explicit
@@ -730,9 +724,7 @@ fn project_source(project: &ShellAgentProjectSummary) -> &'static str {
     }
 }
 
-fn project_git_available(
-    project: &crate::shell_protocol::ShellAgentProjectSummary,
-) -> Option<bool> {
+fn project_git_available(project: &crate::runner_protocol::RunnerProjectSummary) -> Option<bool> {
     if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
         Some(true)
     } else {
@@ -740,7 +732,7 @@ fn project_git_available(
     }
 }
 
-fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummary) -> bool {
+fn smoke_marker_present(project: &crate::runner_protocol::RunnerProjectSummary) -> bool {
     let name = project.name.as_deref().unwrap_or_default();
     [project.id.as_str(), name, project.path.as_str()]
         .iter()
@@ -750,7 +742,7 @@ fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummar
 
 fn smoke_project_capabilities(
     client: &RunnerSemanticView,
-    project: &crate::shell_protocol::ShellAgentProjectSummary,
+    project: &crate::runner_protocol::RunnerProjectSummary,
 ) -> Value {
     let git_available = project_git_available(project);
     let safe_smoke_project =
@@ -783,7 +775,7 @@ fn smoke_project_capabilities(
 ///   configured set cannot be checked.
 fn resolve_project_shell_profile(
     project_shell_profile: Option<&str>,
-    summary: Option<&crate::shell_protocol::ShellProfilesSummary>,
+    summary: Option<&crate::runner_protocol::ShellProfilesSummary>,
 ) -> (Option<String>, &'static str) {
     let resolved = project_shell_profile
         .map(str::to_string)
@@ -900,7 +892,7 @@ fn truncate_for_error(s: &str) -> String {
     }
 }
 
-/// Parse a `ShellAgentProjectSummary` from the Runner's project-op JSON
+/// Parse a `RunnerProjectSummary` from the Runner's project-op JSON
 /// response so the server can upsert it into the cached project list. The
 /// response includes `agent_project_id`, `client_id`, `name`, `path`, and
 /// `allow_patch` — enough to build a summary that `listProjects` can show
@@ -908,7 +900,7 @@ fn truncate_for_error(s: &str) -> String {
 fn parse_project_summary_from_result(
     result: &Value,
     _client_id: &str,
-) -> Option<ShellAgentProjectSummary> {
+) -> Option<RunnerProjectSummary> {
     let agent_project_id = result.get("agent_project_id")?.as_str()?;
     let name = result
         .get("name")
@@ -919,7 +911,7 @@ fn parse_project_summary_from_result(
         .get("allow_patch")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    Some(ShellAgentProjectSummary {
+    Some(RunnerProjectSummary {
         id: agent_project_id.to_string(),
         name: name.or_else(|| Some(agent_project_id.to_string())),
         path: path.to_string(),
@@ -959,7 +951,7 @@ mod tests {
 
     #[test]
     fn legacy_managed_temporary_kind_is_projected_as_ordinary_registration() {
-        let project = ShellAgentProjectSummary {
+        let project = RunnerProjectSummary {
             id: "legacy".to_string(),
             name: Some("Legacy".to_string()),
             path: "/tmp/legacy".to_string(),
@@ -981,7 +973,7 @@ mod tests {
 
     #[test]
     fn old_runner_auto_registered_kind_is_compatibility_fallback() {
-        let mut project = ShellAgentProjectSummary {
+        let mut project = RunnerProjectSummary {
             id: "legacy-auto".to_string(),
             name: Some("Legacy Auto".to_string()),
             path: "/tmp/legacy-auto".to_string(),

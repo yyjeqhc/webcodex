@@ -2,7 +2,7 @@ use super::project_resolution::ResolvedProject;
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::RunnerFeature;
-use crate::shell_protocol::{ShellFileOpRequest, ShellRunResponse};
+use crate::runner_protocol::{ShellFileOpRequest, ShellRunResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -184,7 +184,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_skill_store(
                 &client_id,
-                &view.view.agent_instance_id,
+                &view.view.runner_instance_id,
                 operation,
                 access.as_ref(),
                 "skill_runtime".to_string(),

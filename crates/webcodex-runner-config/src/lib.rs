@@ -13,7 +13,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
-use webcodex_core::shell_protocol::ShellClientCapabilities;
+use webcodex_core::runner_protocol::RunnerCapabilities;
 
 pub mod paths;
 
@@ -168,7 +168,7 @@ struct GeneratedRunnerConfig {
     transport: String,
     poll_interval_ms: u64,
     project_registry_dir: PathBuf,
-    capabilities: ShellClientCapabilities,
+    capabilities: RunnerCapabilities,
     policy: GeneratedRunnerPolicy,
 }
 
@@ -192,7 +192,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
         transport: opts.transport.clone(),
         poll_interval_ms: opts.poll_interval_ms,
         project_registry_dir: opts.project_registry_dir.clone(),
-        capabilities: ShellClientCapabilities {
+        capabilities: RunnerCapabilities {
             shell: true,
             file_read: true,
             file_write: true,

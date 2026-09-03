@@ -445,7 +445,7 @@ pub fn cargo_test_count_assertion_schema() -> Value {
             "minimum_tests": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": webcodex_core::shell_protocol::CARGO_TEST_MIN_TESTS_MAX,
+                "maximum": webcodex_core::runner_protocol::CARGO_TEST_MIN_TESTS_MAX,
                 "description": "Effective caller-requested minimum after combining require_tests and min_tests."
             },
             "actual_tests_run": {

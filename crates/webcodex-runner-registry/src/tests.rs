@@ -6,7 +6,7 @@ use crate::validation::{validate_file_request, validate_run_request, MAX_RUN_STD
 use crate::*;
 use std::sync::Arc;
 use tokio::sync::Notify;
-use webcodex_core::shell_protocol::*;
+use webcodex_core::runner_protocol::*;
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> RunnerAccess {
     RunnerAccess {
@@ -41,8 +41,8 @@ fn agent_auth_context(
     }
 }
 
-fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
+fn project_summary(id: &str, path: &str) -> RunnerProjectSummary {
+    RunnerProjectSummary {
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),
@@ -63,10 +63,10 @@ fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
 
 fn runner_registration(
     client_id: &str,
-    agent_instance_id: &str,
-    _projects: Vec<ShellAgentProjectSummary>,
-) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    runner_instance_id: &str,
+    _projects: Vec<RunnerProjectSummary>,
+) -> RunnerRegisterRequest {
+    RunnerRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -74,8 +74,8 @@ fn runner_registration(
         coding_agent_providers: None,
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
-        agent_instance_id: agent_instance_id.to_string(),
-        agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: runner_instance_id.to_string(),
+        runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
@@ -85,22 +85,20 @@ fn runner_registration(
     }
 }
 
-fn v2_baseline_capabilities() -> ShellClientCapabilities {
+fn v2_baseline_capabilities() -> RunnerCapabilities {
     let mut value = serde_json::Map::new();
     value.insert("shell".to_string(), serde_json::Value::Bool(false));
-    for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
+    for capability in RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         value.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
     serde_json::from_value(serde_json::Value::Object(value)).unwrap()
 }
 
-fn current_runner_registration(
-    registration: ShellClientRegisterRequest,
-) -> ShellClientRegisterRequest {
+fn current_runner_registration(registration: RunnerRegisterRequest) -> RunnerRegisterRequest {
     crate::test_support::current_runner_registration(registration)
 }
 
-fn async_job_capabilities() -> ShellClientCapabilities {
+fn async_job_capabilities() -> RunnerCapabilities {
     let mut capabilities = v2_baseline_capabilities();
     capabilities.shell = true;
     capabilities
@@ -136,7 +134,7 @@ async fn register_computer_test_runner(
     text_input_capable: bool,
 ) {
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -144,13 +142,13 @@ async fn register_computer_test_runner(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "computer-inst".to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-inst".to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some(owner.to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: observe_capable,
@@ -168,7 +166,7 @@ async fn register_computer_test_runner(
 
 async fn register_quic_v1_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -176,8 +174,8 @@ async fn register_quic_v1_runner(registry: &RunnerRegistry, client_id: &str) {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -197,10 +195,10 @@ async fn register_instance_with_capabilities(
     registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
-    capabilities: ShellClientCapabilities,
-) -> Result<ShellClientView, String> {
+    capabilities: RunnerCapabilities,
+) -> Result<RunnerView, String> {
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -208,8 +206,8 @@ async fn register_instance_with_capabilities(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: instance.to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: instance.to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -236,9 +234,9 @@ async fn register_with_instance(
     registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
-) -> ShellClientView {
+) -> RunnerView {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -246,8 +244,8 @@ async fn register_with_instance(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: instance.to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: instance.to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,

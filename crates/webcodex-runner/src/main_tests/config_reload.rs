@@ -82,7 +82,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.display_name = Some("changed".to_string());
     changed.owner = Some("changed".to_string());
     changed.hostname = Some("changed".to_string());
-    changed.host_context = Some(shell_protocol::AgentHostContext {
+    changed.host_context = Some(runner_protocol::RunnerHostContext {
         role: Some("primary_development".to_string()),
         runtime: Some("Prefer this Runner for ordinary development.".to_string()),
         ..Default::default()
@@ -90,7 +90,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.project_registry_dir = Some(PathBuf::from("projects-b"));
     changed.deprecated_temporary_projects_root = Some(PathBuf::from("/tmp/webcodex-temporary"));
     changed.poll_interval_ms += 1;
-    changed.capabilities = Some(ShellClientCapabilities::default());
+    changed.capabilities = Some(RunnerCapabilities::default());
     changed.max_concurrent_jobs = Some(4);
     changed.mcp_gateway.request_timeout_secs += 1;
     changed.transport = Some(TRANSPORT_QUIC.to_string());

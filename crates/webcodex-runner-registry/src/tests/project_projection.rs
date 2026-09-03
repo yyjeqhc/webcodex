@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_protocol::ShellProjectInventoryPage;
+use crate::runner_protocol::ShellProjectInventoryPage;
 
 #[tokio::test]
 async fn bounded_semantic_inventory_fails_closed_on_client_or_project_overflow() {
@@ -135,7 +135,7 @@ async fn project_cardinality_does_not_reject_runner_liveness_or_dynamic_upsert()
 async fn registry_inventory_snapshot_saves_projects() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -143,14 +143,14 @@ async fn registry_inventory_snapshot_saves_projects() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -176,7 +176,7 @@ async fn registry_inventory_snapshot_saves_projects() {
 async fn registry_inventory_snapshot_updates_projects() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -184,14 +184,14 @@ async fn registry_inventory_snapshot_updates_projects() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -225,7 +225,7 @@ async fn registry_inventory_snapshot_updates_projects() {
 async fn registry_poll_without_projects_preserves_existing_projection() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -233,14 +233,14 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -255,9 +255,9 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
     .await;
 
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap();
@@ -273,7 +273,7 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
 async fn registry_project_owner_check_enforces_boundary() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -281,21 +281,21 @@ async fn registry_project_owner_check_enforces_boundary() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "alice-client".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
         .await
         .unwrap();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -303,14 +303,14 @@ async fn registry_project_owner_check_enforces_boundary() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "bob-client".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("bob".to_string()),
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))

@@ -268,9 +268,9 @@ pub(crate) fn validate_project_artifact_export_snapshot(
 
 impl ToolRuntime {
     /// Internal-only large-file metadata transport for MCP artifact export.
-    /// The ShellClient registry atomically rechecks the generation-2 streaming
+    /// The Runner registry atomically rechecks the generation-2 streaming
     /// metadata and chunk-read baseline while admitting the request.
-    async fn run_agent_json_artifact_export_metadata_op(
+    async fn run_runner_json_artifact_export_metadata_op(
         &self,
         client_id: String,
         cwd: String,
@@ -489,7 +489,7 @@ impl ToolRuntime {
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
         });
         let obj = match self
-            .run_agent_json_file_op(
+            .run_runner_json_file_op(
                 client_id,
                 proj.path.clone(),
                 path.clone(),
@@ -536,7 +536,7 @@ impl ToolRuntime {
             "allow_missing": allow_missing.unwrap_or(false),
         });
         let obj = match self
-            .run_agent_json_file_op(
+            .run_runner_json_file_op(
                 client_id,
                 proj.path.clone(),
                 path.clone(),
@@ -579,7 +579,7 @@ impl ToolRuntime {
             "allow_missing": false,
         });
         let output = match self
-            .run_agent_json_artifact_export_metadata_op(
+            .run_runner_json_artifact_export_metadata_op(
                 client_id,
                 resolved.config.path.clone(),
                 path.clone(),
@@ -698,7 +698,7 @@ impl ToolRuntime {
             payload["mcp_image"] = json!(true);
         }
         let obj = match self
-            .run_agent_json_file_op(
+            .run_runner_json_file_op(
                 client_id,
                 proj.path.clone(),
                 path.clone(),
@@ -750,7 +750,7 @@ impl ToolRuntime {
         };
         let client_id = proj.client_id.clone();
         let obj = match self
-            .run_agent_json_file_op(client_id, proj.path.clone(), path, op, payload, tool_name)
+            .run_runner_json_file_op(client_id, proj.path.clone(), path, op, payload, tool_name)
             .await
         {
             Ok(v) => v,

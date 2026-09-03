@@ -8,9 +8,8 @@
 //! the same durable Job execution while the default 60-second call stays sync.
 
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
-    ShellCommandExecutionState,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerPollRequest, RunnerResultRequest, ShellCommandExecutionState,
 };
 use crate::tool_runtime::helpers::{
     resolve_sync_timeout_secs, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
@@ -56,9 +55,9 @@ async fn assert_no_pending_shell_request(
 ) {
     let req = runtime
         .runner_registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .expect("poll should succeed");
@@ -94,7 +93,7 @@ async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
     let client_id = "sync-timeout-cargo-fmt-long";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(10));
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         async_shell_jobs: true,
         structured_validation_argv: true,
         ..Default::default()
@@ -121,7 +120,7 @@ async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
 #[tokio::test]
 async fn cargo_validation_tools_reject_timeout_outside_1_3600() {
     let runtime = runtime_with_agent_project("sync-timeout-cargo-range");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };
@@ -184,13 +183,7 @@ async fn cargo_validation_tools_reject_timeout_outside_1_3600() {
 async fn cargo_fmt_mutating_rejects_timeout_above_120_before_enqueue() {
     let client_id = "sync-timeout-fmt-mutating";
     let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities::default(),
-    )
-    .await;
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
     let project = agent_test_project_id(client_id);
 
     // The successful 120-second synchronous lifecycle is owned by
@@ -207,7 +200,7 @@ async fn cargo_fmt_mutating_rejects_timeout_above_120_before_enqueue() {
 #[tokio::test]
 async fn run_shell_rejects_timeout_above_120_before_enqueue() {
     let runtime = runtime_with_agent_project("sync-timeout-shell");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };
@@ -230,7 +223,7 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
     // and the synchronous caller must not be invited to retry blindly.
     let client_id = "sync-short-full-test";
     let runtime = runtime_with_agent_project(client_id);
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };
@@ -299,9 +292,9 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     let late = runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some("late result".to_string()),
@@ -328,7 +321,7 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
 async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
     let client_id = "sync-timeout-undispatched";
     let runtime = runtime_with_agent_project(client_id);
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };
@@ -361,7 +354,7 @@ async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
 async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
     let client_id = "sync-timeout-missing-record";
     let runtime = runtime_with_agent_project(client_id);
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };
@@ -402,7 +395,7 @@ async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
 #[tokio::test]
 async fn timeout_rejection_does_not_pollute_validation_summary() {
     let runtime = runtime_with_agent_project("sync-timeout-ledger");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         ..Default::default()
     };

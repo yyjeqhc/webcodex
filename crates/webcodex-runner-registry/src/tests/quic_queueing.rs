@@ -21,7 +21,10 @@ async fn registry_allows_quic_run_queueing() {
         .unwrap();
     let view = registry.get_runner_view("quic-run").await.unwrap();
     assert_eq!(view.transport, TRANSPORT_QUIC);
-    assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
+    assert_eq!(
+        view.runner_protocol_generation,
+        RUNNER_PROTOCOL_GENERATION_V2
+    );
     assert_eq!(view.pending_requests, 1);
     assert!(view.capabilities.shell);
     assert!(view.capabilities.async_shell_jobs);
@@ -41,9 +44,9 @@ async fn enqueue_file_op_allows_read_with_line_range() {
         .unwrap();
 
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -162,7 +165,7 @@ async fn registry_allows_quic_v1_start_job_queueing() {
 async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -170,8 +173,8 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "quic-stop".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -201,9 +204,9 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
         .await
         .unwrap();
     let _ = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "quic-stop".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()

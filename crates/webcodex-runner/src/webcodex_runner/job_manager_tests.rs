@@ -20,7 +20,7 @@ fn retained_terminal_job(job_id: &str, ended_at: i64) -> RunningJob {
     snapshot.duration_ms = Some(1);
     RunningJob {
         client_id: "test-agent".to_string(),
-        agent_instance_id: "test-instance".to_string(),
+        runner_instance_id: "test-instance".to_string(),
         snapshot,
         child: None,
         stop_requested: Arc::new(AtomicBool::new(false)),
@@ -39,7 +39,7 @@ fn job_reconciliation_inventory_prioritizes_active_and_bounds_terminal_history()
         active.job_id.clone(),
         RunningJob {
             client_id: "test-agent".to_string(),
-            agent_instance_id: "test-instance".to_string(),
+            runner_instance_id: "test-instance".to_string(),
             snapshot: active,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -99,7 +99,7 @@ fn job_reconciliation_inventory_drops_terminal_payload_before_active_jobs() {
         active.job_id.clone(),
         RunningJob {
             client_id: "test-agent".to_string(),
-            agent_instance_id: "test-instance".to_string(),
+            runner_instance_id: "test-instance".to_string(),
             snapshot: active,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -142,7 +142,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "test-agent".to_string(),
-            agent_instance_id: "test-instance".to_string(),
+            runner_instance_id: "test-instance".to_string(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -151,11 +151,11 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-    tx.try_send(AgentEnvelope::Ping { ts: 17 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 17 }).unwrap();
     manager.install_sink(RunnerSink::WebSocket {
         tx,
         client_id: "test-agent".to_string(),
-        agent_instance_id: "test-instance".to_string(),
+        runner_instance_id: "test-instance".to_string(),
     });
     manager.update_and_send(
         "offline-terminal-job",
@@ -246,7 +246,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     manager.install_sink(RunnerSink::WebSocket {
         tx: reconnected_tx,
         client_id: "test-agent".to_string(),
-        agent_instance_id: "test-instance".to_string(),
+        runner_instance_id: "test-instance".to_string(),
     });
     manager.replay_snapshots_since(&registered_inventory);
     assert!(wait_until(Duration::from_secs(2), || {
@@ -258,7 +258,7 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
     manager.install_sink(RunnerSink::WebSocket {
         tx: fresh_tx,
         client_id: "test-agent".to_string(),
-        agent_instance_id: "test-instance".to_string(),
+        runner_instance_id: "test-instance".to_string(),
     });
     manager.replay_snapshots_since(&registered_inventory);
     assert!(
@@ -367,7 +367,7 @@ fn detached_job_request(
         job_id: job_id.to_string(),
         request_id: format!("request-{job_id}"),
         client_id: "detached-agent".to_string(),
-        agent_instance_id: "old-runner-instance".to_string(),
+        runner_instance_id: "old-runner-instance".to_string(),
         context: ShellJobContext {
             runtime_project_id: Some("agent:detached-agent:project".to_string()),
             workflow_session_id: None,
@@ -379,7 +379,7 @@ fn detached_job_request(
             command_preview: "detached test process".to_string(),
             validation_steps: Vec::new(),
             validation: None,
-            structured_execution: Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+            structured_execution: Some(runner_protocol::ShellJobStructuredExecutionMetadata {
                 execution_source: "run_process".to_string(),
                 language: None,
                 script_bytes: None,
@@ -391,7 +391,7 @@ fn detached_job_request(
             }),
         },
         launch: DetachedLaunchSpec {
-            process: shell_protocol::ShellProcessArgv {
+            process: runner_protocol::ShellProcessArgv {
                 executable: std::env::current_exe()
                     .unwrap()
                     .to_string_lossy()
@@ -484,7 +484,7 @@ fn detached_recovery_uses_same_inventory_and_observes_terminal_output() {
         .get(&request.job_id)
         .cloned()
         .unwrap();
-    assert_eq!(local.agent_instance_id, "new-runner-instance");
+    assert_eq!(local.runner_instance_id, "new-runner-instance");
     assert!(local.child.is_none());
     assert!(lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
 
@@ -757,7 +757,7 @@ fn job_manager_stop_terminates_the_process_group() {
         "process-group-job".into(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot: test_job_snapshot("process-group-job"),
             child: Some(child.clone()),
             stop_requested: stop_requested.clone(),
@@ -804,7 +804,7 @@ fn job_shutdown_reaps_a_sigterm_responsive_child() {
         "term-responsive".into(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot: test_job_snapshot("term-responsive"),
             child: Some(Arc::clone(&child)),
             stop_requested: Arc::clone(&stop_requested),
@@ -852,7 +852,7 @@ fn job_shutdown_escalates_ignored_sigterm_for_parent_and_descendant() {
         "term-ignoring".into(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot: test_job_snapshot("term-ignoring"),
             child: Some(Arc::clone(&child)),
             stop_requested: Arc::clone(&stop_requested),
@@ -901,15 +901,15 @@ fn poisoned_job_mutex_does_not_panic_shutdown() {
 /// One run of the fail-fast plan, plus the side effect the plan must not have.
 #[cfg(unix)]
 struct FailFastAttempt {
-    updates: Vec<ShellAgentJobUpdateRequest>,
+    updates: Vec<RunnerJobUpdateRequest>,
     test_step_ran: bool,
 }
 
 fn recv_envelope_until(
     runtime: &tokio::runtime::Runtime,
-    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
     deadline: Instant,
-) -> Result<Option<AgentEnvelope>, tokio::time::error::Elapsed> {
+) -> Result<Option<RunnerEnvelope>, tokio::time::error::Elapsed> {
     runtime.block_on(async {
         tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), rx.recv()).await
     })
@@ -918,21 +918,21 @@ fn recv_envelope_until(
 /// Drain ordered JobUpdates until one reports `finished`, the channel closes,
 /// or one absolute wall-clock deadline expires. Unrelated envelopes are ignored.
 fn collect_job_updates(
-    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
     timeout: Duration,
-) -> Vec<ShellAgentJobUpdateRequest> {
+) -> Vec<RunnerJobUpdateRequest> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
         .expect("JobUpdate collection runtime");
     let deadline = Instant::now() + timeout;
-    let mut updates: Vec<ShellAgentJobUpdateRequest> = Vec::new();
+    let mut updates: Vec<RunnerJobUpdateRequest> = Vec::new();
     loop {
         if updates.last().is_some_and(|update| update.finished) {
             break;
         }
         match recv_envelope_until(&runtime, rx, deadline) {
-            Ok(Some(AgentEnvelope::JobUpdate { payload })) => updates.push(payload),
+            Ok(Some(RunnerEnvelope::JobUpdate { payload })) => updates.push(payload),
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => break,
         }
@@ -941,10 +941,10 @@ fn collect_job_updates(
 }
 
 fn recv_job_update(
-    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
     timeout: Duration,
     label: &str,
-) -> ShellAgentJobUpdateRequest {
+) -> RunnerJobUpdateRequest {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -952,7 +952,7 @@ fn recv_job_update(
     let deadline = Instant::now() + timeout;
     loop {
         match recv_envelope_until(&runtime, rx, deadline) {
-            Ok(Some(AgentEnvelope::JobUpdate { payload })) => return payload,
+            Ok(Some(RunnerEnvelope::JobUpdate { payload })) => return payload,
             Ok(Some(_)) => {}
             Ok(None) => panic!("channel closed while waiting for {label}"),
             Err(_) => panic!("timed out waiting for {label}"),
@@ -1010,7 +1010,7 @@ fn structured_process_context(
     let mut context = test_job_context(cwd, Vec::new());
     context.shell = Some("direct_argv".to_string());
     context.command_preview = "structured process test".to_string();
-    context.structured_execution = Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+    context.structured_execution = Some(runner_protocol::ShellJobStructuredExecutionMetadata {
         execution_source: "run_process".to_string(),
         language: None,
         script_bytes: None,
@@ -1037,7 +1037,7 @@ fn detached_process_context(cwd: &Path, arg_count: usize, stdin_present: bool) -
 #[cfg(unix)]
 fn structured_script_context(
     cwd: &Path,
-    language: shell_protocol::ShellScriptLanguage,
+    language: runner_protocol::ShellScriptLanguage,
     script_bytes: usize,
     arg_count: usize,
     stdin_present: bool,
@@ -1048,7 +1048,7 @@ fn structured_script_context(
         "{} script ({script_bytes} bytes, {arg_count} args)",
         language.as_str()
     );
-    context.structured_execution = Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+    context.structured_execution = Some(runner_protocol::ShellJobStructuredExecutionMetadata {
         execution_source: "run_script".to_string(),
         language: Some(language),
         script_bytes: Some(script_bytes),
@@ -1064,13 +1064,13 @@ fn structured_script_context(
 fn structured_test_sink(
     client_id: &str,
     instance_id: &str,
-) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+) -> (RunnerSink, tokio::sync::mpsc::Receiver<RunnerEnvelope>) {
     let (tx, rx) = tokio::sync::mpsc::channel(256);
     (
         RunnerSink::WebSocket {
             tx,
             client_id: client_id.to_string(),
-            agent_instance_id: instance_id.to_string(),
+            runner_instance_id: instance_id.to_string(),
         },
         rx,
     )
@@ -1737,7 +1737,7 @@ fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
         failed_job_id.to_string(),
         RunningJob {
             client_id: "structured-agent".to_string(),
-            agent_instance_id: "structured-instance".to_string(),
+            runner_instance_id: "structured-instance".to_string(),
             snapshot: failed_snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -1748,7 +1748,7 @@ fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
     let queued = GatedStructuredJob::new(temp.path(), "after-prestart-failure");
     enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &queued);
     assert!(!queued.started.exists());
-    let failed_request: ShellAgentShellRequest = serde_json::from_value(json!({
+    let failed_request: RunnerRequest = serde_json::from_value(json!({
         "request_id": "request-prestart-failure",
         "client_id": "structured-agent",
         "kind": "start_process_job",
@@ -2012,11 +2012,11 @@ fn chatty_job_and_queued_job_progress_while_stream_transport_is_full() {
     let helper = structured_process_helper();
     let queued_marker = temp.path().join("queued-progressed");
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tx.try_send(AgentEnvelope::Ping { ts: 1 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 1 }).unwrap();
     let sink = RunnerSink::WebSocket {
         tx,
         client_id: "backpressure-agent".into(),
-        agent_instance_id: "backpressure-instance".into(),
+        runner_instance_id: "backpressure-instance".into(),
     };
     let manager = JobManager::new(1);
 
@@ -2073,7 +2073,7 @@ fn chatty_job_and_queued_job_progress_while_stream_transport_is_full() {
         .expect("queued job retained");
     assert_eq!(queued.status, "completed", "{queued:?}");
 
-    assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 1 })));
+    assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Ping { ts: 1 })));
 }
 
 #[test]
@@ -2086,7 +2086,7 @@ fn output_only_delivery_coalescing_preserves_authoritative_snapshot_invariants()
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -2094,11 +2094,11 @@ fn output_only_delivery_coalescing_preserves_authoritative_snapshot_invariants()
         },
     );
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tx.try_send(AgentEnvelope::Ping { ts: 7 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 7 }).unwrap();
     manager.install_sink(RunnerSink::WebSocket {
         tx,
         client_id: "test-agent".into(),
-        agent_instance_id: "test-instance".into(),
+        runner_instance_id: "test-instance".into(),
     });
 
     manager.update_and_send(
@@ -2187,7 +2187,7 @@ fn output_only_delivery_coalescing_preserves_authoritative_snapshot_invariants()
     assert_eq!(immutable.update_seq, 103);
     assert_eq!(immutable.stdout.next_line, 102_403);
 
-    assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 7 })));
+    assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Ping { ts: 7 })));
     let updates = collect_job_updates(&mut rx, Duration::from_secs(5));
     assert_eq!(updates.len(), 2, "{updates:?}");
     assert_eq!(updates[0].status, "running");
@@ -2891,14 +2891,14 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
     ];
     let context = structured_script_context(
         temp.path(),
-        shell_protocol::ShellScriptLanguage::Sh,
+        runner_protocol::ShellScriptLanguage::Sh,
         script.len(),
         args.len(),
         false,
     );
     let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
     let manager = JobManager::new(1);
-    let request: ShellAgentShellRequest = serde_json::from_value(json!({
+    let request: RunnerRequest = serde_json::from_value(json!({
         "request_id": "request-structured-script",
         "client_id": "structured-agent",
         "kind": "start_script_job",
@@ -2988,7 +2988,7 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
     let args = vec![marker.to_string_lossy().into_owned()];
     let context = structured_script_context(
         temp.path(),
-        shell_protocol::ShellScriptLanguage::Sh,
+        runner_protocol::ShellScriptLanguage::Sh,
         script.len(),
         args.len(),
         false,
@@ -3074,7 +3074,7 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
     snapshot.status = "running".to_string();
     snapshot.started_at = Some(snapshot.created_at + 1);
     snapshot.context.structured_execution =
-        Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+        Some(runner_protocol::ShellJobStructuredExecutionMetadata {
             execution_source: "run_process".to_string(),
             language: None,
             script_bytes: None,
@@ -3088,7 +3088,7 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "structured-agent".to_string(),
-            agent_instance_id: "structured-instance".to_string(),
+            runner_instance_id: "structured-instance".to_string(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -3126,7 +3126,7 @@ fn structured_job_snapshot_preserves_post_spawn_outcome_unknown() {
 /// keeps a machine-level spawn failure from being read as a fail-fast
 /// regression.
 #[cfg(unix)]
-fn is_validation_spawn_failure(update: &ShellAgentJobUpdateRequest) -> bool {
+fn is_validation_spawn_failure(update: &RunnerJobUpdateRequest) -> bool {
     update.finished
         && update.status == "failed"
         && update.exit_code.is_none()
@@ -3134,7 +3134,7 @@ fn is_validation_spawn_failure(update: &ShellAgentJobUpdateRequest) -> bool {
 }
 
 #[cfg(unix)]
-fn describe_update(update: &ShellAgentJobUpdateRequest) -> String {
+fn describe_update(update: &RunnerJobUpdateRequest) -> String {
     format!(
         "status={:?} finished={} exit_code={:?} error={:?} progress={:?}",
         update.status, update.finished, update.exit_code, update.error, update.validation_progress
@@ -3159,7 +3159,7 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
     let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
-        agent_instance_id: "validation-instance".into(),
+        runner_instance_id: "validation-instance".into(),
     };
     let steps = vec![
         ShellJobValidationStep {
@@ -3270,11 +3270,11 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
     let mut shell = ShellConfig::default();
     shell.path_prepend.push(bin);
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tx.try_send(AgentEnvelope::Ping { ts: 9 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 9 }).unwrap();
     let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
-        agent_instance_id: "validation-instance".into(),
+        runner_instance_id: "validation-instance".into(),
     };
     let manager = JobManager::new(1);
     manager.enqueue(
@@ -3333,7 +3333,7 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
         assert!(queue.output_only.is_none());
     }
 
-    assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 9 })));
+    assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Ping { ts: 9 })));
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     assert_eq!(updates.len(), 4, "{updates:?}");
     let expected_steps = ["format", "check", "test"];
@@ -3473,7 +3473,7 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
     let sink = RunnerSink::WebSocket {
         tx,
         client_id: "validation-agent".into(),
-        agent_instance_id: "validation-instance".into(),
+        runner_instance_id: "validation-instance".into(),
     };
     let manager = JobManager::new(1);
     manager.enqueue(
@@ -3857,7 +3857,7 @@ fn insert_running_job(
         job_id.to_string(),
         RunningJob {
             client_id: "tree-agent".to_string(),
-            agent_instance_id: "tree-instance".to_string(),
+            runner_instance_id: "tree-instance".to_string(),
             snapshot: test_job_snapshot(job_id),
             child,
             stop_requested: Arc::clone(&stop_requested),
@@ -4035,7 +4035,7 @@ fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
             "completed-job".to_string(),
             RunningJob {
                 client_id: "tree-agent".to_string(),
-                agent_instance_id: "tree-instance".to_string(),
+                runner_instance_id: "tree-instance".to_string(),
                 snapshot,
                 child: None,
                 stop_requested: Arc::clone(&completed_stop),
@@ -4188,7 +4188,7 @@ fn job_timeout_terminates_the_whole_tree() {
     let sink = RunnerSink::WebSocket {
         tx,
         client_id: "timeout-agent".into(),
-        agent_instance_id: "timeout-instance".into(),
+        runner_instance_id: "timeout-instance".into(),
     };
     let manager = JobManager::new(1);
     manager.enqueue(

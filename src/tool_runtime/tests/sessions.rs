@@ -4,7 +4,7 @@ use super::super::sessions::{SessionMessageKind, SessionMessagePriority};
 use super::super::*;
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::Value;
 
 async fn post_session_message(
@@ -54,7 +54,7 @@ async fn read_agent_file_for_session(
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
+    let req = wait_for_runner_request_for_instance(runtime, client_id, "inst").await;
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -74,7 +74,7 @@ async fn read_file_with_session_id_records_event_without_content() {
         &runtime,
         "telemetry-read",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -105,7 +105,7 @@ async fn read_file_with_session_id_records_event_without_content() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-read", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "telemetry-read", "inst").await;
     assert_eq!(req.kind, "file_read");
     complete_patch_agent_request(
         &runtime,
@@ -148,7 +148,7 @@ async fn read_file_without_session_id_omits_session_telemetry() {
         &runtime,
         "telemetry-nosession",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -174,7 +174,7 @@ async fn read_file_without_session_id_omits_session_telemetry() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-nosession", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "telemetry-nosession", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-nosession",
@@ -201,7 +201,7 @@ async fn session_inbox_hint_reports_open_guidance_without_text() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -256,7 +256,7 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -361,7 +361,7 @@ async fn session_inbox_hint_counts_question_todo_and_risk() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -434,7 +434,7 @@ async fn session_inbox_hint_disappears_after_message_resolved() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -754,7 +754,7 @@ async fn finish_coding_task_does_not_auto_close_session() {
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "coding-finish-no-close", "demo", tmp.path())
+        register_runner_project_at_path(&runtime, "coding-finish-no-close", "demo", tmp.path())
             .await;
     let auth = auth_context(None, true);
     let session = runtime

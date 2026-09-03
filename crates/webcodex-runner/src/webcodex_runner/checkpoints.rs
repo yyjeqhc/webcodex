@@ -1,5 +1,5 @@
 use super::output::{err_cmd, ok_cmd, CommandResult};
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -10,7 +10,7 @@ pub(crate) fn is_checkpoint_request_kind(kind: &str) -> bool {
 }
 
 pub(crate) fn handle_checkpoint_file_request(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -45,7 +45,7 @@ pub(crate) fn handle_checkpoint_file_request(
     ok_cmd(start, output)
 }
 
-fn parse_payload(request: &ShellAgentShellRequest) -> Result<Value, String> {
+fn parse_payload(request: &RunnerRequest) -> Result<Value, String> {
     let content = request
         .content
         .as_deref()

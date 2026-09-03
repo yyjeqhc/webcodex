@@ -1,7 +1,7 @@
 use super::config::RunnerPolicy;
 use super::files::{resolve_requested_path, sha256_hex_bytes};
 use super::output::{line_edit_stdout, CommandResult};
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
@@ -91,7 +91,7 @@ fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
     write_file_atomic_strict(path, content, ".pd-line")
 }
 
-fn parse_json_payload(request: &ShellAgentShellRequest) -> Result<serde_json::Value, String> {
+fn parse_json_payload(request: &RunnerRequest) -> Result<serde_json::Value, String> {
     serde_json::from_str(request.content.as_deref().unwrap_or_default())
         .map_err(|e| format!("invalid json: {}", e))
 }
@@ -159,7 +159,7 @@ fn write_project_file_apply_error(
 }
 
 pub(crate) fn handle_write_project_file_request(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -1145,7 +1145,7 @@ fn execute_planned_file_changes(
 
 fn resolve_unique_patch_path(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     touched: &mut HashSet<PathBuf>,
     index: usize,
     kind: &str,
@@ -1267,7 +1267,7 @@ fn apply_patch_strict_match_rejection(
 
 pub(crate) fn handle_apply_patch_file_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     start: Instant,
 ) -> CommandResult {
     let payload: ApplyPatchPayload =
@@ -1529,7 +1529,7 @@ pub(crate) fn handle_apply_patch_file_request(
 
 pub(crate) fn handle_apply_text_edits_file_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     start: Instant,
 ) -> CommandResult {
     let payload: ApplyTextEditsPayload =

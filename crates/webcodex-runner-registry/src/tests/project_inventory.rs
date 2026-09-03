@@ -1,11 +1,11 @@
 use super::*;
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellProjectInventoryPage, PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS,
     PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
     PROJECT_INVENTORY_STAGING_TTL_SECS,
 };
 
-fn synthetic_projects(count: usize) -> Vec<ShellAgentProjectSummary> {
+fn synthetic_projects(count: usize) -> Vec<RunnerProjectSummary> {
     (0..count)
         .map(|index| {
             project_summary(
@@ -16,14 +16,14 @@ fn synthetic_projects(count: usize) -> Vec<ShellAgentProjectSummary> {
         .collect()
 }
 
-fn paged_registration(client_id: &str, instance_id: &str) -> ShellClientRegisterRequest {
+fn paged_registration(client_id: &str, instance_id: &str) -> RunnerRegisterRequest {
     runner_registration(client_id, instance_id, Vec::new())
 }
 
 fn snapshot_pages(
     generation: &str,
     snapshot_sequence: u64,
-    projects: &[ShellAgentProjectSummary],
+    projects: &[RunnerProjectSummary],
 ) -> Vec<ShellProjectInventoryPage> {
     if projects.is_empty() {
         return vec![ShellProjectInventoryPage {
@@ -59,8 +59,8 @@ async fn apply_snapshot(
     instance_id: &str,
     generation: &str,
     snapshot_sequence: u64,
-    projects: &[ShellAgentProjectSummary],
-) -> crate::shell_protocol::ShellProjectInventoryStatus {
+    projects: &[RunnerProjectSummary],
+) -> crate::runner_protocol::ShellProjectInventoryStatus {
     let mut status = None;
     for page in snapshot_pages(generation, snapshot_sequence, projects) {
         status = Some(
@@ -73,7 +73,7 @@ async fn apply_snapshot(
     status.expect("snapshot always contains at least one page")
 }
 
-fn assert_resolves_edges(projects: &[ShellAgentProjectSummary], count: usize) {
+fn assert_resolves_edges(projects: &[RunnerProjectSummary], count: usize) {
     for index in [0, count / 2, count - 1] {
         let id = format!("project-{index:04}");
         assert!(
@@ -243,7 +243,7 @@ async fn unsupported_protocol_registration_does_not_publish_project_inventory() 
         instance_id,
         vec![project_summary("untrusted", "/tmp/untrusted")],
     );
-    registration.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
+    registration.runner_protocol_generation = RunnerProtocolGenerationNumber::new(3);
 
     let error = registry.register(registration).await.unwrap_err();
     assert_eq!(error, "agent_protocol_generation is unsupported");

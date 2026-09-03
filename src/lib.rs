@@ -59,7 +59,7 @@ mod workspace_activity_store;
 pub(crate) use webcodex_admin as admin_cli;
 pub(crate) use webcodex_core::{
     apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge,
-    sensitive_paths, shell_protocol, validation_bridge,
+    runner_protocol, sensitive_paths, validation_bridge,
 };
 pub(crate) use webcodex_runner_config as runner_config;
 pub(crate) use webcodex_workspace::project_overview;

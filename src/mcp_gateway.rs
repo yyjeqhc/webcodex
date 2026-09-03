@@ -77,7 +77,7 @@ impl McpGatewayRuntime {
 #[derive(Debug, Clone)]
 struct ResolvedProvider {
     client_id: String,
-    agent_instance_id: String,
+    runner_instance_id: String,
     provider_id: String,
     provider_instance_id: String,
     name: String,
@@ -446,7 +446,7 @@ async fn visible_provider_candidates(
                 .or_default()
                 .push(ResolvedProvider {
                     client_id: client.client_id.clone(),
-                    agent_instance_id: client.agent_instance_id.clone(),
+                    runner_instance_id: client.runner_instance_id.clone(),
                     provider_id: provider.provider_id.clone(),
                     provider_instance_id: provider.provider_instance_id.clone(),
                     name: provider.name.clone(),
@@ -486,7 +486,7 @@ async fn execute_exact(
         .runner_registry
         .enqueue_mcp_gateway(
             &provider.client_id,
-            &provider.agent_instance_id,
+            &provider.runner_instance_id,
             request,
             access.as_ref(),
             "mcp_tool".to_string(),
@@ -663,7 +663,7 @@ mod tests {
     fn no_arg_list_reports_routing_resolvability_not_health() {
         let provider = |client_id: &str, instance_id: &str| ResolvedProvider {
             client_id: client_id.to_string(),
-            agent_instance_id: format!("{client_id}-agent"),
+            runner_instance_id: format!("{client_id}-agent"),
             provider_id: "server".to_string(),
             provider_instance_id: instance_id.to_string(),
             name: "Server".to_string(),

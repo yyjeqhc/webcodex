@@ -9,9 +9,9 @@ use webcodex_core::coding_agent::{
     CodingAgentProvider, CodingAgentResponse, CodingAgentRunInventory,
 };
 use webcodex_core::mcp_gateway::McpGatewayResponse;
-use webcodex_core::shell_protocol::{
-    AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
-    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientView, ShellCommandExecutionState,
+use webcodex_core::runner_protocol::{
+    PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
+    RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState,
     ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
     ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
@@ -23,7 +23,7 @@ pub(super) struct ProjectInventoryStaging {
     pub(super) snapshot_sequence: u64,
     pub(super) total_reported: usize,
     pub(super) next_page_index: u32,
-    pub(super) projects: Vec<ShellAgentProjectSummary>,
+    pub(super) projects: Vec<RunnerProjectSummary>,
     pub(super) seen_ids: HashSet<String>,
     pub(super) serialized_bytes: usize,
     pub(super) started_at: i64,
@@ -48,18 +48,18 @@ pub(super) struct RunnerRecord {
     /// Active Runner process identity (UUID). Replacing this value is the lease
     /// hand-off: once changed, the previous instance can no longer poll or
     /// submit results/job_updates.
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) display_name: Option<String>,
     pub(super) owner: Option<String>,
     pub(super) hostname: Option<String>,
     /// Bounded Runner-configured planning metadata. This is not policy or live
     /// state and is replaced by each successful registration.
-    pub(super) host_context: Option<AgentHostContext>,
+    pub(super) host_context: Option<RunnerHostContext>,
     /// Canonical Server capability truth normalized once from the required
     /// registration snapshot. It also owns the public wire projection, so the
     /// record has no second independently stored capability copy.
     pub(super) runner_features: RunnerFeatureSet,
-    pub(super) projects: Vec<ShellAgentProjectSummary>,
+    pub(super) projects: Vec<RunnerProjectSummary>,
     /// Authoritative project snapshot plus bounded in-progress staging. A
     /// staging failure never changes liveness or partially publishes projects.
     pub(super) project_inventory: ProjectInventoryState,
@@ -72,9 +72,9 @@ pub(super) struct RunnerRecord {
     /// Sanitized Runner policy summary reported at registration. `None` for
     /// older Runners that did not report a policy. Exposed in
     /// `runtime_status` / `list_runners`; never carries token/env/init_script.
-    pub(super) policy: Option<AgentPolicySummary>,
+    pub(super) policy: Option<RunnerPolicySummary>,
     /// Lightweight quick-start isolation group captured at registration. This
-    /// is intentionally not exposed in `ShellClientView`.
+    /// is intentionally not exposed in `RunnerView`.
     pub(super) auth_group: Option<RunnerAccessGroup>,
     /// When the current Runner instance first registered under this client_id.
     /// Preserved across same-instance re-registrations (transport reconnects).
@@ -93,7 +93,7 @@ pub(super) struct RunnerRecord {
     /// Runner-reported process start timestamp (register payload).
     pub(super) process_started_at: Option<i64>,
     /// Runner-reported build identity (register payload).
-    pub(super) build: Option<AgentBuildInfo>,
+    pub(super) build: Option<RunnerBuildInfo>,
     /// Runner-reported effective static Job execution concurrency. This is
     /// safe operational metadata and remains unknown for older Runners.
     pub(super) job_concurrency_limit: Option<usize>,
@@ -117,7 +117,7 @@ pub(super) struct RunnerRecord {
 /// This type is never serialized or exposed through the wire protocol.
 #[derive(Debug, Clone)]
 pub struct RunnerSemanticView {
-    pub view: ShellClientView,
+    pub view: RunnerView,
     pub(super) runner_features: RunnerFeatureSet,
 }
 
@@ -127,7 +127,7 @@ impl RunnerSemanticView {
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
-    pub fn from_public_view_for_test(view: ShellClientView) -> Self {
+    pub fn from_public_view_for_test(view: RunnerView) -> Self {
         let runner_features = RunnerFeatureSet::from_wire_for_test(&view.capabilities);
         Self {
             view,
@@ -139,7 +139,7 @@ impl RunnerSemanticView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProjectedStructuredTerminalSuppression {
     pub(super) client_id: String,
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) job_id: String,
     pub(super) request_id: String,
     pub(super) expires_at: i64,
@@ -165,7 +165,7 @@ impl RunnerRecord {
         self.projected_structured_terminal_suppressions.push_back(
             ProjectedStructuredTerminalSuppression {
                 client_id: self.client_id.clone(),
-                agent_instance_id: self.agent_instance_id.clone(),
+                runner_instance_id: self.runner_instance_id.clone(),
                 job_id,
                 request_id,
                 expires_at: now.saturating_add(JOB_TERMINAL_RETENTION_SECS),
@@ -181,7 +181,7 @@ impl RunnerRecord {
     pub(super) fn suppresses_projected_structured_terminal(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         job_id: &str,
         request_id: &str,
         now: i64,
@@ -191,7 +191,7 @@ impl RunnerRecord {
             .any(|suppression| {
                 suppression.expires_at > now
                     && suppression.client_id == client_id
-                    && suppression.agent_instance_id == agent_instance_id
+                    && suppression.runner_instance_id == runner_instance_id
                     && suppression.job_id == job_id
                     && suppression.request_id == request_id
             })
@@ -200,13 +200,13 @@ impl RunnerRecord {
 
 #[derive(Debug, Clone)]
 pub(super) struct SkillStoreDispatchFence {
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) management: bool,
 }
 
 #[derive(Debug)]
 pub(super) struct PendingShellRequest {
-    pub(super) request: ShellAgentShellRequest,
+    pub(super) request: RunnerRequest,
     pub(super) waiter: Option<oneshot::Sender<ShellRunResponse>>,
     pub(super) job_id: Option<String>,
     /// Optional Control-side project-placement fence for synchronous requests
@@ -218,7 +218,7 @@ pub(super) struct PendingShellRequest {
     /// Exact Runner process lease captured for an MCP gateway request. This is
     /// revalidated under the registry lock immediately before dequeue so a
     /// replacement Runner cannot consume stale bridge work.
-    pub(super) expected_mcp_gateway_agent_instance_id: Option<String>,
+    pub(super) expected_mcp_gateway_runner_instance_id: Option<String>,
     /// Exact provider lease captured with the Runner lease. Both logical id
     /// and opaque provider instance must still match registration immediately
     /// before dequeue.
@@ -233,7 +233,7 @@ pub(super) struct PendingShellRequest {
 
 #[derive(Debug, Clone)]
 pub(super) struct CodingAgentDispatchFence {
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) provider_id: String,
     pub(super) provider_instance_id: String,
 }
@@ -273,7 +273,7 @@ pub(super) struct ShellJobRecord {
     /// the originating runner registration is removed.
     pub(super) auth_group: Option<RunnerAccessGroup>,
     /// Internal lease owner. Never exposed through public job tools.
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) kind: String,
     pub(super) project_id: Option<String>,
     pub(super) session_id: Option<String>,
@@ -305,7 +305,7 @@ pub(super) struct ShellJobRecord {
     pub(super) structured_execution: Option<ShellJobStructuredExecutionMetadata>,
     pub(super) codex: Option<ShellJobCodexMetadata>,
     pub(super) validation_steps: Vec<String>,
-    pub(super) validation: Option<webcodex_core::shell_protocol::ShellJobValidationMetadata>,
+    pub(super) validation: Option<webcodex_core::runner_protocol::ShellJobValidationMetadata>,
     pub(super) validation_progress: Option<ShellJobValidationProgress>,
     pub(super) visibility: ShellJobVisibility,
     pub(super) last_update_seq: u64,
@@ -399,6 +399,6 @@ pub(super) struct RunnerRegistryInner {
 pub(super) struct NotifierEntry {
     pub(super) notify: Arc<Notify>,
     pub(super) cancel: watch::Sender<bool>,
-    pub(super) agent_instance_id: String,
+    pub(super) runner_instance_id: String,
     pub(super) connection_id: Option<String>,
 }

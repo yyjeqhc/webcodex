@@ -9,8 +9,8 @@ use super::*;
 // advances `last_update_seq` via `update_job`, so waiters observe real sequence
 // advancement, log growth, and terminal transitions.
 
-fn sequenced_job_capabilities() -> ShellClientCapabilities {
-    ShellClientCapabilities {
+fn sequenced_job_capabilities() -> RunnerCapabilities {
+    RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
         jobs: true,
@@ -28,10 +28,10 @@ fn wait_job_update(
     status: &str,
     stdout_chunk: Option<&str>,
     finished: bool,
-) -> ShellAgentJobUpdateRequest {
-    ShellAgentJobUpdateRequest {
+) -> RunnerJobUpdateRequest {
+    RunnerJobUpdateRequest {
         client_id: "oe".to_string(),
-        agent_instance_id: instance.to_string(),
+        runner_instance_id: instance.to_string(),
         job_id: job_id.to_string(),
         request_id: None,
         update_seq: Some(sequence),
@@ -52,19 +52,19 @@ fn wait_job_update(
 
 async fn register_sequenced(registry: &RunnerRegistry, instance: &str) {
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
-            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+            job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
             }),
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: instance.to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: instance.to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -76,7 +76,7 @@ async fn register_sequenced(registry: &RunnerRegistry, instance: &str) {
         .unwrap();
 }
 
-async fn start_wait_job(registry: &RunnerRegistry) -> crate::shell_protocol::ShellJobInfo {
+async fn start_wait_job(registry: &RunnerRegistry) -> crate::runner_protocol::ShellJobInfo {
     register_sequenced(registry, "inst-wait").await;
     registry
         .start_job(
@@ -347,9 +347,9 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".into(),
-            agent_instance_id: "inst-wait".into(),
+            runner_instance_id: "inst-wait".into(),
             update_seq: Some(1),
             job_id: job.job_id.clone(),
             request_id: None,
@@ -375,9 +375,9 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
         .observation_token
         .unwrap();
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".into(),
-            agent_instance_id: "inst-wait".into(),
+            runner_instance_id: "inst-wait".into(),
             update_seq: Some(2),
             job_id: job.job_id.clone(),
             request_id: None,
@@ -439,14 +439,14 @@ async fn job_log_wait_recovery_transition_between_calls_is_immediate() {
 #[tokio::test]
 async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
     let registry = RunnerRegistry::default();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
         jobs: true,
         ..Default::default()
     };
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -454,8 +454,8 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "legacy".to_string(),
-            agent_instance_id: "legacy-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "legacy-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -485,9 +485,9 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         .await
         .unwrap();
     let token0 = job.observation_token.clone().unwrap();
-    let update = || ShellAgentJobUpdateRequest {
+    let update = || RunnerJobUpdateRequest {
         client_id: "legacy".to_string(),
-        agent_instance_id: "legacy-inst".to_string(),
+        runner_instance_id: "legacy-inst".to_string(),
         update_seq: None,
         job_id: job.job_id.clone(),
         request_id: None,
@@ -599,9 +599,9 @@ async fn agent_job_log_observation_is_baseline_then_independent_deltas() {
     let token1 = stdout_job.observation_token.unwrap();
 
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".into(),
-            agent_instance_id: "inst-wait".into(),
+            runner_instance_id: "inst-wait".into(),
             job_id: job.job_id.clone(),
             request_id: None,
             update_seq: Some(3),
@@ -796,9 +796,9 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
     assert_eq!(parsed3.stderr_cursor, Some(1));
 
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".into(),
-            agent_instance_id: "inst-wait".into(),
+            runner_instance_id: "inst-wait".into(),
             job_id: job.job_id.clone(),
             request_id: None,
             update_seq: Some(5),
@@ -833,9 +833,9 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
     assert_eq!(parsed4.stderr_cursor, Some(1));
 
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".into(),
-            agent_instance_id: "inst-wait".into(),
+            runner_instance_id: "inst-wait".into(),
             job_id: job.job_id.clone(),
             request_id: None,
             update_seq: Some(6),

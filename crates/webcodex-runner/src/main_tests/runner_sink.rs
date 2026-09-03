@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn sink_submit_result_sends_result_envelope() {
-    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<RunnerEnvelope>);
     for (label, make_sink, expected_client, expected_instance) in [
         ("ws", ws_sink as SinkFactory, "ws-client", "ws-inst"),
         ("quic", quic_sink as SinkFactory, "quic-client", "quic-inst"),
@@ -22,10 +22,10 @@ fn sink_submit_result_sends_result_envelope() {
         );
         let env = rx.try_recv().expect("envelope was sent");
         match env {
-            AgentEnvelope::Result { payload } => {
+            RunnerEnvelope::Result { payload } => {
                 assert_eq!(payload.result.client_id, expected_client, "{label}");
                 assert_eq!(
-                    payload.result.agent_instance_id, expected_instance,
+                    payload.result.runner_instance_id, expected_instance,
                     "{label}"
                 );
                 assert_eq!(payload.result.request_id, "req-9");
@@ -40,15 +40,15 @@ fn sink_submit_result_sends_result_envelope() {
 
 #[test]
 fn sink_send_job_update_sends_job_update_envelope() {
-    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+    type SinkFactory = fn(&str) -> (RunnerSink, tokio::sync::mpsc::Receiver<RunnerEnvelope>);
     for (label, make_sink, expected_client) in [
         ("ws", ws_sink as SinkFactory, "ws-client"),
         ("quic", quic_sink as SinkFactory, "quic-client"),
     ] {
         let (sink, mut rx) = make_sink(expected_client);
-        let body = ShellAgentJobUpdateRequest {
+        let body = RunnerJobUpdateRequest {
             client_id: expected_client.to_string(),
-            agent_instance_id: sink.agent_instance_id().to_string(),
+            runner_instance_id: sink.runner_instance_id().to_string(),
             job_id: "job-1".to_string(),
             request_id: Some("req-1".to_string()),
             update_seq: None,
@@ -68,11 +68,11 @@ fn sink_send_job_update_sends_job_update_envelope() {
         sink.send_job_update(&body).unwrap();
         let env = rx.try_recv().expect("envelope was sent");
         match env {
-            AgentEnvelope::JobUpdate { payload } => {
+            RunnerEnvelope::JobUpdate { payload } => {
                 assert_eq!(payload.client_id, expected_client, "{label}");
                 assert_eq!(
-                    payload.agent_instance_id,
-                    sink.agent_instance_id(),
+                    payload.runner_instance_id,
+                    sink.runner_instance_id(),
                     "{label}"
                 );
                 assert_eq!(payload.job_id, "job-1", "{label}");
@@ -92,23 +92,23 @@ fn sink_send_job_update_sends_job_update_envelope() {
 fn sink_try_send_job_update_preserves_full_ws_and_quic_queue_for_retry() {
     for label in ["ws", "quic"] {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-        tx.try_send(AgentEnvelope::Ping { ts: 11 }).unwrap();
+        tx.try_send(RunnerEnvelope::Ping { ts: 11 }).unwrap();
         let sink = match label {
             "ws" => RunnerSink::WebSocket {
                 tx,
                 client_id: "stream-client".to_string(),
-                agent_instance_id: "stream-instance".to_string(),
+                runner_instance_id: "stream-instance".to_string(),
             },
             "quic" => RunnerSink::Quic {
                 tx,
                 client_id: "stream-client".to_string(),
-                agent_instance_id: "stream-instance".to_string(),
+                runner_instance_id: "stream-instance".to_string(),
             },
             _ => unreachable!(),
         };
-        let body = ShellAgentJobUpdateRequest {
+        let body = RunnerJobUpdateRequest {
             client_id: "stream-client".to_string(),
-            agent_instance_id: "stream-instance".to_string(),
+            runner_instance_id: "stream-instance".to_string(),
             job_id: "job-full".to_string(),
             request_id: Some("request-full".to_string()),
             update_seq: Some(2),
@@ -127,11 +127,11 @@ fn sink_try_send_job_update_preserves_full_ws_and_quic_queue_for_retry() {
         };
 
         assert_eq!(sink.try_send_job_update(&body), Ok(false), "{label}");
-        assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 11 })));
+        assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Ping { ts: 11 })));
         assert_eq!(sink.try_send_job_update(&body), Ok(true), "{label}");
         assert!(matches!(
             rx.try_recv(),
-            Ok(AgentEnvelope::JobUpdate { payload }) if payload.job_id == "job-full"
+            Ok(RunnerEnvelope::JobUpdate { payload }) if payload.job_id == "job-full"
         ));
     }
 }

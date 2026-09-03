@@ -1,7 +1,7 @@
 use super::helpers::{project_relative_runner_cwd, resolve_runner_cwd};
 use super::{ExecutionPurpose, ExecutionShell, ToolResult, ToolRuntime};
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellJobContext, RAW_SHELL_COMMAND_MAX_BYTES,
 };
 use serde_json::json;
@@ -451,7 +451,7 @@ impl ToolRuntime {
                 purpose: None,
             };
             let result = match self
-                .run_agent_persistent_shell(&client_id, request, Some(job_context), 35)
+                .run_runner_persistent_shell(&client_id, request, Some(job_context), 35)
                 .await
             {
                 Ok(result) => result,
@@ -518,7 +518,7 @@ impl ToolRuntime {
             purpose: None,
         };
         let result = match self
-            .run_agent_persistent_shell(&client_id, request, None, 35)
+            .run_runner_persistent_shell(&client_id, request, None, 35)
             .await
         {
             Ok(result) => result,
@@ -607,7 +607,7 @@ impl ToolRuntime {
             purpose: purpose.map(|purpose| purpose.as_str().to_string()),
         };
         let result = self
-            .run_agent_persistent_shell(client_id, request, record.job_context(), timeout_secs + 5)
+            .run_runner_persistent_shell(client_id, request, record.job_context(), timeout_secs + 5)
             .await;
         let result = match result {
             Ok(result) => result,
@@ -654,7 +654,7 @@ impl ToolRuntime {
             return persistent_record_to_tool(record, &project_config, "status");
         }
         let result = self
-            .run_agent_persistent_shell(
+            .run_runner_persistent_shell(
                 record.client_id.as_deref().unwrap_or_default(),
                 PersistentShellRequest {
                     action: "status".to_string(),
@@ -742,7 +742,7 @@ impl ToolRuntime {
         record: &SessionShellRecord,
         reason: &str,
     ) -> Result<PersistentShellResult, String> {
-        self.run_agent_persistent_shell(
+        self.run_runner_persistent_shell(
             record.client_id.as_deref().unwrap_or_default(),
             PersistentShellRequest {
                 action: "close".to_string(),
@@ -768,7 +768,7 @@ impl ToolRuntime {
             .filter(|record| record.runtime_project_id == runtime_project_id)
         {
             let result = self
-                .run_agent_persistent_shell(
+                .run_runner_persistent_shell(
                     record.client_id.as_deref().unwrap_or_default(),
                     PersistentShellRequest {
                         action: "status".to_string(),
@@ -911,7 +911,7 @@ impl ToolRuntime {
             );
     }
 
-    async fn run_agent_persistent_shell(
+    async fn run_runner_persistent_shell(
         &self,
         client_id: &str,
         request: PersistentShellRequest,

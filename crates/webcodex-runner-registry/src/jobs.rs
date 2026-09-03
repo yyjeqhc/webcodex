@@ -5,9 +5,9 @@ use super::{
 };
 use std::collections::VecDeque;
 use std::fmt;
-use webcodex_core::shell_protocol::{
-    ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest,
-    ShellCommandExecutionState, ShellJobInfo, ShellJobStreamSnapshot,
+use webcodex_core::runner_protocol::{
+    RunnerJobResult, RunnerRequest, RunnerShellJobResult, ShellCommandExecutionState, ShellJobInfo,
+    ShellJobStreamSnapshot,
 };
 
 pub const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
@@ -134,7 +134,7 @@ pub fn script_preview(language: &str, script_bytes: usize, arg_count: usize) -> 
     format!("{language} script ({script_bytes} bytes, {arg_count} args)")
 }
 
-pub(super) fn request_preview(request: &ShellAgentShellRequest) -> String {
+pub(super) fn request_preview(request: &RunnerRequest) -> String {
     if let Some(script) = request.script.as_ref() {
         script_preview(
             script.language.as_str(),
@@ -282,8 +282,8 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
             .map(|started_at| job.ended_at.unwrap_or(now).saturating_sub(started_at) as u64)
     };
     let result = if is_final_job_status(&job.status) {
-        Some(ShellAgentJobResult {
-            shell: Some(ShellAgentShellJobResult {
+        Some(RunnerJobResult {
+            shell: Some(RunnerShellJobResult {
                 cwd: job.cwd.clone(),
                 command_preview: job.command_preview.clone(),
                 exit_code: job.exit_code,
@@ -629,12 +629,12 @@ pub(super) fn offline_last_seen(now: i64) -> i64 {
 pub(super) fn assert_active_instance_locked(
     inner: &RunnerRegistryInner,
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
 ) -> Result<(), String> {
     let Some(runner) = inner.runners.get(client_id) else {
         return Err(format!("unknown shell client: {}", client_id));
     };
-    if runner.agent_instance_id != agent_instance_id {
+    if runner.runner_instance_id != runner_instance_id {
         return Err(format!(
             "runner {} is no longer the active instance (stale or replaced)",
             client_id

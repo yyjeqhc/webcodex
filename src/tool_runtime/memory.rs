@@ -127,7 +127,7 @@ fn memory_inventory_observation(
         client_inventory_complete.insert(client_id.clone(), complete);
         for project in &semantic.view.projects {
             let runtime_id =
-                super::project_resolution::agent_project_runtime_id(client_id, &project.id);
+                super::project_resolution::runner_project_runtime_id(client_id, &project.id);
             let scope = memory_scope_id_from_parts(&runtime_id, client_id, &project.path);
             if current_projects.insert(scope, runtime_id).is_some() {
                 // A domain collision or duplicated authoritative identity makes

@@ -1,7 +1,7 @@
 use super::*;
-use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellClientCapabilities, ShellClientRegisterRequest,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerPollRequest, RunnerProjectSummary, RunnerRegisterRequest,
+    RunnerResultRequest,
 };
 use base64::engine::general_purpose;
 use sha2::{Digest, Sha256};

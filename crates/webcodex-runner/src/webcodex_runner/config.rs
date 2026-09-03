@@ -7,8 +7,8 @@ use crate::runner_config::{
     DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC,
     TRANSPORT_WEBSOCKET,
 };
-use crate::shell_protocol::{
-    AgentConfigReloadStatus, AgentHostContext, ShellClientCapabilities, RUNNER_JOB_CONCURRENCY_MAX,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerConfigReloadStatus, RunnerHostContext, RUNNER_JOB_CONCURRENCY_MAX,
     RUNNER_JOB_CONCURRENCY_MIN,
 };
 use serde::Deserialize;
@@ -51,7 +51,7 @@ pub(crate) struct RunnerConfig {
     /// Stable, bounded planning context for this host. This is registration
     /// metadata only and never changes Runner authority or capability.
     #[serde(default)]
-    pub(crate) host_context: Option<AgentHostContext>,
+    pub(crate) host_context: Option<RunnerHostContext>,
     #[serde(default)]
     pub(crate) project_registry_dir: Option<PathBuf>,
     /// Legacy config spelling retained only for load-time compatibility. A
@@ -67,7 +67,7 @@ pub(crate) struct RunnerConfig {
     #[serde(default = "default_poll_interval_ms")]
     pub(crate) poll_interval_ms: u64,
     #[serde(default)]
-    pub(crate) capabilities: Option<ShellClientCapabilities>,
+    pub(crate) capabilities: Option<RunnerCapabilities>,
     #[serde(default)]
     pub(crate) max_concurrent_jobs: Option<usize>,
     #[serde(default)]
@@ -240,7 +240,7 @@ impl Default for ClaudeCodeMcpConfig {
 /// fields are required when `transport = "quic"`; `run_quic_runner` validates
 /// them before connecting. The token is NOT stored here — it stays in the
 /// top-level `RunnerConfig.token`. QUIC encodes that credential only in its v1
-/// transport-specific first-register frame; it never enters `AgentEnvelope`.
+/// transport-specific first-register frame; it never enters `RunnerEnvelope`.
 /// WebSocket and polling continue to use `Authorization: Bearer`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct QuicClientConfig {
@@ -266,7 +266,7 @@ pub(crate) struct QuicClientConfig {
 pub(crate) const MAX_QUIC_KEEPALIVE_INTERVAL_SECS: u64 = 25;
 
 pub(crate) fn default_quic_alpn() -> String {
-    crate::shell_protocol::AGENT_QUIC_ALPN_V1.to_string()
+    crate::runner_protocol::RUNNER_QUIC_ALPN_V1.to_string()
 }
 pub(crate) fn default_quic_connect_timeout_secs() -> u64 {
     10
@@ -441,11 +441,11 @@ pub(crate) struct HotRunnerConfig {
     pub(crate) shell: ShellConfig,
     pub(crate) ssh: SshConfig,
     pub(crate) external_tools: Arc<ExternalToolRouter>,
-    reload_status: Mutex<AgentConfigReloadStatus>,
+    reload_status: Mutex<RunnerConfigReloadStatus>,
 }
 
 impl HotRunnerConfig {
-    fn new(generation: u64, cfg: &RunnerConfig, status: AgentConfigReloadStatus) -> Self {
+    fn new(generation: u64, cfg: &RunnerConfig, status: RunnerConfigReloadStatus) -> Self {
         Self {
             generation,
             policy: cfg.policy.clone(),
@@ -456,7 +456,7 @@ impl HotRunnerConfig {
         }
     }
 
-    pub(crate) fn reload_status(&self) -> AgentConfigReloadStatus {
+    pub(crate) fn reload_status(&self) -> RunnerConfigReloadStatus {
         self.reload_status.lock().unwrap().clone()
     }
 }
@@ -477,7 +477,7 @@ pub(crate) struct ReloadableRunnerConfig {
 
 impl ReloadableRunnerConfig {
     pub(crate) fn new(startup: RunnerConfig, path: PathBuf) -> Self {
-        let mut status = AgentConfigReloadStatus::default();
+        let mut status = RunnerConfigReloadStatus::default();
         if !cfg!(unix) {
             status.last_reload_result = "unsupported".to_string();
             status.last_reload_error_code = Some("reload_unsupported".to_string());
@@ -558,7 +558,7 @@ impl ReloadableRunnerConfig {
     }
 
     #[cfg(any(unix, test))]
-    pub(crate) fn reload(&self) -> AgentConfigReloadStatus {
+    pub(crate) fn reload(&self) -> RunnerConfigReloadStatus {
         if self.is_stopping() {
             return self.snapshot().reload_status();
         }
@@ -590,7 +590,7 @@ impl ReloadableRunnerConfig {
         let active = self.snapshot();
         let generation = active.generation.saturating_add(1);
         let restart_required_fields = restart_required_fields(&self.startup, &candidate);
-        let status = AgentConfigReloadStatus {
+        let status = RunnerConfigReloadStatus {
             generation,
             last_reload_result: if restart_required_fields.is_empty() {
                 "success"

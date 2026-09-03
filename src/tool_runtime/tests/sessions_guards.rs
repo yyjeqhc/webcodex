@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
 use std::fs;
@@ -13,8 +13,8 @@ async fn runtime_with_two_agent_projects(
     root_b: &Path,
 ) -> (ToolRuntime, String, String) {
     let runtime = test_runtime();
-    let alpha = register_agent_project_at_path(&runtime, "alpha-client", "alpha", root_a).await;
-    let bravo = register_agent_project_at_path(&runtime, "bravo-client", "bravo", root_b).await;
+    let alpha = register_runner_project_at_path(&runtime, "alpha-client", "alpha", root_a).await;
+    let bravo = register_runner_project_at_path(&runtime, "bravo-client", "bravo", root_b).await;
     (runtime, alpha, bravo)
 }
 
@@ -229,7 +229,7 @@ async fn read_only_recording_session_does_not_guard_same_project_write() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "guard-recorder", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "guard-recorder", "demo", tmp.path()).await;
     let auth = auth_context(None, true);
     let recorder = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
@@ -308,7 +308,8 @@ async fn closed_recording_session_remains_provenance_only_for_business_write() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "guard-closed-recorder", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "guard-closed-recorder", "demo", tmp.path())
+            .await;
     let auth = auth_context(None, true);
     let recorder = runtime
         .sessions
@@ -473,7 +474,7 @@ async fn read_only_session_allows_read_file_and_records_success() {
         &runtime,
         "guard-read",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -508,7 +509,7 @@ async fn read_only_session_allows_read_file_and_records_success() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "guard-read", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "guard-read", "inst").await;
     assert_eq!(req.kind, "file_read");
     complete_patch_agent_request(
         &runtime,
@@ -633,7 +634,7 @@ async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak
         &runtime,
         "guard-artifact-upload",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             ..Default::default()
         },
@@ -760,7 +761,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
         &runtime,
         "guard-shell",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             file_write: true,
             ..Default::default()
@@ -823,7 +824,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
         &runtime,
         "guard-write-only",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             shell: true,
             ..Default::default()
@@ -879,7 +880,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "guard-write-only", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "guard-write-only", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "guard-write-only",
@@ -925,7 +926,7 @@ async fn deny_shell_only_allows_write_tools() {
         &runtime,
         "guard-shell-only",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             file_write: true,
             ..Default::default()

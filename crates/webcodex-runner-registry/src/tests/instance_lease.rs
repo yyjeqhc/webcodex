@@ -4,11 +4,11 @@ use super::*;
 async fn lease_first_register_accepts_instance() {
     let registry = RunnerRegistry::default();
     let view = register_with_instance(&registry, "oe", "inst-a").await;
-    assert_eq!(view.agent_instance_id, "inst-a");
+    assert_eq!(view.runner_instance_id, "inst-a");
     assert!(view.connected);
     // The view/list path exposes the instance id.
     let runners = registry.list_runners().await;
-    assert_eq!(runners[0].agent_instance_id, "inst-a");
+    assert_eq!(runners[0].runner_instance_id, "inst-a");
 }
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn lease_same_instance_reregister_accepts() {
     // Same client_id + same instance id is a reconnect/refresh: accepted.
     let _ = register_with_instance(&registry, "oe", "inst-a").await;
     let view = registry.get_runner_view("oe").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
+    assert_eq!(view.runner_instance_id, "inst-a");
     assert!(view.connected);
 }
 
@@ -29,7 +29,7 @@ async fn lease_different_online_instance_rejected() {
     // A second process with the same client_id but a different instance
     // must be rejected while the first is online.
     let err = registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -37,8 +37,8 @@ async fn lease_different_online_instance_rejected() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst-b".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -54,7 +54,7 @@ async fn lease_different_online_instance_rejected() {
     );
     // The active instance is unchanged.
     let view = registry.get_runner_view("oe").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
+    assert_eq!(view.runner_instance_id, "inst-a");
 }
 
 #[tokio::test]
@@ -68,7 +68,7 @@ async fn lease_stale_replaced_by_different_instance_accepts() {
     // A different instance may now take over the lease.
     let _ = register_with_instance(&registry, "oe", "inst-b").await;
     let view = registry.get_runner_view("oe").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-b");
+    assert_eq!(view.runner_instance_id, "inst-b");
     assert!(view.connected);
 }
 
@@ -84,9 +84,9 @@ async fn lease_stale_instance_poll_rejected() {
 
     // The stale instance A can no longer poll.
     let err = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
         })
         .await
         .unwrap_err();
@@ -97,9 +97,9 @@ async fn lease_stale_instance_poll_rejected() {
 
     // The active instance B can still poll.
     registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
         })
         .await
         .expect("active instance must poll");
@@ -125,9 +125,9 @@ async fn lease_stale_instance_result_rejected() {
         .await
         .unwrap();
     let _ = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
         })
         .await
         .unwrap()
@@ -143,9 +143,9 @@ async fn lease_stale_instance_result_rejected() {
 
     // The stale instance A cannot submit the result.
     let err = registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
             request_id: request_id.clone(),
             exit_code: Some(0),
             stdout: Some("hi".to_string()),
@@ -173,9 +173,9 @@ async fn lease_stale_instance_result_rejected() {
     // request record was drained with the replaced process, so it is no
     // longer present for the new lease.
     let err = registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
             request_id,
             exit_code: Some(0),
             stdout: Some("hi".to_string()),
@@ -243,9 +243,9 @@ async fn lease_stale_instance_job_update_rejected() {
 
     // The stale instance A cannot update the job (lease check).
     let err = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
             update_seq: None,
             job_id: job.job_id.clone(),
             request_id: None,
@@ -272,9 +272,9 @@ async fn lease_stale_instance_job_update_rejected() {
     // The active instance B cannot inherit or update A's job: it belongs
     // to the replaced runner instance.
     let err = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
             update_seq: None,
             job_id: job.job_id.clone(),
             request_id: None,
@@ -302,9 +302,9 @@ async fn lease_stale_instance_job_update_rejected() {
     // revive the job or change the first `ended_at` / reason.
     let first_ended_at = lost.ended_at.unwrap();
     let _ = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
             update_seq: None,
             job_id: job.job_id.clone(),
             request_id: None,
@@ -416,7 +416,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     registry.reconcile_disconnect("oe", "inst-a").await;
 
     let view = registry.get_runner_view("oe").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-b");
+    assert_eq!(view.runner_instance_id, "inst-b");
     assert!(view.connected, "stale disconnect must not drop B's lease");
 
     // B's notifier remains installed (still addressable) and B's job is
@@ -442,9 +442,9 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     // B can still poll/update/complete its own job after A's stale
     // disconnect.
     let updated = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
             update_seq: None,
             job_id: b_job.job_id.clone(),
             request_id: None,
@@ -510,7 +510,7 @@ async fn lease_register_notifier_rejects_stale_instance() {
 async fn lease_register_rejects_empty_instance_id() {
     let registry = RunnerRegistry::default();
     let err = registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -518,14 +518,14 @@ async fn lease_register_rejects_empty_instance_id() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -537,7 +537,7 @@ async fn lease_register_rejects_empty_instance_id() {
 #[tokio::test]
 async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() {
     let registry = RunnerRegistry::default();
-    let capabilities = || ShellClientCapabilities {
+    let capabilities = || RunnerCapabilities {
         jobs: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -549,19 +549,19 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         ..Default::default()
     };
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
-            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+            job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
             }),
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst-a".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -592,7 +592,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
                 purpose: Some("test".to_string()),
                 shell: Some("direct_argv".to_string()),
                 structured_execution: Some(StructuredJobExecution::DetachedProcess(
-                    crate::shell_protocol::ShellProcessArgv {
+                    crate::runner_protocol::ShellProcessArgv {
                         executable: "/bin/sleep".to_string(),
                         args: vec!["60".to_string()],
                     },
@@ -604,9 +604,9 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
         })
         .await
         .unwrap()
@@ -615,9 +615,9 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
 
     registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
             job_id: job.job_id.clone(),
             request_id: job.request_id.clone(),
             update_seq: Some(1),
@@ -640,7 +640,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     let snapshot = {
         let inner = registry.inner.lock().await;
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
-        crate::shell_protocol::ShellJobSnapshot {
+        crate::runner_protocol::ShellJobSnapshot {
             job_id: record.job_id.clone(),
             request_id: record.request_id.clone().unwrap(),
             status: record.status.clone(),
@@ -652,7 +652,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
             duration_ms: record.duration_ms,
             error: record.error.clone(),
             command_execution_state: record.command_execution_state,
-            context: crate::shell_protocol::ShellJobContext {
+            context: crate::runner_protocol::ShellJobContext {
                 runtime_project_id: record.project_id.clone(),
                 workflow_session_id: record.session_id.clone(),
                 ssh_resource: record.ssh_resource.clone(),
@@ -675,19 +675,19 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
         .await;
     let view = registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
-            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+            job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: vec![snapshot.clone()],
             }),
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst-b".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -697,12 +697,12 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         }))
         .await
         .expect("exact detached recovery inventory must transfer to replacement instance");
-    assert_eq!(view.agent_instance_id, "inst-b");
+    assert_eq!(view.runner_instance_id, "inst-b");
 
     {
         let inner = registry.inner.lock().await;
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
-        assert_eq!(record.agent_instance_id, "inst-b");
+        assert_eq!(record.runner_instance_id, "inst-b");
         assert_eq!(record.status, "running");
         assert_eq!(record.last_update_seq, snapshot.update_seq);
         assert_eq!(
@@ -712,9 +712,9 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     }
 
     let updated = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-b".to_string(),
+            runner_instance_id: "inst-b".to_string(),
             job_id: job.job_id.clone(),
             request_id: job.request_id.clone(),
             update_seq: Some(snapshot.update_seq + 1),
@@ -736,9 +736,9 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     assert_eq!(updated.status, "running");
 
     let stale = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-a".to_string(),
+            runner_instance_id: "inst-a".to_string(),
             job_id: job.job_id.clone(),
             request_id: job.request_id.clone(),
             update_seq: Some(snapshot.update_seq + 2),

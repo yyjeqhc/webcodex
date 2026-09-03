@@ -8,7 +8,7 @@ use super::super::ToolRuntime;
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -774,13 +774,7 @@ async fn observe_session_messages_collaboration_projectless_owner_and_foreign_re
 async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenance_independent() {
     let client_id = "collaboration-runtime";
     let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities::default(),
-    )
-    .await;
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let coordinator =
@@ -1008,13 +1002,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
 async fn collaboration_completion_without_recording_session_has_null_author_even_with_window() {
     let client_id = "collaboration-null-author";
     let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities::default(),
-    )
-    .await;
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let coordinator = start_authorized_project_session(&runtime, &project, None, &auth);
@@ -1059,13 +1047,7 @@ async fn collaboration_completion_without_recording_session_has_null_author_even
 async fn collaboration_explicit_recording_session_is_completion_author() {
     let client_id = "collaboration-recorder-author";
     let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        ShellClientCapabilities::default(),
-    )
-    .await;
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let coordinator =
@@ -1465,7 +1447,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         &runtime,
         "recycled-client",
         &alice,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![project_summary.clone()],
     )
     .await;
@@ -1533,7 +1515,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         &runtime,
         "recycled-client",
         &bob,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![project_summary.clone()],
     )
     .await;
@@ -1631,7 +1613,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         &runtime,
         "recycled-client",
         &alice,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![project_summary],
     )
     .await;
@@ -1893,7 +1875,7 @@ async fn collaboration_foreign_owner_cannot_read_or_complete_known_session_and_t
         &runtime,
         "alice-host",
         &alice,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![named_registered_project(
             "alice-host",
             "private",

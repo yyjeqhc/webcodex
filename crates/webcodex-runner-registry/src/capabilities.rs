@@ -1,4 +1,4 @@
-use webcodex_core::shell_protocol::{self as wire, ShellClientCapabilities};
+use webcodex_core::runner_protocol::{self as wire, RunnerCapabilities};
 
 /// Canonical Server-side identity for one Runner-advertised wire capability.
 ///
@@ -134,177 +134,129 @@ impl RunnerFeature {
 
     pub const fn as_wire_name(self) -> &'static str {
         match self {
-            Self::Shell => wire::SHELL_CLIENT_CAPABILITY_SHELL,
-            Self::FileRead => wire::SHELL_CLIENT_CAPABILITY_FILE_READ,
-            Self::FileWrite => wire::SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-            Self::ArtifactExportChunkRead => {
-                wire::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ
-            }
+            Self::Shell => wire::RUNNER_CAPABILITY_SHELL,
+            Self::FileRead => wire::RUNNER_CAPABILITY_FILE_READ,
+            Self::FileWrite => wire::RUNNER_CAPABILITY_FILE_WRITE,
+            Self::ArtifactExportChunkRead => wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
             Self::ArtifactExportStreamingMetadata => {
-                wire::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA
+                wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA
             }
-            Self::StructuredFileDelete => wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
-            Self::ApplyTextEditOccurrence => {
-                wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE
-            }
-            Self::ApplyTextEditLineScope => {
-                wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE
-            }
-            Self::ApplyPatch => wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
-            Self::ApplyPatchMatchMetadata => {
-                wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA
-            }
-            Self::ApplyPatchStrictMatching => {
-                wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
-            }
-            Self::Git => wire::SHELL_CLIENT_CAPABILITY_GIT,
-            Self::Jobs => wire::SHELL_CLIENT_CAPABILITY_JOBS,
-            Self::AsyncJobs => wire::SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
-            Self::AsyncShellJobs => wire::SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-            Self::SshShell => wire::SHELL_CLIENT_CAPABILITY_SSH_SHELL,
-            Self::PersistentShell => wire::SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-            Self::SshPersistentShell => wire::SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-            Self::StructuredValidationArgv => {
-                wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV
-            }
+            Self::StructuredFileDelete => wire::RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE,
+            Self::ApplyTextEditOccurrence => wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+            Self::ApplyTextEditLineScope => wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+            Self::ApplyPatch => wire::RUNNER_CAPABILITY_APPLY_PATCH,
+            Self::ApplyPatchMatchMetadata => wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+            Self::ApplyPatchStrictMatching => wire::RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+            Self::Git => wire::RUNNER_CAPABILITY_GIT,
+            Self::Jobs => wire::RUNNER_CAPABILITY_JOBS,
+            Self::AsyncJobs => wire::RUNNER_CAPABILITY_ASYNC_JOBS,
+            Self::AsyncShellJobs => wire::RUNNER_CAPABILITY_ASYNC_SHELL_JOBS,
+            Self::SshShell => wire::RUNNER_CAPABILITY_SSH_SHELL,
+            Self::PersistentShell => wire::RUNNER_CAPABILITY_PERSISTENT_SHELL,
+            Self::SshPersistentShell => wire::RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
+            Self::StructuredValidationArgv => wire::RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
             Self::StructuredCargoTestCountAssertion => {
-                wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION
+                wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION
             }
-            Self::StructuredGoTestJson => wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-            Self::StructuredGoTestTool => wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-            Self::StructuredGoTestPackages => {
-                wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES
-            }
-            Self::StructuredProcessArgv => wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-            Self::StructuredScriptPayload => {
-                wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD
-            }
-            Self::InternalPosixScript => wire::SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-            Self::StructuredExecutionJobs => {
-                wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS
-            }
-            Self::DetachedProcessJobs => wire::SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
-            Self::LspReadOnlyNavigation => wire::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-            Self::LspCallHierarchy => wire::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-            Self::ProjectLifecycle => wire::SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
-            Self::ProjectPathRegistration => {
-                wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION
-            }
-            Self::SkillStoreRead => wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ,
-            Self::SkillStoreManage => wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE,
-            Self::ComputerObserve => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+            Self::StructuredGoTestJson => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+            Self::StructuredGoTestTool => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
+            Self::StructuredGoTestPackages => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
+            Self::StructuredProcessArgv => wire::RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+            Self::StructuredScriptPayload => wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+            Self::InternalPosixScript => wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
+            Self::StructuredExecutionJobs => wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
+            Self::DetachedProcessJobs => wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
+            Self::LspReadOnlyNavigation => wire::RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+            Self::LspCallHierarchy => wire::RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
+            Self::ProjectLifecycle => wire::RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
+            Self::ProjectPathRegistration => wire::RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
+            Self::SkillStoreRead => wire::RUNNER_CAPABILITY_SKILL_STORE_READ,
+            Self::SkillStoreManage => wire::RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
+            Self::ComputerObserve => wire::RUNNER_CAPABILITY_COMPUTER_OBSERVE,
             Self::ComputerApplicationDiscovery => {
-                wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY
+                wire::RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY
             }
-            Self::ComputerApplicationLaunch => {
-                wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH
-            }
-            Self::ComputerDisplayObserve => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-            Self::ComputerPointerControl => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
-            Self::ComputerClipboardRead => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-            Self::ComputerClipboardWrite => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
-            Self::ComputerSnapshotRegion => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+            Self::ComputerApplicationLaunch => wire::RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
+            Self::ComputerDisplayObserve => wire::RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
+            Self::ComputerPointerControl => wire::RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL,
+            Self::ComputerClipboardRead => wire::RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ,
+            Self::ComputerClipboardWrite => wire::RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
+            Self::ComputerSnapshotRegion => wire::RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
             Self::ComputerAccessibilityObserve => {
-                wire::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+                wire::RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
-            Self::ComputerElementState => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-            Self::JobStateReconciliation => wire::SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
-            Self::CodingAgentRuns => wire::SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS,
-            Self::ComputerControl => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-            Self::ComputerScrollToElement => {
-                wire::SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT
-            }
-            Self::ComputerKeyInput => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-            Self::ComputerWindowActivate => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-            Self::ComputerTextInput => wire::SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+            Self::ComputerElementState => wire::RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE,
+            Self::JobStateReconciliation => wire::RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION,
+            Self::CodingAgentRuns => wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS,
+            Self::ComputerControl => wire::RUNNER_CAPABILITY_COMPUTER_CONTROL,
+            Self::ComputerScrollToElement => wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+            Self::ComputerKeyInput => wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
+            Self::ComputerWindowActivate => wire::RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+            Self::ComputerTextInput => wire::RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT,
         }
     }
 
     pub(crate) fn from_wire_name(name: &str) -> Option<Self> {
         Some(match name {
-            wire::SHELL_CLIENT_CAPABILITY_SHELL => Self::Shell,
-            wire::SHELL_CLIENT_CAPABILITY_FILE_READ => Self::FileRead,
-            wire::SHELL_CLIENT_CAPABILITY_FILE_WRITE => Self::FileWrite,
-            wire::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ => {
-                Self::ArtifactExportChunkRead
-            }
-            wire::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA => {
+            wire::RUNNER_CAPABILITY_SHELL => Self::Shell,
+            wire::RUNNER_CAPABILITY_FILE_READ => Self::FileRead,
+            wire::RUNNER_CAPABILITY_FILE_WRITE => Self::FileWrite,
+            wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ => Self::ArtifactExportChunkRead,
+            wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA => {
                 Self::ArtifactExportStreamingMetadata
             }
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE => Self::StructuredFileDelete,
-            wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE => {
-                Self::ApplyTextEditOccurrence
-            }
-            wire::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE => {
-                Self::ApplyTextEditLineScope
-            }
-            wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH => Self::ApplyPatch,
-            wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA => {
-                Self::ApplyPatchMatchMetadata
-            }
-            wire::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING => {
-                Self::ApplyPatchStrictMatching
-            }
-            wire::SHELL_CLIENT_CAPABILITY_GIT => Self::Git,
-            wire::SHELL_CLIENT_CAPABILITY_JOBS => Self::Jobs,
-            wire::SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => Self::AsyncJobs,
-            wire::SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS => Self::AsyncShellJobs,
-            wire::SHELL_CLIENT_CAPABILITY_SSH_SHELL => Self::SshShell,
-            wire::SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL => Self::PersistentShell,
-            wire::SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL => Self::SshPersistentShell,
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV => {
-                Self::StructuredValidationArgv
-            }
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION => {
+            wire::RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE => Self::StructuredFileDelete,
+            wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE => Self::ApplyTextEditOccurrence,
+            wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE => Self::ApplyTextEditLineScope,
+            wire::RUNNER_CAPABILITY_APPLY_PATCH => Self::ApplyPatch,
+            wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA => Self::ApplyPatchMatchMetadata,
+            wire::RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING => Self::ApplyPatchStrictMatching,
+            wire::RUNNER_CAPABILITY_GIT => Self::Git,
+            wire::RUNNER_CAPABILITY_JOBS => Self::Jobs,
+            wire::RUNNER_CAPABILITY_ASYNC_JOBS => Self::AsyncJobs,
+            wire::RUNNER_CAPABILITY_ASYNC_SHELL_JOBS => Self::AsyncShellJobs,
+            wire::RUNNER_CAPABILITY_SSH_SHELL => Self::SshShell,
+            wire::RUNNER_CAPABILITY_PERSISTENT_SHELL => Self::PersistentShell,
+            wire::RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL => Self::SshPersistentShell,
+            wire::RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV => Self::StructuredValidationArgv,
+            wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION => {
                 Self::StructuredCargoTestCountAssertion
             }
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON => Self::StructuredGoTestJson,
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL => Self::StructuredGoTestTool,
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => {
-                Self::StructuredGoTestPackages
-            }
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV => Self::StructuredProcessArgv,
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD => {
-                Self::StructuredScriptPayload
-            }
-            wire::SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT => Self::InternalPosixScript,
-            wire::SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS => {
-                Self::StructuredExecutionJobs
-            }
-            wire::SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS => Self::DetachedProcessJobs,
-            wire::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION => Self::LspReadOnlyNavigation,
-            wire::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY => Self::LspCallHierarchy,
-            wire::SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE => Self::ProjectLifecycle,
-            wire::SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION => {
-                Self::ProjectPathRegistration
-            }
-            wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_READ => Self::SkillStoreRead,
-            wire::SHELL_CLIENT_CAPABILITY_SKILL_STORE_MANAGE => Self::SkillStoreManage,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE => Self::ComputerObserve,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY => {
+            wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON => Self::StructuredGoTestJson,
+            wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL => Self::StructuredGoTestTool,
+            wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => Self::StructuredGoTestPackages,
+            wire::RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV => Self::StructuredProcessArgv,
+            wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD => Self::StructuredScriptPayload,
+            wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT => Self::InternalPosixScript,
+            wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS => Self::StructuredExecutionJobs,
+            wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS => Self::DetachedProcessJobs,
+            wire::RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION => Self::LspReadOnlyNavigation,
+            wire::RUNNER_CAPABILITY_LSP_CALL_HIERARCHY => Self::LspCallHierarchy,
+            wire::RUNNER_CAPABILITY_PROJECT_LIFECYCLE => Self::ProjectLifecycle,
+            wire::RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION => Self::ProjectPathRegistration,
+            wire::RUNNER_CAPABILITY_SKILL_STORE_READ => Self::SkillStoreRead,
+            wire::RUNNER_CAPABILITY_SKILL_STORE_MANAGE => Self::SkillStoreManage,
+            wire::RUNNER_CAPABILITY_COMPUTER_OBSERVE => Self::ComputerObserve,
+            wire::RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY => {
                 Self::ComputerApplicationDiscovery
             }
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH => {
-                Self::ComputerApplicationLaunch
-            }
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE => Self::ComputerDisplayObserve,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL => Self::ComputerPointerControl,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ => Self::ComputerClipboardRead,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE => Self::ComputerClipboardWrite,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION => Self::ComputerSnapshotRegion,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE => {
+            wire::RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH => Self::ComputerApplicationLaunch,
+            wire::RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE => Self::ComputerDisplayObserve,
+            wire::RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL => Self::ComputerPointerControl,
+            wire::RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ => Self::ComputerClipboardRead,
+            wire::RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE => Self::ComputerClipboardWrite,
+            wire::RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION => Self::ComputerSnapshotRegion,
+            wire::RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE => {
                 Self::ComputerAccessibilityObserve
             }
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE => Self::ComputerElementState,
-            wire::SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION => Self::JobStateReconciliation,
-            wire::SHELL_CLIENT_CAPABILITY_CODING_AGENT_RUNS => Self::CodingAgentRuns,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL => Self::ComputerControl,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT => {
-                Self::ComputerScrollToElement
-            }
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT => Self::ComputerKeyInput,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE => Self::ComputerWindowActivate,
-            wire::SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT => Self::ComputerTextInput,
+            wire::RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE => Self::ComputerElementState,
+            wire::RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION => Self::JobStateReconciliation,
+            wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS => Self::CodingAgentRuns,
+            wire::RUNNER_CAPABILITY_COMPUTER_CONTROL => Self::ComputerControl,
+            wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT => Self::ComputerScrollToElement,
+            wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT => Self::ComputerKeyInput,
+            wire::RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE => Self::ComputerWindowActivate,
+            wire::RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT => Self::ComputerTextInput,
             _ => return None,
         })
     }
@@ -365,7 +317,7 @@ impl RunnerFeature {
         }
     }
 
-    fn advertised_by(self, capabilities: &ShellClientCapabilities) -> bool {
+    fn advertised_by(self, capabilities: &RunnerCapabilities) -> bool {
         match self {
             Self::Shell => capabilities.shell,
             Self::FileRead => capabilities.file_read,
@@ -434,7 +386,7 @@ impl RunnerFeature {
 /// semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerFeatureSet {
-    capabilities: ShellClientCapabilities,
+    capabilities: RunnerCapabilities,
 }
 
 impl RunnerFeatureSet {
@@ -444,9 +396,7 @@ impl RunnerFeatureSet {
     /// explicit bool projection; contradictions reject registration instead of
     /// being silently inferred. RegistrationRequired features are never inferred
     /// from generation.
-    pub(crate) fn try_from_registration(
-        capabilities: &ShellClientCapabilities,
-    ) -> Result<Self, String> {
+    pub(crate) fn try_from_registration(capabilities: &RunnerCapabilities) -> Result<Self, String> {
         for feature in RunnerFeature::all().iter().copied() {
             if feature.inference() == RunnerFeatureInference::GenerationEligible
                 && !feature.advertised_by(capabilities)
@@ -463,7 +413,7 @@ impl RunnerFeatureSet {
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
-    pub(crate) fn from_wire_for_test(capabilities: &ShellClientCapabilities) -> Self {
+    pub(crate) fn from_wire_for_test(capabilities: &RunnerCapabilities) -> Self {
         Self {
             capabilities: capabilities.clone(),
         }
@@ -477,7 +427,7 @@ impl RunnerFeatureSet {
         RunnerFeature::from_wire_name(capability).is_some_and(|feature| self.supports(feature))
     }
 
-    pub fn wire_capabilities(&self) -> &ShellClientCapabilities {
+    pub fn wire_capabilities(&self) -> &RunnerCapabilities {
         &self.capabilities
     }
 }

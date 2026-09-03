@@ -6,7 +6,7 @@ use super::validation::validate_project_summary;
 use super::{RunnerFeatureSet, RunnerRegistry};
 #[cfg(test)]
 use std::fmt;
-use webcodex_core::shell_protocol::ShellAgentProjectSummary;
+use webcodex_core::runner_protocol::RunnerProjectSummary;
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,10 +28,7 @@ impl fmt::Display for RunnerLookupError {
 #[cfg(test)]
 impl std::error::Error for RunnerLookupError {}
 
-fn upsert_project_summary(
-    projects: &mut Vec<ShellAgentProjectSummary>,
-    project: ShellAgentProjectSummary,
-) {
+fn upsert_project_summary(projects: &mut Vec<RunnerProjectSummary>, project: RunnerProjectSummary) {
     if let Some(existing) = projects.iter_mut().find(|p| p.id == project.id) {
         *existing = project;
     } else {
@@ -109,7 +106,7 @@ impl RunnerRegistry {
     pub async fn list_runner_projects(
         &self,
         client_id: &str,
-    ) -> Result<Vec<ShellAgentProjectSummary>, String> {
+    ) -> Result<Vec<RunnerProjectSummary>, String> {
         validate_id(client_id, "client_id")?;
         self.prune_expired_shared_key_runners().await;
         let inner = self.inner.lock().await;
@@ -129,15 +126,15 @@ impl RunnerRegistry {
     pub async fn upsert_runner_project_for_instance(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
-        project: ShellAgentProjectSummary,
+        runner_instance_id: &str,
+        project: RunnerProjectSummary,
     ) -> Result<(), String> {
         validate_project_summary(&project).map_err(str::to_string)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -151,14 +148,14 @@ impl RunnerRegistry {
     pub async fn remove_runner_project_for_instance(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         project_id: &str,
     ) -> Result<bool, String> {
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -175,13 +172,13 @@ impl RunnerRegistry {
     pub async fn upsert_runner_project(
         &self,
         client_id: &str,
-        project: ShellAgentProjectSummary,
+        project: RunnerProjectSummary,
     ) -> Result<(), String> {
         let instance = self
             .get_runner_view(client_id)
             .await
             .ok_or_else(|| format!("unknown shell client: {}", client_id))?
-            .agent_instance_id;
+            .runner_instance_id;
         self.upsert_runner_project_for_instance(client_id, &instance, project)
             .await
     }

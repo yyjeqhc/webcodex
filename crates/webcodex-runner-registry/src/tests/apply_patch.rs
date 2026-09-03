@@ -33,12 +33,12 @@ async fn register_patch_instance(
     supported: bool,
     metadata_supported: bool,
     strict_supported: bool,
-) -> Result<ShellClientView, String> {
+) -> Result<RunnerView, String> {
     register_instance_with_capabilities(
         registry,
         client_id,
         "inst",
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             apply_patch: supported,
             apply_patch_match_metadata: metadata_supported,
@@ -66,9 +66,9 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
     assert!(error.contains("capability_unavailable"), "{error}");
     assert!(error.contains("apply_patch"), "{error}");
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "patch-off".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -88,9 +88,9 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
     assert!(error.contains("capability_unavailable"), "{error}");
     assert!(error.contains("apply_patch_match_metadata"), "{error}");
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "legacy-patch".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -108,9 +108,9 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .await
         .expect("current Runner should accept ordinary apply_patch");
     let queued = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "patch-on".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -137,9 +137,9 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
     assert!(error.contains("capability_unavailable"), "{error}");
     assert!(error.contains("apply_patch_strict_matching"), "{error}");
     assert!(registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "strict-off".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -153,9 +153,9 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .await
         .expect("strict-capable Runner should accept strict apply_patch");
     let queued = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "strict-on".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -169,14 +169,14 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
 
 #[test]
 fn apply_patch_missing_capability_defaults_false_and_is_omitted() {
-    let legacy: ShellClientCapabilities = serde_json::from_str(
+    let legacy: RunnerCapabilities = serde_json::from_str(
         r#"{"shell":true,"file_read":true,"file_write":true,"structured_file_delete":true}"#,
     )
     .unwrap();
     assert!(!legacy.apply_patch);
     assert!(!legacy.apply_patch_match_metadata);
     assert!(!legacy.apply_patch_strict_matching);
-    let serialized = serde_json::to_value(ShellClientCapabilities::default()).unwrap();
+    let serialized = serde_json::to_value(RunnerCapabilities::default()).unwrap();
     assert!(serialized.get("apply_patch").is_none());
     assert!(serialized.get("apply_patch_match_metadata").is_none());
     assert!(serialized.get("apply_patch_strict_matching").is_none());

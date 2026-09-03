@@ -10,8 +10,8 @@ use super::reconciliation::{
 use super::requests::resolve_disconnected_sync_requests_locked;
 use super::state::{NotifierEntry, RunnerRecord, RunnerRegistryInner, RunnerSemanticView};
 use super::validation::{
-    normalize_tool_providers, trim_string, validate_agent_instance_id, validate_id,
-    validate_optional_field,
+    normalize_tool_providers, trim_string, validate_id, validate_optional_field,
+    validate_runner_instance_id,
 };
 use super::{
     now_ts, AcceptedRunnerProtocol, RunnerFeature, RunnerFeatureSet, RunnerRegistry,
@@ -29,9 +29,8 @@ use webcodex_core::coding_agent::{
     CODING_AGENT_MAX_PROVIDER_NAME_BYTES,
 };
 use webcodex_core::mcp_gateway::validate_providers;
-use webcodex_core::shell_protocol::{
-    ShellClientRegisterRequest, ShellClientView, RUNNER_JOB_CONCURRENCY_MAX,
-    RUNNER_JOB_CONCURRENCY_MIN,
+use webcodex_core::runner_protocol::{
+    RunnerRegisterRequest, RunnerView, RUNNER_JOB_CONCURRENCY_MAX, RUNNER_JOB_CONCURRENCY_MIN,
 };
 
 fn validate_coding_agent_registration(
@@ -110,12 +109,12 @@ fn validate_coding_agent_registration(
 
 fn reject_same_instance_feature_downgrade(
     existing: Option<&RunnerRecord>,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     incoming: &RunnerFeatureSet,
     feature: RunnerFeature,
 ) -> Result<(), String> {
     if existing.is_some_and(|existing| {
-        existing.agent_instance_id == agent_instance_id
+        existing.runner_instance_id == runner_instance_id
             && existing.runner_features.supports(feature)
             && !incoming.supports(feature)
     }) {
@@ -136,30 +135,27 @@ struct StreamingSessionRegistration {
 
 impl RunnerRegistry {
     #[cfg(any(test, feature = "root-test-support"))]
-    pub async fn register(
-        &self,
-        body: ShellClientRegisterRequest,
-    ) -> Result<ShellClientView, String> {
+    pub async fn register(&self, body: RunnerRegisterRequest) -> Result<RunnerView, String> {
         self.register_with_auth(body, None).await
     }
 
     pub async fn register_with_auth(
         &self,
-        body: ShellClientRegisterRequest,
+        body: RunnerRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
-    ) -> Result<ShellClientView, String> {
+    ) -> Result<RunnerView, String> {
         self.register_session(body, auth, None).await
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
     pub async fn register_streaming_session(
         &self,
-        body: ShellClientRegisterRequest,
+        body: RunnerRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
         connection_id: &str,
         transport: RunnerTransport,
         notify: Arc<Notify>,
-    ) -> Result<ShellClientView, String> {
+    ) -> Result<RunnerView, String> {
         let (cancel, _cancelled) = watch::channel(false);
         self.register_streaming_session_with_cancel_sender(
             body,
@@ -178,12 +174,12 @@ impl RunnerRegistry {
     /// a failed replacement cannot signal the currently active session.
     pub async fn register_streaming_session_with_cancel(
         &self,
-        body: ShellClientRegisterRequest,
+        body: RunnerRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
         connection_id: &str,
         transport: RunnerTransport,
         notify: Arc<Notify>,
-    ) -> Result<(ShellClientView, watch::Receiver<bool>), String> {
+    ) -> Result<(RunnerView, watch::Receiver<bool>), String> {
         let (cancel, cancelled) = watch::channel(false);
         let view = self
             .register_streaming_session_with_cancel_sender(
@@ -200,13 +196,13 @@ impl RunnerRegistry {
 
     async fn register_streaming_session_with_cancel_sender(
         &self,
-        body: ShellClientRegisterRequest,
+        body: RunnerRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
         connection_id: &str,
         transport: RunnerTransport,
         notify: Arc<Notify>,
         cancel: watch::Sender<bool>,
-    ) -> Result<ShellClientView, String> {
+    ) -> Result<RunnerView, String> {
         validate_id(connection_id, "connection_id")?;
         if transport == RunnerTransport::Polling {
             return Err("streaming Runner transport is unsupported".to_string());
@@ -226,12 +222,12 @@ impl RunnerRegistry {
 
     async fn register_session(
         &self,
-        body: ShellClientRegisterRequest,
+        body: RunnerRegisterRequest,
         auth: Option<&crate::RunnerAccess>,
         streaming: Option<StreamingSessionRegistration>,
-    ) -> Result<ShellClientView, String> {
+    ) -> Result<RunnerView, String> {
         validate_id(&body.client_id, "client_id")?;
-        validate_agent_instance_id(&body.agent_instance_id)?;
+        validate_runner_instance_id(&body.runner_instance_id)?;
         validate_optional_field(&body.display_name, "display_name")?;
         validate_optional_field(&body.owner, "owner")?;
         validate_optional_field(&body.hostname, "hostname")?;
@@ -244,9 +240,9 @@ impl RunnerRegistry {
         }
 
         let client_id = body.client_id.trim().to_string();
-        let agent_instance_id = body.agent_instance_id.trim().to_string();
+        let runner_instance_id = body.runner_instance_id.trim().to_string();
         let accepted_protocol =
-            AcceptedRunnerProtocol::try_from_registration(body.agent_protocol_generation)?;
+            AcceptedRunnerProtocol::try_from_registration(body.runner_protocol_generation)?;
         let runner_features = RunnerFeatureSet::try_from_registration(&body.capabilities)?;
         if runner_features.supports(RunnerFeature::ApplyPatchMatchMetadata)
             && !runner_features.supports(RunnerFeature::ApplyPatch)
@@ -277,7 +273,7 @@ impl RunnerRegistry {
         let host_context = body
             .host_context
             .clone()
-            .map(webcodex_core::shell_protocol::AgentHostContext::normalized)
+            .map(webcodex_core::runner_protocol::RunnerHostContext::normalized)
             .transpose()?;
         let mut policy = body.policy;
         if let Some(policy) = policy.as_mut() {
@@ -297,7 +293,7 @@ impl RunnerRegistry {
         let project_inventory = pending_inventory_state(0);
         let record = RunnerRecord {
             client_id: client_id.clone(),
-            agent_instance_id: agent_instance_id.clone(),
+            runner_instance_id: runner_instance_id.clone(),
             display_name: trim_string(body.display_name),
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),
@@ -396,7 +392,7 @@ impl RunnerRegistry {
         if inner
             .retired_instances
             .get(&client_id)
-            .is_some_and(|retired| retired.iter().any(|id| id == &agent_instance_id))
+            .is_some_and(|retired| retired.iter().any(|id| id == &runner_instance_id))
         {
             return Err(format!(
                 "runner {} instance was replaced and cannot reclaim the lease",
@@ -405,18 +401,18 @@ impl RunnerRegistry {
         }
         reject_same_instance_feature_downgrade(
             inner.runners.get(&client_id),
-            &agent_instance_id,
+            &runner_instance_id,
             &runner_features,
             RunnerFeature::JobStateReconciliation,
         )?;
         reject_same_instance_feature_downgrade(
             inner.runners.get(&client_id),
-            &agent_instance_id,
+            &runner_instance_id,
             &runner_features,
             RunnerFeature::CodingAgentRuns,
         )?;
         if inner.runners.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
+            existing.runner_instance_id == runner_instance_id
                 && existing.coding_agent_providers != coding_agent_providers
         }) {
             return Err(
@@ -425,7 +421,7 @@ impl RunnerRegistry {
             );
         }
         if inner.runners.get(&client_id).is_some_and(|existing| {
-            existing.agent_instance_id == agent_instance_id
+            existing.runner_instance_id == runner_instance_id
                 && existing
                     .policy
                     .as_ref()
@@ -444,7 +440,7 @@ impl RunnerRegistry {
         // time.
         if let Some(existing) = inner.runners.get(&client_id) {
             let online = now_ts().saturating_sub(existing.last_seen) <= RUNNER_ONLINE_WINDOW_SECS;
-            let same_instance = existing.agent_instance_id == agent_instance_id;
+            let same_instance = existing.runner_instance_id == runner_instance_id;
             if online && !same_instance {
                 // Rolling compatibility fence: webcodex-runner classifies this
                 // complete historical prose string exactly during registration recovery.
@@ -458,18 +454,18 @@ impl RunnerRegistry {
         let replaced_instance = inner
             .runners
             .get(&client_id)
-            .map(|existing| existing.agent_instance_id != agent_instance_id)
+            .map(|existing| existing.runner_instance_id != runner_instance_id)
             .unwrap_or(false);
         let replaced_instance_id = replaced_instance.then(|| {
             inner
                 .runners
                 .get(&client_id)
                 .expect("replacement requires existing runner")
-                .agent_instance_id
+                .runner_instance_id
                 .clone()
         });
         if let Some(inventory) = job_inventory.as_ref() {
-            preflight_inventory_locked(&inner, &client_id, &agent_instance_id, inventory)?;
+            preflight_inventory_locked(&inner, &client_id, &runner_instance_id, inventory)?;
         }
         // All fallible validation/preflight is complete. Capture the previous
         // streaming session's cancellation sender now, but do not signal it
@@ -520,7 +516,7 @@ impl RunnerRegistry {
         // connection. A new instance starts a fresh lifecycle.
         let mut record = record;
         if let Some(existing) = inner.runners.get(&client_id) {
-            if existing.agent_instance_id == agent_instance_id {
+            if existing.runner_instance_id == runner_instance_id {
                 record.registered_at = existing.registered_at;
                 record.projected_structured_terminal_suppressions =
                     existing.projected_structured_terminal_suppressions.clone();
@@ -533,7 +529,7 @@ impl RunnerRegistry {
             // pending/degraded. A different `agent_instance_id` must use the
             // projection built from its own registration (empty for V2 paged
             // registration) until that instance completes an atomic snapshot.
-            if existing.agent_instance_id == agent_instance_id {
+            if existing.runner_instance_id == runner_instance_id {
                 record.projects = existing.projects.clone();
                 record.project_inventory = preserve_authoritative_pending(
                     &existing.project_inventory,
@@ -554,7 +550,7 @@ impl RunnerRegistry {
                 NotifierEntry {
                     notify: streaming.notify,
                     cancel: streaming.cancel,
-                    agent_instance_id: agent_instance_id.clone(),
+                    runner_instance_id: runner_instance_id.clone(),
                     connection_id: Some(streaming.connection_id),
                 },
             );
@@ -567,7 +563,7 @@ impl RunnerRegistry {
             let reconciliation = reconcile_inventory_locked(
                 &mut inner,
                 &client_id,
-                &agent_instance_id,
+                &runner_instance_id,
                 auth_group,
                 self.observation_epoch.clone(),
                 inventory,
@@ -580,7 +576,7 @@ impl RunnerRegistry {
             tracing::info!(
                 target: "webcodex::job_reconciliation",
                 client_id = %client_id,
-                agent_instance_id = %agent_instance_id,
+                runner_instance_id = %runner_instance_id,
                 process_started_at = ?process_started_at,
                 inventory_active = reconciliation.inventory_active,
                 inventory_terminal = reconciliation.inventory_terminal,
@@ -616,7 +612,7 @@ impl RunnerRegistry {
     async fn set_transport_checked(
         &self,
         client_id: &str,
-        agent_instance_id: Option<&str>,
+        runner_instance_id: Option<&str>,
         connection_id: Option<&str>,
         transport: RunnerTransport,
     ) -> Result<(), String> {
@@ -624,7 +620,7 @@ impl RunnerRegistry {
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if agent_instance_id.is_some_and(|id| runner.agent_instance_id != id)
+        if runner_instance_id.is_some_and(|id| runner.runner_instance_id != id)
             || connection_id.is_some_and(|id| runner.connection_id.as_deref() != Some(id))
         {
             return Err(format!(
@@ -646,14 +642,14 @@ impl RunnerRegistry {
     pub async fn touch_runner(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
     ) -> Result<(), String> {
-        validate_agent_instance_id(agent_instance_id)?;
+        validate_runner_instance_id(runner_instance_id)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -674,15 +670,15 @@ impl RunnerRegistry {
     pub async fn touch_runner_for_connection(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: &str,
     ) -> Result<(), String> {
-        validate_agent_instance_id(agent_instance_id)?;
+        validate_runner_instance_id(runner_instance_id)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -705,10 +701,10 @@ impl RunnerRegistry {
     pub async fn update_tool_providers(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
-        status: Option<webcodex_core::shell_protocol::ToolProvidersStatus>,
+        runner_instance_id: &str,
+        status: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
     ) -> Result<(), String> {
-        self.update_tool_providers_checked(client_id, agent_instance_id, None, status)
+        self.update_tool_providers_checked(client_id, runner_instance_id, None, status)
             .await
     }
 
@@ -719,13 +715,13 @@ impl RunnerRegistry {
     pub async fn update_tool_providers_for_connection(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: &str,
-        status: Option<webcodex_core::shell_protocol::ToolProvidersStatus>,
+        status: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
     ) -> Result<(), String> {
         self.update_tool_providers_checked(
             client_id,
-            agent_instance_id,
+            runner_instance_id,
             Some(connection_id),
             status,
         )
@@ -735,19 +731,19 @@ impl RunnerRegistry {
     async fn update_tool_providers_checked(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         expected_connection_id: Option<&str>,
-        status: Option<webcodex_core::shell_protocol::ToolProvidersStatus>,
+        status: Option<webcodex_core::runner_protocol::ToolProvidersStatus>,
     ) -> Result<(), String> {
         let Some(status) = normalize_tool_providers(status) else {
             return Ok(());
         };
-        validate_agent_instance_id(agent_instance_id)?;
+        validate_runner_instance_id(runner_instance_id)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -872,10 +868,10 @@ impl RunnerRegistry {
     pub async fn register_notifier(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         notify: Arc<Notify>,
     ) -> Result<(), String> {
-        self.register_notifier_checked(client_id, agent_instance_id, None, notify)
+        self.register_notifier_checked(client_id, runner_instance_id, None, notify)
             .await
     }
 
@@ -883,16 +879,16 @@ impl RunnerRegistry {
     async fn register_notifier_checked(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: Option<&str>,
         notify: Arc<Notify>,
     ) -> Result<(), String> {
-        validate_agent_instance_id(agent_instance_id)?;
+        validate_runner_instance_id(runner_instance_id)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {} is no longer the active instance (stale or replaced)",
                 client_id
@@ -910,7 +906,7 @@ impl RunnerRegistry {
             NotifierEntry {
                 notify,
                 cancel,
-                agent_instance_id: agent_instance_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
                 connection_id: connection_id.map(str::to_string),
             },
         );
@@ -920,25 +916,25 @@ impl RunnerRegistry {
     /// Reconcile state after an Runner transport disconnects or sends a
     /// graceful offline notice.
     #[cfg(any(test, feature = "root-test-support"))]
-    pub async fn reconcile_disconnect(&self, client_id: &str, agent_instance_id: &str) {
-        self.reconcile_disconnect_checked(client_id, agent_instance_id, None)
+    pub async fn reconcile_disconnect(&self, client_id: &str, runner_instance_id: &str) {
+        self.reconcile_disconnect_checked(client_id, runner_instance_id, None)
             .await;
     }
 
     pub async fn reconcile_disconnect_for_connection(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: &str,
     ) {
-        self.reconcile_disconnect_checked(client_id, agent_instance_id, Some(connection_id))
+        self.reconcile_disconnect_checked(client_id, runner_instance_id, Some(connection_id))
             .await;
     }
 
     async fn reconcile_disconnect_checked(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: Option<&str>,
     ) {
         let mut inner = self.inner.lock().await;
@@ -946,7 +942,7 @@ impl RunnerRegistry {
             .runners
             .get(client_id)
             .map(|runner| {
-                runner.agent_instance_id == agent_instance_id
+                runner.runner_instance_id == runner_instance_id
                     && connection_id
                         .map(|id| runner.connection_id.as_deref() == Some(id))
                         .unwrap_or(true)
@@ -959,7 +955,7 @@ impl RunnerRegistry {
             .notifiers
             .get(client_id)
             .map(|entry| {
-                entry.agent_instance_id == agent_instance_id
+                entry.runner_instance_id == runner_instance_id
                     && connection_id
                         .map(|id| entry.connection_id.as_deref() == Some(id))
                         .unwrap_or(true)
@@ -1058,7 +1054,7 @@ impl RunnerRegistry {
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
-    pub async fn list_runners(&self) -> Vec<ShellClientView> {
+    pub async fn list_runners(&self) -> Vec<RunnerView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now);
@@ -1075,7 +1071,7 @@ impl RunnerRegistry {
     pub async fn list_runners_for_auth(
         &self,
         auth: Option<&crate::RunnerAccess>,
-    ) -> Vec<ShellClientView> {
+    ) -> Vec<RunnerView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now);
@@ -1202,7 +1198,7 @@ impl RunnerRegistry {
         result
     }
 
-    pub async fn get_runner_view(&self, client_id: &str) -> Option<ShellClientView> {
+    pub async fn get_runner_view(&self, client_id: &str) -> Option<RunnerView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now);
@@ -1216,13 +1212,13 @@ impl RunnerRegistry {
     pub async fn get_runner_view_for_connection(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: &str,
-    ) -> Option<ShellClientView> {
+    ) -> Option<RunnerView> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let runner = inner.runners.get(client_id)?;
-        if runner.agent_instance_id != agent_instance_id
+        if runner.runner_instance_id != runner_instance_id
             || runner.connection_id.as_deref() != Some(connection_id)
         {
             return None;
@@ -1234,7 +1230,7 @@ impl RunnerRegistry {
         &self,
         client_id: &str,
         auth: Option<&crate::RunnerAccess>,
-    ) -> Option<ShellClientView> {
+    ) -> Option<RunnerView> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let runner = inner.runners.get(client_id)?;
@@ -1289,7 +1285,7 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         client_id: &str,
         run_id: &str,
-    ) -> Option<(ShellClientView, CodingAgentRunSnapshot)> {
+    ) -> Option<(RunnerView, CodingAgentRunSnapshot)> {
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let runner = inner.runners.get(client_id)?;
@@ -1310,7 +1306,7 @@ impl RunnerRegistry {
         &self,
         auth: Option<&crate::RunnerAccess>,
         run_id: &str,
-    ) -> Option<(ShellClientView, CodingAgentRunSnapshot)> {
+    ) -> Option<(RunnerView, CodingAgentRunSnapshot)> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now);
@@ -1401,7 +1397,7 @@ impl RunnerRegistry {
         })
     }
 
-    fn runner_view_locked(inner: &RunnerRegistryInner, client_id: &str) -> Option<ShellClientView> {
+    fn runner_view_locked(inner: &RunnerRegistryInner, client_id: &str) -> Option<RunnerView> {
         let runner = inner.runners.get(client_id)?;
         let pending_requests = inner
             .queues_by_runner
@@ -1410,9 +1406,9 @@ impl RunnerRegistry {
             .unwrap_or(0);
         let age = now_ts().saturating_sub(runner.last_seen);
         let connected = age <= RUNNER_ONLINE_WINDOW_SECS;
-        Some(ShellClientView {
+        Some(RunnerView {
             client_id: runner.client_id.clone(),
-            agent_instance_id: runner.agent_instance_id.clone(),
+            runner_instance_id: runner.runner_instance_id.clone(),
             display_name: runner.display_name.clone(),
             owner: runner.owner.clone(),
             hostname: runner.hostname.clone(),
@@ -1426,7 +1422,7 @@ impl RunnerRegistry {
             pending_requests,
             projects: runner.projects.clone(),
             project_inventory: Some(runner.project_inventory.status.clone()),
-            agent_protocol_generation: runner.accepted_protocol.generation(),
+            runner_protocol_generation: runner.accepted_protocol.generation(),
             transport: runner.transport.as_str().to_string(),
             policy: runner.policy.clone(),
             registered_at: runner.registered_at,

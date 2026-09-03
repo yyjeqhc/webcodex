@@ -4,7 +4,7 @@ use super::*;
 async fn reconcile_disconnect_marks_running_jobs_lost() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,8 +12,8 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -62,7 +62,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
     // wait timeout.
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -70,14 +70,14 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -135,9 +135,9 @@ async fn dispatched_file_request_disconnect_remains_request_neutral() {
         .await
         .unwrap();
     registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -172,7 +172,7 @@ async fn reconcile_disconnect_releases_active_lease_immediately() {
     assert!(now_ts().saturating_sub(offline.last_seen) > RUNNER_ONLINE_WINDOW_SECS);
 
     let new_view = register_with_instance(&registry, "oe", "inst-b").await;
-    assert_eq!(new_view.agent_instance_id, "inst-b");
+    assert_eq!(new_view.runner_instance_id, "inst-b");
     assert!(
         new_view.connected,
         "new instance should register without waiting 60 seconds"

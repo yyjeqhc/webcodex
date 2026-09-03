@@ -5,7 +5,7 @@
 //! intentionally thin: every business operation (register, request routing,
 //! result recording, job updates) is delegated to the existing
 //! [`RunnerRegistry`]. The handler only translates between the
-//! transport-neutral [`AgentEnvelope`] wire format and registry method calls.
+//! transport-neutral [`RunnerEnvelope`] wire format and registry method calls.
 //!
 //! Request delivery model: after a successful register the server spawns a
 //! "request pump" task. The pump pops pending requests from the registry
@@ -18,7 +18,7 @@
 //! Polling remains a fully supported fallback transport.
 
 use crate::runner_http::{RunnerRegistry, RunnerTransport};
-use crate::shell_protocol::{AgentEnvelope, ShellClientRegisterRequest};
+use crate::runner_protocol::{RunnerEnvelope, RunnerRegisterRequest};
 use futures_util::{SinkExt, StreamExt};
 use salvo::prelude::*;
 use salvo::websocket::{Message, WebSocket, WebSocketUpgrade};
@@ -31,11 +31,11 @@ use tokio::sync::{mpsc, Notify};
 /// output which can be sizeable; 8 MiB matches the registry output cap head
 /// room while still bounding memory.
 const WS_MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
-/// Deadline for the agent to send its first `Register` envelope after the
+/// Deadline for the Runner to send its first `Register` envelope after the
 /// handshake. Prevents half-open connections from holding registry state.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// WebSocket agent endpoint: `GET /api/agents/ws`. Requires auth via the shared
+/// Runner WebSocket endpoint: `GET /api/agents/ws`. Requires auth via the shared
 /// `AuthMiddleware`, exactly like the polling endpoints. Authentication is
 /// `Authorization: Bearer <token>`; query-string credentials are not accepted.
 #[handler]
@@ -76,7 +76,7 @@ async fn handle_runner_ws(
         Err(e) => {
             send_envelope_or_log(
                 &mut ws,
-                AgentEnvelope::Error {
+                RunnerEnvelope::Error {
                     code: "expected_register".to_string(),
                     message: e,
                 },
@@ -87,7 +87,7 @@ async fn handle_runner_ws(
         }
     };
     let client_id = register_payload.client_id.clone();
-    let agent_instance_id = register_payload.agent_instance_id.clone();
+    let runner_instance_id = register_payload.runner_instance_id.clone();
     let connection_id = uuid::Uuid::new_v4().to_string();
 
     // 1b. Enforce the Runner transport boundary before mutating the registry.
@@ -105,7 +105,7 @@ async fn handle_runner_ws(
     {
         send_envelope_or_log(
             &mut ws,
-            AgentEnvelope::Error {
+            RunnerEnvelope::Error {
                 code: crate::runner_session::RegisterPreludeError::CODE.to_string(),
                 message: e.message().to_string(),
             },
@@ -133,7 +133,7 @@ async fn handle_runner_ws(
         Err(e) => {
             send_envelope_or_log(
                 &mut ws,
-                AgentEnvelope::Error {
+                RunnerEnvelope::Error {
                     code: "register_failed".to_string(),
                     message: e,
                 },
@@ -150,7 +150,7 @@ async fn handle_runner_ws(
     //    reconnect remains protected by the connection_id fence.
     if send_envelope(
         &mut ws,
-        AgentEnvelope::Registered {
+        RunnerEnvelope::Registered {
             success: true,
             client: Some(view),
             error: None,
@@ -161,7 +161,7 @@ async fn handle_runner_ws(
     {
         tracing::debug!(client_id = %client_id, "Runner WebSocket registered ack send failed");
         registry
-            .reconcile_disconnect_for_connection(&client_id, &agent_instance_id, &connection_id)
+            .reconcile_disconnect_for_connection(&client_id, &runner_instance_id, &connection_id)
             .await;
         return;
     }
@@ -170,11 +170,11 @@ async fn handle_runner_ws(
     // 4. Split the socket into a writer (owned by a writer task) and a reader
     //    (owned by this task). Outgoing envelopes go through a single mpsc so
     //    the request pump and pong replies share one writer. The channel
-    //    carries `AgentEnvelope`s; the writer serializes each to text, so the
+    //    carries `RunnerEnvelope`s; the writer serializes each to text, so the
     //    shared session loop (`run_runner_session`) is transport-neutral.
     let (sink, stream) = ws.split();
     let (out_tx, out_rx) =
-        mpsc::channel::<AgentEnvelope>(crate::runner_session::OUTGOING_CHANNEL_CAPACITY);
+        mpsc::channel::<RunnerEnvelope>(crate::runner_session::OUTGOING_CHANNEL_CAPACITY);
 
     let writer_task = tokio::spawn(async move {
         let mut sink = sink;
@@ -202,7 +202,7 @@ async fn handle_runner_ws(
         crate::runner_session::SessionContext {
             registry: &registry,
             client_id: &client_id,
-            agent_instance_id: &agent_instance_id,
+            runner_instance_id: &runner_instance_id,
             connection_id: &connection_id,
             notify,
             cancel,
@@ -248,7 +248,7 @@ impl crate::runner_session::RunnerReader for WsReader {
             Ok(s) => s,
             Err(_) => return crate::runner_session::RecvOutcome::Skip,
         };
-        match AgentEnvelope::from_slice(text.as_bytes()) {
+        match RunnerEnvelope::from_slice(text.as_bytes()) {
             Ok(env) => crate::runner_session::RecvOutcome::Envelope(env),
             Err(e) => {
                 tracing::debug!(error = %e, "Runner WebSocket received malformed envelope; ignoring");
@@ -260,7 +260,7 @@ impl crate::runner_session::RunnerReader for WsReader {
 
 /// Read the first envelope from the socket, requiring it to be a `Register`.
 /// Applies a deadline so a half-open connection cannot hold registry state.
-async fn read_register(ws: &mut WebSocket) -> Result<ShellClientRegisterRequest, String> {
+async fn read_register(ws: &mut WebSocket) -> Result<RunnerRegisterRequest, String> {
     let msg = tokio::time::timeout(REGISTER_TIMEOUT, ws.recv())
         .await
         .map_err(|_| "register timed out".to_string())?
@@ -269,21 +269,21 @@ async fn read_register(ws: &mut WebSocket) -> Result<ShellClientRegisterRequest,
     let text = msg
         .as_str()
         .map_err(|_| "register message must be text".to_string())?;
-    let env = AgentEnvelope::from_slice(text.as_bytes())
+    let env = RunnerEnvelope::from_slice(text.as_bytes())
         .map_err(|e| format!("register message is not a valid envelope: {}", e))?;
     match env {
-        AgentEnvelope::Register { payload, .. } => Ok(payload),
+        RunnerEnvelope::Register { payload, .. } => Ok(payload),
         other => Err(format!("expected register envelope, got {}", other.kind())),
     }
 }
 
 /// Encode and send a single envelope before the socket is split.
-async fn send_envelope(ws: &mut WebSocket, env: AgentEnvelope) -> Result<(), ()> {
+async fn send_envelope(ws: &mut WebSocket, env: RunnerEnvelope) -> Result<(), ()> {
     let json = env.to_json().map_err(|_| ())?;
     ws.send(Message::text(json)).await.map_err(|_| ())
 }
 
-async fn send_envelope_or_log(ws: &mut WebSocket, env: AgentEnvelope, context: &'static str) {
+async fn send_envelope_or_log(ws: &mut WebSocket, env: RunnerEnvelope, context: &'static str) {
     let kind = env.kind();
     if send_envelope(ws, env).await.is_err() {
         tracing::debug!(
@@ -297,10 +297,10 @@ async fn send_envelope_or_log(ws: &mut WebSocket, env: AgentEnvelope, context: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell_protocol::{
-        AgentPolicySummary, AgentProtocolGenerationNumber, ClaudeCodeProviderStatus,
-        ProviderCallSummary, ShellAgentResultRequest, ShellClientCapabilities,
-        ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest, ToolProvidersStatus,
+    use crate::runner_protocol::{
+        ClaudeCodeProviderStatus, ProviderCallSummary, RunnerCapabilities, RunnerPolicySummary,
+        RunnerProtocolGenerationNumber, RunnerRegisterRequest, RunnerResultRequest,
+        ShellJobOpRequest, ShellRunRequest, ToolProvidersStatus,
     };
     use salvo::conn::{Acceptor, Listener};
     use std::net::SocketAddr;
@@ -346,13 +346,13 @@ mod tests {
         }
     }
 
-    fn register_envelope(client_id: &str) -> AgentEnvelope {
+    fn register_envelope(client_id: &str) -> RunnerEnvelope {
         register_envelope_with_instance(client_id, "ws-inst")
     }
 
-    fn register_envelope_with_instance(client_id: &str, instance_id: &str) -> AgentEnvelope {
-        AgentEnvelope::Register {
-            payload: ShellClientRegisterRequest {
+    fn register_envelope_with_instance(client_id: &str, instance_id: &str) -> RunnerEnvelope {
+        RunnerEnvelope::Register {
+            payload: RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -360,14 +360,14 @@ mod tests {
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: instance_id.to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: instance_id.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some("ws-test".to_string()),
                 owner: Some("tester".to_string()),
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
+                    RunnerCapabilities {
                         shell: true,
                         file_read: true,
                         file_write: true,
@@ -421,7 +421,7 @@ mod tests {
                         coding_agent_runs: false,
                     },
                 ),
-                policy: Some(AgentPolicySummary::default()),
+                policy: Some(RunnerPolicySummary::default()),
             },
         }
     }
@@ -465,14 +465,14 @@ mod tests {
         ws: &mut tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
         >,
-    ) -> AgentEnvelope {
+    ) -> RunnerEnvelope {
         let msg = ws
             .next()
             .await
             .expect("stream not closed")
             .expect("ok message");
         let text = msg.into_text().expect("text message");
-        AgentEnvelope::from_slice(text.as_bytes()).expect("valid envelope")
+        RunnerEnvelope::from_slice(text.as_bytes()).expect("valid envelope")
     }
 
     /// Build a salvo router serving only the agent ws endpoint backed by a
@@ -537,14 +537,14 @@ mod tests {
         connect_async(request).await.expect("ws connect").0
     }
 
-    fn shared_key_register_envelope(client_id: &str, instance_id: &str) -> AgentEnvelope {
-        let AgentEnvelope::Register { mut payload, .. } =
+    fn shared_key_register_envelope(client_id: &str, instance_id: &str) -> RunnerEnvelope {
+        let RunnerEnvelope::Register { mut payload, .. } =
             register_envelope_with_instance(client_id, instance_id)
         else {
             unreachable!()
         };
         payload.owner = Some("untrusted-owner".to_string());
-        AgentEnvelope::Register { payload }
+        RunnerEnvelope::Register { payload }
     }
 
     #[tokio::test]
@@ -564,7 +564,7 @@ mod tests {
         ))
         .await
         .unwrap();
-        let AgentEnvelope::Registered {
+        let RunnerEnvelope::Registered {
             success: true,
             client: Some(client_a),
             ..
@@ -602,7 +602,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let AgentEnvelope::Error { code, message } = recv_envelope(&mut ws_collision).await else {
+        let RunnerEnvelope::Error { code, message } = recv_envelope(&mut ws_collision).await else {
             panic!("cross-group client_id collision should fail")
         };
         assert_eq!(code, "register_failed");
@@ -619,7 +619,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             recv_envelope(&mut ws_b).await,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
 
         let (request_id, mut result_rx) = registry
@@ -638,16 +638,16 @@ mod tests {
             .unwrap();
         assert!(matches!(
             recv_envelope(&mut ws_a).await,
-            AgentEnvelope::Request { .. }
+            RunnerEnvelope::Request { .. }
         ));
 
         // Key B knows the public ids but its registered connection identity
         // must not be able to submit Key A's result.
         ws_b.send(TungsteniteMessage::Text(
-            AgentEnvelope::Result {
-                payload: ShellAgentResultRequest {
+            RunnerEnvelope::Result {
+                payload: RunnerResultRequest {
                     client_id: "shared-a".to_string(),
-                    agent_instance_id: "instance-a".to_string(),
+                    runner_instance_id: "instance-a".to_string(),
                     request_id: request_id.clone(),
                     exit_code: Some(0),
                     stdout: Some("spoofed".to_string()),
@@ -671,10 +671,10 @@ mod tests {
         );
 
         ws_a.send(TungsteniteMessage::Text(
-            AgentEnvelope::Result {
-                payload: ShellAgentResultRequest {
+            RunnerEnvelope::Result {
+                payload: RunnerResultRequest {
                     client_id: "shared-a".to_string(),
-                    agent_instance_id: "instance-a".to_string(),
+                    runner_instance_id: "instance-a".to_string(),
                     request_id,
                     exit_code: Some(0),
                     stdout: Some("authentic".to_string()),
@@ -713,7 +713,7 @@ mod tests {
             .unwrap();
 
         match recv_envelope(&mut ws).await {
-            AgentEnvelope::Error { code, message } => {
+            RunnerEnvelope::Error { code, message } => {
                 assert_eq!(code, "expected_register");
                 assert!(message.contains("agent_protocol_generation"), "{message}");
             }
@@ -732,16 +732,16 @@ mod tests {
         let url = format!("ws://{}/api/agents/ws", addr);
         let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
         let mut register = register_envelope("ws-unsupported-protocol");
-        let AgentEnvelope::Register { payload, .. } = &mut register else {
+        let RunnerEnvelope::Register { payload, .. } = &mut register else {
             unreachable!("register helper must return Register")
         };
-        payload.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
+        payload.runner_protocol_generation = RunnerProtocolGenerationNumber::new(3);
         ws.send(TungsteniteMessage::Text(register.to_json().unwrap().into()))
             .await
             .unwrap();
 
         match recv_envelope(&mut ws).await {
-            AgentEnvelope::Error { code, message } => {
+            RunnerEnvelope::Error { code, message } => {
                 assert_eq!(code, "register_failed");
                 assert_eq!(message, "agent_protocol_generation is unsupported");
             }
@@ -771,7 +771,7 @@ mod tests {
         // Expect Registered ack.
         let ack = recv_envelope(&mut ws).await;
         match ack {
-            AgentEnvelope::Registered {
+            RunnerEnvelope::Registered {
                 success, client, ..
             } => {
                 assert!(success);
@@ -802,7 +802,7 @@ mod tests {
         // Receive the pushed Request envelope.
         let req_env = recv_envelope(&mut ws).await;
         match req_env {
-            AgentEnvelope::Request { request } => {
+            RunnerEnvelope::Request { request } => {
                 assert_eq!(request.request_id, request_id);
                 assert_eq!(request.kind, "run_shell");
                 assert_eq!(request.command, "echo hi");
@@ -811,10 +811,10 @@ mod tests {
         }
 
         // Send back a Result envelope.
-        let result_env = AgentEnvelope::Result {
-            payload: ShellAgentResultRequest {
+        let result_env = RunnerEnvelope::Result {
+            payload: RunnerResultRequest {
                 client_id: "ws-roundtrip".to_string(),
-                agent_instance_id: "ws-inst".to_string(),
+                runner_instance_id: "ws-inst".to_string(),
                 request_id: request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some("hi".to_string()),
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(response.exit_code, Some(0));
 
         ws.send(TungsteniteMessage::Text(
-            AgentEnvelope::RuntimeMetadata {
+            RunnerEnvelope::RuntimeMetadata {
                 tool_providers: provider_status(),
             }
             .to_json()
@@ -895,14 +895,14 @@ mod tests {
         .unwrap();
         let _ = recv_envelope(&mut ws).await; // Registered
 
-        let ping = AgentEnvelope::Ping { ts: 12345 };
+        let ping = RunnerEnvelope::Ping { ts: 12345 };
         ws.send(TungsteniteMessage::Text(ping.to_json().unwrap().into()))
             .await
             .unwrap();
 
         let pong = recv_envelope(&mut ws).await;
         match pong {
-            AgentEnvelope::Pong { ts } => assert_eq!(ts, 12345),
+            RunnerEnvelope::Pong { ts } => assert_eq!(ts, 12345),
             other => panic!("expected pong, got {:?}", other),
         }
 
@@ -940,12 +940,12 @@ mod tests {
 
         // A Ping must bring it back online.
         ws.send(TungsteniteMessage::Text(
-            AgentEnvelope::Ping { ts: 1 }.to_json().unwrap().into(),
+            RunnerEnvelope::Ping { ts: 1 }.to_json().unwrap().into(),
         ))
         .await
         .unwrap();
         let pong = recv_envelope(&mut ws).await;
-        assert!(matches!(pong, AgentEnvelope::Pong { .. }));
+        assert!(matches!(pong, RunnerEnvelope::Pong { .. }));
 
         let fresh = registry.get_runner_view("ws-age").await.unwrap();
         assert!(fresh.connected);
@@ -978,7 +978,7 @@ mod tests {
         // Send a Pong. The server must not close the socket and must not echo
         // anything back (Pong is terminal keepalive).
         ws.send(TungsteniteMessage::Text(
-            AgentEnvelope::Pong { ts: 99 }.to_json().unwrap().into(),
+            RunnerEnvelope::Pong { ts: 99 }.to_json().unwrap().into(),
         ))
         .await
         .unwrap();
@@ -990,12 +990,12 @@ mod tests {
 
         // The connection is still usable: a subsequent Ping still gets a Pong.
         ws.send(TungsteniteMessage::Text(
-            AgentEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
+            RunnerEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
         ))
         .await
         .unwrap();
         let pong = recv_envelope(&mut ws).await;
-        assert!(matches!(pong, AgentEnvelope::Pong { ts: 7 }));
+        assert!(matches!(pong, RunnerEnvelope::Pong { ts: 7 }));
     }
 
     #[tokio::test]
@@ -1018,7 +1018,7 @@ mod tests {
         let ack1 = recv_envelope(&mut ws1).await;
         assert!(matches!(
             ack1,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
         let view1 = registry.get_runner_view("ws-recon").await.unwrap();
         assert_eq!(view1.transport, "websocket");
@@ -1037,7 +1037,7 @@ mod tests {
         .unwrap();
         let ack2 = recv_envelope(&mut ws2).await;
         match ack2 {
-            AgentEnvelope::Registered {
+            RunnerEnvelope::Registered {
                 success, client, ..
             } => {
                 assert!(success);
@@ -1090,7 +1090,7 @@ mod tests {
         let (mut ws, _resp) = connect_async(url).await.unwrap();
 
         // Send a Ping instead of Register.
-        let ping = AgentEnvelope::Ping { ts: 1 };
+        let ping = RunnerEnvelope::Ping { ts: 1 };
         ws.send(TungsteniteMessage::Text(ping.to_json().unwrap().into()))
             .await
             .unwrap();
@@ -1098,7 +1098,7 @@ mod tests {
         // Server should send an error and close.
         let env = recv_envelope(&mut ws).await;
         match env {
-            AgentEnvelope::Error { code, .. } => {
+            RunnerEnvelope::Error { code, .. } => {
                 assert_eq!(code, "expected_register");
             }
             other => panic!("expected error, got {:?}", other),
@@ -1130,7 +1130,7 @@ mod tests {
         // rejected by the queue cap.
         let mut first_rx: Option<(
             String,
-            tokio::sync::oneshot::Receiver<crate::shell_protocol::ShellRunResponse>,
+            tokio::sync::oneshot::Receiver<crate::runner_protocol::ShellRunResponse>,
         )> = None;
         let processed = tokio::time::timeout(Duration::from_secs(10), async {
             for i in 0..400usize {
@@ -1161,14 +1161,14 @@ mod tests {
         let (request_id, rx) = first_rx.expect("first request kept");
         let req_env = recv_envelope(&mut ws).await;
         match req_env {
-            AgentEnvelope::Request { request } => assert_eq!(request.request_id, request_id),
+            RunnerEnvelope::Request { request } => assert_eq!(request.request_id, request_id),
             other => panic!("expected request, got {:?}", other),
         }
         ws.send(TungsteniteMessage::Text(
-            AgentEnvelope::Result {
-                payload: ShellAgentResultRequest {
+            RunnerEnvelope::Result {
+                payload: RunnerResultRequest {
                     client_id: "ws-slow".to_string(),
-                    agent_instance_id: "ws-inst".to_string(),
+                    runner_instance_id: "ws-inst".to_string(),
                     request_id: request_id.clone(),
                     exit_code: Some(0),
                     stdout: Some("hi".to_string()),
@@ -1261,10 +1261,10 @@ mod tests {
         let ack = recv_envelope(&mut ws_a).await;
         assert!(matches!(
             ack,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
         let view = registry.get_runner_view("ws-dup").await.unwrap();
-        assert_eq!(view.agent_instance_id, "inst-a");
+        assert_eq!(view.runner_instance_id, "inst-a");
         assert!(view.connected);
 
         // Second session: instance B, same client_id, while A is online.
@@ -1279,14 +1279,14 @@ mod tests {
         .unwrap();
         let resp = recv_envelope(&mut ws_b).await;
         match resp {
-            AgentEnvelope::Error { message, .. } => {
+            RunnerEnvelope::Error { message, .. } => {
                 assert!(message.contains("already online"), "error was: {message}");
                 assert!(
                     message.contains("different instance"),
                     "error was: {message}"
                 );
             }
-            AgentEnvelope::Registered {
+            RunnerEnvelope::Registered {
                 success: false,
                 error,
                 ..
@@ -1299,7 +1299,7 @@ mod tests {
 
         // The active instance is still A.
         let view = registry.get_runner_view("ws-dup").await.unwrap();
-        assert_eq!(view.agent_instance_id, "inst-a");
+        assert_eq!(view.runner_instance_id, "inst-a");
         assert!(view.connected);
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
         let ack1 = recv_envelope(&mut ws1).await;
         assert!(matches!(
             ack1,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
         drop(ws1);
         wait_for_ws_client_connected(&registry, "ws-same", false).await;
@@ -1342,10 +1342,10 @@ mod tests {
         let ack2 = recv_envelope(&mut ws2).await;
         assert!(matches!(
             ack2,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
         let view = registry.get_runner_view("ws-same").await.unwrap();
-        assert_eq!(view.agent_instance_id, "inst-x");
+        assert_eq!(view.runner_instance_id, "inst-x");
         assert!(view.connected);
     }
 
@@ -1366,11 +1366,11 @@ mod tests {
         .unwrap();
         assert!(matches!(
             recv_envelope(&mut ws_a).await,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
 
         ws_a.send(TungsteniteMessage::Text(
-            AgentEnvelope::Goodbye {
+            RunnerEnvelope::Goodbye {
                 reason: Some("test shutdown".to_string()),
             }
             .to_json()
@@ -1394,10 +1394,10 @@ mod tests {
         .unwrap();
         assert!(matches!(
             recv_envelope(&mut ws_b).await,
-            AgentEnvelope::Registered { success: true, .. }
+            RunnerEnvelope::Registered { success: true, .. }
         ));
         let view = registry.get_runner_view("ws-goodbye").await.unwrap();
-        assert_eq!(view.agent_instance_id, "inst-b");
+        assert_eq!(view.runner_instance_id, "inst-b");
         assert!(view.connected);
     }
 
@@ -1440,7 +1440,7 @@ mod tests {
         .unwrap();
         let _ = recv_envelope(&mut ws_b).await; // Registered
         let view_b = registry.get_runner_view("ws-stale-disc").await.unwrap();
-        assert_eq!(view_b.agent_instance_id, "inst-b");
+        assert_eq!(view_b.runner_instance_id, "inst-b");
         assert!(view_b.connected);
 
         // Start a job under B.
@@ -1475,7 +1475,7 @@ mod tests {
             view_b_after.connected,
             "stale disconnect must not mark newer active instance offline"
         );
-        assert_eq!(view_b_after.agent_instance_id, "inst-b");
+        assert_eq!(view_b_after.runner_instance_id, "inst-b");
         let job_view = registry.get_job(&job.job_id).await.unwrap();
         assert_ne!(
             job_view.status, "lost",
@@ -1533,7 +1533,7 @@ mod tests {
         .unwrap();
         let _ = recv_envelope(&mut ws_b).await; // Registered
         let view_b = registry.get_runner_view("ws-stale-ping").await.unwrap();
-        assert_eq!(view_b.agent_instance_id, "inst-b");
+        assert_eq!(view_b.runner_instance_id, "inst-b");
         assert!(view_b.connected);
 
         // Snapshot B's last_seen right after registration.
@@ -1568,7 +1568,7 @@ mod tests {
 
         // B sends a Ping and its liveness IS refreshed.
         ws_b.send(TungsteniteMessage::Text(
-            AgentEnvelope::Ping { ts: 2 }.to_json().unwrap().into(),
+            RunnerEnvelope::Ping { ts: 2 }.to_json().unwrap().into(),
         ))
         .await
         .unwrap();
@@ -1642,7 +1642,7 @@ mod tests {
             .await
             .unwrap();
         match req_env {
-            AgentEnvelope::Request { request } => assert_eq!(request.request_id, request_id),
+            RunnerEnvelope::Request { request } => assert_eq!(request.request_id, request_id),
             other => panic!("expected request on B, got {:?}", other),
         }
 

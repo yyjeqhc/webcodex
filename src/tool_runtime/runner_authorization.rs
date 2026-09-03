@@ -2,9 +2,7 @@ use super::project_resolution::ResolvedProject;
 use super::tool_definition::{runtime_tool_runner_capability, RunnerCapabilityRequirement};
 use super::{ProjectResolverError, RecoveryKind, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_protocol::{
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
-};
+use crate::runner_protocol::{RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_SHELL};
 use serde_json::json;
 
 /// The Runner capability or owner-boundary requirement a Runner-backed tool
@@ -194,7 +192,7 @@ impl ToolRuntime {
                     .runner_registry
                     .runner_supports_for_auth(
                         &client_id,
-                        SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
+                        RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
                         access.as_ref(),
                     )
                     .await
@@ -202,7 +200,7 @@ impl ToolRuntime {
                 {
                     return Err(runner_capability_unavailable_result(format!(
                         "agent_capability_unavailable: Runner {} does not support {}",
-                        client_id, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL
+                        client_id, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL
                     )));
                 }
             } else {
@@ -213,7 +211,7 @@ impl ToolRuntime {
                     .runner_registry
                     .runner_supports_for_auth(
                         &client_id,
-                        SHELL_CLIENT_CAPABILITY_SSH_SHELL,
+                        RUNNER_CAPABILITY_SSH_SHELL,
                         access.as_ref(),
                     )
                     .await
@@ -221,7 +219,7 @@ impl ToolRuntime {
                 {
                     return Err(runner_capability_unavailable_result(format!(
                         "agent_capability_unavailable: Runner {} does not support {}",
-                        client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL
+                        client_id, RUNNER_CAPABILITY_SSH_SHELL
                     )));
                 }
             }

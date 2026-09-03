@@ -19,7 +19,7 @@ use super::helpers::{
 use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::ToolRuntime;
-use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest};
+use crate::runner_protocol::{ShellCommandExecutionState, ShellRunRequest};
 use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 
 /// Sentinel separating `git status --porcelain` from `git diff --stat` in the

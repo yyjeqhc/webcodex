@@ -12,7 +12,7 @@ use super::super::{ToolResult, ToolRuntime};
 use super::support::*;
 use crate::db::{memory_catalog_revision, MemoryPriority, MAX_MEMORY_BOOTSTRAP_BYTES};
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
+use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -93,7 +93,7 @@ async fn list_files_with_session_context(
             "Memory ACK fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -830,7 +830,7 @@ async fn memory_bootstrap_is_explicit_and_never_inferred_from_session_ack_recove
     let (runtime, _tmp) = runtime_with_memory();
     let root = tempfile::tempdir().unwrap();
     let project_id =
-        register_agent_project_at_path(&runtime, "memory-ack", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "memory-ack", "demo", root.path()).await;
     let project = runtime
         .resolve_project_input_for_auth(&project_id, None)
         .await
@@ -918,7 +918,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     let (runtime, _tmp) = runtime_with_memory();
     let root = tempfile::tempdir().unwrap();
     let writer = shared_key_auth_context("memory-writer");
-    let project = register_agent_project_at_path_with_auth(
+    let project = register_runner_project_at_path_with_auth(
         &runtime,
         "mem-runner",
         "demo",
@@ -1208,14 +1208,14 @@ async fn memory_scope_lifecycle_is_offline_safe_unregister_explicit_and_purge_on
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             project_lifecycle: true,
             ..Default::default()
         },
         vec![summary.clone()],
     )
     .await;
-    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let project_id = crate::tool_runtime::runner_project_runtime_id(client_id, "demo");
     let project = runtime
         .resolve_project_input_for_auth(&project_id, Some(&admin))
         .await
@@ -1324,7 +1324,7 @@ async fn memory_scope_lifecycle_is_offline_safe_unregister_explicit_and_purge_on
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             project_lifecycle: true,
             ..Default::default()
         },
@@ -1342,7 +1342,7 @@ async fn memory_scope_lifecycle_is_offline_safe_unregister_explicit_and_purge_on
                 .await
         }
     });
-    let request = wait_for_agent_request_for_client(&runtime, client_id).await;
+    let request = wait_for_runner_request_for_client(&runtime, client_id).await;
     assert_eq!(request.kind, "project_lifecycle_unregister");
     complete_patch_agent_request_for_instance(
         &runtime,
@@ -1407,11 +1407,11 @@ async fn memory_scope_same_project_id_new_root_does_not_migrate_old_memory() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![registered_project("demo", &root_a_text)],
     )
     .await;
-    let project_id = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+    let project_id = crate::tool_runtime::runner_project_runtime_id(client_id, "demo");
     let project_a = runtime
         .resolve_project_input_for_auth(&project_id, Some(&admin))
         .await
@@ -1436,7 +1436,7 @@ async fn memory_scope_same_project_id_new_root_does_not_migrate_old_memory() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![registered_project("demo", &root_b_text)],
     )
     .await;
@@ -1503,7 +1503,7 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
     let admin = bootstrap_auth_context();
     let client_id = "memory-incomplete";
     let project = resolved(
-        &crate::tool_runtime::agent_project_runtime_id(client_id, "demo"),
+        &crate::tool_runtime::runner_project_runtime_id(client_id, "demo"),
         client_id,
         "/registered/missing-at-runtime",
     );
@@ -1543,7 +1543,7 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
     runtime
         .runner_registry
         .register(crate::test_support::current_runner_registration(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -1551,13 +1551,13 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: format!("inst-{client_id}"),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: format!("inst-{client_id}"),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: ShellClientCapabilities::default(),
+                capabilities: RunnerCapabilities::default(),
                 policy: None,
             },
         ))
@@ -1570,7 +1570,7 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         Vec::new(),
     )
     .await;
@@ -1924,7 +1924,7 @@ async fn session_and_skill_observations_do_not_automatically_create_memory() {
     let (runtime, _tmp) = runtime_with_memory();
     let root = tempfile::tempdir().unwrap();
     let project_id =
-        register_agent_project_at_path(&runtime, "memory-no-auto", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "memory-no-auto", "demo", root.path()).await;
     let project = runtime
         .resolve_project_input_for_auth(&project_id, None)
         .await
@@ -1986,7 +1986,7 @@ async fn session_and_skill_observations_do_not_automatically_create_memory() {
             "skill_list fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(&runtime, "memory-no-auto").await {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 &runtime,
                 "memory-no-auto",

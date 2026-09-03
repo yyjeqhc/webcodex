@@ -1753,14 +1753,14 @@ async fn diagnostic_coding_workflow(
     while !task.is_finished() {
         if let Some(req) = runtime
             .runner_registry
-            .poll(crate::shell_protocol::ShellAgentPollRequest {
+            .poll(crate::runner_protocol::RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
             })
             .await
             .unwrap()
         {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&req);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -1783,7 +1783,7 @@ async fn coding_workflow_continuation_describes_previous_attempt_not_empty_new_o
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "continuation-agent", "demo", dir.path()).await;
+        register_runner_project_at_path(&runtime, "continuation-agent", "demo", dir.path()).await;
 
     // First coding workflow creates the session with instruction A.
     let first = diagnostic_coding_workflow(
@@ -1886,7 +1886,8 @@ async fn coding_workflow_fresh_session_continuation_is_not_applicable() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
-    let project = register_agent_project_at_path(&runtime, "fresh-agent", "demo", dir.path()).await;
+    let project =
+        register_runner_project_at_path(&runtime, "fresh-agent", "demo", dir.path()).await;
 
     let first =
         diagnostic_coding_workflow(&runtime, "fresh-agent", &project, "fresh start", None).await;
@@ -2079,7 +2080,7 @@ async fn validation_summary_surfaces_validation_delta_without_shell_or_new_event
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "vsummary-agent", "demo", dir.path()).await;
+        register_runner_project_at_path(&runtime, "vsummary-agent", "demo", dir.path()).await;
     let auth = auth_context(None, true);
 
     // Create a real session scoped to the registered project, then record
@@ -2194,7 +2195,7 @@ async fn finish_coding_task_continuation_matches_handoff_attempt_without_rerunni
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "finish-agent", "demo", dir.path()).await;
+        register_runner_project_at_path(&runtime, "finish-agent", "demo", dir.path()).await;
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(
         Some(project.clone()),

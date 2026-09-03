@@ -5,7 +5,7 @@ use super::{RecoveryKind, RecoveryTool, ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::runner_http::RunnerFeature;
-use crate::shell_protocol::{ShellCommandExecutionState, ShellFileOpRequest};
+use crate::runner_protocol::{ShellCommandExecutionState, ShellFileOpRequest};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

@@ -101,7 +101,7 @@ fn tool_specs_structured_validation_schema_and_output() {
     assert_eq!(cargo_test_input["min_tests"]["minimum"], 1);
     assert_eq!(
         cargo_test_input["min_tests"]["maximum"],
-        crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+        crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX
     );
     for valid in [
         serde_json::json!({"project": "agent:demo:repo"}),
@@ -119,7 +119,7 @@ fn tool_specs_structured_validation_schema_and_output() {
         serde_json::json!({"project": "agent:demo:repo", "min_tests": 0}),
         serde_json::json!({"project": "agent:demo:repo", "min_tests": -1}),
         serde_json::json!({"project": "agent:demo:repo", "min_tests": 1.5}),
-        serde_json::json!({"project": "agent:demo:repo", "min_tests": crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX + 1}),
+        serde_json::json!({"project": "agent:demo:repo", "min_tests": crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX + 1}),
         serde_json::json!({"project": "agent:demo:repo", "no_run": true, "require_tests": true}),
         serde_json::json!({"project": "agent:demo:repo", "no_run": true, "min_tests": 1}),
     ] {
@@ -173,7 +173,7 @@ fn tool_specs_structured_validation_schema_and_output() {
     assert_eq!(flattened["min_tests"]["minimum"], 1);
     assert_eq!(
         flattened["min_tests"]["maximum"],
-        crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+        crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX
     );
     let go_props = spec_named(&specs, "go_test").input_schema["properties"]
         .as_object()

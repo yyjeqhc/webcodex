@@ -99,7 +99,7 @@ pub enum CallHierarchyDirection {
 /// future wire formats cannot silently treat unknown ops as shell commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
-pub enum AgentLspRequest {
+pub enum RunnerLspRequest {
     Status,
     DocumentSymbols {
         path: String,
@@ -186,9 +186,9 @@ fn default_call_hierarchy_limit() -> usize {
 /// resolved by the server from a full runtime project id. Absolute roots and
 /// arbitrary LSP methods are never included.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentLspPayload {
+pub struct RunnerLspPayload {
     pub project_id: String,
-    pub request: AgentLspRequest,
+    pub request: RunnerLspRequest,
 }
 
 /// Public 1-based Unicode scalar position.
@@ -425,22 +425,22 @@ pub struct CallHierarchyResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentLspError {
+pub struct RunnerLspError {
     pub code: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentLspResultEnvelope {
+pub struct RunnerLspResultEnvelope {
     pub format: String,
     pub success: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<AgentLspError>,
+    pub error: Option<RunnerLspError>,
 }
 
-impl AgentLspResultEnvelope {
+impl RunnerLspResultEnvelope {
     pub fn ok(result: impl Serialize) -> Self {
         Self {
             format: AGENT_LSP_RESULT_FORMAT.to_string(),
@@ -455,7 +455,7 @@ impl AgentLspResultEnvelope {
             format: AGENT_LSP_RESULT_FORMAT.to_string(),
             success: false,
             result: None,
-            error: Some(AgentLspError {
+            error: Some(RunnerLspError {
                 code: code.into(),
                 message: bound_error_message(message),
             }),
@@ -470,7 +470,7 @@ impl AgentLspResultEnvelope {
 }
 
 /// Parse a strict versioned agent LSP result envelope from stdout.
-pub fn parse_agent_lsp_result_envelope(stdout: &str) -> Result<AgentLspResultEnvelope, String> {
+pub fn parse_runner_lsp_result_envelope(stdout: &str) -> Result<RunnerLspResultEnvelope, String> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return Err(format!(
@@ -478,7 +478,7 @@ pub fn parse_agent_lsp_result_envelope(stdout: &str) -> Result<AgentLspResultEnv
             error_codes::MALFORMED_AGENT_LSP_RESULT
         ));
     }
-    let envelope: AgentLspResultEnvelope = serde_json::from_str(trimmed).map_err(|error| {
+    let envelope: RunnerLspResultEnvelope = serde_json::from_str(trimmed).map_err(|error| {
         format!(
             "{}: {}",
             error_codes::MALFORMED_AGENT_LSP_RESULT,
@@ -633,38 +633,38 @@ mod tests {
     #[test]
     fn agent_lsp_request_serde_roundtrip() {
         let cases = vec![
-            AgentLspRequest::Status,
-            AgentLspRequest::DocumentSymbols {
+            RunnerLspRequest::Status,
+            RunnerLspRequest::DocumentSymbols {
                 path: "src/main.rs".to_string(),
                 limit: 50,
             },
-            AgentLspRequest::DocumentDiagnostics {
+            RunnerLspRequest::DocumentDiagnostics {
                 path: "src/main.rs".to_string(),
                 limit: 100,
             },
-            AgentLspRequest::Hover {
+            RunnerLspRequest::Hover {
                 path: "src/main.rs".to_string(),
                 line: 10,
                 column: 4,
             },
-            AgentLspRequest::WorkspaceSymbols {
+            RunnerLspRequest::WorkspaceSymbols {
                 query: "ToolRuntime".to_string(),
                 limit: 50,
             },
-            AgentLspRequest::GotoDefinition {
+            RunnerLspRequest::GotoDefinition {
                 path: "src/main.rs".to_string(),
                 line: 10,
                 column: 4,
                 limit: 20,
             },
-            AgentLspRequest::FindReferences {
+            RunnerLspRequest::FindReferences {
                 path: "src/lib.rs".to_string(),
                 line: 3,
                 column: 8,
                 include_declaration: false,
                 limit: 40,
             },
-            AgentLspRequest::CallHierarchy {
+            RunnerLspRequest::CallHierarchy {
                 path: "src/lib.rs".to_string(),
                 line: 3,
                 column: 8,
@@ -674,12 +674,12 @@ mod tests {
             },
         ];
         for request in cases {
-            let payload = AgentLspPayload {
+            let payload = RunnerLspPayload {
                 project_id: "private-drop".to_string(),
                 request: request.clone(),
             };
             let json = serde_json::to_string(&payload).unwrap();
-            let back: AgentLspPayload = serde_json::from_str(&json).unwrap();
+            let back: RunnerLspPayload = serde_json::from_str(&json).unwrap();
             assert_eq!(back, payload);
             assert!(!json.contains("operation\":\"unknown"));
         }
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn arbitrary_operation_is_rejected() {
         let json = r#"{"project_id":"p","request":{"operation":"arbitrary_passthrough","method":"workspace/symbol"}}"#;
-        let err = serde_json::from_str::<AgentLspPayload>(json).unwrap_err();
+        let err = serde_json::from_str::<RunnerLspPayload>(json).unwrap_err();
         assert!(
             err.to_string().contains("unknown variant") || err.to_string().contains("operation")
         );
@@ -697,25 +697,25 @@ mod tests {
     #[test]
     fn defaults_fill_optional_limits() {
         let json = r#"{"project_id":"p","request":{"operation":"document_symbols","path":"a.rs"}}"#;
-        let payload: AgentLspPayload = serde_json::from_str(json).unwrap();
+        let payload: RunnerLspPayload = serde_json::from_str(json).unwrap();
         match payload.request {
-            AgentLspRequest::DocumentSymbols { limit, .. } => {
+            RunnerLspRequest::DocumentSymbols { limit, .. } => {
                 assert_eq!(limit, DEFAULT_DOCUMENT_SYMBOLS_LIMIT);
             }
             other => panic!("unexpected {other:?}"),
         }
         let workspace = r#"{"project_id":"p","request":{"operation":"workspace_symbols","query":"ToolRuntime"}}"#;
-        let payload: AgentLspPayload = serde_json::from_str(workspace).unwrap();
+        let payload: RunnerLspPayload = serde_json::from_str(workspace).unwrap();
         match payload.request {
-            AgentLspRequest::WorkspaceSymbols { limit, .. } => {
+            RunnerLspRequest::WorkspaceSymbols { limit, .. } => {
                 assert_eq!(limit, DEFAULT_WORKSPACE_SYMBOLS_LIMIT);
             }
             other => panic!("unexpected {other:?}"),
         }
         let refs = r#"{"project_id":"p","request":{"operation":"find_references","path":"a.rs","line":1,"column":1}}"#;
-        let payload: AgentLspPayload = serde_json::from_str(refs).unwrap();
+        let payload: RunnerLspPayload = serde_json::from_str(refs).unwrap();
         match payload.request {
-            AgentLspRequest::FindReferences {
+            RunnerLspRequest::FindReferences {
                 include_declaration,
                 limit,
                 ..
@@ -727,17 +727,17 @@ mod tests {
         }
         let diagnostics =
             r#"{"project_id":"p","request":{"operation":"document_diagnostics","path":"a.rs"}}"#;
-        let payload: AgentLspPayload = serde_json::from_str(diagnostics).unwrap();
+        let payload: RunnerLspPayload = serde_json::from_str(diagnostics).unwrap();
         match payload.request {
-            AgentLspRequest::DocumentDiagnostics { limit, .. } => {
+            RunnerLspRequest::DocumentDiagnostics { limit, .. } => {
                 assert_eq!(limit, DEFAULT_DOCUMENT_DIAGNOSTICS_LIMIT);
             }
             other => panic!("unexpected {other:?}"),
         }
         let hierarchy = r#"{"project_id":"p","request":{"operation":"call_hierarchy","path":"a.rs","line":1,"column":1}}"#;
-        let payload: AgentLspPayload = serde_json::from_str(hierarchy).unwrap();
+        let payload: RunnerLspPayload = serde_json::from_str(hierarchy).unwrap();
         match payload.request {
-            AgentLspRequest::CallHierarchy {
+            RunnerLspRequest::CallHierarchy {
                 direction,
                 depth,
                 limit,
@@ -754,7 +754,7 @@ mod tests {
                 r#"{{"project_id":"p","request":{{"operation":"call_hierarchy","path":"a.rs","line":1,"column":1,"{field}":null}}}}"#
             );
             assert!(
-                serde_json::from_str::<AgentLspPayload>(&json).is_err(),
+                serde_json::from_str::<RunnerLspPayload>(&json).is_err(),
                 "explicit null must be rejected for {field}"
             );
         }
@@ -867,23 +867,23 @@ mod tests {
 
     #[test]
     fn result_envelope_roundtrip_and_strict_parse() {
-        let ok = AgentLspResultEnvelope::ok(LspStatusResult {
+        let ok = RunnerLspResultEnvelope::ok(LspStatusResult {
             project: "p".to_string(),
             detected_languages: vec!["rust".to_string()],
             servers: vec![],
             warnings: vec![],
         });
         let stdout = ok.to_stdout_json();
-        let parsed = parse_agent_lsp_result_envelope(&stdout).unwrap();
+        let parsed = parse_runner_lsp_result_envelope(&stdout).unwrap();
         assert!(parsed.success);
         assert_eq!(parsed.format, AGENT_LSP_RESULT_FORMAT);
 
-        assert!(parse_agent_lsp_result_envelope("not-json").is_err());
-        assert!(parse_agent_lsp_result_envelope(
+        assert!(parse_runner_lsp_result_envelope("not-json").is_err());
+        assert!(parse_runner_lsp_result_envelope(
             r#"{"format":"other","success":true,"result":{}}"#
         )
         .is_err());
-        assert!(parse_agent_lsp_result_envelope(
+        assert!(parse_runner_lsp_result_envelope(
             r#"{"format":"webcodex.agent_lsp_result.v1","success":true}"#
         )
         .is_err());

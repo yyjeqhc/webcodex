@@ -1644,7 +1644,7 @@ pub(super) fn sanitize_persisted_validation_output_summary(
 fn sanitized_test_count_assertion(value: Option<&Value>) -> Option<Value> {
     let object = value?.as_object()?;
     let minimum_tests = object.get("minimum_tests")?.as_u64()?;
-    if !(1..=webcodex_core::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum_tests) {
+    if !(1..=webcodex_core::runner_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum_tests) {
         return None;
     }
     let actual_tests_run = match object.get("actual_tests_run") {

@@ -19,7 +19,7 @@ use crate::runner_http::{
     process_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
     StructuredJobExecution, DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
     ShellProcessArgv, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,

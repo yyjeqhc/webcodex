@@ -1,17 +1,19 @@
-use webcodex_core::shell_protocol::{AgentProtocolGenerationNumber, AGENT_PROTOCOL_GENERATION_V2};
+use webcodex_core::runner_protocol::{
+    RunnerProtocolGenerationNumber, RUNNER_PROTOCOL_GENERATION_V2,
+};
 
 /// Canonical protocol generation captured once at registration ingress.
 /// Transport is an independent ingress fact and project inventory is always paged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AcceptedRunnerProtocol {
-    generation: AgentProtocolGenerationNumber,
+    generation: RunnerProtocolGenerationNumber,
 }
 
 impl AcceptedRunnerProtocol {
     pub(crate) fn try_from_registration(
-        generation_number: AgentProtocolGenerationNumber,
+        generation_number: RunnerProtocolGenerationNumber,
     ) -> Result<Self, String> {
-        if generation_number == AGENT_PROTOCOL_GENERATION_V2 {
+        if generation_number == RUNNER_PROTOCOL_GENERATION_V2 {
             Ok(Self {
                 generation: generation_number,
             })
@@ -20,7 +22,7 @@ impl AcceptedRunnerProtocol {
         }
     }
 
-    pub(crate) const fn generation(self) -> AgentProtocolGenerationNumber {
+    pub(crate) const fn generation(self) -> RunnerProtocolGenerationNumber {
         self.generation
     }
 }

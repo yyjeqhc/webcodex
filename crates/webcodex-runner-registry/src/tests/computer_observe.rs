@@ -64,9 +64,9 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-owned".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()
@@ -106,7 +106,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
     assert!(error.contains("does not support computer_snapshot_region"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -114,13 +114,13 @@ async fn computer_snapshot_region_requires_additive_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-region-only".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: false,
@@ -145,7 +145,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
     assert!(error.contains("does not support computer_observe"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -153,13 +153,13 @@ async fn computer_snapshot_region_requires_additive_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-region-new".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
@@ -182,9 +182,9 @@ async fn computer_snapshot_region_requires_additive_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-region-new".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()
@@ -199,7 +199,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
     let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -207,13 +207,13 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-display-large".to_string(),
-            agent_instance_id: "display-large-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "display-large-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_display_observe: true,
                 ..Default::default()
             },
@@ -235,9 +235,9 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-display-large".to_string(),
-            agent_instance_id: "display-large-inst".to_string(),
+            runner_instance_id: "display-large-inst".to_string(),
         })
         .await
         .unwrap()
@@ -247,9 +247,9 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
     let stdout = "x".repeat(super::super::MAX_OUTPUT_BYTES + 1024);
     assert!(stdout.len() < crate::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES);
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "computer-display-large".to_string(),
-            agent_instance_id: "display-large-inst".to_string(),
+            runner_instance_id: "display-large-inst".to_string(),
             request_id,
             exit_code: Some(0),
             stdout: Some(stdout.clone()),

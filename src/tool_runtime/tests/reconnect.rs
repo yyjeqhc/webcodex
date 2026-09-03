@@ -6,9 +6,9 @@ use super::support::*;
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::runner_http::RunnerTransport;
-use crate::shell_protocol::{
-    AgentBuildInfo, AgentHostContext, AgentProtocolGenerationNumber, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellJobOpRequest, AGENT_PROTOCOL_GENERATION_V2,
+use crate::runner_protocol::{
+    RunnerBuildInfo, RunnerCapabilities, RunnerHostContext, RunnerProtocolGenerationNumber,
+    RunnerRegisterRequest, ShellJobOpRequest, RUNNER_PROTOCOL_GENERATION_V2,
 };
 use crate::tool_runtime::observations::ToolCallObservation;
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
@@ -47,17 +47,17 @@ fn register_request(
     client_id: &str,
     instance: &str,
     process_started_at: Option<i64>,
-    build: Option<AgentBuildInfo>,
-) -> ShellClientRegisterRequest {
-    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
+    build: Option<RunnerBuildInfo>,
+) -> RunnerRegisterRequest {
+    crate::test_support::current_runner_registration(RunnerRegisterRequest {
         client_id: client_id.to_string(),
-        agent_instance_id: instance.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: instance.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: ShellClientCapabilities {
+        capabilities: RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -82,7 +82,7 @@ async fn register_with_project(
     client_id: &str,
     instance: &str,
     process_started_at: Option<i64>,
-    build: Option<AgentBuildInfo>,
+    build: Option<RunnerBuildInfo>,
 ) {
     runtime
         .runner_registry
@@ -205,7 +205,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
     assert_eq!(reconnected["project_registry"]["status"], "registered");
 
     // Calls recover: a dispatched shell tool reaches the new instance.
-    let project = crate::tool_runtime::agent_project_runtime_id("rc-agent", "proj");
+    let project = crate::tool_runtime::runner_project_runtime_id("rc-agent", "proj");
     let run = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -226,7 +226,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "rc-agent", "inst-b").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "rc-agent", "inst-b").await;
     complete_patch_agent_request_for_instance(
         &runtime,
         "rc-agent",
@@ -390,7 +390,7 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
             .unwrap();
 
     let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project = register_agent_project_at_path_with_auth(
+    let project = register_runner_project_at_path_with_auth(
         &runtime1,
         "canonical-restart-agent",
         "proj",
@@ -416,7 +416,7 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
     drop(runtime1);
 
     let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_agent_project_at_path_with_auth(
+    register_runner_project_at_path_with_auth(
         &runtime2,
         "canonical-restart-agent",
         "proj",
@@ -454,7 +454,7 @@ async fn malformed_persisted_authority_is_discarded_fail_closed() {
     let alice = shared_key_auth_context("malformed-authority-alice");
 
     let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let project = register_agent_project_at_path_with_auth(
+    let project = register_runner_project_at_path_with_auth(
         &runtime1,
         "malformed-authority-agent",
         "proj",
@@ -510,7 +510,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
         )
         .await
         .unwrap();
-    let _req = wait_for_agent_request_for_instance(&runtime, "job-agent", "inst-a").await;
+    let _req = wait_for_runner_request_for_instance(&runtime, "job-agent", "inst-a").await;
 
     // Transport drops mid-job: job authority is not silently completed.
     runtime
@@ -585,7 +585,7 @@ async fn runtime_status_keeps_generation_independent_from_transport() {
             .unwrap_or_else(|| panic!("runner {client_id} missing"));
         assert_eq!(
             runner["agent_protocol_generation"],
-            AGENT_PROTOCOL_GENERATION_V2.get()
+            RUNNER_PROTOCOL_GENERATION_V2.get()
         );
         assert_eq!(runner["status"], "compatible");
 
@@ -596,7 +596,7 @@ async fn runtime_status_keeps_generation_independent_from_transport() {
         assert_eq!(client["transport"], transport);
         assert_eq!(
             client["agent_protocol_generation"],
-            AGENT_PROTOCOL_GENERATION_V2.get()
+            RUNNER_PROTOCOL_GENERATION_V2.get()
         );
         assert_eq!(client["project_inventory"]["sync_state"], "pending");
     }
@@ -620,7 +620,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
             "same-version-different-source",
             "inst-1",
             None,
-            Some(AgentBuildInfo {
+            Some(RunnerBuildInfo {
                 version: Some(server_version.to_string()),
                 git_commit: Some(different_commit),
                 git_dirty: Some(false),
@@ -635,7 +635,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
             "old-build",
             "inst-2",
             None,
-            Some(AgentBuildInfo {
+            Some(RunnerBuildInfo {
                 version: Some("0.0.1".to_string()),
                 git_commit: None,
                 git_dirty: None,
@@ -646,7 +646,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     // Unsupported protocol generations fail registration and therefore never
     // become a diagnostic-but-operational runtime client.
     let mut unsupported = register_request("future-generation", "inst-3", None, None);
-    unsupported.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
+    unsupported.runner_protocol_generation = RunnerProtocolGenerationNumber::new(3);
     let unsupported = runtime
         .runner_registry
         .register(unsupported)
@@ -711,7 +711,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
 async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     let runtime = test_runtime();
     let mut request = register_request("sf", "inst-host-context", None, None);
-    request.host_context = Some(AgentHostContext {
+    request.host_context = Some(RunnerHostContext {
         role: Some("server_host".to_string()),
         runtime: Some("Prefer this Runner for operations on its own host.".to_string()),
         service: Some("Use the ordinary host-local service mechanism.".to_string()),
@@ -761,7 +761,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     // Same-instance reconnect republishes the current startup context; it does
     // not depend on the previous transport record for this descriptive fact.
     let mut reconnect = register_request("sf", "inst-host-context", None, None);
-    reconnect.host_context = Some(AgentHostContext {
+    reconnect.host_context = Some(RunnerHostContext {
         role: Some("server_host".to_string()),
         network: Some("Internal destinations normally use the direct path.".to_string()),
         ..Default::default()
@@ -784,7 +784,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
 async fn runner_host_context_is_revalidated_at_server_registration() {
     let runtime = test_runtime();
     let mut request = register_request("bad-context", "inst-bad", None, None);
-    request.host_context = Some(AgentHostContext {
+    request.host_context = Some(RunnerHostContext {
         role: Some("Server Host".to_string()),
         ..Default::default()
     });
@@ -848,14 +848,14 @@ async fn dispatch_coding_call_in_window_with_transport(
         );
         if let Some(req) = runtime
             .runner_registry
-            .poll(crate::shell_protocol::ShellAgentPollRequest {
+            .poll(crate::runner_protocol::RunnerPollRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
             })
             .await
             .unwrap()
         {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&req);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -902,7 +902,7 @@ async fn work_on_project_without_resume_always_creates_fresh_session() {
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "continuity-agent", "demo", dir.path()).await;
+        register_runner_project_at_path(&runtime, "continuity-agent", "demo", dir.path()).await;
     let auth = auth_context(None, true);
 
     let first = dispatch_coding_call_in_window(
@@ -963,7 +963,7 @@ async fn work_on_project_second_fresh_start_preserves_previous_session() {
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "isolation-agent", "demo", dir.path()).await;
+        register_runner_project_at_path(&runtime, "isolation-agent", "demo", dir.path()).await;
     let auth = auth_context(None, true);
     let first = dispatch_coding_call_in_window(
         &runtime,
@@ -1003,7 +1003,7 @@ async fn failed_project_start_does_not_create_or_mutate_workflow_session() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
-    let project = register_agent_project_at_path(&runtime, "stable-agent", "a", dir.path()).await;
+    let project = register_runner_project_at_path(&runtime, "stable-agent", "a", dir.path()).await;
     let auth = auth_context(None, true);
     let first = dispatch_coding_call_in_window(
         &runtime,
@@ -1083,7 +1083,7 @@ async fn coding_workflow_read_only_upgrade_is_atomic_and_permission_checked() {
             crate::auth::SCOPE_PROJECT_WRITE,
         ],
     );
-    let project = register_agent_project_at_path_with_auth(
+    let project = register_runner_project_at_path_with_auth(
         &runtime,
         "oauth-client",
         "demo",
@@ -1119,14 +1119,14 @@ async fn coding_workflow_read_only_upgrade_is_atomic_and_permission_checked() {
     while !read_only_task.is_finished() {
         if let Some(req) = runtime
             .runner_registry
-            .poll(crate::shell_protocol::ShellAgentPollRequest {
+            .poll(crate::runner_protocol::RunnerPollRequest {
                 client_id: "oauth-client".to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
             })
             .await
             .unwrap()
         {
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&req);
             complete_patch_agent_request(
                 &runtime,
                 "oauth-client",

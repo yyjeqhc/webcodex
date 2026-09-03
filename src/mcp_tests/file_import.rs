@@ -250,13 +250,11 @@ async fn mcp_import_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
 ) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
-    use crate::shell_protocol::{
-        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
-    };
+    use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
     let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     registry
         .register(crate::test_support::current_runner_registration(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -264,13 +262,13 @@ async fn mcp_import_runtime(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: "importer".to_string(),
-                agent_instance_id: "inst-import".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "inst-import".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: owner.map(str::to_string),
                 hostname: None,
                 host_context: None,
-                capabilities: ShellClientCapabilities {
+                capabilities: RunnerCapabilities {
                     file_write: true,
                     ..Default::default()
                 },
@@ -283,7 +281,7 @@ async fn mcp_import_runtime(
         &registry,
         "importer",
         "inst-import",
-        vec![ShellAgentProjectSummary {
+        vec![RunnerProjectSummary {
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: root.to_string_lossy().into_owned(),
@@ -313,18 +311,18 @@ async fn complete_mcp_import_save(
     registry: Arc<crate::runner_http::RunnerRegistry>,
     expected_bytes: Vec<u8>,
 ) {
-    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+    use crate::runner_protocol::{RunnerPollRequest, RunnerResultRequest};
     use base64::Engine as _;
     use sha2::{Digest, Sha256};
 
     async fn next_request(
         registry: &crate::runner_http::RunnerRegistry,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         loop {
             if let Some(request) = registry
-                .poll(ShellAgentPollRequest {
+                .poll(RunnerPollRequest {
                     client_id: "importer".to_string(),
-                    agent_instance_id: "inst-import".to_string(),
+                    runner_instance_id: "inst-import".to_string(),
                 })
                 .await
                 .unwrap()
@@ -350,9 +348,9 @@ async fn complete_mcp_import_save(
     let mime_type = begin["mime_type"].as_str().unwrap().to_string();
     let upload_id = "wc_upload_mcp_import_fixture";
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "importer".to_string(),
-            agent_instance_id: "inst-import".to_string(),
+            runner_instance_id: "inst-import".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(
@@ -399,9 +397,9 @@ async fn complete_mcp_import_save(
                 );
                 bytes.extend_from_slice(&chunk);
                 registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: "importer".to_string(),
-                        agent_instance_id: "inst-import".to_string(),
+                        runner_instance_id: "inst-import".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(0),
                         stdout: Some(
@@ -429,9 +427,9 @@ async fn complete_mcp_import_save(
                 assert_eq!(bytes, expected_bytes);
                 let sha256 = format!("{:x}", Sha256::digest(&bytes));
                 registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: "importer".to_string(),
-                        agent_instance_id: "inst-import".to_string(),
+                        runner_instance_id: "inst-import".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(0),
                         stdout: Some(
@@ -464,17 +462,17 @@ async fn complete_mcp_import_save(
 async fn complete_mcp_import_until_abort(
     registry: Arc<crate::runner_http::RunnerRegistry>,
 ) -> usize {
-    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+    use crate::runner_protocol::{RunnerPollRequest, RunnerResultRequest};
     use base64::Engine as _;
 
     async fn next_request(
         registry: &crate::runner_http::RunnerRegistry,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         loop {
             if let Some(request) = registry
-                .poll(ShellAgentPollRequest {
+                .poll(RunnerPollRequest {
                     client_id: "importer".to_string(),
-                    agent_instance_id: "inst-import".to_string(),
+                    runner_instance_id: "inst-import".to_string(),
                 })
                 .await
                 .unwrap()
@@ -493,9 +491,9 @@ async fn complete_mcp_import_until_abort(
     let mime_type = begin["mime_type"].as_str().unwrap().to_string();
     let upload_id = "wc_upload_mcp_abort_fixture";
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "importer".to_string(),
-            agent_instance_id: "inst-import".to_string(),
+            runner_instance_id: "inst-import".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(
@@ -540,9 +538,9 @@ async fn complete_mcp_import_until_abort(
                 received_bytes += chunk.len();
                 chunk_count += 1;
                 registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: "importer".to_string(),
-                        agent_instance_id: "inst-import".to_string(),
+                        runner_instance_id: "inst-import".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(0),
                         stdout: Some(
@@ -568,9 +566,9 @@ async fn complete_mcp_import_until_abort(
             }
             "file_artifact_upload_abort" => {
                 registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: "importer".to_string(),
-                        agent_instance_id: "inst-import".to_string(),
+                        runner_instance_id: "inst-import".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(0),
                         stdout: Some(

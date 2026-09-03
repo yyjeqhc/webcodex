@@ -3,7 +3,7 @@
 use super::super::patch::{analyze_unified_diff, MAX_UNIFIED_DIFF_BYTES};
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use std::collections::BTreeSet;
 
 async fn runtime_with_unified_diff_agent(client_id: &str) -> ToolRuntime {
@@ -12,7 +12,7 @@ async fn runtime_with_unified_diff_agent(client_id: &str) -> ToolRuntime {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             ..Default::default()
         },
@@ -231,7 +231,7 @@ async fn apply_unified_diff_large_payload_still_travels_only_via_stdin() {
     let project = agent_test_project_id(client_id);
     let marker = "UNIFIED_LARGE_MARKER";
     let diff = large_marker_patch("UNIFIED_LARGE.md", marker);
-    assert!(diff.len() > crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
+    assert!(diff.len() > crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
     assert!(diff.len() <= MAX_UNIFIED_DIFF_BYTES);
 
     let task = tokio::spawn({

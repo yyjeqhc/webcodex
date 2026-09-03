@@ -1,8 +1,6 @@
 use super::RunnerRegistry;
 use std::sync::Arc;
-use webcodex_core::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentShellRequest,
-};
+use webcodex_core::runner_protocol::{RunnerJobUpdateRequest, RunnerRequest, RunnerResultPayload};
 use webcodex_runner_registry::RunnerRegistryTelemetry;
 
 #[derive(Debug, Default)]
@@ -11,12 +9,12 @@ struct ToolRequestTraceRunnerRegistryTelemetry;
 impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
     fn request_enqueued(
         &self,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
         request_id: &str,
         client_id: &str,
         kind: &str,
         job_id: Option<&str>,
-        agent_instance_id: Option<&str>,
+        runner_instance_id: Option<&str>,
         runner_transport: Option<&str>,
         runner_version: Option<&str>,
         runner_git_commit: Option<&str>,
@@ -27,14 +25,14 @@ impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
             client_id,
             kind,
             job_id,
-            agent_instance_id,
+            runner_instance_id,
             runner_transport,
             runner_version,
             runner_git_commit,
         );
     }
 
-    fn runner_result_accepted(&self, request_id: &str, payload: &ShellAgentResultPayload) {
+    fn runner_result_accepted(&self, request_id: &str, payload: &RunnerResultPayload) {
         crate::tool_request_trace::capture_runner_result(request_id, payload);
     }
 
@@ -46,7 +44,7 @@ impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
         &self,
         request_id: Option<&str>,
         job_id: &str,
-        payload: &ShellAgentJobUpdateRequest,
+        payload: &RunnerJobUpdateRequest,
     ) {
         crate::tool_request_trace::capture_runner_job_update(request_id, job_id, payload);
     }

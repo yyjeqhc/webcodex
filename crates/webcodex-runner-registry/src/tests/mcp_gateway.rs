@@ -3,9 +3,9 @@ use crate::mcp_gateway::{
     McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
     McpGatewayResponsePayload,
 };
-use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentResultPayload, ShellAgentResultRequest,
-    ShellClientRegisterRequest,
+use crate::runner_protocol::{
+    RunnerPolicySummary, RunnerPollRequest, RunnerRegisterRequest, RunnerResultPayload,
+    RunnerResultRequest,
 };
 
 fn bridge_provider(provider_instance_id: &str) -> McpGatewayProvider {
@@ -18,18 +18,18 @@ fn bridge_provider(provider_instance_id: &str) -> McpGatewayProvider {
 
 async fn register_bridge_runner(registry: &RunnerRegistry) {
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "bridge-instance".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "bridge-instance".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             host_context: None,
-            policy: Some(AgentPolicySummary {
+            policy: Some(RunnerPolicySummary {
                 mcp_gateway_providers: Some(vec![bridge_provider("provider-instance")]),
                 ..Default::default()
             }),
@@ -53,19 +53,19 @@ fn list_request(provider_instance_id: &str) -> McpGatewayRequest {
 
 fn bridge_registration(
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     providers: Option<Vec<McpGatewayProvider>>,
-) -> ShellClientRegisterRequest {
-    current_runner_registration(ShellClientRegisterRequest {
+) -> RunnerRegisterRequest {
+    current_runner_registration(RunnerRegisterRequest {
         client_id: client_id.to_string(),
-        agent_instance_id: agent_instance_id.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: runner_instance_id.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
-        capabilities: ShellClientCapabilities::default(),
+        capabilities: RunnerCapabilities::default(),
         host_context: None,
-        policy: providers.map(|providers| AgentPolicySummary {
+        policy: providers.map(|providers| RunnerPolicySummary {
             mcp_gateway_providers: Some(providers),
             ..Default::default()
         }),
@@ -249,12 +249,12 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
             .runners
             .get_mut("bridge-runner")
             .unwrap()
-            .agent_instance_id = "replacement-instance".to_string();
+            .runner_instance_id = "replacement-instance".to_string();
     }
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "replacement-instance".to_string(),
+            runner_instance_id: "replacement-instance".to_string(),
         })
         .await
         .unwrap();
@@ -295,9 +295,9 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
             .mcp_gateway_providers = Some(vec![bridge_provider("replacement-provider-instance")]);
     }
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "bridge-instance".to_string(),
+            runner_instance_id: "bridge-instance".to_string(),
         })
         .await
         .unwrap();
@@ -336,9 +336,9 @@ async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "bridge-instance".to_string(),
+            runner_instance_id: "bridge-instance".to_string(),
         })
         .await
         .unwrap()
@@ -381,17 +381,17 @@ async fn typed_bridge_result_is_correlated_once() {
         .await
         .unwrap();
     registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "bridge-instance".to_string(),
+            runner_instance_id: "bridge-instance".to_string(),
         })
         .await
         .unwrap()
         .unwrap();
-    let payload = ShellAgentResultPayload {
-        result: ShellAgentResultRequest {
+    let payload = RunnerResultPayload {
+        result: RunnerResultRequest {
             client_id: "bridge-runner".to_string(),
-            agent_instance_id: "bridge-instance".to_string(),
+            runner_instance_id: "bridge-instance".to_string(),
             request_id: request_id.clone(),
             exit_code: None,
             stdout: None,

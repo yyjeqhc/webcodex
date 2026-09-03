@@ -3,12 +3,12 @@ use super::position::MAX_LSP_DOCUMENT_BYTES;
 use super::supervisor::{LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig};
 use super::test_support::{fake_server_path, wait_until};
 use crate::lsp_bridge::{
-    parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, CallHierarchyDirection,
+    parse_runner_lsp_result_envelope, CallHierarchyDirection, RunnerLspPayload, RunnerLspRequest,
     AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
     MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
     MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
 };
-use crate::shell_protocol::{ShellAgentShellRequest, ShellClientCapabilities};
+use crate::runner_protocol::{RunnerCapabilities, RunnerRequest};
 use crate::webcodex_runner::config::RunnerPolicy;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -19,8 +19,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 /// Minimal agent shell request carrying a typed LSP payload.
-fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn shell_lsp_request(payload: RunnerLspPayload) -> RunnerRequest {
+    RunnerRequest {
         request_id: "lsp-1".to_string(),
         client_id: "agent".to_string(),
         kind: AGENT_LSP_REQUEST_KIND.to_string(),
@@ -142,11 +142,11 @@ impl NavFixture {
         }
     }
 
-    fn request(&self, payload: AgentLspPayload) -> Value {
+    fn request(&self, payload: RunnerLspPayload) -> Value {
         self.request_with_timeout(payload, 60)
     }
 
-    fn request_with_timeout(&self, payload: AgentLspPayload, timeout_secs: u64) -> Value {
+    fn request_with_timeout(&self, payload: RunnerLspPayload, timeout_secs: u64) -> Value {
         let mut req = shell_lsp_request(payload);
         req.timeout_secs = timeout_secs;
         let result = handle_lsp_request(
@@ -157,14 +157,14 @@ impl NavFixture {
         );
         assert!(result.error.is_none(), "{result:?}");
         let stdout = result.stdout.expect("stdout envelope");
-        let envelope = parse_agent_lsp_result_envelope(&stdout).expect("valid envelope");
+        let envelope = parse_runner_lsp_result_envelope(&stdout).expect("valid envelope");
         serde_json::to_value(envelope).unwrap()
     }
 
     fn diagnostics(&self, limit: usize) -> Value {
-        self.request(AgentLspPayload {
+        self.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::DocumentDiagnostics {
+            request: RunnerLspRequest::DocumentDiagnostics {
                 path: "src/main.rs".into(),
                 limit,
             },
@@ -172,9 +172,9 @@ impl NavFixture {
     }
 
     fn hover(&self, line: usize, column: usize) -> Value {
-        self.request(AgentLspPayload {
+        self.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::Hover {
+            request: RunnerLspRequest::Hover {
                 path: "src/main.rs".into(),
                 line,
                 column,
@@ -183,9 +183,9 @@ impl NavFixture {
     }
 
     fn workspace_symbols(&self, query: &str, limit: usize) -> Value {
-        self.request(AgentLspPayload {
+        self.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::WorkspaceSymbols {
+            request: RunnerLspRequest::WorkspaceSymbols {
                 query: query.into(),
                 limit,
             },
@@ -201,9 +201,9 @@ impl NavFixture {
         depth: usize,
         limit: usize,
     ) -> Value {
-        self.request(AgentLspPayload {
+        self.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::CallHierarchy {
+            request: RunnerLspRequest::CallHierarchy {
                 path: path.into(),
                 line,
                 column,
@@ -241,10 +241,10 @@ fn lsp_kind_never_matches_shell() {
 #[test]
 fn capability_default_is_false_and_new_runner_sets_true() {
     let _serial = super::serialize_fake_lsp_test();
-    let old: ShellClientCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
+    let old: RunnerCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
     assert!(!old.lsp_read_only_navigation);
     assert!(!old.lsp_call_hierarchy);
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         lsp_read_only_navigation: true,
         lsp_call_hierarchy: true,
         ..Default::default()
@@ -340,9 +340,9 @@ fn go_call_hierarchy_fails_explicitly_when_provider_is_unsupported() {
 fn call_hierarchy_uses_one_shared_operation_deadline() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("call_hierarchy_shared_deadline");
-    let mut request = shell_lsp_request(AgentLspPayload {
+    let mut request = shell_lsp_request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::CallHierarchy {
+        request: RunnerLspRequest::CallHierarchy {
             path: "src/main.rs".into(),
             line: 1,
             column: 4,
@@ -361,7 +361,7 @@ fn call_hierarchy_uses_one_shared_operation_deadline() {
         &request,
     );
     let elapsed = started.elapsed();
-    let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
+    let envelope = parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(!envelope.success, "{envelope:?}");
     assert_eq!(
         envelope.error.as_ref().map(|error| error.code.as_str()),
@@ -608,9 +608,9 @@ fn call_hierarchy_preserves_unicode_scalar_positions_and_language_profiles() {
 fn status_does_not_start_server_and_unavailable_succeeds() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
-    let available = fixture.request(AgentLspPayload {
+    let available = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::Status,
+        request: RunnerLspRequest::Status,
     });
     assert_eq!(available["success"], true);
     assert_eq!(available["result"]["servers"][0]["status"], "available");
@@ -640,7 +640,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         allow_cwd_anywhere: true,
         ..RunnerPolicy::default()
     };
-    let req = ShellAgentShellRequest {
+    let req = RunnerRequest {
         request_id: "s".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),
@@ -662,9 +662,9 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         requested_by: "t".into(),
         created_at: 0,
         validation: None,
-        lsp: Some(AgentLspPayload {
+        lsp: Some(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::Status,
+            request: RunnerLspRequest::Status,
         }),
         job_context: None,
         mcp_gateway: None,
@@ -672,7 +672,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         persistent_shell: None,
     };
     let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
-    let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
+    let envelope = parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(envelope.success);
     let value = envelope.result.unwrap();
     assert_eq!(value["servers"][0]["available"], false);
@@ -687,9 +687,9 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
 fn document_symbols_hierarchical_and_budget() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/main.rs".into(),
             limit: 1,
         },
@@ -713,9 +713,9 @@ fn document_symbols_hierarchical_and_budget() {
 fn document_symbols_symbol_information_fallback() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("symbol_information");
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/main.rs".into(),
             limit: 100,
         },
@@ -730,17 +730,17 @@ fn navigation_reuses_one_did_open_for_the_same_document() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
     let requests = [
-        AgentLspRequest::DocumentSymbols {
+        RunnerLspRequest::DocumentSymbols {
             path: "src/main.rs".into(),
             limit: 10,
         },
-        AgentLspRequest::GotoDefinition {
+        RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
             limit: 10,
         },
-        AgentLspRequest::FindReferences {
+        RunnerLspRequest::FindReferences {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -750,7 +750,7 @@ fn navigation_reuses_one_did_open_for_the_same_document() {
     ];
     for _ in 0..2 {
         for request in &requests {
-            let envelope = fixture.request(AgentLspPayload {
+            let envelope = fixture.request(RunnerLspPayload {
                 project_id: "demo".into(),
                 request: request.clone(),
             });
@@ -773,9 +773,9 @@ fn navigation_sends_full_text_changes_once_per_disk_content_version() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
     let request = || {
-        fixture.request(AgentLspPayload {
+        fixture.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::DocumentSymbols {
+            request: RunnerLspRequest::DocumentSymbols {
                 path: "src/main.rs".into(),
                 limit: 10,
             },
@@ -1068,9 +1068,9 @@ fn cold_workspace_symbols_waits_for_quiescent_readiness_before_dispatch() {
     let fixture = NavFixture::new("workspace_readiness_timeout");
     let started = Instant::now();
     let result = fixture.request_with_timeout(
-        AgentLspPayload {
+        RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::WorkspaceSymbols {
+            request: RunnerLspRequest::WorkspaceSymbols {
                 query: "KnownSymbol".into(),
                 limit: 50,
             },
@@ -1090,9 +1090,9 @@ fn rust_workspace_symbols_can_outlive_the_ordinary_request_timeout() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("workspace_slow_success");
     let result = fixture.request_with_timeout(
-        AgentLspPayload {
+        RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::WorkspaceSymbols {
+            request: RunnerLspRequest::WorkspaceSymbols {
                 query: "KnownSymbol".into(),
                 limit: 50,
             },
@@ -1110,9 +1110,9 @@ fn rust_workspace_symbol_timeout_remains_bounded_by_the_operation_deadline() {
     let fixture = NavFixture::new("workspace_slow_success");
     let started = Instant::now();
     let result = fixture.request_with_timeout(
-        AgentLspPayload {
+        RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::WorkspaceSymbols {
+            request: RunnerLspRequest::WorkspaceSymbols {
                 query: "KnownSymbol".into(),
                 limit: 50,
             },
@@ -1132,9 +1132,9 @@ fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
     let fixture = NavFixture::new("workspace_readiness_restart");
     let started = Instant::now();
     let result = fixture.request_with_timeout(
-        AgentLspPayload {
+        RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::WorkspaceSymbols {
+            request: RunnerLspRequest::WorkspaceSymbols {
                 query: "KnownSymbol".into(),
                 limit: 50,
             },
@@ -1240,9 +1240,9 @@ fn workspace_symbols_validates_query_and_sanitizes_names() {
 fn navigation_restart_opens_the_document_on_the_new_server_instance() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("restart_then_success");
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/main.rs".into(),
             limit: 10,
         },
@@ -1271,9 +1271,9 @@ fn navigation_restart_opens_the_document_on_the_new_server_instance() {
 #[test]
 fn definition_variants_and_external_invalid() {
     let _serial = super::serialize_fake_lsp_test();
-    let single = NavFixture::new("normal").request(AgentLspPayload {
+    let single = NavFixture::new("normal").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1284,9 +1284,9 @@ fn definition_variants_and_external_invalid() {
     assert_eq!(single["result"]["returned_count"], 1);
     assert_eq!(single["result"]["locations"][0]["path"], "src/main.rs");
 
-    let multi = NavFixture::new("definition_array").request(AgentLspPayload {
+    let multi = NavFixture::new("definition_array").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1295,9 +1295,9 @@ fn definition_variants_and_external_invalid() {
     });
     assert!(multi["result"]["returned_count"].as_u64().unwrap() >= 1);
 
-    let link = NavFixture::new("definition_link").request(AgentLspPayload {
+    let link = NavFixture::new("definition_link").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1310,9 +1310,9 @@ fn definition_variants_and_external_invalid() {
         "link response: {link}"
     );
 
-    let external = NavFixture::new("definition_external").request(AgentLspPayload {
+    let external = NavFixture::new("definition_external").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1328,9 +1328,9 @@ fn definition_variants_and_external_invalid() {
     );
     assert!(!external.to_string().contains("/usr/lib"));
 
-    let malformed = NavFixture::new("definition_malformed").request(AgentLspPayload {
+    let malformed = NavFixture::new("definition_malformed").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1348,9 +1348,9 @@ fn definition_variants_and_external_invalid() {
 #[test]
 fn references_dedup_truncation_and_external() {
     let _serial = super::serialize_fake_lsp_test();
-    let dedup = NavFixture::new("references_duplicates").request(AgentLspPayload {
+    let dedup = NavFixture::new("references_duplicates").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::FindReferences {
+        request: RunnerLspRequest::FindReferences {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1362,9 +1362,9 @@ fn references_dedup_truncation_and_external() {
     assert_eq!(dedup["result"]["total_results"], 3);
     assert_eq!(dedup["result"]["returned_count"], 2);
 
-    let overflow = NavFixture::new("references_overflow").request(AgentLspPayload {
+    let overflow = NavFixture::new("references_overflow").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::FindReferences {
+        request: RunnerLspRequest::FindReferences {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1379,9 +1379,9 @@ fn references_dedup_truncation_and_external() {
     assert_eq!(overflow["result"]["truncated"], true);
     assert_eq!(overflow["result"]["total_results"], 30);
 
-    let external = NavFixture::new("references_external").request(AgentLspPayload {
+    let external = NavFixture::new("references_external").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::FindReferences {
+        request: RunnerLspRequest::FindReferences {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1397,9 +1397,9 @@ fn references_dedup_truncation_and_external() {
 fn rejects_absolute_traversal_symlink_and_non_rs() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
-    let absolute = fixture.request(AgentLspPayload {
+    let absolute = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "/etc/passwd.rs".into(),
             limit: 10,
         },
@@ -1407,9 +1407,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
     assert_eq!(absolute["success"], false);
     assert_eq!(absolute["error"]["code"], "invalid_project_path");
 
-    let traversal = fixture.request(AgentLspPayload {
+    let traversal = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "../secret.rs".into(),
             limit: 10,
         },
@@ -1417,9 +1417,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
     assert_eq!(traversal["success"], false);
     assert_eq!(traversal["error"]["code"], "invalid_project_path");
 
-    let non_rs = fixture.request(AgentLspPayload {
+    let non_rs = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "Cargo.toml".into(),
             limit: 10,
         },
@@ -1440,9 +1440,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
             r"\\?\C:\etc\passwd.rs",
             r"\\server\share\passwd.rs",
         ] {
-            let rejected = fixture.request(AgentLspPayload {
+            let rejected = fixture.request(RunnerLspPayload {
                 project_id: "demo".into(),
-                request: AgentLspRequest::DocumentSymbols {
+                request: RunnerLspRequest::DocumentSymbols {
                     path: absolute.into(),
                     limit: 10,
                 },
@@ -1455,9 +1455,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
         }
         // Backslash-separated `..` traversal is rejected by component
         // semantics, which are separator-agnostic.
-        let traversal_win = fixture.request(AgentLspPayload {
+        let traversal_win = fixture.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::DocumentSymbols {
+            request: RunnerLspRequest::DocumentSymbols {
                 path: r"..\..\secret.rs".into(),
                 limit: 10,
             },
@@ -1475,9 +1475,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
     {
         let link = fixture.root.join("src/linked.rs");
         std::os::unix::fs::symlink(&outside, &link).unwrap();
-        let sym = fixture.request(AgentLspPayload {
+        let sym = fixture.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::DocumentSymbols {
+            request: RunnerLspRequest::DocumentSymbols {
                 path: "src/linked.rs".into(),
                 limit: 10,
             },
@@ -1511,9 +1511,9 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
             String::from_utf8_lossy(&created.stdout),
             String::from_utf8_lossy(&created.stderr)
         );
-        let escaped = fixture.request(AgentLspPayload {
+        let escaped = fixture.request(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::DocumentSymbols {
+            request: RunnerLspRequest::DocumentSymbols {
                 path: "src/escaped/escaped.rs".into(),
                 limit: 10,
             },
@@ -1543,9 +1543,9 @@ fn navigation_round_trips_space_and_unicode_paths() {
             "fn unicode_fn() {}\nlet x = 1;\n// pad line\n// pad line\n",
         )],
     );
-    let goto = fixture.request(AgentLspPayload {
+    let goto = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/ünïcode file.rs".into(),
             line: 1,
             column: 1,
@@ -1559,9 +1559,9 @@ fn navigation_round_trips_space_and_unicode_paths() {
         "{goto}"
     );
 
-    let symbols = fixture.request(AgentLspPayload {
+    let symbols = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/ünïcode file.rs".into(),
             limit: 10,
         },
@@ -1589,9 +1589,9 @@ fn oversized_document_is_rejected_before_read_and_server_start() {
     file.set_len(MAX_LSP_DOCUMENT_BYTES + 1).unwrap();
     drop(file);
 
-    let symbols = fixture.request(AgentLspPayload {
+    let symbols = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/generated.rs".into(),
             limit: 10,
         },
@@ -1599,9 +1599,9 @@ fn oversized_document_is_rejected_before_read_and_server_start() {
     assert_eq!(symbols["success"], false);
     assert_eq!(symbols["error"]["code"], "document_too_large");
 
-    let goto = fixture.request(AgentLspPayload {
+    let goto = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/generated.rs".into(),
             line: 1,
             column: 1,
@@ -1622,9 +1622,9 @@ fn oversized_document_is_rejected_before_read_and_server_start() {
 fn project_relative_normalization_and_no_absolute_in_result() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.rs".into(),
             line: 1,
             column: 1,
@@ -1641,7 +1641,7 @@ fn project_relative_normalization_and_no_absolute_in_result() {
 fn missing_lsp_payload_returns_structured_error() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
-    let req = ShellAgentShellRequest {
+    let req = RunnerRequest {
         request_id: "x".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),
@@ -1675,7 +1675,7 @@ fn missing_lsp_payload_returns_structured_error() {
         &fixture.supervisor,
         &req,
     );
-    let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
+    let envelope = parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(!envelope.success);
     assert_eq!(envelope.error.unwrap().code, "missing_lsp_payload");
 }
@@ -1686,7 +1686,7 @@ fn lsp_request_ignores_command_field() {
     // Typed LSP handling must not consult or execute `command`.
     let fixture = NavFixture::new("normal");
     let marker = fixture._temp.path().join("shell-ran");
-    let req = ShellAgentShellRequest {
+    let req = RunnerRequest {
         request_id: "req".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),
@@ -1708,9 +1708,9 @@ fn lsp_request_ignores_command_field() {
         requested_by: "t".into(),
         created_at: 0,
         validation: None,
-        lsp: Some(AgentLspPayload {
+        lsp: Some(RunnerLspPayload {
             project_id: "demo".into(),
-            request: AgentLspRequest::Status,
+            request: RunnerLspRequest::Status,
         }),
         job_context: None,
         mcp_gateway: None,
@@ -1725,7 +1725,7 @@ fn lsp_request_ignores_command_field() {
     );
     assert!(result.error.is_none(), "{result:?}");
     assert!(!marker.exists(), "LSP handler must not execute command");
-    let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
+    let envelope = parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(envelope.success);
 }
 
@@ -1748,9 +1748,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = go_fixture("go_workspace_symbol_information");
 
-    let status = fixture.request(AgentLspPayload {
+    let status = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::Status,
+        request: RunnerLspRequest::Status,
     });
     assert_eq!(status["success"], true, "{status}");
     assert_eq!(
@@ -1766,9 +1766,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
     assert_eq!(gopls["available"], true);
     assert!(!fixture.marker.exists(), "status must not start gopls");
 
-    let symbols = fixture.request(AgentLspPayload {
+    let symbols = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/main.go".into(),
             limit: 20,
         },
@@ -1778,9 +1778,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
     assert_eq!(symbols["result"]["path"], "src/main.go");
     assert_eq!(recorded_did_open_language_id(&fixture.marker), "go");
 
-    let goto = fixture.request(AgentLspPayload {
+    let goto = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.go".into(),
             line: 3,
             column: 15,
@@ -1790,9 +1790,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
     assert_eq!(goto["success"], true, "{goto}");
     assert_eq!(goto["result"]["locations"][0]["path"], "src/main.go");
 
-    let references = fixture.request(AgentLspPayload {
+    let references = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::FindReferences {
+        request: RunnerLspRequest::FindReferences {
             path: "src/main.go".into(),
             line: 3,
             column: 6,
@@ -1807,9 +1807,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
         .iter()
         .all(|location| location["path"] == "src/main.go"));
 
-    let hover = fixture.request(AgentLspPayload {
+    let hover = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::Hover {
+        request: RunnerLspRequest::Hover {
             path: "src/main.go".into(),
             line: 3,
             column: 6,
@@ -1822,9 +1822,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
     assert_eq!(workspace["success"], true, "{workspace}");
     assert_eq!(workspace["result"]["symbols"][0]["path"], "src/main.go");
 
-    let serialized = serde_json::to_string(&fixture.request(AgentLspPayload {
+    let serialized = serde_json::to_string(&fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::Status,
+        request: RunnerLspRequest::Status,
     }))
     .unwrap();
     assert!(!serialized.contains(fixture.root.to_string_lossy().as_ref()));
@@ -1834,9 +1834,9 @@ fn go_navigation_routes_and_normalizes_existing_operations() {
 fn go_diagnostics_external_locations_and_malformed_results_are_sanitized() {
     let _serial = super::serialize_fake_lsp_test();
 
-    let diagnostics = go_fixture("go_diagnostics_one").request(AgentLspPayload {
+    let diagnostics = go_fixture("go_diagnostics_one").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentDiagnostics {
+        request: RunnerLspRequest::DocumentDiagnostics {
             path: "src/main.go".into(),
             limit: 20,
         },
@@ -1847,9 +1847,9 @@ fn go_diagnostics_external_locations_and_malformed_results_are_sanitized() {
     assert_eq!(diagnostics["result"]["diagnostics"][0]["source"], "gopls");
 
     let external_fixture = go_fixture("go_definition_external");
-    let external = external_fixture.request(AgentLspPayload {
+    let external = external_fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.go".into(),
             line: 3,
             column: 6,
@@ -1863,9 +1863,9 @@ fn go_diagnostics_external_locations_and_malformed_results_are_sanitized() {
     assert!(!external_text.contains("/usr/lib"));
     assert!(!external_text.contains("file://"));
 
-    let malformed = go_fixture("go_definition_malformed").request(AgentLspPayload {
+    let malformed = go_fixture("go_definition_malformed").request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/main.go".into(),
             line: 3,
             column: 6,
@@ -1893,9 +1893,9 @@ fn navigation_routes_python_file_to_pyright_with_python_language_id() {
             ("src/app.py", "def main():\n    return 1\n"),
         ],
     );
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/app.py".into(),
             limit: 10,
         },
@@ -1916,9 +1916,9 @@ fn navigation_routes_tsx_file_with_react_dialect_language_id() {
             ("src/App.tsx", "export const App = () => null;\n"),
         ],
     );
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/App.tsx".into(),
             limit: 10,
         },
@@ -1944,9 +1944,9 @@ fn unsupported_extension_is_rejected_with_supported_list() {
             ("notes.md", "# not a source file\n"),
         ],
     );
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "notes.md".into(),
             limit: 10,
         },
@@ -1966,9 +1966,9 @@ fn lsp_status_reports_every_registered_language_server() {
         LspServerKind::Pyright,
         &[("pyproject.toml", "[project]\n"), ("src/app.py", "x = 1\n")],
     );
-    let envelope = fixture.request(AgentLspPayload {
+    let envelope = fixture.request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::Status,
+        request: RunnerLspRequest::Status,
     });
     assert_eq!(envelope["success"], true, "{envelope}");
     assert_eq!(
@@ -2057,9 +2057,9 @@ fn real_pyright_document_symbols_end_to_end() {
         ..RunnerPolicy::default()
     };
 
-    let req = shell_lsp_request(AgentLspPayload {
+    let req = shell_lsp_request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/app.py".into(),
             limit: 50,
         },
@@ -2067,7 +2067,7 @@ fn real_pyright_document_symbols_end_to_end() {
     let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
     assert!(result.error.is_none(), "{result:?}");
     let envelope =
-        parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope");
+        parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope");
     let value = serde_json::to_value(&envelope).unwrap();
     assert_eq!(value["success"], true, "{value}");
     assert_eq!(value["result"]["language"], "python");
@@ -2101,9 +2101,9 @@ fn real_pyright_document_symbols_end_to_end() {
 
     // Goto-definition on the `greet(...)` call in `render` resolves back to the
     // function definition on line 1 — real cross-symbol navigation.
-    let goto = shell_lsp_request(AgentLspPayload {
+    let goto = shell_lsp_request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::GotoDefinition {
+        request: RunnerLspRequest::GotoDefinition {
             path: "src/app.py".into(),
             line: 7,
             column: 16,
@@ -2112,7 +2112,7 @@ fn real_pyright_document_symbols_end_to_end() {
     });
     let goto_result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &goto);
     let goto_value = serde_json::to_value(
-        parse_agent_lsp_result_envelope(goto_result.stdout.as_deref().unwrap()).unwrap(),
+        parse_runner_lsp_result_envelope(goto_result.stdout.as_deref().unwrap()).unwrap(),
     )
     .unwrap();
     assert_eq!(goto_value["success"], true, "{goto_value}");
@@ -2194,9 +2194,9 @@ fn real_typescript_document_symbols_end_to_end() {
         ..RunnerPolicy::default()
     };
 
-    let req = shell_lsp_request(AgentLspPayload {
+    let req = shell_lsp_request(RunnerLspPayload {
         project_id: "demo".into(),
-        request: AgentLspRequest::DocumentSymbols {
+        request: RunnerLspRequest::DocumentSymbols {
             path: "src/App.tsx".into(),
             limit: 50,
         },
@@ -2204,7 +2204,7 @@ fn real_typescript_document_symbols_end_to_end() {
     let result = handle_lsp_request(&policy, &project_registry_dir, &supervisor, &req);
     assert!(result.error.is_none(), "{result:?}");
     let value = serde_json::to_value(
-        parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope"),
+        parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope"),
     )
     .unwrap();
     assert_eq!(value["success"], true, "{value}");
@@ -2284,19 +2284,19 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
             &policy,
             &project_registry_dir,
             &supervisor,
-            &shell_lsp_request(AgentLspPayload {
+            &shell_lsp_request(RunnerLspPayload {
                 project_id: "demo".into(),
                 request,
             }),
         );
         assert!(result.error.is_none(), "{result:?}");
         serde_json::to_value(
-            parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap(),
+            parse_runner_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap(),
         )
         .unwrap()
     };
 
-    let symbols = request(AgentLspRequest::DocumentSymbols {
+    let symbols = request(RunnerLspRequest::DocumentSymbols {
         path: "main.go".into(),
         limit: 50,
     });
@@ -2306,7 +2306,7 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
     assert!(symbol_text.contains("greet"), "{symbols}");
     assert!(symbol_text.contains("render"), "{symbols}");
 
-    let goto = request(AgentLspRequest::GotoDefinition {
+    let goto = request(RunnerLspRequest::GotoDefinition {
         path: "main.go".into(),
         line: 8,
         column: 12,
@@ -2319,7 +2319,7 @@ fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
         .iter()
         .any(|location| location["path"] == "main.go"));
 
-    let impact = request(AgentLspRequest::CallHierarchy {
+    let impact = request(RunnerLspRequest::CallHierarchy {
         path: "main.go".into(),
         line: 7,
         column: 6,

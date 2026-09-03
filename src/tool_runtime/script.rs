@@ -17,7 +17,7 @@ use crate::auth::AuthContext;
 use crate::runner_http::{
     script_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
 };
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     validate_script_request, ShellCommandExecutionState, ShellJobOpRequest, ShellScriptLanguage,
     ShellScriptPayload,
 };

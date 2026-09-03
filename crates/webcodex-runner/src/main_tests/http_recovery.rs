@@ -16,8 +16,8 @@ fn bounded_response_body_reader_stops_after_limit_plus_one() {
 #[test]
 fn response_decode_distinguishes_empty_eof_and_complete_syntax_errors() {
     for bytes in [b"".as_slice(), br#"{"success":true,"request":"#.as_slice()] {
-        let error = decode_json_response::<ShellAgentPollResponse>(
-            AGENT_POLL_PATH,
+        let error = decode_json_response::<RunnerPollResponse>(
+            RUNNER_POLL_PATH,
             reqwest::StatusCode::OK,
             "application/json",
             BoundedResponseBody {
@@ -29,8 +29,8 @@ fn response_decode_distinguishes_empty_eof_and_complete_syntax_errors() {
         assert_eq!(error.kind, RunnerHttpErrorKind::DecodeTransient);
     }
 
-    let error = decode_json_response::<ShellAgentPollResponse>(
-        AGENT_POLL_PATH,
+    let error = decode_json_response::<RunnerPollResponse>(
+        RUNNER_POLL_PATH,
         reqwest::StatusCode::OK,
         "application/json",
         BoundedResponseBody {
@@ -50,7 +50,7 @@ fn protocol_decode_diagnostics_omit_queries_credentials_and_response_values() {
         "application/json; authorization=Bearer SECRET-TOKEN",
     );
     let content_type = bounded_response_content_type(Some(&content_type), "SECRET-TOKEN");
-    let error = decode_json_response::<ShellAgentPollResponse>(
+    let error = decode_json_response::<RunnerPollResponse>(
         "/api/shell/agent/poll?token=SECRET-TOKEN",
         reqwest::StatusCode::OK,
         &content_type,
@@ -171,7 +171,7 @@ fn http_status_classification_keeps_retryable_auth_and_gateway_kinds() {
 #[test]
 fn register_recovery_classification_is_strict_about_lease_conflicts() {
     let lease = RunnerHttpError::status(
-        AGENT_REGISTER_PATH,
+        RUNNER_REGISTER_PATH,
         reqwest::StatusCode::BAD_REQUEST,
         r#"{"success":false,"error":"agent client oe is already online with a different instance"}"#,
     );
@@ -187,7 +187,7 @@ fn register_recovery_classification_is_strict_about_lease_conflicts() {
         r#"{"success":false,"error":"agent client oe is already online"}"#,
     ] {
         let rejected =
-            RunnerHttpError::status(AGENT_REGISTER_PATH, reqwest::StatusCode::BAD_REQUEST, body);
+            RunnerHttpError::status(RUNNER_REGISTER_PATH, reqwest::StatusCode::BAD_REQUEST, body);
         let rejected = RegisterError::from_http(rejected, "oe");
         assert_eq!(
             rejected.recovery_action(),
@@ -201,7 +201,7 @@ fn register_recovery_classification_is_strict_about_lease_conflicts() {
 fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
     let transient = PollError::from_http(
         RunnerHttpError::status(
-            AGENT_POLL_PATH,
+            RUNNER_POLL_PATH,
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             "{}",
         ),
@@ -214,7 +214,7 @@ fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
 
     let missing_session = PollError::from_http(
         RunnerHttpError::status(
-            AGENT_POLL_PATH,
+            RUNNER_POLL_PATH,
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"success":false,"error":"unknown shell client: oe"}"#,
         ),
@@ -227,7 +227,7 @@ fn poll_recovery_actions_separate_transport_session_and_fatal_errors() {
 
     let ordinary_400 = PollError::from_http(
         RunnerHttpError::status(
-            AGENT_POLL_PATH,
+            RUNNER_POLL_PATH,
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"success":false,"error":"invalid poll payload"}"#,
         ),

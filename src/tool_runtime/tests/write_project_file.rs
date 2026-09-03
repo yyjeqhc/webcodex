@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 
 async fn write_runtime(client_id: &str) -> (ToolRuntime, String) {
@@ -11,7 +11,7 @@ async fn write_runtime(client_id: &str) -> (ToolRuntime, String) {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             ..Default::default()
         },

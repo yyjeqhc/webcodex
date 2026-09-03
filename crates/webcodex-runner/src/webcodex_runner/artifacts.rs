@@ -5,7 +5,7 @@ use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error, DOCX_MIME,
     MAX_MCP_IMAGE_BYTES, PPTX_MIME, XLSX_MIME,
 };
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use base64::{engine::general_purpose, Engine as _};
 use flate2::read::DeflateDecoder;
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,7 @@ fn is_sensitive_artifact_path(path: &str) -> bool {
     webcodex_core::sensitive_paths::is_bulk_skipped_path(path)
 }
 
-fn parse_json_payload(request: &ShellAgentShellRequest) -> Result<Value, String> {
+fn parse_json_payload(request: &RunnerRequest) -> Result<Value, String> {
     let Some(content) = request.content.as_deref() else {
         return Err("invalid json: missing file-op payload".to_string());
     };
@@ -172,7 +172,7 @@ fn validate_upload_id(upload_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn project_root(request: &ShellAgentShellRequest) -> Result<std::path::PathBuf, String> {
+fn project_root(request: &RunnerRequest) -> Result<std::path::PathBuf, String> {
     let Some(cwd) = request.cwd.as_deref() else {
         return Err("artifact request missing project root".to_string());
     };
@@ -1348,7 +1348,7 @@ fn read_limited(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn handle_artifact_file_request(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -1405,7 +1405,7 @@ pub(crate) fn handle_artifact_file_request(
 }
 
 fn handle_save_project_artifact(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -1503,7 +1503,7 @@ fn handle_save_project_artifact(
 }
 
 fn handle_artifact_upload_begin(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -1714,7 +1714,7 @@ fn handle_artifact_upload_begin(
 }
 
 fn handle_artifact_upload_chunk(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -1936,7 +1936,7 @@ fn handle_artifact_upload_chunk(
 }
 
 fn handle_artifact_upload_finish(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -2077,7 +2077,7 @@ fn handle_artifact_upload_finish(
 }
 
 fn handle_artifact_upload_abort(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -2159,7 +2159,7 @@ fn handle_artifact_upload_abort(
 }
 
 fn handle_read_project_artifact_metadata(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -2311,7 +2311,7 @@ fn handle_read_project_artifact_metadata(
 }
 
 fn handle_read_project_artifact_export_chunk(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -2452,7 +2452,7 @@ fn handle_read_project_artifact_export_chunk(
 }
 
 fn handle_read_project_artifact(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -2650,13 +2650,8 @@ mod tests {
         assert!(!part.exists());
     }
 
-    fn artifact_request(
-        root: &Path,
-        kind: &str,
-        path: &str,
-        payload: Value,
-    ) -> ShellAgentShellRequest {
-        ShellAgentShellRequest {
+    fn artifact_request(root: &Path, kind: &str, path: &str, payload: Value) -> RunnerRequest {
+        RunnerRequest {
             request_id: format!("req-{kind}"),
             client_id: "agent-1".to_string(),
             kind: kind.to_string(),

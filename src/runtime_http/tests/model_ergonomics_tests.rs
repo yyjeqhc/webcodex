@@ -140,7 +140,7 @@ async fn api_batch_call_records_one_generic_outer_invocation() {
     let project_tmp = tempfile::tempdir().unwrap();
     let (runtime, registry) = super::register_import_agent_with_capabilities(
         project_tmp.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
+        Some(crate::runner_protocol::RunnerCapabilities {
             file_read: true,
             ..Default::default()
         }),

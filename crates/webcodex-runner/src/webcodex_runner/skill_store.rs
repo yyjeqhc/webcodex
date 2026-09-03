@@ -2,7 +2,7 @@ use super::artifacts::validate_artifact_runner_path;
 use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1533,7 +1533,7 @@ pub(crate) fn handle_skill_store_request(
     client_id: &str,
     server_url: &str,
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
 ) -> CommandResult {
     let start = Instant::now();
     let parsed = match request

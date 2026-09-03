@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -110,7 +110,8 @@ async fn checkpoint_create_lists_and_shows_metadata() {
     commit_file(root, "a.txt", "base\n", "base commit");
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-create", "agent-proj", root).await;
+    let project =
+        register_runner_project_at_path(&runtime, "ckpt-create", "agent-proj", root).await;
 
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
@@ -186,7 +187,7 @@ async fn checkpoint_create_records_kind_labels_validation() {
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-metadata", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-metadata", "agent-proj", root).await;
     let validation = checkpoint_validation(
         Some("passed"),
         &["cargo fmt --check", "cargo test checkpoint"],
@@ -264,7 +265,7 @@ async fn checkpoint_list_includes_kind_labels_validation_status() {
     commit_file(root, "a.txt", "base\n", "base commit");
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-list", "agent-proj", root).await;
+    let project = register_runner_project_at_path(&runtime, "ckpt-list", "agent-proj", root).await;
 
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
@@ -319,7 +320,7 @@ async fn checkpoint_defaults_metadata_for_old_or_minimal_checkpoint() {
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-defaults", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-defaults", "agent-proj", root).await;
 
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
@@ -419,7 +420,7 @@ async fn checkpoint_rejects_invalid_kind_or_labels() {
     let state = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-invalid", "agent-proj", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "ckpt-invalid", "agent-proj", tmp.path()).await;
     let long_label = "a".repeat(65);
     let bootstrap = auth_context(None, true);
 
@@ -482,7 +483,7 @@ async fn checkpoint_validation_metadata_is_bounded() {
     let state = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-bounds", "agent-proj", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "ckpt-bounds", "agent-proj", tmp.path()).await;
     let bootstrap = auth_context(None, true);
     let too_many_commands = (0..21).map(|idx| format!("echo {idx}")).collect::<Vec<_>>();
     let too_many_command_refs = too_many_commands
@@ -609,7 +610,7 @@ async fn checkpoint_restore_tracked_changes() {
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-restore", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-restore", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-restore",
@@ -680,7 +681,8 @@ async fn checkpoint_restore_ignores_metadata_and_still_restores() {
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-restore-metadata", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-restore-metadata", "agent-proj", root)
+            .await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-restore-metadata",
@@ -755,7 +757,7 @@ async fn checkpoint_restore_requires_confirm() {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-confirm", "agent-proj", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "ckpt-confirm", "agent-proj", tmp.path()).await;
     let result = runtime
         .dispatch_with_auth(
             ToolCall::WorkspaceCheckpointRestore {
@@ -780,7 +782,7 @@ async fn checkpoint_restore_rejects_head_mismatch() {
     init_git_repo(root);
     commit_file(root, "a.txt", "base\n", "base commit");
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-head", "agent-proj", root).await;
+    let project = register_runner_project_at_path(&runtime, "ckpt-head", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-head",
@@ -823,7 +825,7 @@ async fn checkpoint_untracked_text_file_roundtrip() {
     fs::write(root.join("notes.txt"), "safe untracked\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-untracked", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-untracked", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-untracked",
@@ -871,7 +873,7 @@ async fn checkpoint_skips_large_or_binary_untracked() {
     fs::write(root.join("binary.bin"), b"abc\0def").unwrap();
     fs::write(root.join(".env.local"), "TOKEN=secret\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-skip", "agent-proj", root).await;
+    let project = register_runner_project_at_path(&runtime, "ckpt-skip", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-skip",
@@ -915,7 +917,7 @@ async fn checkpoint_allows_security_domain_source_names_but_keeps_envrc_protecte
     .unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-security-source-name", "agent-proj", root)
+        register_runner_project_at_path(&runtime, "ckpt-security-source-name", "agent-proj", root)
             .await;
 
     let allowed = dispatch_checkpoint_with_local_agent(
@@ -948,7 +950,7 @@ async fn checkpoint_restore_rejects_malicious_untracked_paths() {
     commit_file(root, "a.txt", "base\n", "base commit");
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-malicious", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-malicious", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-malicious",
@@ -1017,7 +1019,7 @@ async fn checkpoint_does_not_persist_inside_worktree() {
     init_git_repo(root);
     commit_file(root, "a.txt", "base\n", "base commit");
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-path", "agent-proj", root).await;
+    let project = register_runner_project_at_path(&runtime, "ckpt-path", "agent-proj", root).await;
     let created = dispatch_checkpoint_with_local_agent(
         &runtime,
         "ckpt-path",
@@ -1045,7 +1047,7 @@ async fn checkpoint_session_guards() {
     commit_file(root, "a.txt", "base\n", "base commit");
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
-    let project = register_agent_project_at_path(&runtime, "ckpt-guard", "agent-proj", root).await;
+    let project = register_runner_project_at_path(&runtime, "ckpt-guard", "agent-proj", root).await;
     let bootstrap = auth_context(None, true);
 
     let read_only = runtime
@@ -1169,7 +1171,7 @@ async fn checkpoint_session_input_summary_does_not_leak_commands() {
     fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
     let runtime = test_runtime().with_checkpoint_state_dir(state.path());
     let project =
-        register_agent_project_at_path(&runtime, "ckpt-summary", "agent-proj", root).await;
+        register_runner_project_at_path(&runtime, "ckpt-summary", "agent-proj", root).await;
     let session = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("checkpoint metadata".to_string()),
@@ -1230,7 +1232,7 @@ async fn checkpoint_session_input_summary_does_not_leak_commands() {
 #[tokio::test]
 async fn checkpoint_metadata_tools_enforce_agent_owner_boundary() {
     let runtime = runtime_with_agent_project("oe");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: false,
         ..Default::default()
     };

@@ -51,9 +51,9 @@ async fn computer_control_enqueue_requires_independent_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-control".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()
@@ -94,7 +94,7 @@ async fn computer_scroll_to_element_requires_independent_capability() {
     assert!(error.contains("does not support computer_scroll_to_element"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -102,13 +102,13 @@ async fn computer_scroll_to_element_requires_independent_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-scroll-capable".to_string(),
-            agent_instance_id: "computer-scroll-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-scroll-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_control: true,
                 computer_scroll_to_element: true,
                 ..Default::default()
@@ -129,9 +129,9 @@ async fn computer_scroll_to_element_requires_independent_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-scroll-capable".to_string(),
-            agent_instance_id: "computer-scroll-inst".to_string(),
+            runner_instance_id: "computer-scroll-inst".to_string(),
         })
         .await
         .unwrap()
@@ -172,7 +172,7 @@ async fn computer_key_input_requires_independent_capability() {
     assert!(error.contains("does not support computer_key_input"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -180,13 +180,13 @@ async fn computer_key_input_requires_independent_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-key-capable".to_string(),
-            agent_instance_id: "computer-key-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-key-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_control: true,
                 computer_key_input: true,
                 ..Default::default()
@@ -207,9 +207,9 @@ async fn computer_key_input_requires_independent_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-key-capable".to_string(),
-            agent_instance_id: "computer-key-inst".to_string(),
+            runner_instance_id: "computer-key-inst".to_string(),
         })
         .await
         .unwrap()
@@ -228,7 +228,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
     let payload = r#"{"display_id":"display_0123456789abcdef0123456789abcdef","snapshot_generation":7,"x":123,"y":456}"#;
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -236,13 +236,13 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-pointer-old".to_string(),
-            agent_instance_id: "pointer-old-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "pointer-old-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_control: true,
                 computer_display_observe: true,
                 ..Default::default()
@@ -270,7 +270,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
     }
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -278,13 +278,13 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-pointer-capable".to_string(),
-            agent_instance_id: "pointer-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "pointer-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_pointer_control: true,
                 ..Default::default()
             },
@@ -304,9 +304,9 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-pointer-capable".to_string(),
-            agent_instance_id: "pointer-inst".to_string(),
+            runner_instance_id: "pointer-inst".to_string(),
         })
         .await
         .unwrap()
@@ -325,7 +325,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     let alice = auth_context(Some("alice"), false);
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -333,13 +333,13 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-clipboard-old".to_string(),
-            agent_instance_id: "clipboard-old-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "clipboard-old-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_observe: true,
                 computer_control: true,
                 computer_text_input: true,
@@ -375,7 +375,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     }
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -383,13 +383,13 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-clipboard-read".to_string(),
-            agent_instance_id: "clipboard-read-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "clipboard-read-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_clipboard_read: true,
                 ..Default::default()
             },
@@ -409,9 +409,9 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-clipboard-read".to_string(),
-            agent_instance_id: "clipboard-read-inst".to_string(),
+            runner_instance_id: "clipboard-read-inst".to_string(),
         })
         .await
         .unwrap()
@@ -437,7 +437,7 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
     assert!(error.contains("does not support computer_clipboard_write"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -445,13 +445,13 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-clipboard-write".to_string(),
-            agent_instance_id: "clipboard-write-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "clipboard-write-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 computer_clipboard_write: true,
                 ..Default::default()
             },
@@ -471,9 +471,9 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-clipboard-write".to_string(),
-            agent_instance_id: "clipboard-write-inst".to_string(),
+            runner_instance_id: "clipboard-write-inst".to_string(),
         })
         .await
         .unwrap()
@@ -528,7 +528,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
     assert!(error.contains("does not support computer_window_activate"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -536,13 +536,13 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-activate".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
@@ -567,9 +567,9 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-activate".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()

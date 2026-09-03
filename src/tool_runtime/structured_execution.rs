@@ -1,7 +1,7 @@
 use super::helpers::{bounded_tail, COMMAND_STDIO_TAIL_CHARS};
 use crate::auth::AuthContext;
 use crate::runner_http::RunnerRegistry;
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellJobInfo, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };

@@ -10,7 +10,7 @@ use super::super::sessions::{
 };
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
-use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
+use crate::runner_protocol::{RunnerCapabilities, RunnerResultRequest};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -69,7 +69,7 @@ async fn call_kernel_with_local_agent(
         assert!(Instant::now() < deadline, "skill fixture timed out");
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             kinds.push(request.kind.clone());
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -124,7 +124,7 @@ async fn dispatch_with_context_and_local_agent(
         assert!(Instant::now() < deadline, "skill sidecar fixture timed out");
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             kinds.push(request.kind.clone());
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 runtime,
                 client_id,
@@ -287,9 +287,9 @@ async fn call_kernel_with_fake_operator_store(
                 };
                 runtime
                     .runner_registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: client_id.to_string(),
-                        agent_instance_id: "inst".to_string(),
+                        runner_instance_id: "inst".to_string(),
                         request_id: request.request_id,
                         exit_code,
                         stdout,
@@ -300,7 +300,7 @@ async fn call_kernel_with_fake_operator_store(
                     .await
                     .unwrap();
             } else {
-                let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+                let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
                 complete_patch_agent_request(
                     runtime,
                     client_id,
@@ -338,7 +338,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             skill_store_read: true,
             ..Default::default()
@@ -349,8 +349,8 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         ],
     )
     .await;
-    let project_a = crate::tool_runtime::agent_project_runtime_id(client_id, "a");
-    let project_b = crate::tool_runtime::agent_project_runtime_id(client_id, "b");
+    let project_a = crate::tool_runtime::runner_project_runtime_id(client_id, "a");
+    let project_b = crate::tool_runtime::runner_project_runtime_id(client_id, "b");
     let package_a = format!("wc_skillpkg_{}", "a".repeat(64));
     let package_b = format!("wc_skillpkg_{}", "b".repeat(64));
     let definition = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string();
@@ -464,7 +464,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "skill-catalog", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "skill-catalog", "demo", root.path()).await;
 
     let (empty, kinds) = call_kernel_with_local_agent(
         &runtime,
@@ -653,9 +653,9 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
 
     let runtime = ToolRuntime::new_for_tests();
     let project_a =
-        register_agent_project_at_path(&runtime, "skill-read-a", "demo", root_a.path()).await;
+        register_runner_project_at_path(&runtime, "skill-read-a", "demo", root_a.path()).await;
     let project_b =
-        register_agent_project_at_path(&runtime, "skill-read-b", "demo", root_b.path()).await;
+        register_runner_project_at_path(&runtime, "skill-read-b", "demo", root_b.path()).await;
     let (listed, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
@@ -838,7 +838,7 @@ async fn skill_resource_read_revalidates_definition_after_resource_io() {
 
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "skill-definition-race", "demo", root.path())
+        register_runner_project_at_path(&runtime, "skill-definition-race", "demo", root.path())
             .await;
     let (listed, _) = call_kernel_with_local_agent(
         &runtime,
@@ -916,7 +916,7 @@ async fn skill_resource_read_revalidates_definition_after_resource_io() {
             } else if changed_definition && request_path.ends_with("SKILL.md") {
                 saw_post_resource_definition_check = true;
             }
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             complete_patch_agent_request(
                 &runtime,
                 "skill-definition-race",
@@ -1043,7 +1043,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     );
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "skill-fence", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "skill-fence", "demo", root.path()).await;
 
     let mut denied_arguments = json!({"project": project});
     denied_arguments[TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] = json!(["skills.catalog"]);
@@ -1230,7 +1230,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     let restricted = ToolRuntime::new_for_tests()
         .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::Restricted));
     let restricted_project =
-        register_agent_project_at_path(&restricted, "skill-restricted", "demo", root.path()).await;
+        register_runner_project_at_path(&restricted, "skill-restricted", "demo", root.path()).await;
     let (restricted_list, _) = call_kernel_with_local_agent(
         &restricted,
         "skill-restricted",

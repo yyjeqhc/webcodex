@@ -45,7 +45,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
     ] {
         registry
             .register_with_auth(
-                ShellClientRegisterRequest {
+                RunnerRegisterRequest {
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,
@@ -53,8 +53,9 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                     coding_agent_providers: None,
                     coding_agent_inventory: None,
                     client_id: client_id.to_string(),
-                    agent_instance_id: format!("inst-{}", client_id),
-                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                    runner_instance_id: format!("inst-{}", client_id),
+                    runner_protocol_generation:
+                        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: None,
                     hostname: None,
@@ -73,7 +74,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
         ("bob-runner", "bob", "/home/bob/private"),
     ] {
         registry
-            .register(ShellClientRegisterRequest {
+            .register(RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -81,8 +82,8 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: format!("inst-{client_id}"),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: format!("inst-{client_id}"),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some(owner.to_string()),
                 hostname: None,
@@ -211,7 +212,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
 async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -219,8 +220,8 @@ async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "bob-runner".to_string(),
-            agent_instance_id: "inst-bob".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst-bob".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("bob".to_string()),
             hostname: None,
@@ -277,7 +278,7 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
         ("bob-runner", "bob", "wc_agent_run_bob"),
     ] {
         registry
-            .register(ShellClientRegisterRequest {
+            .register(RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -309,14 +310,14 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
                     },
                 ),
                 client_id: client_id.to_string(),
-                agent_instance_id: format!("inst-{client_id}"),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: format!("inst-{client_id}"),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some(owner.to_string()),
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities {
+                    RunnerCapabilities {
                         coding_agent_runs: true,
                         ..Default::default()
                     },
@@ -362,7 +363,7 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
     let grant_b = crate::auth::shared_key::project_credential_context("wc_pgrant_bbbbbbbbbbbbbbbb");
     let grant_a_access = runner_access_from_auth(Some(&grant_a)).unwrap();
     let grant_b_access = runner_access_from_auth(Some(&grant_b)).unwrap();
-    let registration = |hostname: &str| ShellClientRegisterRequest {
+    let registration = |hostname: &str| RunnerRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -370,8 +371,8 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
         coding_agent_providers: None,
         coding_agent_inventory: None,
         client_id: "same-project-agent".to_string(),
-        agent_instance_id: "same-instance-id".to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: "same-instance-id".to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: Some(hostname.to_string()),
@@ -429,7 +430,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
     let managed_access = runner_access_from_auth(Some(&managed)).unwrap();
     let bootstrap_access = runner_access_from_auth(Some(&bootstrap)).unwrap();
     let registration = |client_id: &str, instance: &str, hostname: &str, owner: Option<&str>| {
-        ShellClientRegisterRequest {
+        RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -437,8 +438,8 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: instance.to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: instance.to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: Some(hostname.to_string()),

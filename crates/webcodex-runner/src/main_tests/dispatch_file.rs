@@ -183,7 +183,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
     let cwd = tmp.path().to_string_lossy().to_string();
     let (sink, mut rx) = ws_sink("ws-client");
     let jobs = JobManager::new(max_concurrent_jobs(&cfg));
-    let request = ShellAgentShellRequest {
+    let request = RunnerRequest {
         request_id: "req-edit".to_string(),
         client_id: "ws-client".to_string(),
         kind: "file_write_project_file".to_string(),
@@ -239,7 +239,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
     assert!(ran);
     let env = rx.try_recv().expect("result envelope was sent");
     match env {
-        AgentEnvelope::Result { payload } => {
+        RunnerEnvelope::Result { payload } => {
             assert_eq!(payload.result.request_id, "req-edit");
             assert_eq!(payload.result.exit_code, Some(0));
             let stdout = payload
@@ -287,7 +287,7 @@ fn dispatch_request_rejects_unsupported_file_kinds_without_starting_command() {
         let command = format!(
             "printf shell-ran > {marker_name}; printf modified > {target_name}; printf shell-stdout"
         );
-        let request: ShellAgentShellRequest = serde_json::from_value(serde_json::json!({
+        let request: RunnerRequest = serde_json::from_value(serde_json::json!({
             "request_id": format!("req-unsupported-file-{index}"),
             "client_id": "ws-client",
             "kind": kind,
@@ -320,7 +320,7 @@ fn dispatch_request_rejects_unsupported_file_kinds_without_starting_command() {
         assert!(ran, "{kind}");
         let env = rx.try_recv().expect("result envelope was sent");
         match env {
-            AgentEnvelope::Result { payload } => {
+            RunnerEnvelope::Result { payload } => {
                 assert_eq!(payload.result.exit_code, None, "{kind}");
                 assert_eq!(payload.result.stdout, None, "{kind}");
                 assert_eq!(

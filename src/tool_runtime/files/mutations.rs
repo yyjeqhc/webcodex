@@ -179,7 +179,7 @@ fn apply_text_edit_occurrence_capability_rejection(reason: impl AsRef<str>) -> T
             "state_changed": false,
             "error_kind": "agent_capability_unavailable",
             "failure_kind": "capability_unavailable",
-            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+            "capability": crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
             "retry_guidance": "reconnect the Runner or refine the edit to a unique exact match without occurrence"
         }),
     )
@@ -195,7 +195,7 @@ fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> T
             "state_changed": false,
             "error_kind": "agent_capability_unavailable",
             "failure_kind": "capability_unavailable",
-            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+            "capability": crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
             "retry_guidance": "reconnect a Runner with apply_text_edit_line_scope support; never silently downgrade a scoped edit to an unscoped edit"
         }),
     )
@@ -236,7 +236,7 @@ fn apply_patch_strict_matching_capability_rejection(reason: impl AsRef<str>) -> 
             "execution_state": "not_started",
             "error_kind": "agent_capability_unavailable",
             "failure_kind": "capability_unavailable",
-            "capability": crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+            "capability": crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
             "recovery_action": "upgrade_or_reconnect_runner",
             "retry_guidance": "reconnect or upgrade the Runner so it explicitly advertises apply_patch_strict_matching; never silently downgrade a strict patch"
         }),
@@ -1858,7 +1858,7 @@ impl ToolRuntime {
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error.contains(
-                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
                     ) =>
             {
                 return apply_patch_strict_matching_capability_rejection(error)
@@ -1866,22 +1866,21 @@ impl ToolRuntime {
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error.contains(
-                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
                     ) =>
             {
                 return apply_patch_capability_rejection(
                     error,
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+                    crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
                 )
             }
             Err(error)
                 if error.starts_with("capability_unavailable:")
-                    && error
-                        .contains(crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH) =>
+                    && error.contains(crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH) =>
             {
                 return apply_patch_capability_rejection(
                     error,
-                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH,
+                    crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH,
                 )
             }
             Err(_) => {
@@ -2105,7 +2104,7 @@ impl ToolRuntime {
             Err(e)
                 if e.starts_with("capability_unavailable:")
                     && e.contains(
-                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
                     ) =>
             {
                 return apply_text_edit_line_scope_capability_rejection(e)
@@ -2113,7 +2112,7 @@ impl ToolRuntime {
             Err(e)
                 if e.starts_with("capability_unavailable:")
                     && e.contains(
-                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
                     ) =>
             {
                 return apply_text_edit_occurrence_capability_rejection(e)
@@ -2206,7 +2205,7 @@ mod tests {
         assert_eq!(result.output["error_kind"], "agent_capability_unavailable");
         assert_eq!(
             result.output["capability"],
-            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
+            crate::runner_protocol::RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING
         );
         assert_eq!(result.output["recovery_kind"], "retry_same");
         assert!(result.output["retry_guidance"]

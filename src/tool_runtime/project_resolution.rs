@@ -1,7 +1,7 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientView};
+use crate::runner_protocol::{RunnerProjectSummary, RunnerView};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -120,17 +120,17 @@ impl From<ProjectResolverError> for String {
     }
 }
 
-pub(crate) fn agent_project_runtime_id(client_id: &str, project_id: &str) -> String {
+pub(crate) fn runner_project_runtime_id(client_id: &str, project_id: &str) -> String {
     format!("agent:{}:{}", client_id, project_id)
 }
 
 impl ToolRuntime {
     fn project_candidate_from_view(
-        client: &ShellClientView,
-        project: &ShellAgentProjectSummary,
+        client: &RunnerView,
+        project: &RunnerProjectSummary,
     ) -> ProjectResolverCandidate {
         ProjectResolverCandidate {
-            id: agent_project_runtime_id(&client.client_id, &project.id),
+            id: runner_project_runtime_id(&client.client_id, &project.id),
             client_id: client.client_id.clone(),
             agent_project_id: project.id.clone(),
             name: project.name.clone(),

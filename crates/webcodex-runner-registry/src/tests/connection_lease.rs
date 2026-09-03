@@ -9,10 +9,10 @@ async fn register_with_connection(
     client_id: &str,
     instance: &str,
     connection_id: &str,
-) -> ShellClientView {
+) -> RunnerView {
     registry
         .register_streaming_session(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -20,8 +20,8 @@ async fn register_with_connection(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: instance.to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: instance.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -68,7 +68,7 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
     let notifier = inner.notifiers.get("atomic-stream").unwrap();
     assert_eq!(client.connection_id.as_deref(), Some("atomic-connection"));
     assert_eq!(client.transport, RunnerTransport::WebSocket);
-    assert_eq!(notifier.agent_instance_id, "atomic-instance");
+    assert_eq!(notifier.runner_instance_id, "atomic-instance");
     assert_eq!(notifier.connection_id.as_deref(), Some("atomic-connection"));
     assert!(Arc::ptr_eq(&notifier.notify, &notify));
 }
@@ -119,7 +119,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
 
     let notify_b = Arc::new(Notify::new());
     let mut rejected = runner_registration("atomic-preserve", "atomic-instance", Vec::new());
-    rejected.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
+    rejected.runner_protocol_generation = RunnerProtocolGenerationNumber::new(3);
     let error = registry
         .register_streaming_session_with_cancel(
             rejected,
@@ -209,9 +209,9 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // A's connection-scoped poll is rejected with the stable stale error.
     let err = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-a",
         )
@@ -255,9 +255,9 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // B's connection-scoped poll receives the request (exactly once).
     let polled_b = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-b",
         )
@@ -272,9 +272,9 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // The queue is now drained: a second poll by either connection gets None.
     let again_a = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-a",
         )
@@ -343,7 +343,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
     let register_with_policy = async |connection_id: &str| {
         registry
             .register_streaming_session(
-                ShellClientRegisterRequest {
+                RunnerRegisterRequest {
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,
@@ -351,14 +351,15 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                     coding_agent_providers: None,
                     coding_agent_inventory: None,
                     client_id: "oe".to_string(),
-                    agent_instance_id: "inst-x".to_string(),
-                    agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                    runner_instance_id: "inst-x".to_string(),
+                    runner_protocol_generation:
+                        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                     display_name: None,
                     owner: Some("alice".to_string()),
                     hostname: None,
                     host_context: None,
                     capabilities: async_job_capabilities(),
-                    policy: Some(AgentPolicySummary::default()),
+                    policy: Some(RunnerPolicySummary::default()),
                 },
                 None,
                 connection_id,
@@ -492,14 +493,14 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
         assert_eq!(client.connection_id.as_deref(), Some("conn-b"));
         assert_eq!(client.transport, RunnerTransport::WebSocket);
         assert_eq!(notifier.connection_id.as_deref(), Some("conn-b"));
-        assert_eq!(notifier.agent_instance_id, "inst-x");
+        assert_eq!(notifier.runner_instance_id, "inst-x");
     }
     // B's notifier survives A's cleanup and B's own dispatch still works.
     let polled = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-b",
         )
@@ -542,9 +543,9 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
         .unwrap();
     let polled_a = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-a",
         )
@@ -566,9 +567,9 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     // (same instance) and resolves the waiter.
     registry
         .complete_for_connection(
-            ShellAgentResultRequest {
+            RunnerResultRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
                 request_id: request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some("hi".to_string()),
@@ -608,9 +609,9 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
         .unwrap();
     let err = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-a",
         )
@@ -624,9 +625,9 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     // B receives the new request.
     let polled_b = registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-b",
         )
@@ -666,9 +667,9 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     // A polls/dispatches the job (still current lease).
     registry
         .poll_for_connection(
-            ShellAgentPollRequest {
+            RunnerPollRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
             },
             "conn-a",
         )
@@ -688,9 +689,9 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     // Late job update over stale connection A is accepted and applied.
     registry
         .update_job_for_connection(
-            ShellAgentJobUpdateRequest {
+            RunnerJobUpdateRequest {
                 client_id: "oe".to_string(),
-                agent_instance_id: "inst-x".to_string(),
+                runner_instance_id: "inst-x".to_string(),
                 update_seq: None,
                 job_id: job.job_id.clone(),
                 request_id: None,
@@ -730,9 +731,9 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
         .await;
     register_with_instance(&registry, "oe", "inst-y").await;
     let err = registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst-x".to_string(),
+            runner_instance_id: "inst-x".to_string(),
             update_seq: None,
             job_id: job.job_id.clone(),
             request_id: None,

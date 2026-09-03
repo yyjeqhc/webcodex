@@ -39,9 +39,9 @@ async fn dispatch_with_local_agent(
         poll_calls.fetch_add(1, Ordering::SeqCst);
         let request = runtime
             .runner_registry
-            .poll(crate::shell_protocol::ShellAgentPollRequest {
+            .poll(crate::runner_protocol::RunnerPollRequest {
                 client_id: CLIENT.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
             })
             .await
             .unwrap();
@@ -75,7 +75,7 @@ async fn dispatch_with_local_agent(
                 String::new(),
             )
         } else {
-            run_agent_shell_request_locally(&req)
+            run_runner_shell_request_locally(&req)
         };
         complete_patch_agent_request(
             runtime,
@@ -125,7 +125,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     std::fs::write(root.join("NOTES.txt"), "existing user work\n").unwrap();
 
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, CLIENT, "fixture", &root).await;
+    let project = register_runner_project_at_path(&runtime, CLIENT, "fixture", &root).await;
     let poll_calls = Arc::new(AtomicUsize::new(0));
 
     let mut total_tool_calls = 0usize;

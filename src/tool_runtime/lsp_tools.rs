@@ -4,10 +4,10 @@ use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{
     clamp_document_diagnostics_limit, clamp_document_symbols_limit, clamp_find_references_limit,
     clamp_goto_definition_limit, clamp_workspace_symbols_limit, error_codes, is_known_error_code,
-    parse_agent_lsp_result_envelope, redact_absolute_paths, validate_call_hierarchy_bounds,
-    AgentLspPayload, AgentLspRequest, CallHierarchyResult, DocumentDiagnosticsResult,
-    DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult, LocationsResult,
-    LspStatusResult, WorkspaceSymbolsResult, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
+    parse_runner_lsp_result_envelope, redact_absolute_paths, validate_call_hierarchy_bounds,
+    CallHierarchyResult, DocumentDiagnosticsResult, DocumentDiagnosticsStatus,
+    DocumentSymbolsResult, HoverResult, LocationsResult, LspStatusResult, RunnerLspPayload,
+    RunnerLspRequest, WorkspaceSymbolsResult, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
     MAX_CALL_HIERARCHY_ROOTS,
 };
 use crate::runner_http::{EnqueueLspError, RunnerFeature};
@@ -23,7 +23,7 @@ impl ToolRuntime {
             ToolCall::LspStatus {
                 project,
                 session_id: _,
-            } => self.call_agent_lsp(project, AgentLspRequest::Status).await,
+            } => self.call_agent_lsp(project, RunnerLspRequest::Status).await,
             ToolCall::DocumentSymbols {
                 project,
                 path,
@@ -32,7 +32,7 @@ impl ToolRuntime {
             } => {
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::DocumentSymbols {
+                    RunnerLspRequest::DocumentSymbols {
                         path,
                         limit: clamp_document_symbols_limit(limit),
                     },
@@ -47,7 +47,7 @@ impl ToolRuntime {
             } => {
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::DocumentDiagnostics {
+                    RunnerLspRequest::DocumentDiagnostics {
                         path,
                         limit: clamp_document_diagnostics_limit(limit),
                     },
@@ -67,7 +67,7 @@ impl ToolRuntime {
                         error_codes::INVALID_ARGUMENTS
                     ));
                 }
-                self.call_agent_lsp(project, AgentLspRequest::Hover { path, line, column })
+                self.call_agent_lsp(project, RunnerLspRequest::Hover { path, line, column })
                     .await
             }
             ToolCall::WorkspaceSymbols {
@@ -91,7 +91,7 @@ impl ToolRuntime {
                 }
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::WorkspaceSymbols {
+                    RunnerLspRequest::WorkspaceSymbols {
                         query,
                         limit: clamp_workspace_symbols_limit(limit),
                     },
@@ -114,7 +114,7 @@ impl ToolRuntime {
                 }
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::GotoDefinition {
+                    RunnerLspRequest::GotoDefinition {
                         path,
                         line,
                         column,
@@ -140,7 +140,7 @@ impl ToolRuntime {
                 }
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::FindReferences {
+                    RunnerLspRequest::FindReferences {
                         path,
                         line,
                         column,
@@ -174,7 +174,7 @@ impl ToolRuntime {
                 }
                 self.call_agent_lsp(
                     project,
-                    AgentLspRequest::CallHierarchy {
+                    RunnerLspRequest::CallHierarchy {
                         path,
                         line,
                         column,
@@ -189,7 +189,7 @@ impl ToolRuntime {
         }
     }
 
-    async fn call_agent_lsp(&self, project: String, request: AgentLspRequest) -> ToolResult {
+    async fn call_agent_lsp(&self, project: String, request: RunnerLspRequest) -> ToolResult {
         let resolved = match self.resolve_project_input(&project).await {
             Ok(p) => p,
             Err(e) => return e.into_tool_result(),
@@ -212,7 +212,7 @@ impl ToolRuntime {
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
-        let call_hierarchy = matches!(&request, AgentLspRequest::CallHierarchy { .. });
+        let call_hierarchy = matches!(&request, RunnerLspRequest::CallHierarchy { .. });
         if call_hierarchy && !client.supports(RunnerFeature::LspCallHierarchy) {
             return ToolResult::err(format!(
                 "{}: Runner does not support lsp_call_hierarchy",
@@ -237,7 +237,7 @@ impl ToolRuntime {
             }
         };
         let expected_result = request.clone();
-        let payload = AgentLspPayload {
+        let payload = RunnerLspPayload {
             project_id: agent_project_id,
             request,
         };
@@ -263,7 +263,7 @@ impl ToolRuntime {
                     return map_runner_transport_error(error);
                 }
                 let stdout = resp.stdout.unwrap_or_default();
-                match parse_agent_lsp_result_envelope(&stdout) {
+                match parse_runner_lsp_result_envelope(&stdout) {
                     Ok(envelope) if envelope.success => {
                         let result = envelope.result.unwrap_or(Value::Null);
                         let mut result = match validate_agent_lsp_result(&expected_result, result) {
@@ -274,7 +274,7 @@ impl ToolRuntime {
                             obj.insert("project".to_string(), json!(resolved.resolved_id));
                         }
                         match expected_result {
-                            AgentLspRequest::DocumentDiagnostics { .. } => {
+                            RunnerLspRequest::DocumentDiagnostics { .. } => {
                                 let status = result
                                     .get("status")
                                     .and_then(Value::as_str)
@@ -302,7 +302,7 @@ impl ToolRuntime {
                         let err =
                             envelope
                                 .error
-                                .unwrap_or_else(|| crate::lsp_bridge::AgentLspError {
+                                .unwrap_or_else(|| crate::lsp_bridge::RunnerLspError {
                                     code: error_codes::LSP_SERVER_FAILED.to_string(),
                                     message: "LSP request failed".to_string(),
                                 });
@@ -338,13 +338,13 @@ impl ToolRuntime {
     }
 }
 
-fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result<Value, String> {
+fn validate_agent_lsp_result(request: &RunnerLspRequest, result: Value) -> Result<Value, String> {
     let result = match request {
-        AgentLspRequest::Status => roundtrip_typed_result::<LspStatusResult>(result),
-        AgentLspRequest::DocumentSymbols { .. } => {
+        RunnerLspRequest::Status => roundtrip_typed_result::<LspStatusResult>(result),
+        RunnerLspRequest::DocumentSymbols { .. } => {
             roundtrip_typed_result::<DocumentSymbolsResult>(result)
         }
-        AgentLspRequest::DocumentDiagnostics { .. } => {
+        RunnerLspRequest::DocumentDiagnostics { .. } => {
             serde_json::from_value::<DocumentDiagnosticsResult>(result).and_then(|typed| {
                 if validate_document_diagnostics_status(&typed).is_err() {
                     return Err(serde_json::Error::io(std::io::Error::other(
@@ -354,14 +354,14 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
                 serde_json::to_value(typed)
             })
         }
-        AgentLspRequest::Hover { .. } => roundtrip_typed_result::<HoverResult>(result),
-        AgentLspRequest::WorkspaceSymbols { .. } => {
+        RunnerLspRequest::Hover { .. } => roundtrip_typed_result::<HoverResult>(result),
+        RunnerLspRequest::WorkspaceSymbols { .. } => {
             roundtrip_typed_result::<WorkspaceSymbolsResult>(result)
         }
-        AgentLspRequest::GotoDefinition { .. } | AgentLspRequest::FindReferences { .. } => {
+        RunnerLspRequest::GotoDefinition { .. } | RunnerLspRequest::FindReferences { .. } => {
             roundtrip_typed_result::<LocationsResult>(result)
         }
-        AgentLspRequest::CallHierarchy {
+        RunnerLspRequest::CallHierarchy {
             path,
             direction,
             line,

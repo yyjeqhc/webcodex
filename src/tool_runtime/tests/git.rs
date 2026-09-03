@@ -5,7 +5,7 @@ use super::super::git_review::*;
 use super::super::helpers::*;
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
+use crate::runner_protocol::{RunnerCapabilities, RunnerResultRequest};
 use crate::tool_runtime::ToolRuntime;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -24,7 +24,7 @@ async fn register_structured_git_agent_at_path(
         runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             structured_process_argv: true,
@@ -34,10 +34,10 @@ async fn register_structured_git_agent_at_path(
         vec![registered_project(project_id, &project_path)],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
-async fn run_agent_git_commit_paths(
+async fn run_runner_git_commit_paths(
     runtime: &ToolRuntime,
     client_id: &str,
     project: String,
@@ -64,7 +64,7 @@ async fn run_agent_git_commit_paths(
     assert!(script.script.contains("git update-ref"));
     assert!(script.script.contains("git commit-tree"));
     assert!(!script.script.contains("git push"));
-    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -93,7 +93,7 @@ async fn git_commit_paths_commits_only_requested_paths_and_preserves_other_workt
     let runtime = test_runtime();
     let project =
         register_structured_git_agent_at_path(&runtime, "commit-paths", "repo", tmp.path()).await;
-    let result = run_agent_git_commit_paths(
+    let result = run_runner_git_commit_paths(
         &runtime,
         "commit-paths",
         project,
@@ -142,7 +142,7 @@ async fn git_commit_paths_rejects_existing_staged_state_without_advancing_head()
     let project =
         register_structured_git_agent_at_path(&runtime, "commit-staged-reject", "repo", tmp.path())
             .await;
-    let result = run_agent_git_commit_paths(
+    let result = run_runner_git_commit_paths(
         &runtime,
         "commit-staged-reject",
         project,
@@ -176,7 +176,7 @@ async fn git_commit_paths_rejects_stale_expected_head_before_mutation() {
         register_structured_git_agent_at_path(&runtime, "commit-head-fence", "repo", tmp.path())
             .await;
     let stale = "f".repeat(40);
-    let result = run_agent_git_commit_paths(
+    let result = run_runner_git_commit_paths(
         &runtime,
         "commit-head-fence",
         project,
@@ -378,7 +378,7 @@ async fn git_restore_stays_sync_on_structured_job_capable_runner() {
         &runtime,
         "restore-sync-job-capable",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             jobs: true,
@@ -436,7 +436,7 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
         &runtime,
         "restore-uncertain",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             structured_process_argv: true,
@@ -465,7 +465,7 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
         "restore-uncertain",
         "inst-b",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             structured_process_argv: true,
@@ -759,7 +759,7 @@ fn show_changes_tool_is_known_and_parses() {
     );
 }
 
-async fn run_agent_git_diff_hunks_page(
+async fn run_runner_git_diff_hunks_page(
     runtime: &ToolRuntime,
     client_id: &str,
     project: &str,
@@ -799,7 +799,7 @@ async fn run_agent_git_diff_hunks_page(
         .expect("git_diff_hunks must carry a typed internal script")
         .script
         .clone();
-    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
     let stdout_bytes = stdout.len();
     complete_patch_agent_request(
         runtime,
@@ -813,7 +813,7 @@ async fn run_agent_git_diff_hunks_page(
     (task.await.unwrap(), stdout_bytes, script)
 }
 
-async fn run_agent_git_diff_hunks_committed_page(
+async fn run_runner_git_diff_hunks_committed_page(
     runtime: &ToolRuntime,
     client_id: &str,
     project: &str,
@@ -892,7 +892,7 @@ async fn run_agent_git_diff_hunks_committed_page(
                 assert!(script.contains("--no-ext-diff"));
                 assert!(script.contains("--no-textconv"));
             }
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             if script.contains("page_budget=") {
                 page_stdout_bytes = stdout.len();
             }
@@ -974,7 +974,7 @@ async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attribu
         "src/space file.rs".to_string(),
         "src/你好.rs".to_string(),
     ];
-    let (result, raw_bytes, scripts) = run_agent_git_diff_hunks_committed_page(
+    let (result, raw_bytes, scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-targeted",
         &project,
@@ -1027,7 +1027,7 @@ async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attribu
     );
     assert!(b["hunks"].as_array().unwrap().is_empty());
 
-    let (all_result, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (all_result, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-targeted",
         &project,
@@ -1085,7 +1085,7 @@ async fn git_diff_hunks_ignores_external_diff_helpers_in_worktree_and_cached_mod
     )
     .await;
     let paths = Some(vec!["safe.txt".to_string()]);
-    let (worktree, _, worktree_script) = run_agent_git_diff_hunks_page(
+    let (worktree, _, worktree_script) = run_runner_git_diff_hunks_page(
         &runtime,
         "diff-hunks-no-external",
         &project,
@@ -1105,7 +1105,7 @@ async fn git_diff_hunks_ignores_external_diff_helpers_in_worktree_and_cached_mod
     assert!(!worktree_output.contains("FAKE_PRIVATE_MARKER_117"));
 
     git_test_command_ok(tmp.path(), "git add -- safe.txt");
-    let (cached, _, cached_script) = run_agent_git_diff_hunks_page(
+    let (cached, _, cached_script) = run_runner_git_diff_hunks_page(
         &runtime,
         "diff-hunks-no-external",
         &project,
@@ -1143,7 +1143,7 @@ async fn git_diff_hunks_never_returns_secret_path_content_in_any_mode() {
         register_structured_git_agent_at_path(&runtime, "diff-secret-boundary", "repo", tmp.path())
             .await;
 
-    let (committed, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (committed, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "diff-secret-boundary",
         &project,
@@ -1171,7 +1171,7 @@ async fn git_diff_hunks_never_returns_secret_path_content_in_any_mode() {
         );
     }
 
-    let (worktree, _, _) = run_agent_git_diff_hunks_page(
+    let (worktree, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         "diff-secret-boundary",
         &project,
@@ -1266,7 +1266,7 @@ async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() 
         );
     }
 
-    let (same, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (same, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-validation",
         &project,
@@ -1284,7 +1284,7 @@ async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() 
     assert_eq!(same.output["files"], json!([]));
 
     let missing = "f".repeat(40);
-    let (missing_result, _, missing_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (missing_result, _, missing_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-validation",
         &project,
@@ -1312,7 +1312,7 @@ async fn git_diff_hunks_committed_range_validation_and_merge_base_fail_closed() 
         run_command_sync("printf blob | git hash-object -w --stdin", tmp.path(), 30);
     assert_eq!(blob_exit, 0, "{blob_stderr}");
     let blob = blob_stdout.trim().to_string();
-    let (blob_result, _, blob_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (blob_result, _, blob_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-validation",
         &project,
@@ -1355,7 +1355,7 @@ async fn git_diff_hunks_committed_nonancestor_disconnected_and_ambiguous_merge_b
     let project =
         register_structured_git_agent_at_path(&runtime, "committed-merge-base", "repo", tmp.path())
             .await;
-    let (nonancestor, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (nonancestor, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-merge-base",
         &project,
@@ -1393,7 +1393,7 @@ async fn git_diff_hunks_committed_nonancestor_disconnected_and_ambiguous_merge_b
         disconnected.path(),
     )
     .await;
-    let (no_base, _, scripts) = run_agent_git_diff_hunks_committed_page(
+    let (no_base, _, scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime2,
         "committed-disconnected",
         &project2,
@@ -1442,7 +1442,7 @@ async fn git_diff_hunks_committed_nonancestor_disconnected_and_ambiguous_merge_b
         ambiguous.path(),
     )
     .await;
-    let (ambiguous_result, _, ambiguous_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (ambiguous_result, _, ambiguous_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime3,
         "committed-ambiguous",
         &project3,
@@ -1494,7 +1494,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
     )
     .await;
     let paths = Some(vec!["large.txt".to_string()]);
-    let (first, first_bytes, first_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (first, first_bytes, first_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1521,7 +1521,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         .unwrap()
         .to_string();
 
-    let (second, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (second, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1544,7 +1544,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         "continuation must not replay page one"
     );
 
-    let (second_again, _, _) = run_agent_git_diff_hunks_committed_page(
+    let (second_again, _, _) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1569,7 +1569,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         .as_str()
         .map(str::to_string);
     while let Some(current) = next {
-        let (page, _, _) = run_agent_git_diff_hunks_committed_page(
+        let (page, _, _) = run_runner_git_diff_hunks_committed_page(
             &runtime,
             "committed-continuation",
             &project,
@@ -1601,7 +1601,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         "all four committed hunks must be returned once"
     );
 
-    let (path_mismatch, _, path_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (path_mismatch, _, path_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1622,7 +1622,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         "mismatch must stop before page producer"
     );
 
-    let (range_mismatch, _, range_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (range_mismatch, _, range_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1646,7 +1646,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
     let last = tampered.len() - 1;
     tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
     let tampered = String::from_utf8(tampered).unwrap();
-    let (tampered_result, _, tampered_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (tampered_result, _, tampered_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1676,7 +1676,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
             "wcdh1.{}",
             general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).unwrap())
         );
-        let (forged_result, _, forged_scripts) = run_agent_git_diff_hunks_committed_page(
+        let (forged_result, _, forged_scripts) = run_runner_git_diff_hunks_committed_page(
             &runtime,
             "committed-continuation",
             &project,
@@ -1712,7 +1712,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         })
         .collect::<String>();
     write_git_review_fixture_file(tmp.path(), "large.txt", &dirty_body);
-    let (worktree_page, _, _) = run_agent_git_diff_hunks_page(
+    let (worktree_page, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1729,7 +1729,7 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
         .as_str()
         .expect("worktree continuation")
         .to_string();
-    let (wrong_mode, _, wrong_mode_scripts) = run_agent_git_diff_hunks_committed_page(
+    let (wrong_mode, _, wrong_mode_scripts) = run_runner_git_diff_hunks_committed_page(
         &runtime,
         "committed-continuation",
         &project,
@@ -1827,7 +1827,7 @@ async fn git_diff_hunks_committed_drains_bounded_consumer_and_preserves_producer
         .as_mut()
         .expect("typed page script")
         .script = page_script.replacen(&needle, &injected, 1);
-    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&page_request);
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&page_request);
     assert_eq!(
         exit_code, 0,
         "page envelope should carry producer failure structurally: {stderr}"
@@ -1893,7 +1893,7 @@ async fn git_diff_hunks_stable_multi_page_traversal_has_no_duplicate_or_missing_
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-pages";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
     let mut continuation = None;
     let mut logical_files = Vec::new();
     let mut logical_hunks = Vec::new();
@@ -1902,7 +1902,7 @@ async fn git_diff_hunks_stable_multi_page_traversal_has_no_duplicate_or_missing_
 
     for _ in 0..10 {
         let prior_token = continuation.clone();
-        let (result, _stdout_bytes, command) = run_agent_git_diff_hunks_page(
+        let (result, _stdout_bytes, command) = run_runner_git_diff_hunks_page(
             &runtime,
             client_id,
             &project,
@@ -1991,8 +1991,8 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-large";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (result, agent_stdout_bytes, _command) = run_agent_git_diff_hunks_page(
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (result, runner_stdout_bytes, _command) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2006,8 +2006,8 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
     .await;
     assert!(result.success, "{:?}", result.error);
     assert!(
-        agent_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096,
-        "producer sent {agent_stdout_bytes} bytes through ordinary transport"
+        runner_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096,
+        "producer sent {runner_stdout_bytes} bytes through ordinary transport"
     );
     assert_eq!(result.output["files"][0]["path"], "large-0.txt");
     assert_eq!(result.output["has_more"], true);
@@ -2029,8 +2029,8 @@ async fn git_diff_hunks_worktree_continuation_fails_stale_after_relevant_change(
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-worktree-stale";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (page, _, _) = run_agent_git_diff_hunks_page(
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (page, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2049,7 +2049,7 @@ async fn git_diff_hunks_worktree_continuation_fails_stale_after_relevant_change(
         .to_string();
     fs::write(repo.path().join("b.txt"), "b2\nextra\n").unwrap();
 
-    let (stale, _, _) = run_agent_git_diff_hunks_page(
+    let (stale, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2080,8 +2080,8 @@ async fn git_diff_hunks_cached_continuation_fails_stale_after_index_change() {
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-cached-stale";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (page, _, _) = run_agent_git_diff_hunks_page(
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (page, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2101,7 +2101,7 @@ async fn git_diff_hunks_cached_continuation_fails_stale_after_index_change() {
     fs::write(repo.path().join("b.txt"), "b2\n").unwrap();
     git_test_command_ok(repo.path(), "git add -- b.txt");
 
-    let (stale, _, _) = run_agent_git_diff_hunks_page(
+    let (stale, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2132,8 +2132,8 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-scoped";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (page, _, _) = run_agent_git_diff_hunks_page(
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (page, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2152,7 +2152,7 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
         .to_string();
     fs::write(repo.path().join("outside.txt"), "outside1\n").unwrap();
 
-    let (continued, _, command) = run_agent_git_diff_hunks_page(
+    let (continued, _, command) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2172,7 +2172,7 @@ async fn git_diff_hunks_scoped_fence_ignores_outside_change_and_rejects_scope_mi
 
     let other_client_id = "diff-hunks-scoped-other";
     let other_project =
-        register_agent_project_at_path(&runtime, other_client_id, "repo", repo.path()).await;
+        register_runner_project_at_path(&runtime, other_client_id, "repo", repo.path()).await;
     let project_mismatch = runtime
         .git_diff_hunks_continued(
             other_project,
@@ -2244,12 +2244,12 @@ async fn git_diff_hunks_binary_records_advance_across_byte_bounded_pages() {
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-binary";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
     let mut continuation = None;
     let mut returned = Vec::new();
     let mut finished = false;
     for _ in 0..10 {
-        let (page, agent_stdout_bytes, _) = run_agent_git_diff_hunks_page(
+        let (page, runner_stdout_bytes, _) = run_runner_git_diff_hunks_page(
             &runtime,
             client_id,
             &project,
@@ -2263,7 +2263,7 @@ async fn git_diff_hunks_binary_records_advance_across_byte_bounded_pages() {
         .await;
         assert!(page.success, "{:?}", page.error);
         assert_eq!(page.output["hunk_count"], 0);
-        assert!(agent_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
+        assert!(runner_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
         for file in page.output["files"].as_array().unwrap() {
             assert_ne!(file.get("continued").and_then(Value::as_bool), Some(true));
             returned.push(file["path"].as_str().unwrap().to_string());
@@ -2306,8 +2306,8 @@ async fn git_diff_hunks_hunk_line_limit_does_not_create_fake_continuation() {
 
     let runtime = test_runtime();
     let client_id = "diff-hunks-line-limit";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (page, _, _) = run_agent_git_diff_hunks_page(
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (page, _, _) = run_runner_git_diff_hunks_page(
         &runtime,
         client_id,
         &project,
@@ -2344,7 +2344,7 @@ async fn git_diff_hunks_malformed_continuation_fails_before_runner_dispatch() {
     fs::write(repo.path().join("a.txt"), "a1\n").unwrap();
     let runtime = test_runtime();
     let client_id = "diff-hunks-invalid-token";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
     let result = runtime
         .git_diff_hunks_continued(
             project,
@@ -2421,12 +2421,12 @@ fn show_changes_command_is_read_only() {
     let without_diff = show_changes_command(false, 20, 80);
     let with_diff = show_changes_command(true, 20, 80);
     assert!(
-        without_diff.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
+        without_diff.len() <= crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
         "include_diff=false command is {} bytes",
         without_diff.len()
     );
     assert!(
-        with_diff.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
+        with_diff.len() <= crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
         "include_diff=true command is {} bytes",
         with_diff.len()
     );
@@ -3204,7 +3204,7 @@ async fn show_changes_untracked_preview_truncation_does_not_create_diff_handoff(
 
     let runtime = test_runtime();
     let client_id = "show-untracked-handoff";
-    let project = register_agent_project_at_path(&runtime, client_id, "repo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, client_id, project, None, true).await;
     assert!(result.success, "{:?}", result.error);
     assert_show_changes_envelope_matches_schema("untracked-only truncation", &result);
@@ -3314,7 +3314,7 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
 #[tokio::test]
 async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper() {
     let runtime = runtime_with_agent_project("show-native");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         internal_posix_script: true,
         ..Default::default()
@@ -3350,7 +3350,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
         .expect("show_changes must carry a typed internal script");
     assert_eq!(
         payload.language,
-        crate::shell_protocol::ShellScriptLanguage::Sh
+        crate::runner_protocol::ShellScriptLanguage::Sh
     );
     assert!(payload.args.is_empty());
     let forbidden = ["python3", "-c"].join(" ");
@@ -3546,7 +3546,7 @@ fn show_changes_session_changed_paths_are_deduped() {
 #[tokio::test]
 async fn show_changes_session_event_limit_is_bounded() {
     let runtime = runtime_with_agent_project("show");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         shell: true,
         internal_posix_script: true,
         ..Default::default()
@@ -3855,7 +3855,7 @@ async fn git_diff_hunks_rejects_unsafe_paths_before_project_dispatch() {
 #[tokio::test]
 async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     let runtime = runtime_with_agent_project("telemetry-show");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         file_read: true,
         shell: true,
         internal_posix_script: true,
@@ -3886,7 +3886,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_instance(&runtime, "telemetry-show", "inst").await;
+    let req = wait_for_runner_request_for_instance(&runtime, "telemetry-show", "inst").await;
     complete_patch_agent_request(
         &runtime,
         "telemetry-show",
@@ -3986,14 +3986,14 @@ async fn show_changes_accepts_unique_short_id() {
                 .await
         }
     });
-    let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
+    let req = wait_for_runner_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     let stdout = framed_clean_show_changes_test_stdout("head", false);
     runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "workstation".to_string(),
-            agent_instance_id: "inst-workstation".to_string(),
+            runner_instance_id: "inst-workstation".to_string(),
             request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some(stdout),
@@ -4102,7 +4102,7 @@ async fn git_diff_summary_agent_uses_internal_posix_runtime() {
 
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "summary-internal", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "summary-internal", "demo", tmp.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -4181,7 +4181,7 @@ async fn run_git_review_summary_via_agent(
                 .expect("git_review_summary must use a typed internal script");
             assert_eq!(
                 payload.language,
-                crate::shell_protocol::ShellScriptLanguage::Sh
+                crate::runner_protocol::ShellScriptLanguage::Sh
             );
             assert!(payload.args.is_empty());
             assert!(payload.script.contains("GIT_NO_REPLACE_OBJECTS=1"));
@@ -4212,7 +4212,7 @@ async fn run_git_review_summary_via_agent(
                 assert!(payload.script.contains("--no-ext-diff"));
                 assert!(payload.script.contains("--no-textconv"));
             }
-            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+            let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             assert_eq!(
                 exit_code, 0,
                 "git_review_summary internal script failed\nscript:\n{}\nstdout:\n{}\nstderr:\n{}",
@@ -5020,7 +5020,7 @@ async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
         &runtime,
         "oe",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: false,
             ..Default::default()
         },
@@ -5143,7 +5143,7 @@ async fn run_show_changes_via_agent(
                 .expect("show_changes must carry a typed internal script");
             assert_eq!(
                 payload.language,
-                crate::shell_protocol::ShellScriptLanguage::Sh
+                crate::runner_protocol::ShellScriptLanguage::Sh
             );
             assert!(payload.args.is_empty());
             complete_agent_request_by_running_locally(runtime, client_id, req).await;
@@ -5256,7 +5256,7 @@ async fn show_changes_preserves_sentinel_text_in_normal_diff_and_tool_result() {
 
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "show-collision", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "show-collision", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "show-collision", project, None, true).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["diff_exit"], 0);
@@ -5276,7 +5276,7 @@ async fn show_changes_agent_untracked_preview_uses_internal_posix_runtime() {
 
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "show-untracked", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "show-untracked", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "show-untracked", project, None, true).await;
 
     assert!(result.success, "{:?}", result.error);
@@ -5549,7 +5549,7 @@ async fn show_changes_degrades_gracefully_for_non_git_project() {
     let tmp = tempfile::tempdir().unwrap();
     // Intentionally do NOT init a git repo.
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "ng", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "ng", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "ng", project, None, false).await;
     assert!(
         result.success,
@@ -5604,7 +5604,7 @@ async fn show_changes_degrades_gracefully_for_non_git_project() {
 async fn show_changes_non_git_project_still_returns_session_summary() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "ngs", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "ngs", "demo", tmp.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("task".to_string()));
@@ -5657,7 +5657,7 @@ async fn show_changes_real_git_repo_marks_git_available_and_reports_status() {
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "gr", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "gr", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "gr", project, None, false).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["non_git_project"], false);
@@ -5687,7 +5687,7 @@ async fn show_changes_real_git_repo_include_diff_true_matches_schema() {
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     std::fs::write(tmp.path().join("README.md"), "hello\nchanged\n").unwrap();
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "grd", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "grd", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "grd", project, None, true).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status_observation"]["status"], "observed");
@@ -5713,7 +5713,7 @@ async fn show_changes_status_failure_is_not_masked_by_successful_diff() {
     );
 
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "gsf", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "gsf", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "gsf", project, None, false).await;
     assert!(!result.success, "status failure must fail show_changes");
     assert_eq!(
@@ -6353,7 +6353,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
     std::fs::set_permissions(&wrapper_path, permissions).unwrap();
 
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "stat-only", "demo", repo.path()).await;
+    let project = register_runner_project_at_path(&runtime, "stat-only", "demo", repo.path()).await;
     let path_prefix = format!(
         "PATH={}:\"$PATH\"; export PATH;",
         shell_single_quote(wrapper_dir.path().to_str().unwrap())
@@ -6378,11 +6378,11 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
             .expect("show_changes must carry a typed internal script");
         assert_eq!(
             payload.language,
-            crate::shell_protocol::ShellScriptLanguage::Sh
+            crate::runner_protocol::ShellScriptLanguage::Sh
         );
         assert!(payload.args.is_empty());
         assert!(
-            payload.script.len() <= crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES,
+            payload.script.len() <= crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES,
             "script bytes={}",
             payload.script.len()
         );
@@ -6472,7 +6472,7 @@ async fn show_changes_runtime_rejects_unavailable_diff_stat_observation() {
 
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "stat-missing", "demo", repo.path()).await;
+        register_runner_project_at_path(&runtime, "stat-missing", "demo", repo.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -6724,7 +6724,7 @@ async fn show_changes_runtime_propagates_full_diff_failure_as_tool_failure() {
         "sh -c 'printf x > {marker_str}; exit 5' \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\""
     );
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "extd", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "extd", "demo", tmp.path()).await;
     // The agent completes the request by running the bounded command locally,
     // but with the failing external diff exported into the environment. The
     // production script starts with a brace group, so the external diff must

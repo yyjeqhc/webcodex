@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_protocol::ShellCommandExecutionState;
+use crate::runner_protocol::ShellCommandExecutionState;
 use std::sync::{Arc, OnceLock};
 
 #[cfg(windows)]
@@ -635,7 +635,8 @@ fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
     let args = vec!["argv".to_string(), "a".repeat(4_500), "b".repeat(4_500)];
     assert!(args.iter().map(String::len).sum::<usize>() > 8_000);
     assert!(
-        args.iter().map(String::len).sum::<usize>() < crate::shell_protocol::PROCESS_ARGV_MAX_BYTES
+        args.iter().map(String::len).sum::<usize>()
+            < crate::runner_protocol::PROCESS_ARGV_MAX_BYTES
     );
 
     let result = run_direct_process(cwd.path(), &helper, &args, None, 10);

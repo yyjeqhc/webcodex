@@ -33,9 +33,9 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-ax".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()
@@ -73,7 +73,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
     assert!(error.contains("does not support computer_element_state"));
 
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -81,13 +81,13 @@ async fn computer_element_state_requires_its_own_additive_capability() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "computer-state-capable".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "computer-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
                 computer_observe: true,
@@ -111,9 +111,9 @@ async fn computer_element_state_requires_its_own_additive_capability() {
         .await
         .unwrap();
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "computer-state-capable".to_string(),
-            agent_instance_id: "computer-inst".to_string(),
+            runner_instance_id: "computer-inst".to_string(),
         })
         .await
         .unwrap()

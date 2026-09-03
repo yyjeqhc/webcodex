@@ -269,7 +269,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .get_mut(&job.job_id)
             .unwrap()
             .terminal_observed_at =
-            Some(now_ts() - crate::shell_protocol::JOB_TERMINAL_RETENTION_SECS);
+            Some(now_ts() - crate::runner_protocol::JOB_TERMINAL_RETENTION_SECS);
     }
     crate::recovery_timeout_sweep(&registry).await;
     assert!(registry

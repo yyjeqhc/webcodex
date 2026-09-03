@@ -28,7 +28,7 @@ const SSH_REMOTE_CWD_MAX_BYTES: usize = 4096;
 /// It is transport headroom, not a smaller Windows product limit.
 #[cfg(any(test, windows))]
 const WINDOWS_DIRECT_PROGRAM_MAX_BYTES: usize =
-    crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES + SSH_REMOTE_CWD_MAX_BYTES * 5 + 512;
+    crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES + SSH_REMOTE_CWD_MAX_BYTES * 5 + 512;
 /// Windows Direct transports a shell-quoted `eval <program>` frame over stdin.
 /// POSIX single-quote encoding expands each input byte by at most 5x; the fixed
 /// `eval ` prefix and surrounding quotes add seven bytes. This is internal
@@ -757,7 +757,7 @@ fn apply_transport_failure_policy(
 ) {
     if !matches!(
         result.execution_state,
-        crate::shell_protocol::ShellCommandExecutionState::Completed
+        crate::runner_protocol::ShellCommandExecutionState::Completed
     ) || !is_transport_failure(
         transport,
         result.result.exit_code,
@@ -777,7 +777,7 @@ fn apply_transport_failure_policy(
         result.result.error =
             Some("ssh_transport_failed: command may have started and was not retried".to_string());
     }
-    result.execution_state = crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown;
+    result.execution_state = crate::runner_protocol::ShellCommandExecutionState::OutcomeUnknown;
 }
 
 /// Used by async job handling to apply the same conservative invalidation
@@ -2344,7 +2344,7 @@ mod tests {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
         manager.enqueue(
             sink.clone(),
@@ -2362,7 +2362,7 @@ mod tests {
         assert_eq!(completed.exit_code, Some(0), "{completed:?}");
         assert_eq!(
             completed.command_execution_state,
-            Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            Some(crate::runner_protocol::ShellCommandExecutionState::Completed),
             "{completed:?}"
         );
         assert!(
@@ -2393,7 +2393,7 @@ mod tests {
         assert_eq!(stopped.exit_code, None, "{stopped:?}");
         assert_eq!(
             stopped.command_execution_state,
-            Some(crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown),
+            Some(crate::runner_protocol::ShellCommandExecutionState::OutcomeUnknown),
             "{stopped:?}"
         );
         assert!(
@@ -2419,7 +2419,7 @@ mod tests {
         assert_eq!(missing.status, "failed", "{missing:?}");
         assert_eq!(
             missing.command_execution_state,
-            Some(crate::shell_protocol::ShellCommandExecutionState::NotStarted),
+            Some(crate::runner_protocol::ShellCommandExecutionState::NotStarted),
             "{missing:?}"
         );
         assert!(
@@ -2466,7 +2466,7 @@ mod tests {
         job_id: &str,
         resource: &str,
         command: &str,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         serde_json::from_value(serde_json::json!({
             "request_id": format!("request-{job_id}"),
             "client_id": "ssh-agent",
@@ -2491,14 +2491,14 @@ mod tests {
     }
 
     fn wait_for_job_update(
-        rx: &mut tokio::sync::mpsc::Receiver<crate::shell_protocol::AgentEnvelope>,
+        rx: &mut tokio::sync::mpsc::Receiver<crate::runner_protocol::RunnerEnvelope>,
         job_id: &str,
-        predicate: impl Fn(&crate::shell_protocol::ShellAgentJobUpdateRequest) -> bool,
-    ) -> crate::shell_protocol::ShellAgentJobUpdateRequest {
+        predicate: impl Fn(&crate::runner_protocol::RunnerJobUpdateRequest) -> bool,
+    ) -> crate::runner_protocol::RunnerJobUpdateRequest {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             match rx.try_recv() {
-                Ok(crate::shell_protocol::AgentEnvelope::JobUpdate { payload })
+                Ok(crate::runner_protocol::RunnerEnvelope::JobUpdate { payload })
                     if payload.job_id == job_id && predicate(&payload) =>
                 {
                     return payload;
@@ -2533,7 +2533,7 @@ mod tests {
         shell_id: &str,
         resource: &str,
         command: Option<&str>,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         ssh_persistent_shell_request_at_cwd(action, shell_id, resource, None, command)
     }
 
@@ -2543,7 +2543,7 @@ mod tests {
         resource: &str,
         cwd: Option<&str>,
         command: Option<&str>,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         serde_json::from_value(serde_json::json!({
             "request_id": format!("req-{action}-{shell_id}"),
             "client_id": "ssh-agent",
@@ -3296,7 +3296,7 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
-    use crate::shell_protocol::ShellCommandExecutionState;
+    use crate::runner_protocol::ShellCommandExecutionState;
     use crate::webcodex_runner::config::{RunnerPolicy, SshResourceConfig};
     use std::collections::BTreeMap;
     use std::ffi::OsString;
@@ -3603,7 +3603,7 @@ fn main() {
         job_id: &str,
         command: &str,
         timeout_secs: u64,
-    ) -> crate::shell_protocol::ShellAgentShellRequest {
+    ) -> crate::runner_protocol::RunnerRequest {
         serde_json::from_value(serde_json::json!({
             "request_id": format!("request-{job_id}"),
             "client_id": "ssh-agent",
@@ -3628,14 +3628,14 @@ fn main() {
     }
 
     fn wait_for_job_update(
-        rx: &mut tokio::sync::mpsc::Receiver<crate::shell_protocol::AgentEnvelope>,
+        rx: &mut tokio::sync::mpsc::Receiver<crate::runner_protocol::RunnerEnvelope>,
         job_id: &str,
-        predicate: impl Fn(&crate::shell_protocol::ShellAgentJobUpdateRequest) -> bool,
-    ) -> crate::shell_protocol::ShellAgentJobUpdateRequest {
+        predicate: impl Fn(&crate::runner_protocol::RunnerJobUpdateRequest) -> bool,
+    ) -> crate::runner_protocol::RunnerJobUpdateRequest {
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
             match rx.try_recv() {
-                Ok(crate::shell_protocol::AgentEnvelope::JobUpdate { payload })
+                Ok(crate::runner_protocol::RunnerEnvelope::JobUpdate { payload })
                     if payload.job_id == job_id && predicate(&payload) =>
                 {
                     return payload;
@@ -3757,10 +3757,10 @@ fn main() {
     #[test]
     fn windows_direct_large_program_and_cwd_contract_fit_bounded_argv() {
         let pool = SshConnectionPool::default();
-        let authored = "'".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
+        let authored = "'".repeat(crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
         let wrapped = explicit_bash_wire_command(&authored);
         assert_eq!(wrapped.len(), 64_015);
-        assert!(wrapped.len() <= crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        assert!(wrapped.len() <= crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
 
         let max_host = "h".repeat(512);
         let prepared = pool
@@ -3811,14 +3811,14 @@ fn main() {
         );
         assert_eq!(result.result.exit_code, Some(0), "{result:?}");
 
-        let max_wire = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
-        crate::shell_protocol::validate_raw_shell_wire_command(&max_wire).unwrap();
+        let max_wire = "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        crate::runner_protocol::validate_raw_shell_wire_command(&max_wire).unwrap();
         assert!(
-            crate::shell_protocol::validate_raw_shell_wire_command(&format!("{max_wire}x"))
+            crate::runner_protocol::validate_raw_shell_wire_command(&format!("{max_wire}x"))
                 .is_err()
         );
         assert!(
-            crate::shell_protocol::validate_raw_shell_wire_command("printf ok\0printf never")
+            crate::runner_protocol::validate_raw_shell_wire_command("printf ok\0printf never")
                 .is_err(),
             "raw-shell NUL rejection must remain platform-neutral"
         );
@@ -3973,7 +3973,7 @@ fn main() {
 
     #[test]
     fn windows_program_writer_failure_after_spawn_is_outcome_unknown() {
-        let command = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let command = "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
         let cwd = "'".repeat(SSH_REMOTE_CWD_MAX_BYTES);
         let result = run_ssh_shell_with_execution_state(
             &fake_pool(),
@@ -4010,7 +4010,7 @@ fn main() {
             max_output_bytes: 4 * 1024,
             ..RunnerPolicy::default()
         };
-        let program = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let program = "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
         let started = Instant::now();
         let result = run_ssh_shell_with_execution_state(
             &fake_pool(),
@@ -4054,7 +4054,7 @@ fn main() {
             );
             stop_signal.store(true, Ordering::SeqCst);
         });
-        let program = "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES);
+        let program = "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
         let started = Instant::now();
         let result = run_ssh_shell_with_execution_state(
             &fake_pool(),
@@ -4305,7 +4305,7 @@ fn main() {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
         enqueue_job(
             &manager,
@@ -4462,7 +4462,7 @@ fn main() {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
 
         enqueue_job(
@@ -4526,7 +4526,7 @@ fn main() {
             "background direct exit 255 was retried"
         );
 
-        let long_authored = "'".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
+        let long_authored = "'".repeat(crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
         let long_wire = explicit_bash_wire_command(&long_authored);
         enqueue_job(
             &manager,
@@ -4595,7 +4595,7 @@ fn main() {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
 
         let stop_marker = temp.path().join("stop-grandchild.marker");
@@ -4672,7 +4672,7 @@ fn main() {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
         enqueue_job(
             &manager,
@@ -4947,11 +4947,11 @@ fn main() {
         let prefix = "printf wc-max-wire; #";
         let max_wire = format!(
             "{prefix}{}",
-            "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES - prefix.len())
+            "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES - prefix.len())
         );
         assert_eq!(
             max_wire.len(),
-            crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES
+            crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES
         );
         let max_wire_result = run(None, &max_wire);
         assert_eq!(
@@ -4974,7 +4974,7 @@ fn main() {
         let sink = crate::webcodex_runner::RunnerSink::WebSocket {
             tx,
             client_id: "ssh-agent".to_string(),
-            agent_instance_id: "ssh-instance".to_string(),
+            runner_instance_id: "ssh-instance".to_string(),
         };
         enqueue_job(
             &manager,

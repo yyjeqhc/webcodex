@@ -12,9 +12,8 @@ use super::shell::shell_quote;
 use super::shell::shell_quote_powershell;
 use super::shell::{base_shell_env, cwd_allowed};
 use super::ssh::SshConnectionPool;
-use crate::shell_protocol::{
-    PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest,
-    RAW_SHELL_COMMAND_MAX_BYTES,
+use crate::runner_protocol::{
+    PersistentShellRequest, PersistentShellResult, RunnerRequest, RAW_SHELL_COMMAND_MAX_BYTES,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -54,7 +53,7 @@ impl PersistentShellManager {
         ssh: &SshConfig,
         ssh_generation: u64,
         project_registry_dir: &Path,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
     ) -> PersistentShellResult {
         self.processes.update_limits(limits(shell));
         let ssh_resource = request
@@ -147,7 +146,7 @@ impl PersistentShellManager {
         policy: &RunnerPolicy,
         ssh: &SshConfig,
         ssh_generation: u64,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
         operation: &PersistentShellRequest,
         resource_name: &str,
         _project: &RunnerProjectShellContext,
@@ -247,7 +246,7 @@ impl PersistentShellManager {
         _policy: &RunnerPolicy,
         _ssh: &SshConfig,
         _ssh_generation: u64,
-        _request: &ShellAgentShellRequest,
+        _request: &RunnerRequest,
         operation: &PersistentShellRequest,
         _resource_name: &str,
         _project: &RunnerProjectShellContext,
@@ -393,7 +392,7 @@ impl PersistentShellManager {
         &self,
         policy: &RunnerPolicy,
         shell: &ShellConfig,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
         operation: &PersistentShellRequest,
         project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
@@ -820,7 +819,7 @@ fn selected_profile<'a>(
 fn build_launch(
     policy: &RunnerPolicy,
     shell: &ShellConfig,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     operation: &PersistentShellRequest,
     project: &RunnerProjectShellContext,
 ) -> Result<ShellLaunch, (&'static str, String)> {
@@ -838,7 +837,7 @@ fn build_launch(
 
 fn build_launch_at_cwd(
     shell: &ShellConfig,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     operation: &PersistentShellRequest,
     project: &RunnerProjectShellContext,
     cwd: PathBuf,
@@ -1147,11 +1146,11 @@ fn error_result(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::shell_protocol::ShellAgentShellRequest;
+    use crate::runner_protocol::RunnerRequest;
     use std::collections::BTreeMap;
 
-    fn request(action: &str, shell_id: &str, command: Option<&str>) -> ShellAgentShellRequest {
-        ShellAgentShellRequest {
+    fn request(action: &str, shell_id: &str, command: Option<&str>) -> RunnerRequest {
+        RunnerRequest {
             request_id: format!("req-{action}"),
             client_id: "agent-1".to_string(),
             kind: "persistent_shell".to_string(),
@@ -1539,11 +1538,11 @@ mod windows_tests {
     use super::super::config::SshResourceConfig;
     use super::super::ssh::SshConnectionPool;
     use super::*;
-    use crate::shell_protocol::ShellAgentShellRequest;
+    use crate::runner_protocol::RunnerRequest;
     use std::collections::BTreeMap;
 
-    fn request(action: &str, shell_id: &str, command: Option<&str>) -> ShellAgentShellRequest {
-        ShellAgentShellRequest {
+    fn request(action: &str, shell_id: &str, command: Option<&str>) -> RunnerRequest {
+        RunnerRequest {
             request_id: format!("req-{action}"),
             client_id: "msi".to_string(),
             kind: "persistent_shell".to_string(),
@@ -1588,7 +1587,7 @@ mod windows_tests {
         shell_id: &str,
         resource: &str,
         command: Option<&str>,
-    ) -> ShellAgentShellRequest {
+    ) -> RunnerRequest {
         serde_json::from_value(serde_json::json!({
             "request_id": format!("req-ssh-{action}-{shell_id}"),
             "client_id": "msi",

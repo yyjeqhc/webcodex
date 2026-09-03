@@ -7,7 +7,7 @@ use super::helpers::{bounded_tail, decode_git_quoted_path};
 use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
-use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
+use crate::runner_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
 
 pub(crate) use webcodex_core::runtime_contract::MAX_UNIFIED_DIFF_BYTES;
 const MAX_UNIFIED_DIFF_AFFECTED_FILES: usize = 128;

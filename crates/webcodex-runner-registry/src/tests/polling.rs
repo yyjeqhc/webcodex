@@ -4,7 +4,7 @@ use super::*;
 async fn registry_enqueues_polls_and_completes_shell_request() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,14 +12,14 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "xrh".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -40,9 +40,9 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
         .await
         .unwrap();
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "xrh".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -51,9 +51,9 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
     assert_eq!(polled.command, "echo hello");
     assert_eq!(polled.stdin.as_deref(), Some("hello stdin"));
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "xrh".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id,
             exit_code: Some(0),
             stdout: Some("hello\n".to_string()),
@@ -73,7 +73,7 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
     let registry = RunnerRegistry::default();
     for (client_id, instance) in [("owner", "inst-owner"), ("other", "inst-other")] {
         registry
-            .register(current_runner_registration(ShellClientRegisterRequest {
+            .register(current_runner_registration(RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -81,14 +81,14 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: instance.to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: instance.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities::default(),
+                    RunnerCapabilities::default(),
                 ),
                 policy: None,
             }))
@@ -111,9 +111,9 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
         .unwrap();
 
     let error = registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "other".to_string(),
-            agent_instance_id: "inst-other".to_string(),
+            runner_instance_id: "inst-other".to_string(),
             request_id: request_id.clone(),
             exit_code: Some(0),
             stdout: Some("spoofed\n".to_string()),
@@ -126,18 +126,18 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
     assert_eq!(error, "request_id does not belong to client_id");
 
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "owner".to_string(),
-            agent_instance_id: "inst-owner".to_string(),
+            runner_instance_id: "inst-owner".to_string(),
         })
         .await
         .unwrap()
         .expect("rejected cross-client result must leave the request pending");
     assert_eq!(polled.request_id, request_id);
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "owner".to_string(),
-            agent_instance_id: "inst-owner".to_string(),
+            runner_instance_id: "inst-owner".to_string(),
             request_id,
             exit_code: Some(0),
             stdout: Some("owner\n".to_string()),
@@ -154,7 +154,7 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
 async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -162,14 +162,14 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "ordered".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         }))
@@ -205,17 +205,17 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
         .unwrap();
 
     let polled_a = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "ordered".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
         .unwrap();
     let polled_b = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "ordered".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -225,9 +225,9 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
 
     for (request_id, stdout) in [(&request_b, "result-b\n"), (&request_a, "result-a\n")] {
         registry
-            .complete(ShellAgentResultRequest {
+            .complete(RunnerResultRequest {
                 client_id: "ordered".to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id: request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some(stdout.to_string()),

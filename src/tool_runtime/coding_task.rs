@@ -41,9 +41,8 @@ use super::unknown_session_result;
 use super::validation_events::skipped_validation_summary;
 use super::{ToolCall, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_protocol::{
-    ShellFileOpRequest, SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_GIT,
-    SHELL_CLIENT_CAPABILITY_SHELL,
+use crate::runner_protocol::{
+    ShellFileOpRequest, RUNNER_CAPABILITY_FILE_READ, RUNNER_CAPABILITY_GIT, RUNNER_CAPABILITY_SHELL,
 };
 use std::collections::HashSet;
 use std::time::Duration;
@@ -258,14 +257,14 @@ impl ToolRuntime {
         let access = crate::runner_http::runner_access_from_auth(auth);
         let supports_shell = self
             .runner_registry
-            .runner_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_SHELL, access.as_ref())
+            .runner_supports_for_auth(client_id, RUNNER_CAPABILITY_SHELL, access.as_ref())
             .await
             .map_err(ToolResult::err)?;
         let supports_git = if supports_shell {
             false
         } else {
             self.runner_registry
-                .runner_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_GIT, access.as_ref())
+                .runner_supports_for_auth(client_id, RUNNER_CAPABILITY_GIT, access.as_ref())
                 .await
                 .map_err(ToolResult::err)?
         };
@@ -1659,11 +1658,7 @@ impl ToolRuntime {
         // The owning runner must support the structured file capability.
         if !self
             .runner_registry
-            .runner_supports_for_auth(
-                client_id,
-                SHELL_CLIENT_CAPABILITY_FILE_READ,
-                access.as_ref(),
-            )
+            .runner_supports_for_auth(client_id, RUNNER_CAPABILITY_FILE_READ, access.as_ref())
             .await
             .unwrap_or(false)
         {

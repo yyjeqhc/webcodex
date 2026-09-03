@@ -4,7 +4,7 @@ use super::super::files::*;
 use super::super::sessions::SessionTransport;
 use super::super::ToolCall;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 
 #[tokio::test]
@@ -14,7 +14,7 @@ async fn save_project_artifact_routes_to_agent_file_op() {
         &runtime,
         "artifact-save",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             ..Default::default()
         },
@@ -77,7 +77,7 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
         &runtime,
         "artifact-meta",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -128,7 +128,7 @@ async fn read_project_artifact_metadata_allow_missing_routes_to_agent_file_op() 
         &runtime,
         "artifact-meta-missing",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -177,7 +177,7 @@ async fn read_project_artifact_routes_to_agent_file_op() {
         &runtime,
         "artifact-read",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -237,7 +237,7 @@ async fn read_project_artifact_mcp_image_routes_complete_bounded_remote_read() {
         &runtime,
         "artifact-image",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -309,7 +309,7 @@ async fn read_project_artifact_mcp_image_rejects_untrusted_remote_mime() {
         &runtime,
         "artifact-image-mime",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_read: true,
             ..Default::default()
         },
@@ -403,7 +403,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
         &runtime,
         "artifact-upload",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             ..Default::default()
         },

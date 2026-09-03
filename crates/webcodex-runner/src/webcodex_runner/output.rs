@@ -1,4 +1,4 @@
-use crate::shell_protocol::ShellCommandExecutionState;
+use crate::runner_protocol::ShellCommandExecutionState;
 use std::time::Instant;
 
 #[derive(Debug)]

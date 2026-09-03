@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -18,10 +18,10 @@ async fn register_and_start_agent_job(
     client_id: &str,
 ) -> (
     String,
-    crate::shell_protocol::ShellAgentShellRequest,
+    crate::runner_protocol::RunnerRequest,
     crate::auth::AuthContext,
 ) {
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
         ..Default::default()
@@ -55,7 +55,7 @@ async fn start_owned_agent_job(
     project_id: &str,
     auth: &crate::auth::AuthContext,
 ) -> String {
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
         ..Default::default()
@@ -87,7 +87,7 @@ async fn start_owned_agent_job(
         .await;
     assert!(started.success, "{:?}", started.error);
     let job_id = started.output["job_id"].as_str().unwrap().to_string();
-    let request = wait_for_agent_request_for_client(runtime, client_id).await;
+    let request = wait_for_runner_request_for_client(runtime, client_id).await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     job_id
 }

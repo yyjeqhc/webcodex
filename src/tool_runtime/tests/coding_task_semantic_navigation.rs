@@ -1,11 +1,10 @@
 use super::support::*;
 use crate::lsp_bridge::{
-    AgentLspRequest, AgentLspResultEnvelope, LspAvailabilityStatus, LspCommandSource,
-    LspServerStatusEntry, LspStatusResult, AGENT_LSP_REQUEST_KIND,
+    LspAvailabilityStatus, LspCommandSource, LspServerStatusEntry, LspStatusResult,
+    RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND,
 };
-use crate::shell_protocol::{
-    ShellAgentResultRequest, ShellClientCapabilities,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerResultRequest, RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 };
 use crate::tool_runtime::{
     known_tool_names, model_hidden_tool_names, registered_tool_specs, SessionMode, ToolResult,
@@ -14,8 +13,8 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-fn semantic_capabilities(enabled: bool) -> ShellClientCapabilities {
-    ShellClientCapabilities {
+fn semantic_capabilities(enabled: bool) -> RunnerCapabilities {
+    RunnerCapabilities {
         shell: true,
         git: true,
         file_read: true,
@@ -40,7 +39,7 @@ async fn register_semantic_agent(
         vec![registered_project(project_id, &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
 fn spawn_start(
@@ -74,13 +73,13 @@ fn spawn_start(
 async fn next_semantic_status_request(
     runtime: &ToolRuntime,
     client_id: &str,
-) -> crate::shell_protocol::ShellAgentShellRequest {
+) -> crate::runner_protocol::RunnerRequest {
     let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, AGENT_LSP_REQUEST_KIND);
     assert!(request.command.is_empty());
     assert!(request.stdin.is_none());
     let payload = request.lsp.as_ref().expect("typed LSP payload");
-    assert_eq!(payload.request, AgentLspRequest::Status);
+    assert_eq!(payload.request, RunnerLspRequest::Status);
     request
 }
 
@@ -88,7 +87,7 @@ async fn complete_status_envelope(
     runtime: &ToolRuntime,
     client_id: &str,
     request_id: &str,
-    envelope: AgentLspResultEnvelope,
+    envelope: RunnerLspResultEnvelope,
 ) {
     complete_patch_agent_request(
         runtime,
@@ -142,7 +141,7 @@ async fn start_with_status(
         &runtime,
         "semantic-agent",
         &request.request_id,
-        AgentLspResultEnvelope::ok(status_result("demo", true, status, position_encoding)),
+        RunnerLspResultEnvelope::ok(status_result("demo", true, status, position_encoding)),
     )
     .await;
     finish_start_servicing_locally(&runtime, "semantic-agent", task).await
@@ -271,7 +270,7 @@ async fn coding_task_semantic_navigation_non_rust_agent_is_not_applicable() {
         &runtime,
         "non-rust-agent",
         &request.request_id,
-        AgentLspResultEnvelope::ok(status_result(
+        RunnerLspResultEnvelope::ok(status_result(
             "demo",
             false,
             LspAvailabilityStatus::Available,
@@ -369,9 +368,9 @@ async fn coding_task_semantic_navigation_timeout_uses_one_budget_and_cancels_wai
 
     let expired = runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "timeout-agent".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some("{}".to_string()),
@@ -439,7 +438,7 @@ async fn coding_task_semantic_navigation_agent_failure_uses_fixed_reason_code() 
         &runtime,
         "failed-agent",
         &request.request_id,
-        AgentLspResultEnvelope::err("lsp_protocol_error", "private raw failure detail"),
+        RunnerLspResultEnvelope::err("lsp_protocol_error", "private raw failure detail"),
     )
     .await;
     let result = finish_start_servicing_locally(&runtime, "failed-agent", task).await;
@@ -468,7 +467,7 @@ async fn coding_task_semantic_navigation_read_only_keeps_compact_shape() {
         &runtime,
         "compact-agent",
         &request.request_id,
-        AgentLspResultEnvelope::ok(status_result(
+        RunnerLspResultEnvelope::ok(status_result(
             "demo",
             true,
             LspAvailabilityStatus::Available,
@@ -535,6 +534,6 @@ fn coding_workflow_semantic_navigation_output_schema_is_explicit_and_surface_cou
         .sum();
     assert_eq!(operation_count, 22);
     assert!(!known_tool_names().any(|name| name == "semantic_navigation"));
-    assert!(crate::shell_protocol::SHELL_CLIENT_CAPABILITY_NAMES
-        .contains(&SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION));
+    assert!(crate::runner_protocol::RUNNER_CAPABILITY_NAMES
+        .contains(&RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION));
 }

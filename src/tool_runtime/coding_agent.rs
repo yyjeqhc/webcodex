@@ -45,7 +45,7 @@ const OBSERVATION_MAC_KEY_BYTES: usize = 32;
 pub(crate) struct ServerRunBinding {
     authority_fingerprint: String,
     client_id: String,
-    agent_instance_id: String,
+    runner_instance_id: String,
     runtime_project_id: String,
     provider_id: String,
     provider_instance_id: String,
@@ -68,7 +68,7 @@ pub(crate) struct CodingAgentPreparedStart {
     pub(crate) provider_id: String,
     pub(crate) provider_instance_id: String,
     pub(crate) intent_fingerprint: String,
-    client: crate::shell_protocol::ShellClientView,
+    client: crate::runner_protocol::RunnerView,
     project_root: String,
     instruction: String,
     config: BTreeMap<String, CodingAgentConfigValue>,
@@ -201,14 +201,14 @@ impl CodingAgentServerState {
     }
     async fn bind(
         &self,
-        client: &crate::shell_protocol::ShellClientView,
+        client: &crate::runner_protocol::RunnerView,
         run: CodingAgentRunSnapshot,
         recording_session_id: Option<String>,
     ) -> Result<ServerRunBinding, String> {
         let incoming = ServerRunBinding {
             authority_fingerprint: run.authority_fingerprint.clone(),
             client_id: client.client_id.clone(),
-            agent_instance_id: client.agent_instance_id.clone(),
+            runner_instance_id: client.runner_instance_id.clone(),
             runtime_project_id: run.runtime_project_id.clone(),
             provider_id: run.provider_id.clone(),
             provider_instance_id: run.provider_instance_id.clone(),
@@ -520,7 +520,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_coding_agent(
                 &prepared.client.client_id,
-                &prepared.client.agent_instance_id,
+                &prepared.client.runner_instance_id,
                 &prepared.provider_id,
                 &prepared.provider_instance_id,
                 operation,
@@ -714,7 +714,7 @@ impl ToolRuntime {
             }
         };
         if binding.snapshot.state.terminal()
-            && binding.agent_instance_id
+            && binding.runner_instance_id
                 != self
                     .current_agent_instance(&binding.client_id, auth)
                     .await
@@ -743,7 +743,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_coding_agent(
                 &binding.client_id,
-                &binding.agent_instance_id,
+                &binding.runner_instance_id,
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
@@ -818,7 +818,9 @@ impl ToolRuntime {
                     )
                     .await
                 {
-                    Some(client) if client.agent_instance_id == binding.agent_instance_id => client,
+                    Some(client) if client.runner_instance_id == binding.runner_instance_id => {
+                        client
+                    }
                     Some(_) => {
                         return coding_agent_error(
                             "invalid_runner_response",
@@ -915,7 +917,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_coding_agent(
                 &binding.client_id,
-                &binding.agent_instance_id,
+                &binding.runner_instance_id,
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
@@ -973,7 +975,7 @@ impl ToolRuntime {
                     )
                     .await
                 {
-                    if client.agent_instance_id != binding.agent_instance_id {
+                    if client.runner_instance_id != binding.runner_instance_id {
                         return coding_agent_error(
                             "invalid_runner_response",
                             "owning Runner instance changed while cancellation was in flight",
@@ -1107,8 +1109,9 @@ impl ToolRuntime {
                     return Ok(None);
                 }
                 let identity_changed = !run_matches_binding_identity(&binding, &run);
-                let runner_replaced_while_active =
-                    client.agent_instance_id != binding.agent_instance_id && !run.state.terminal();
+                let runner_replaced_while_active = client.runner_instance_id
+                    != binding.runner_instance_id
+                    && !run.state.terminal();
                 if identity_changed || runner_replaced_while_active {
                     let code = if identity_changed {
                         "coding_agent_identity_changed_uncertain"
@@ -1141,7 +1144,7 @@ impl ToolRuntime {
                 )
                 .await
             {
-                let instance_replaced = current.agent_instance_id != binding.agent_instance_id;
+                let instance_replaced = current.runner_instance_id != binding.runner_instance_id;
                 let provider_replaced = !instance_replaced
                     && current
                         .coding_agent_providers
@@ -1196,7 +1199,7 @@ impl ToolRuntime {
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await
-            .map(|client| client.agent_instance_id)
+            .map(|client| client.runner_instance_id)
     }
 }
 
@@ -1788,7 +1791,7 @@ mod tests {
         ServerRunBinding {
             authority_fingerprint: "auth_test".to_string(),
             client_id: "client".to_string(),
-            agent_instance_id: "instance".to_string(),
+            runner_instance_id: "instance".to_string(),
             runtime_project_id: "agent:test:demo".to_string(),
             provider_id: "codex".to_string(),
             provider_instance_id: "provider".to_string(),
@@ -1815,10 +1818,10 @@ mod tests {
         }
     }
 
-    fn test_shell_client() -> crate::shell_protocol::ShellClientView {
-        crate::shell_protocol::ShellClientView {
+    fn test_shell_client() -> crate::runner_protocol::RunnerView {
+        crate::runner_protocol::RunnerView {
             client_id: "client".to_string(),
-            agent_instance_id: "instance".to_string(),
+            runner_instance_id: "instance".to_string(),
             display_name: None,
             owner: None,
             hostname: None,
@@ -1831,7 +1834,7 @@ mod tests {
             pending_requests: 0,
             projects: Vec::new(),
             project_inventory: None,
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             transport: "websocket".to_string(),
             policy: None,
             registered_at: 0,

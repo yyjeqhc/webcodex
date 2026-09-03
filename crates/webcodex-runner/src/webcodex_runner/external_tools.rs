@@ -8,8 +8,8 @@ use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use super::shutdown::{lock_unpoison, SHUTDOWN_POLL_INTERVAL};
 use super::RunnerPolicy;
-use crate::shell_protocol::{
-    ClaudeCodeProviderStatus, ProviderCallSummary, ShellAgentShellRequest, ToolProvidersStatus,
+use crate::runner_protocol::{
+    ClaudeCodeProviderStatus, ProviderCallSummary, RunnerRequest, ToolProvidersStatus,
     EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use serde_json::{json, Value};
@@ -227,18 +227,14 @@ impl ExternalToolRouter {
     }
 
     #[cfg(test)]
-    pub(crate) fn route(
-        &self,
-        policy: &RunnerPolicy,
-        request: &ShellAgentShellRequest,
-    ) -> ExternalRoute {
+    pub(crate) fn route(&self, policy: &RunnerPolicy, request: &RunnerRequest) -> ExternalRoute {
         self.route_with_shutdown(policy, request, None)
     }
 
     pub(crate) fn route_with_shutdown(
         &self,
         policy: &RunnerPolicy,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
         shutdown: Option<&AtomicBool>,
     ) -> ExternalRoute {
         if self.strategy == ToolProviderStrategy::Native {
@@ -437,7 +433,7 @@ fn normalized_search_exit_code(stdout: &str) -> i32 {
 
 fn validate_context(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     _capability: ProviderCapability,
     payload: &Value,
 ) -> Result<(PathBuf, PathBuf), ProviderError> {

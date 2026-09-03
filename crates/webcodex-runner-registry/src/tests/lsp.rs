@@ -1,10 +1,10 @@
 use super::*;
-use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest};
+use crate::lsp_bridge::{RunnerLspPayload, RunnerLspRequest};
 
-fn lsp_status_payload() -> AgentLspPayload {
-    AgentLspPayload {
+fn lsp_status_payload() -> RunnerLspPayload {
+    RunnerLspPayload {
         project_id: "demo".to_string(),
-        request: AgentLspRequest::Status,
+        request: RunnerLspRequest::Status,
     }
 }
 
@@ -19,7 +19,7 @@ async fn register_lsp_test_runner_capabilities(
     call_hierarchy_capable: bool,
 ) {
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -27,13 +27,13 @@ async fn register_lsp_test_runner_capabilities(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: ShellClientCapabilities {
+            capabilities: RunnerCapabilities {
                 lsp_read_only_navigation: lsp_capable,
                 lsp_call_hierarchy: call_hierarchy_capable,
                 ..Default::default()
@@ -48,9 +48,9 @@ async fn register_lsp_test_runner_capabilities(
 async fn enqueue_call_hierarchy_uses_only_its_distinct_capability() {
     let registry = RunnerRegistry::default();
     register_lsp_test_runner_capabilities(&registry, "hierarchy", false, true).await;
-    let payload = AgentLspPayload {
+    let payload = RunnerLspPayload {
         project_id: "demo".to_string(),
-        request: AgentLspRequest::CallHierarchy {
+        request: RunnerLspRequest::CallHierarchy {
             path: "src/main.rs".to_string(),
             line: 1,
             column: 1,
@@ -72,7 +72,7 @@ async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
     let auth = shared_key_access("ttl-lsp");
     let mut registration = runner_registration("ttl-lsp", "inst", Vec::new());
     registration.capabilities =
-        crate::test_support::current_runner_capabilities(ShellClientCapabilities {
+        crate::test_support::current_runner_capabilities(RunnerCapabilities {
             lsp_call_hierarchy: true,
             ..Default::default()
         });
@@ -90,9 +90,9 @@ async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
     let error = registry
         .enqueue_lsp(
             "ttl-lsp".to_string(),
-            AgentLspPayload {
+            RunnerLspPayload {
                 project_id: "demo".to_string(),
-                request: AgentLspRequest::CallHierarchy {
+                request: RunnerLspRequest::CallHierarchy {
                     path: "src/main.rs".to_string(),
                     line: 1,
                     column: 1,

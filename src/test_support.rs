@@ -150,13 +150,14 @@ pub(crate) fn runner_access(
 /// Tests that exercise registration rejection should construct their wire
 /// capabilities directly instead of using this helper.
 pub(crate) fn current_runner_capabilities(
-    capabilities: crate::shell_protocol::ShellClientCapabilities,
-) -> crate::shell_protocol::ShellClientCapabilities {
+    capabilities: crate::runner_protocol::RunnerCapabilities,
+) -> crate::runner_protocol::RunnerCapabilities {
     let mut value = serde_json::to_value(capabilities).expect("serialize Runner test capabilities");
     let object = value
         .as_object_mut()
         .expect("Runner test capabilities must serialize as an object");
-    for capability in crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+    for capability in
+        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
     {
         object.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
@@ -167,9 +168,9 @@ pub(crate) fn current_runner_capabilities(
 /// generation-2 contract. Protocol-admission tests intentionally bypass this
 /// helper so missing/old generations remain observable failures.
 pub(crate) fn current_runner_registration(
-    mut registration: crate::shell_protocol::ShellClientRegisterRequest,
-) -> crate::shell_protocol::ShellClientRegisterRequest {
-    registration.agent_protocol_generation = crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2;
+    mut registration: crate::runner_protocol::RunnerRegisterRequest,
+) -> crate::runner_protocol::RunnerRegisterRequest {
+    registration.runner_protocol_generation = crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2;
     registration.capabilities = current_runner_capabilities(registration.capabilities);
     registration
 }
@@ -183,22 +184,22 @@ static TEST_PROJECT_INVENTORY_SEQUENCE: std::sync::atomic::AtomicU64 =
 pub(crate) async fn apply_project_inventory_snapshot(
     registry: &crate::runner_http::RunnerRegistry,
     client_id: &str,
-    agent_instance_id: &str,
-    projects: Vec<crate::shell_protocol::ShellAgentProjectSummary>,
+    runner_instance_id: &str,
+    projects: Vec<crate::runner_protocol::RunnerProjectSummary>,
 ) {
     use std::sync::atomic::Ordering;
 
     let snapshot_sequence = TEST_PROJECT_INVENTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let generation = format!("test-inventory-{snapshot_sequence}");
     let chunks = projects
-        .chunks(crate::shell_protocol::PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
+        .chunks(crate::runner_protocol::PROJECT_INVENTORY_PAGE_MAX_SUMMARIES)
         .collect::<Vec<_>>();
     if chunks.is_empty() {
         registry
             .apply_project_inventory_page(
                 client_id,
-                agent_instance_id,
-                crate::shell_protocol::ShellProjectInventoryPage {
+                runner_instance_id,
+                crate::runner_protocol::ShellProjectInventoryPage {
                     generation,
                     snapshot_sequence,
                     page_index: 0,
@@ -217,8 +218,8 @@ pub(crate) async fn apply_project_inventory_snapshot(
         registry
             .apply_project_inventory_page(
                 client_id,
-                agent_instance_id,
-                crate::shell_protocol::ShellProjectInventoryPage {
+                runner_instance_id,
+                crate::runner_protocol::ShellProjectInventoryPage {
                     generation: generation.clone(),
                     snapshot_sequence,
                     page_index: index as u32,

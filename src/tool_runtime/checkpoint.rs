@@ -459,7 +459,7 @@ impl ToolRuntime {
         config: &ProjectConfig,
         include_untracked: bool,
     ) -> Result<Value, String> {
-        self.run_agent_json_file_op(
+        self.run_runner_json_file_op(
             config.client_id.clone(),
             config.path.clone(),
             ".".to_string(),
@@ -475,7 +475,7 @@ impl ToolRuntime {
         config: &ProjectConfig,
         checkpoint: Value,
     ) -> Result<Value, String> {
-        self.run_agent_json_file_op(
+        self.run_runner_json_file_op(
             config.client_id.clone(),
             config.path.clone(),
             ".".to_string(),

@@ -28,12 +28,12 @@ async fn register_occurrence_instance(
     client_id: &str,
     instance: &str,
     supported: bool,
-) -> Result<ShellClientView, String> {
+) -> Result<RunnerView, String> {
     register_instance_with_capabilities(
         registry,
         client_id,
         instance,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             file_write: true,
             apply_text_edit_occurrence: supported,
             ..Default::default()
@@ -56,9 +56,9 @@ async fn enqueue_apply_text_edits_occurrence_requires_capability_and_queues_atom
         .await
         .expect("capable Runner should accept occurrence edit");
     let request = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "occurrence-on".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -74,11 +74,11 @@ async fn enqueue_apply_text_edits_occurrence_requires_capability_and_queues_atom
 
 #[test]
 fn apply_text_edit_occurrence_missing_capability_defaults_false_and_is_omitted() {
-    let legacy: ShellClientCapabilities = serde_json::from_str(
+    let legacy: RunnerCapabilities = serde_json::from_str(
         r#"{"shell":true,"file_read":true,"file_write":true,"structured_file_delete":true}"#,
     )
     .unwrap();
     assert!(!legacy.apply_text_edit_occurrence);
-    let serialized = serde_json::to_value(ShellClientCapabilities::default()).unwrap();
+    let serialized = serde_json::to_value(RunnerCapabilities::default()).unwrap();
     assert!(serialized.get("apply_text_edit_occurrence").is_none());
 }

@@ -183,7 +183,7 @@ pub fn cargo_test_input_schema() -> Value {
     );
     schema["properties"]["min_tests"]["minimum"] = json!(1);
     schema["properties"]["min_tests"]["maximum"] =
-        json!(webcodex_core::shell_protocol::CARGO_TEST_MIN_TESTS_MAX);
+        json!(webcodex_core::runner_protocol::CARGO_TEST_MIN_TESTS_MAX);
     schema["allOf"] = json!([{
         "if": {
             "properties": { "no_run": { "const": true } },
@@ -226,9 +226,9 @@ pub fn go_test_input_schema() -> Value {
     );
     schema["properties"]["packages"]["minItems"] = json!(1);
     schema["properties"]["packages"]["maxItems"] =
-        json!(webcodex_core::shell_protocol::GO_TEST_PACKAGE_MAX_ITEMS);
+        json!(webcodex_core::runner_protocol::GO_TEST_PACKAGE_MAX_ITEMS);
     schema["properties"]["packages"]["items"]["minLength"] = json!(1);
     schema["properties"]["packages"]["items"]["maxLength"] =
-        json!(webcodex_core::shell_protocol::GO_TEST_PACKAGE_MAX_BYTES);
+        json!(webcodex_core::runner_protocol::GO_TEST_PACKAGE_MAX_BYTES);
     with_optional_result_expectation(schema)
 }

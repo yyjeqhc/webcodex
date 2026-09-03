@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use webcodex_core::shell_protocol::ShellJobValidationStep;
+use webcodex_core::runner_protocol::ShellJobValidationStep;
 use webcodex_runner_registry::RunnerAccess;
 
 pub type ConnectorHostFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

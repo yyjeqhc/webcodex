@@ -6,8 +6,8 @@ fn file_read_request(
     start_line: Option<usize>,
     end_line: Option<usize>,
     max_bytes: Option<usize>,
-) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+) -> RunnerRequest {
+    RunnerRequest {
         request_id: "req-file-read".to_string(),
         client_id: "agent-1".to_string(),
         kind: "file_read".to_string(),

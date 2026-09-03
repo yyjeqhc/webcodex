@@ -1,6 +1,6 @@
 use super::*;
 
-fn apply_patch_request(cwd: &Path, patch: &str, dry_run: bool) -> ShellAgentShellRequest {
+fn apply_patch_request(cwd: &Path, patch: &str, dry_run: bool) -> RunnerRequest {
     apply_patch_request_with_strict(cwd, patch, dry_run, false)
 }
 
@@ -9,7 +9,7 @@ fn apply_patch_request_with_strict(
     patch: &str,
     dry_run: bool,
     strict_matching: bool,
-) -> ShellAgentShellRequest {
+) -> RunnerRequest {
     let mut payload = serde_json::json!({
         "patch": patch,
         "dry_run": dry_run,
@@ -17,7 +17,7 @@ fn apply_patch_request_with_strict(
     if strict_matching {
         payload["strict_matching"] = serde_json::json!(true);
     }
-    ShellAgentShellRequest {
+    RunnerRequest {
         request_id: "req-apply-patch".to_string(),
         client_id: "agent-1".to_string(),
         kind: "file_apply_patch".to_string(),

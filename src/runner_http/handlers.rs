@@ -2,11 +2,10 @@ use super::{
     effective_register_owner, enforce_register_owner, enforce_runner_transport, get_registry,
     require_runner_transport_scope, runner_access_from_auth,
 };
-use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
-    ShellAgentPersistentShellResultRequest, ShellAgentPersistentShellResultResponse,
-    ShellAgentPollPayload, ShellAgentPollResponse, ShellAgentResultPayload,
-    ShellAgentResultResponse, ShellClientRegisterRequest, ShellClientRegisterResponse,
+use crate::runner_protocol::{
+    RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerPersistentShellResultRequest,
+    RunnerPersistentShellResultResponse, RunnerPollPayload, RunnerPollResponse,
+    RunnerRegisterRequest, RunnerRegisterResponse, RunnerResultPayload, RunnerResultResponse,
 };
 use salvo::prelude::*;
 
@@ -14,18 +13,18 @@ use salvo::prelude::*;
 pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellClientRegisterResponse {
+        res.render(Json(RunnerRegisterResponse {
             success: false,
             client: None,
             error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
-    let body: ShellClientRegisterRequest = match req.parse_json().await {
+    let body: RunnerRegisterRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellClientRegisterResponse {
+            res.render(Json(RunnerRegisterResponse {
                 success: false,
                 client: None,
                 error: Some(format!("Invalid JSON: {}", e)),
@@ -39,7 +38,7 @@ pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Res
     if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellClientRegisterResponse {
+        res.render(Json(RunnerRegisterResponse {
             success: false,
             client: None,
             error: Some(e),
@@ -48,7 +47,7 @@ pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Res
     }
     if let Err(e) = enforce_register_owner(auth.as_ref(), &body.client_id, body.owner.as_deref()) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellClientRegisterResponse {
+        res.render(Json(RunnerRegisterResponse {
             success: false,
             client: None,
             error: Some(e),
@@ -61,14 +60,14 @@ pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Res
     body.owner = effective_register_owner(auth.as_ref(), body.owner.as_deref());
     let access = runner_access_from_auth(auth.as_ref());
     match registry.register_with_auth(body, access.as_ref()).await {
-        Ok(client) => res.render(Json(ShellClientRegisterResponse {
+        Ok(client) => res.render(Json(RunnerRegisterResponse {
             success: true,
             client: Some(client),
             error: None,
         })),
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellClientRegisterResponse {
+            res.render(Json(RunnerRegisterResponse {
                 success: false,
                 client: None,
                 error: Some(e),
@@ -81,7 +80,7 @@ pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Res
 pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellAgentPollResponse {
+        res.render(Json(RunnerPollResponse {
             success: false,
             request: None,
             error: Some("Runner registry not configured".to_string()),
@@ -89,11 +88,11 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
         }));
         return;
     };
-    let body: ShellAgentPollPayload = match req.parse_json().await {
+    let body: RunnerPollPayload = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentPollResponse {
+            res.render(Json(RunnerPollResponse {
                 success: false,
                 request: None,
                 error: Some(format!("Invalid JSON: {}", e)),
@@ -105,7 +104,7 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_POLL) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPollResponse {
+        res.render(Json(RunnerPollResponse {
             success: false,
             request: None,
             error: Some(e),
@@ -115,7 +114,7 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
     }
     if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.request.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPollResponse {
+        res.render(Json(RunnerPollResponse {
             success: false,
             request: None,
             error: Some(e),
@@ -129,7 +128,7 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPollResponse {
+        res.render(Json(RunnerPollResponse {
             success: false,
             request: None,
             error: Some(e),
@@ -140,24 +139,24 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
     let _ = registry
         .update_tool_providers(
             &body.request.client_id,
-            &body.request.agent_instance_id,
+            &body.request.runner_instance_id,
             body.tool_providers,
         )
         .await;
     let client_id = body.request.client_id.clone();
-    let agent_instance_id = body.request.agent_instance_id.clone();
+    let runner_instance_id = body.request.runner_instance_id.clone();
     let inventory_page = body.project_inventory_page;
     match registry.poll(body.request).await {
         Ok(request) => {
             let project_inventory = if let Some(page) = inventory_page {
                 registry
-                    .apply_project_inventory_page(&client_id, &agent_instance_id, page)
+                    .apply_project_inventory_page(&client_id, &runner_instance_id, page)
                     .await
                     .ok()
             } else {
                 None
             };
-            res.render(Json(ShellAgentPollResponse {
+            res.render(Json(RunnerPollResponse {
                 success: true,
                 request,
                 error: None,
@@ -166,7 +165,7 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
         }
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentPollResponse {
+            res.render(Json(RunnerPollResponse {
                 success: false,
                 request: None,
                 error: Some(e),
@@ -180,17 +179,17 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
 pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellAgentResultResponse {
+        res.render(Json(RunnerResultResponse {
             success: false,
             error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
-    let body: ShellAgentResultPayload = match req.parse_json().await {
+    let body: RunnerResultPayload = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentResultResponse {
+            res.render(Json(RunnerResultResponse {
                 success: false,
                 error: Some(format!("Invalid JSON: {}", e)),
             }));
@@ -200,7 +199,7 @@ pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Respo
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentResultResponse {
+        res.render(Json(RunnerResultResponse {
             success: false,
             error: Some(e),
         }));
@@ -208,7 +207,7 @@ pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Respo
     }
     if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.result.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentResultResponse {
+        res.render(Json(RunnerResultResponse {
             success: false,
             error: Some(e),
         }));
@@ -220,20 +219,20 @@ pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Respo
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentResultResponse {
+        res.render(Json(RunnerResultResponse {
             success: false,
             error: Some(e),
         }));
         return;
     }
     match registry.complete(body).await {
-        Ok(()) => res.render(Json(ShellAgentResultResponse {
+        Ok(()) => res.render(Json(RunnerResultResponse {
             success: true,
             error: None,
         })),
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentResultResponse {
+            res.render(Json(RunnerResultResponse {
                 success: false,
                 error: Some(e),
             }));
@@ -249,17 +248,17 @@ pub async fn runner_persistent_shell_result(
 ) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellAgentPersistentShellResultResponse {
+        res.render(Json(RunnerPersistentShellResultResponse {
             success: false,
             error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
-    let body: ShellAgentPersistentShellResultRequest = match req.parse_json().await {
+    let body: RunnerPersistentShellResultRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(error) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentPersistentShellResultResponse {
+            res.render(Json(RunnerPersistentShellResultResponse {
                 success: false,
                 error: Some(format!("Invalid JSON: {error}")),
             }));
@@ -271,7 +270,7 @@ pub async fn runner_persistent_shell_result(
         require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT)
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPersistentShellResultResponse {
+        res.render(Json(RunnerPersistentShellResultResponse {
             success: false,
             error: Some(error),
         }));
@@ -279,7 +278,7 @@ pub async fn runner_persistent_shell_result(
     }
     if let Err(error) = enforce_runner_transport(auth.as_ref(), &body.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPersistentShellResultResponse {
+        res.render(Json(RunnerPersistentShellResultResponse {
             success: false,
             error: Some(error),
         }));
@@ -291,20 +290,20 @@ pub async fn runner_persistent_shell_result(
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentPersistentShellResultResponse {
+        res.render(Json(RunnerPersistentShellResultResponse {
             success: false,
             error: Some(error),
         }));
         return;
     }
     match registry.complete_persistent_shell(body).await {
-        Ok(()) => res.render(Json(ShellAgentPersistentShellResultResponse {
+        Ok(()) => res.render(Json(RunnerPersistentShellResultResponse {
             success: true,
             error: None,
         })),
         Err(error) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentPersistentShellResultResponse {
+            res.render(Json(RunnerPersistentShellResultResponse {
                 success: false,
                 error: Some(error),
             }));
@@ -316,18 +315,18 @@ pub async fn runner_persistent_shell_result(
 pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellAgentJobUpdateResponse {
+        res.render(Json(RunnerJobUpdateResponse {
             success: false,
             job: None,
             error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
-    let body: ShellAgentJobUpdateRequest = match req.parse_json().await {
+    let body: RunnerJobUpdateRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentJobUpdateResponse {
+            res.render(Json(RunnerJobUpdateResponse {
                 success: false,
                 job: None,
                 error: Some(format!("Invalid JSON: {}", e)),
@@ -340,7 +339,7 @@ pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut R
         require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_JOB_UPDATE)
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentJobUpdateResponse {
+        res.render(Json(RunnerJobUpdateResponse {
             success: false,
             job: None,
             error: Some(e),
@@ -349,7 +348,7 @@ pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut R
     }
     if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentJobUpdateResponse {
+        res.render(Json(RunnerJobUpdateResponse {
             success: false,
             job: None,
             error: Some(e),
@@ -362,7 +361,7 @@ pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut R
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ShellAgentJobUpdateResponse {
+        res.render(Json(RunnerJobUpdateResponse {
             success: false,
             job: None,
             error: Some(e),
@@ -370,14 +369,14 @@ pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut R
         return;
     }
     match registry.update_job(body).await {
-        Ok(job) => res.render(Json(ShellAgentJobUpdateResponse {
+        Ok(job) => res.render(Json(RunnerJobUpdateResponse {
             success: true,
             job: Some(job),
             error: None,
         })),
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellAgentJobUpdateResponse {
+            res.render(Json(RunnerJobUpdateResponse {
                 success: false,
                 job: None,
                 error: Some(e),

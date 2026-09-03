@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-fn wire_capabilities_with_only(feature: Option<RunnerFeature>) -> ShellClientCapabilities {
+fn wire_capabilities_with_only(feature: Option<RunnerFeature>) -> RunnerCapabilities {
     let mut value = serde_json::Map::new();
     // `shell` is the one historical true-by-default field. Pin it false so an
     // omitted field really means false in this all-false/individual-true fixture.
@@ -16,10 +16,10 @@ fn wire_capabilities_with_only(feature: Option<RunnerFeature>) -> ShellClientCap
 }
 
 fn with_wire_feature(
-    capabilities: &ShellClientCapabilities,
+    capabilities: &RunnerCapabilities,
     feature: RunnerFeature,
     enabled: bool,
-) -> ShellClientCapabilities {
+) -> RunnerCapabilities {
     let mut value = serde_json::to_value(capabilities).unwrap();
     value
         .as_object_mut()
@@ -30,7 +30,7 @@ fn with_wire_feature(
 
 #[test]
 fn canonical_runner_feature_inventory_matches_wire_names_exactly() {
-    let wire_names = SHELL_CLIENT_CAPABILITY_NAMES
+    let wire_names = RUNNER_CAPABILITY_NAMES
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
@@ -39,7 +39,7 @@ fn canonical_runner_feature_inventory_matches_wire_names_exactly() {
         .map(|feature| feature.as_wire_name())
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(wire_names.len(), SHELL_CLIENT_CAPABILITY_NAMES.len());
+    assert_eq!(wire_names.len(), RUNNER_CAPABILITY_NAMES.len());
     assert_eq!(canonical_names.len(), RunnerFeature::all().len());
     assert_eq!(canonical_names, wire_names);
 }
@@ -153,7 +153,7 @@ async fn patch_contract_capabilities_require_their_prerequisites() {
 
 #[test]
 fn v2_baseline_exactly_matches_generation_eligible_classification() {
-    let baseline = AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+    let baseline = RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
@@ -167,7 +167,7 @@ fn v2_baseline_exactly_matches_generation_eligible_classification() {
     assert_eq!(baseline.len(), 22);
     assert_eq!(
         baseline.len(),
-        AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len()
+        RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.len()
     );
     assert_eq!(baseline, generation_eligible);
     for feature in RunnerFeature::all() {
@@ -248,7 +248,7 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
 
 #[test]
 fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
-    let wire: ShellClientCapabilities = serde_json::from_str(r#"{}"#).unwrap();
+    let wire: RunnerCapabilities = serde_json::from_str(r#"{}"#).unwrap();
     let semantics = RunnerFeatureSet::from_wire_for_test(&wire);
 
     assert!(semantics.supports(RunnerFeature::Shell));
@@ -320,7 +320,10 @@ async fn top_level_generation_stays_separate_from_public_capability_projection()
     registration.capabilities = capabilities;
     let view = registry.register(registration).await.unwrap();
 
-    assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
+    assert_eq!(
+        view.runner_protocol_generation,
+        RUNNER_PROTOCOL_GENERATION_V2
+    );
     assert!(view.capabilities.computer_control);
     let serialized = serde_json::to_value(&view.capabilities).unwrap();
     assert!(serialized.get("agent_protocol_generation").is_none());
@@ -341,7 +344,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
         .get_runner_semantic_view("semantic-snapshot")
         .await
         .unwrap();
-    assert_eq!(first_snapshot.view.agent_instance_id, "inst-a");
+    assert_eq!(first_snapshot.view.runner_instance_id, "inst-a");
     assert!(first_snapshot.view.connected);
     assert!(first_snapshot.supports(RunnerFeature::FileRead));
     assert!(first_snapshot.supports(RunnerFeature::StructuredProcessArgv));
@@ -366,7 +369,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
         .get_runner_semantic_view("semantic-snapshot")
         .await
         .unwrap();
-    assert_eq!(replacement_snapshot.view.agent_instance_id, "inst-b");
+    assert_eq!(replacement_snapshot.view.runner_instance_id, "inst-b");
     assert!(replacement_snapshot.view.connected);
     assert!(replacement_snapshot.supports(RunnerFeature::FileRead));
     assert!(replacement_snapshot.supports(RunnerFeature::FileWrite));
@@ -376,7 +379,7 @@ async fn semantic_snapshot_keeps_identity_state_and_features_atomic_across_repla
 
     // The prior immutable observation remains internally coherent rather than
     // being paired with feature truth from the replacement process.
-    assert_eq!(first_snapshot.view.agent_instance_id, "inst-a");
+    assert_eq!(first_snapshot.view.runner_instance_id, "inst-a");
     assert!(first_snapshot.supports(RunnerFeature::FileRead));
     assert!(first_snapshot.supports(RunnerFeature::FileWrite));
     assert!(first_snapshot.supports(RunnerFeature::ComputerObserve));
@@ -471,7 +474,7 @@ async fn register_sticky_feature_state(
     registration.capabilities = capabilities;
 
     if feature == RunnerFeature::JobStateReconciliation && enabled {
-        registration.job_inventory = Some(crate::shell_protocol::ShellJobInventory {
+        registration.job_inventory = Some(crate::runner_protocol::ShellJobInventory {
             active_complete: true,
             jobs: Vec::new(),
         });
@@ -596,6 +599,6 @@ async fn canonical_sticky_feature_fence_preserves_allowed_reconnect_transitions(
         .await
         .unwrap();
     let view = replacement.get_runner_view("replacement").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-b");
+    assert_eq!(view.runner_instance_id, "inst-b");
     assert!(!view.capabilities.job_state_reconciliation);
 }

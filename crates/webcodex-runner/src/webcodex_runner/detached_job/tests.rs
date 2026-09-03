@@ -93,7 +93,7 @@ fn test_request(executable: String, args: Vec<String>) -> DetachedStartRequest {
         job_id: format!("job_{}", Uuid::new_v4().simple()),
         request_id: format!("req_{}", Uuid::new_v4().simple()),
         client_id: "test-runner".to_string(),
-        agent_instance_id: "test-instance".to_string(),
+        runner_instance_id: "test-instance".to_string(),
         context: safe_context(),
         launch: DetachedLaunchSpec {
             process: ShellProcessArgv { executable, args },
@@ -418,6 +418,26 @@ fn output_tail_is_bounded_while_total_bytes_and_line_cursors_continue() {
     append_output_tail(&mut output, 5, "tail\n");
     assert_eq!(output.next_line, previous_next + 1);
     validate_output_state("stdout", &output).unwrap();
+}
+
+#[test]
+fn detached_job_persistence_preserves_historical_agent_instance_key() {
+    let request = test_request("/bin/true".to_string(), Vec::new());
+    let request_value = serde_json::to_value(&request).unwrap();
+    assert_eq!(request_value["agent_instance_id"], "test-instance");
+    assert!(request_value.get("runner_instance_id").is_none());
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let record = match store.prepare(&request).unwrap() {
+        PrepareOutcome::First(record) => record,
+        _ => panic!("first prepare must claim"),
+    };
+    let record_value = serde_json::to_value(&record).unwrap();
+    assert_eq!(record_value["agent_instance_id"], "test-instance");
+    assert!(record_value.get("runner_instance_id").is_none());
+    let decoded: DetachedJobRecord = serde_json::from_value(record_value).unwrap();
+    assert_eq!(decoded.runner_instance_id, "test-instance");
 }
 
 #[test]

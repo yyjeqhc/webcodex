@@ -2,7 +2,7 @@ use super::config::{
     default_true, project_registry_dir, validate_shell_profile_name, RunnerConfig, RunnerPolicy,
 };
 use super::shell::canonicalize_existing;
-use crate::shell_protocol::{ShellAgentProjectSummary, ShellAgentShellRequest};
+use crate::runner_protocol::{RunnerProjectSummary, RunnerRequest};
 use crate::{err_cmd, ok_cmd, write_created_file};
 use crate::{CommandResult, CreatedProjectPaths};
 use serde::{Deserialize, Serialize};
@@ -97,7 +97,7 @@ pub(crate) struct RunnerProjectFile {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RunnerProjectCache {
-    projects: Vec<ShellAgentProjectSummary>,
+    projects: Vec<RunnerProjectSummary>,
     refreshed_at: Option<Instant>,
 }
 
@@ -557,7 +557,7 @@ fn runner_project_summary_with_shutdown(
     updated_at: i64,
     include_git: bool,
     shutdown: Option<&AtomicBool>,
-) -> ShellAgentProjectSummary {
+) -> RunnerProjectSummary {
     let mut hooks = project.hooks.keys().cloned().collect::<Vec<_>>();
     hooks.sort();
     // The server uses the reported path as part of its repository continuity
@@ -591,7 +591,7 @@ fn runner_project_summary_with_shutdown(
     // sentinel. New auto-registered records keep persisted `kind` empty, but
     // temporarily project that sentinel on the wire when there is no genuine
     // project kind. New Servers ignore it in favor of `registration_source`.
-    ShellAgentProjectSummary {
+    RunnerProjectSummary {
         id: project.id.clone(),
         name: project.name.clone().or_else(|| Some(project.id.clone())),
         path: resolved_path,
@@ -615,7 +615,7 @@ pub(crate) fn runner_project_summary(
     project: &RunnerProjectFile,
     updated_at: i64,
     include_git: bool,
-) -> ShellAgentProjectSummary {
+) -> RunnerProjectSummary {
     runner_project_summary_with_shutdown(project, updated_at, include_git, None)
 }
 
@@ -637,7 +637,7 @@ fn warn_empty_hook_commands(source: &Path, project: &RunnerProjectFile) {
 fn load_runner_project_summaries_from_dir_with_shutdown(
     dir: &Path,
     shutdown: Option<&AtomicBool>,
-) -> Vec<ShellAgentProjectSummary> {
+) -> Vec<RunnerProjectSummary> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
@@ -705,14 +705,14 @@ fn load_runner_project_summaries_from_dir_with_shutdown(
     projects
 }
 
-pub(crate) fn load_runner_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSummary> {
+pub(crate) fn load_runner_project_summaries_from_dir(dir: &Path) -> Vec<RunnerProjectSummary> {
     load_runner_project_summaries_from_dir_with_shutdown(dir, None)
 }
 
 fn load_runner_project_summaries(
     cfg: &RunnerConfig,
     shutdown: Option<&AtomicBool>,
-) -> Vec<ShellAgentProjectSummary> {
+) -> Vec<RunnerProjectSummary> {
     // Loaded configs always carry a materialized project_registry_dir; a bare
     // test-built config that cannot derive one reports the error instead of
     // silently scanning a relative path.
@@ -728,7 +728,7 @@ fn load_runner_project_summaries(
 
 impl RunnerProjectCache {
     #[cfg(test)]
-    pub(crate) fn get(&mut self, cfg: &RunnerConfig) -> Vec<ShellAgentProjectSummary> {
+    pub(crate) fn get(&mut self, cfg: &RunnerConfig) -> Vec<RunnerProjectSummary> {
         self.get_with_shutdown(cfg, None)
     }
 
@@ -736,7 +736,7 @@ impl RunnerProjectCache {
         &mut self,
         cfg: &RunnerConfig,
         shutdown: Option<&AtomicBool>,
-    ) -> Vec<ShellAgentProjectSummary> {
+    ) -> Vec<RunnerProjectSummary> {
         if self.refreshed_at.is_some_and(|refreshed_at| {
             refreshed_at.elapsed() < Duration::from_millis(PROJECT_SCAN_CACHE_MS)
         }) {
@@ -1184,7 +1184,7 @@ fn choose_auto_project_id(
 }
 
 fn path_resolution_success(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     project: &RunnerProjectFile,
     canonical_path: &Path,
     outcome: &'static str,
@@ -1216,7 +1216,7 @@ fn path_resolution_success(
 
 fn existing_path_resolution_result(
     start: Instant,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     canonical_path: &Path,
     matches: Vec<RunnerProjectFile>,
 ) -> Option<CommandResult> {
@@ -1262,7 +1262,7 @@ fn existing_path_resolution_result(
 pub(crate) fn handle_resolve_or_register_project(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
 ) -> CommandResult {
     let start = Instant::now();
     let _registry_guard = match project_registry_write_lock().lock() {
@@ -1535,7 +1535,7 @@ fn unregister_project_config(path: &Path) -> Result<(), ProjectUnregisterError> 
 pub(crate) fn handle_project_lifecycle_op(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
 ) -> CommandResult {
     let _registry_guard = match project_registry_write_lock().lock() {
         Ok(guard) => guard,
@@ -1753,7 +1753,7 @@ fn recovered_project_result(
 pub(crate) fn handle_project_op(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
 ) -> CommandResult {
     let _registry_guard = match project_registry_write_lock().lock() {
         Ok(guard) => guard,

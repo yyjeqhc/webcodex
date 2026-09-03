@@ -32,7 +32,7 @@ use crate::project_overview::{
     normalize_project_overview_path,
 };
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellCommandExecutionState, ShellFileOpRequest, ShellRunRequest, ShellRunResponse,
     EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
@@ -92,7 +92,7 @@ impl ToolRuntime {
     // Arguments travel as JSON in a native Runner file-op payload; the agent
     // performs validation and returns one JSON object on stdout.
 
-    pub(crate) async fn run_agent_json_file_op(
+    pub(crate) async fn run_runner_json_file_op(
         &self,
         client_id: String,
         cwd: String,

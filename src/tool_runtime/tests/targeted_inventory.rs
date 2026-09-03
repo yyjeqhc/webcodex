@@ -1,7 +1,7 @@
 use super::super::projects::{ListProjectsOptions, ProjectCandidate};
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{AgentBuildInfo, ShellClientCapabilities, ShellClientRegisterRequest};
+use crate::runner_protocol::{RunnerBuildInfo, RunnerCapabilities, RunnerRegisterRequest};
 
 fn list_projects_call(
     client_id: Option<&str>,
@@ -44,12 +44,12 @@ fn runtime_status_call(client_id: Option<&str>, compact: bool) -> ToolCall {
 async fn register_target_agent(
     runtime: &ToolRuntime,
     client_id: &str,
-    projects: Vec<crate::shell_protocol::ShellAgentProjectSummary>,
-    build: Option<AgentBuildInfo>,
+    projects: Vec<crate::runner_protocol::RunnerProjectSummary>,
+    build: Option<RunnerBuildInfo>,
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build,
             job_concurrency_limit: Some(4),
@@ -57,19 +57,17 @@ async fn register_target_agent(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: format!("inst-{client_id}"),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: format!("inst-{client_id}"),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: Some(format!("Runner {client_id}")),
             owner: None,
             hostname: Some(format!("host-{client_id}")),
             host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities {
-                    git: true,
-                    async_shell_jobs: true,
-                    ..Default::default()
-                },
-            ),
+            capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
+                git: true,
+                async_shell_jobs: true,
+                ..Default::default()
+            }),
             policy: None,
         })
         .await
@@ -92,7 +90,7 @@ async fn register_target_agent_for_auth(
     runtime
         .runner_registry
         .register_with_auth(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: Some(4),
@@ -100,14 +98,14 @@ async fn register_target_agent_for_auth(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: client_id.to_string(),
-                agent_instance_id: format!("inst-{client_id}"),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: format!("inst-{client_id}"),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
                 capabilities: crate::test_support::current_runner_capabilities(
-                    ShellClientCapabilities::default(),
+                    RunnerCapabilities::default(),
                 ),
                 policy: None,
             },
@@ -145,7 +143,7 @@ async fn register_managed_target_agent(
 ) {
     runtime
         .runner_registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: Some(4),
@@ -153,14 +151,14 @@ async fn register_managed_target_agent(
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: client_id.to_string(),
-            agent_instance_id: format!("inst-{client_id}"),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: format!("inst-{client_id}"),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: Some(format!("{owner} private runner")),
             owner: Some(owner.to_string()),
             hostname: Some(format!("{owner}-private-host")),
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
-                ShellClientCapabilities::default(),
+                RunnerCapabilities::default(),
             ),
             policy: None,
         })
@@ -175,7 +173,7 @@ async fn register_managed_target_agent(
     .await;
 }
 
-fn large_fixture_projects(count: usize) -> Vec<crate::shell_protocol::ShellAgentProjectSummary> {
+fn large_fixture_projects(count: usize) -> Vec<crate::runner_protocol::RunnerProjectSummary> {
     (0..count)
         .map(|index| {
             let mut project = registered_project(
@@ -696,12 +694,12 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
 #[tokio::test]
 async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
     let runtime = test_runtime();
-    let special_build = AgentBuildInfo {
+    let special_build = RunnerBuildInfo {
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         git_commit: Some("A".to_string()),
         git_dirty: Some(false),
     };
-    let mini_build = AgentBuildInfo {
+    let mini_build = RunnerBuildInfo {
         version: Some("0.0.1".to_string()),
         git_commit: Some("B".to_string()),
         git_dirty: Some(false),

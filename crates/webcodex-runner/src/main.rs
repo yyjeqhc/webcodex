@@ -18,29 +18,28 @@ mod webcodex_runner;
 
 use webcodex_core::{
     apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway,
-    shell_protocol, validation_bridge,
+    runner_protocol, validation_bridge,
 };
 use webcodex_runner_config as runner_config;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
 
-use shell_protocol::{
-    validation_infrastructure_failure_code, AgentPolicySummary, ShellAgentJobUpdateRequest,
-    ShellAgentPollPayload, ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectSummary,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellClientRegisterResponse, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
-    ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
-    ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
-    ShellProjectInventoryPage, ShellProjectInventoryStatus, AGENT_PROTOCOL_GENERATION_V2,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
+use runner_protocol::{
+    validation_infrastructure_failure_code, RunnerCapabilities, RunnerJobUpdateRequest,
+    RunnerPolicySummary, RunnerPollPayload, RunnerPollRequest, RunnerPollResponse,
+    RunnerProjectSummary, RunnerRegisterRequest, RunnerRegisterResponse, RunnerRequest,
+    ShellCommandExecutionState, ShellJobContext, ShellJobInventory, ShellJobLogSnapshot,
+    ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress, ShellJobValidationStep,
+    ShellProfileSummaryEntry, ShellProfilesSummary, ShellProjectInventoryPage,
+    ShellProjectInventoryStatus, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
-    VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
-    VALIDATION_TOOL_UNAVAILABLE_CODE,
+    RUNNER_PROTOCOL_GENERATION_V2, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 
 #[cfg(test)]
 use runner_config::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
-use shell_protocol::{AgentEnvelope, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES};
+use runner_protocol::{RunnerEnvelope, RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES};
 #[cfg(test)]
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -84,12 +83,12 @@ use webcodex_runner::{
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
-const AGENT_REGISTER_PATH: &str = "/api/shell/agent/register";
-const AGENT_POLL_PATH: &str = "/api/shell/agent/poll";
+const RUNNER_REGISTER_PATH: &str = "/api/shell/agent/register";
+const RUNNER_POLL_PATH: &str = "/api/shell/agent/poll";
 /// Polling HTTP responses can carry the current largest 15 MiB request
 /// payloads plus their JSON envelope, but must never be loaded without a
 /// finite bound.
-const AGENT_HTTP_RESPONSE_BODY_MAX_BYTES: usize = 32 * 1024 * 1024;
+const RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// At most the validated Job state machine's semantic transitions are retained
 /// for live delivery. Output-only updates are coalesced separately below.
@@ -209,7 +208,7 @@ struct PendingJobStart {
     shell: ShellConfig,
     ssh: SshConfig,
     project_registry_dir: PathBuf,
-    request: ShellAgentShellRequest,
+    request: RunnerRequest,
 }
 
 #[derive(Debug, Clone)]
@@ -297,7 +296,7 @@ struct DetachedJobRef {
 #[derive(Debug, Clone)]
 struct RunningJob {
     client_id: String,
-    agent_instance_id: String,
+    runner_instance_id: String,
     snapshot: ShellJobSnapshot,
     /// The single owner of the job's process tree. Clones are shared with the
     /// job's worker thread so it can poll the direct child and terminate the
@@ -320,7 +319,7 @@ struct PendingJobUpdateDelivery {
 }
 
 impl PendingJobUpdateDelivery {
-    fn from_update(update: &ShellAgentJobUpdateRequest) -> Self {
+    fn from_update(update: &RunnerJobUpdateRequest) -> Self {
         Self {
             update_seq: update.update_seq.unwrap_or_default(),
             status: update.status.clone(),
@@ -415,9 +414,9 @@ impl JobUpdateDeliveryQueue {
 fn job_update_from_delivery(
     job: &RunningJob,
     pending: &PendingJobUpdateDelivery,
-) -> ShellAgentJobUpdateRequest {
+) -> RunnerJobUpdateRequest {
     let mut update =
-        job_update_from_snapshot(&job.client_id, &job.agent_instance_id, &job.snapshot);
+        job_update_from_snapshot(&job.client_id, &job.runner_instance_id, &job.snapshot);
     update.update_seq = Some(pending.update_seq);
     update.status = pending.status.clone();
     update.exit_code = pending.exit_code;
@@ -529,7 +528,7 @@ fn test_job_snapshot(job_id: &str) -> ShellJobSnapshot {
         duration_ms: None,
         error: None,
         command_execution_state: None,
-        context: shell_protocol::ShellJobContext {
+        context: runner_protocol::ShellJobContext {
             runtime_project_id: None,
             workflow_session_id: None,
             ssh_resource: None,
@@ -549,8 +548,8 @@ fn test_job_snapshot(job_id: &str) -> ShellJobSnapshot {
 }
 
 #[cfg(test)]
-fn test_job_context(cwd: &Path, validation_steps: Vec<String>) -> shell_protocol::ShellJobContext {
-    shell_protocol::ShellJobContext {
+fn test_job_context(cwd: &Path, validation_steps: Vec<String>) -> runner_protocol::ShellJobContext {
+    runner_protocol::ShellJobContext {
         runtime_project_id: None,
         workflow_session_id: None,
         ssh_resource: None,
@@ -1087,7 +1086,7 @@ impl PollError {
                 PollErrorKind::Auth,
                 format!(
                     "authentication failed while polling {}: {}; check agent token/config",
-                    AGENT_POLL_PATH, summary
+                    RUNNER_POLL_PATH, summary
                 ),
             )
         } else if is_unknown_polling_session(client_id, Some(&summary)) {
@@ -1157,7 +1156,7 @@ struct PollingDispatch {
     persistent_shells: webcodex_runner::PersistentShellManager,
     project_registry_dir: PathBuf,
     lsp: webcodex_runner::LspSupervisor,
-    request: ShellAgentShellRequest,
+    request: RunnerRequest,
 }
 
 impl PollingDispatch {
@@ -1750,7 +1749,7 @@ where
                 content_type,
                 format!(
                     "response body exceeds limit_bytes={}",
-                    AGENT_HTTP_RESPONSE_BODY_MAX_BYTES
+                    RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES
                 ),
             ),
         ));
@@ -1808,7 +1807,7 @@ where
     let content_type =
         bounded_response_content_type(resp.headers().get(reqwest::header::CONTENT_TYPE), token);
     let content_length = resp.content_length();
-    if content_length.is_some_and(|length| length > AGENT_HTTP_RESPONSE_BODY_MAX_BYTES as u64) {
+    if content_length.is_some_and(|length| length > RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES as u64) {
         if !status.is_success() {
             return Err(RunnerHttpError::status(path, status, ""));
         }
@@ -1819,7 +1818,7 @@ where
                 &content_type,
                 format!(
                     "declared response body exceeds limit_bytes={}",
-                    AGENT_HTTP_RESPONSE_BODY_MAX_BYTES
+                    RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES
                 ),
             ),
         ));
@@ -1828,7 +1827,7 @@ where
     let body = match read_bounded_response_body(
         &mut resp,
         content_length,
-        AGENT_HTTP_RESPONSE_BODY_MAX_BYTES,
+        RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES,
     ) {
         Ok(body) => body,
         Err(error) if status.is_success() => {
@@ -1863,7 +1862,7 @@ fn disable_job_state_reconciliation_for_test() -> bool {
     )
 }
 
-fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
+fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
     capabilities.jobs = true;
     capabilities.file_read = true;
@@ -2004,14 +2003,14 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> ShellClientCapabilities {
 #[cfg(test)]
 fn build_register_request(
     cfg: &RunnerConfig,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     prepared_cache_count: usize,
-) -> ShellClientRegisterRequest {
+) -> RunnerRegisterRequest {
     let runtime = ReloadableRunnerConfig::new(cfg.clone(), PathBuf::new());
     build_register_request_with_provider_status(
         cfg,
         &runtime,
-        agent_instance_id,
+        runner_instance_id,
         prepared_cache_count,
         ShellJobInventory {
             active_complete: true,
@@ -2024,11 +2023,11 @@ fn build_register_request(
 fn build_register_request_with_provider_status(
     cfg: &RunnerConfig,
     runtime: &ReloadableRunnerConfig,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     prepared_cache_count: usize,
     job_inventory: ShellJobInventory,
 ) -> (
-    ShellClientRegisterRequest,
+    RunnerRegisterRequest,
     Arc<webcodex_runner::external_tools::ExternalToolRouter>,
     u64,
 ) {
@@ -2043,10 +2042,10 @@ fn build_register_request_with_provider_status(
     let (mut tool_providers, revision) = hot.external_tools.registration_status();
     tool_providers.config_reload = hot.reload_status();
     (
-        ShellClientRegisterRequest {
+        RunnerRegisterRequest {
             client_id: cfg.client_id.clone(),
-            agent_instance_id: agent_instance_id.to_string(),
-            agent_protocol_generation: AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: runner_instance_id.to_string(),
+            runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
             display_name: cfg.display_name.clone(),
             owner: cfg.owner.clone(),
             hostname: cfg.hostname.clone().or_else(hostname),
@@ -2087,9 +2086,9 @@ fn process_started_at() -> i64 {
 }
 
 /// Non-secret runner build identity for mixed-version diagnostics.
-fn runner_build_info() -> shell_protocol::AgentBuildInfo {
+fn runner_build_info() -> runner_protocol::RunnerBuildInfo {
     let info = build_info::current();
-    shell_protocol::AgentBuildInfo {
+    runner_protocol::RunnerBuildInfo {
         version: Some(info.version.to_string()),
         git_commit: info.git_commit.map(str::to_string),
         git_dirty: info.git_dirty,
@@ -2183,10 +2182,10 @@ fn build_shell_profiles_summary(
 fn register_policy_summary(
     cfg: &HotRunnerConfig,
     prepared_cache_count: usize,
-    tool_providers: shell_protocol::ToolProvidersStatus,
+    tool_providers: runner_protocol::ToolProvidersStatus,
     mcp_gateway_providers: Vec<crate::mcp_gateway::McpGatewayProvider>,
-) -> AgentPolicySummary {
-    AgentPolicySummary {
+) -> RunnerPolicySummary {
+    RunnerPolicySummary {
         allow_raw_shell: cfg.policy.allow_raw_shell,
         allow_cwd_anywhere: cfg.policy.allow_cwd_anywhere,
         allowed_roots: cfg.policy.allowed_roots.clone(),
@@ -2207,14 +2206,14 @@ fn register(
     runtime: &ReloadableRunnerConfig,
     project_cache: &mut RunnerProjectCache,
     shutdown: Option<&AtomicBool>,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     prepared_cache_count: usize,
     jobs: &JobManager,
 ) -> Result<
     (
         usize,
         ShellJobInventory,
-        Vec<ShellAgentProjectSummary>,
+        Vec<RunnerProjectSummary>,
         ShellProjectInventoryStatus,
     ),
     RegisterError,
@@ -2225,11 +2224,11 @@ fn register(
     let (body, provider, provider_revision) = build_register_request_with_provider_status(
         cfg,
         runtime,
-        agent_instance_id,
+        runner_instance_id,
         prepared_cache_count,
         job_inventory.clone(),
     );
-    let response: ShellClientRegisterResponse = post_json(client, cfg, AGENT_REGISTER_PATH, &body)
+    let response: RunnerRegisterResponse = post_json(client, cfg, RUNNER_REGISTER_PATH, &body)
         .map_err(|error| RegisterError::from_http(error, &cfg.client_id))?;
     if response.success {
         provider.mark_status_reported(provider_revision);
@@ -2257,7 +2256,7 @@ fn is_file_request_kind(kind: &str) -> bool {
         || is_checkpoint_request_kind(kind)
 }
 
-fn handle_file_request(policy: &RunnerPolicy, request: &ShellAgentShellRequest) -> CommandResult {
+fn handle_file_request(policy: &RunnerPolicy, request: &RunnerRequest) -> CommandResult {
     let Some(path) = request.path.as_deref() else {
         return CommandResult {
             exit_code: None,
@@ -2696,9 +2695,7 @@ fn job_prestart_lifecycle_for_kind(kind: &str) -> Option<ShellCommandExecutionSt
     .then_some(ShellCommandExecutionState::NotStarted)
 }
 
-fn structured_prestart_lifecycle(
-    request: &ShellAgentShellRequest,
-) -> Option<ShellCommandExecutionState> {
+fn structured_prestart_lifecycle(request: &RunnerRequest) -> Option<ShellCommandExecutionState> {
     job_prestart_lifecycle_for_kind(request.kind.as_str())
 }
 
@@ -2748,12 +2745,12 @@ fn raw_shell_job_terminal_lifecycle(
 
 fn job_update_from_snapshot(
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     snapshot: &ShellJobSnapshot,
-) -> ShellAgentJobUpdateRequest {
-    ShellAgentJobUpdateRequest {
+) -> RunnerJobUpdateRequest {
+    RunnerJobUpdateRequest {
         client_id: client_id.to_string(),
-        agent_instance_id: agent_instance_id.to_string(),
+        runner_instance_id: runner_instance_id.to_string(),
         job_id: snapshot.job_id.clone(),
         request_id: Some(snapshot.request_id.clone()),
         update_seq: Some(snapshot.update_seq),
@@ -2987,7 +2984,7 @@ fn validate_detached_recovery_context(
 
 fn validate_runner_job_context(
     context: &ShellJobContext,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     client_id: &str,
 ) -> Result<(), String> {
     const MAX_CONTEXT_FIELD_CHARS: usize = 1_024;
@@ -3042,7 +3039,7 @@ fn validate_runner_job_context(
         return Err("job recovery context shell is invalid".to_string());
     }
     if request.kind == "start_job" {
-        shell_protocol::validate_raw_shell_wire_command(&request.command)?;
+        runner_protocol::validate_raw_shell_wire_command(&request.command)?;
     }
     let validation_context = request.kind == "start_validation_job";
     if (validation_context && !(1..=3).contains(&context.validation_steps.len()))
@@ -3104,9 +3101,9 @@ fn validate_runner_job_context(
                 return Err("typed process Job request shape is invalid".to_string());
             }
             let process = request.process.as_ref().expect("checked process payload");
-            shell_protocol::validate_process_argv(process)?;
+            runner_protocol::validate_process_argv(process)?;
             validate_runner_structured_common(request)?;
-            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+            Some(runner_protocol::ShellJobStructuredExecutionMetadata {
                 execution_source: "run_process".to_string(),
                 language: None,
                 script_bytes: None,
@@ -3129,9 +3126,9 @@ fn validate_runner_job_context(
                 .process
                 .as_ref()
                 .expect("checked detached process payload");
-            shell_protocol::validate_process_argv(process)?;
+            runner_protocol::validate_process_argv(process)?;
             validate_runner_structured_common(request)?;
-            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+            Some(runner_protocol::ShellJobStructuredExecutionMetadata {
                 execution_source: "run_detached_process".to_string(),
                 language: None,
                 script_bytes: None,
@@ -3151,13 +3148,13 @@ fn validate_runner_job_context(
                 return Err("typed script Job request shape is invalid".to_string());
             }
             let script = request.script.as_ref().expect("checked script payload");
-            shell_protocol::validate_script_request(
+            runner_protocol::validate_script_request(
                 script,
                 request.stdin.as_deref(),
                 request.cwd.as_deref(),
                 request.timeout_secs,
             )?;
-            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+            Some(runner_protocol::ShellJobStructuredExecutionMetadata {
                 execution_source: "run_script".to_string(),
                 language: Some(script.language),
                 script_bytes: Some(script.script.len()),
@@ -3201,12 +3198,12 @@ fn validate_runner_job_context(
     Ok(())
 }
 
-fn validate_runner_structured_common(request: &ShellAgentShellRequest) -> Result<(), String> {
+fn validate_runner_structured_common(request: &RunnerRequest) -> Result<(), String> {
     if let Some(stdin) = request.stdin.as_deref() {
-        if stdin.len() > shell_protocol::PROCESS_STDIN_MAX_BYTES {
+        if stdin.len() > runner_protocol::PROCESS_STDIN_MAX_BYTES {
             return Err(format!(
                 "stdin is too large; maximum is {} bytes",
-                shell_protocol::PROCESS_STDIN_MAX_BYTES
+                runner_protocol::PROCESS_STDIN_MAX_BYTES
             ));
         }
         if stdin.contains('\0') {
@@ -3214,24 +3211,24 @@ fn validate_runner_structured_common(request: &ShellAgentShellRequest) -> Result
         }
     }
     if let Some(cwd) = request.cwd.as_deref() {
-        if cwd.len() > shell_protocol::PROCESS_CWD_MAX_BYTES {
+        if cwd.len() > runner_protocol::PROCESS_CWD_MAX_BYTES {
             return Err(format!(
                 "cwd is too long; maximum is {} bytes",
-                shell_protocol::PROCESS_CWD_MAX_BYTES
+                runner_protocol::PROCESS_CWD_MAX_BYTES
             ));
         }
         if cwd.contains('\0') {
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
-    if !(shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS
-        ..=shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS)
+    if !(runner_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS
+        ..=runner_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS)
         .contains(&request.timeout_secs)
     {
         return Err(format!(
             "timeout_secs must be between {} and {}",
-            shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
-            shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS
+            runner_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+            runner_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS
         ));
     }
     Ok(())
@@ -3256,7 +3253,7 @@ impl JobManager {
         lock_unpoison(&self.current_sink).clone()
     }
 
-    fn queue_recorded_update(&self, update: ShellAgentJobUpdateRequest, semantic: bool) {
+    fn queue_recorded_update(&self, update: RunnerJobUpdateRequest, semantic: bool) {
         let job_id = update.job_id.clone();
         let accepted = lock_unpoison(&self.pending_job_updates)
             .entry(job_id.clone())
@@ -3276,7 +3273,7 @@ impl JobManager {
         &self,
         job_id: &str,
         mut delta: RunnerJobDelta,
-    ) -> Option<(ShellAgentJobUpdateRequest, bool)> {
+    ) -> Option<(RunnerJobUpdateRequest, bool)> {
         let (update, semantic) = {
             let mut jobs = lock_unpoison(&self.jobs);
             let job = jobs.get_mut(job_id)?;
@@ -3349,7 +3346,7 @@ impl JobManager {
             // markers preserve their sequence while using the latest retained
             // authoritative log snapshot at send time.
             (
-                job_update_from_snapshot(&job.client_id, &job.agent_instance_id, &job.snapshot),
+                job_update_from_snapshot(&job.client_id, &job.runner_instance_id, &job.snapshot),
                 semantic,
             )
         };
@@ -3433,7 +3430,7 @@ impl JobManager {
 
     fn resend_snapshot(&self, job_id: &str) {
         let update = lock_unpoison(&self.jobs).get(job_id).map(|job| {
-            job_update_from_snapshot(&job.client_id, &job.agent_instance_id, &job.snapshot)
+            job_update_from_snapshot(&job.client_id, &job.runner_instance_id, &job.snapshot)
         });
         if let Some(update) = update {
             self.queue_recorded_update(update, true);
@@ -3442,7 +3439,7 @@ impl JobManager {
 
     fn fail_job(
         &self,
-        request: &ShellAgentShellRequest,
+        request: &RunnerRequest,
         error: String,
         validation_progress: Option<ShellJobValidationProgress>,
     ) {
@@ -3579,7 +3576,7 @@ impl JobManager {
         &self,
         store: DetachedJobStore,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
     ) -> Result<usize, String> {
         let records = store.scan_for_client(client_id)?;
         let mut recoverable = Vec::new();
@@ -3631,7 +3628,7 @@ impl JobManager {
                     job_id.clone(),
                     RunningJob {
                         client_id: client_id.to_string(),
-                        agent_instance_id: agent_instance_id.to_string(),
+                        runner_instance_id: runner_instance_id.to_string(),
                         snapshot,
                         child: None,
                         stop_requested: Arc::new(AtomicBool::new(record.stop_requested)),
@@ -3763,7 +3760,7 @@ impl JobManager {
                 job.child = None;
             }
             (
-                job_update_from_snapshot(&job.client_id, &job.agent_instance_id, &job.snapshot),
+                job_update_from_snapshot(&job.client_id, &job.runner_instance_id, &job.snapshot),
                 terminal,
                 semantic || terminal,
             )
@@ -3908,7 +3905,7 @@ impl JobManager {
         self.workers.active()
     }
 
-    fn shutdown_rejection(&self, request: &ShellAgentShellRequest) {
+    fn shutdown_rejection(&self, request: &RunnerRequest) {
         self.fail_job(request, "runner is shutting down".to_string(), None);
     }
 
@@ -3918,9 +3915,9 @@ impl JobManager {
         };
         let Some(context) = start.request.job_context.clone() else {
             let command_execution_state = structured_prestart_lifecycle(&start.request);
-            let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+            let _ = sink.send_job_update(&RunnerJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
-                agent_instance_id: sink.agent_instance_id().to_string(),
+                runner_instance_id: sink.runner_instance_id().to_string(),
                 job_id,
                 request_id: Some(start.request.request_id),
                 update_seq: Some(1),
@@ -3942,9 +3939,9 @@ impl JobManager {
         if let Err(error) = validate_runner_job_context(&context, &start.request, sink.client_id())
         {
             let command_execution_state = structured_prestart_lifecycle(&start.request);
-            let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+            let _ = sink.send_job_update(&RunnerJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
-                agent_instance_id: sink.agent_instance_id().to_string(),
+                runner_instance_id: sink.runner_instance_id().to_string(),
                 job_id,
                 request_id: Some(start.request.request_id),
                 update_seq: Some(1),
@@ -3965,7 +3962,7 @@ impl JobManager {
         }
         self.install_sink(sink.clone());
         let client_id = sink.client_id().to_string();
-        let agent_instance_id = sink.agent_instance_id().to_string();
+        let runner_instance_id = sink.runner_instance_id().to_string();
         let (queue_locally, immediate_failure) = {
             let _lifecycle = lock_unpoison(&self.lifecycle);
             let shutting_down = self.shutting_down.load(Ordering::SeqCst);
@@ -4004,7 +4001,7 @@ impl JobManager {
                 job_id.clone(),
                 RunningJob {
                     client_id: client_id.clone(),
-                    agent_instance_id,
+                    runner_instance_id,
                     snapshot: ShellJobSnapshot {
                         job_id: job_id.clone(),
                         request_id: start.request.request_id.clone(),
@@ -4150,12 +4147,12 @@ impl JobManager {
         policy: RunnerPolicy,
         shell: ShellConfig,
         project_registry_dir: PathBuf,
-        request: ShellAgentShellRequest,
+        request: RunnerRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
-        let (stop_requested, agent_instance_id) = {
+        let (stop_requested, runner_instance_id) = {
             let _lifecycle = lock_unpoison(&self.lifecycle);
             if self.shutting_down.load(Ordering::SeqCst) {
                 (None, None)
@@ -4167,11 +4164,11 @@ impl JobManager {
                 job.slot_reserved = true;
                 (
                     Some(Arc::clone(&job.stop_requested)),
-                    Some(job.agent_instance_id.clone()),
+                    Some(job.runner_instance_id.clone()),
                 )
             }
         };
-        let (Some(stop_requested), Some(agent_instance_id)) = (stop_requested, agent_instance_id)
+        let (Some(stop_requested), Some(runner_instance_id)) = (stop_requested, runner_instance_id)
         else {
             self.shutdown_rejection(&request);
             return;
@@ -4245,7 +4242,7 @@ impl JobManager {
                 job_id: job_id.clone(),
                 request_id: request.request_id.clone(),
                 client_id: request.client_id.clone(),
-                agent_instance_id,
+                runner_instance_id,
                 context,
                 launch: DetachedLaunchSpec {
                     process: prepared.process,
@@ -4318,7 +4315,7 @@ impl JobManager {
         policy: RunnerPolicy,
         shell: ShellConfig,
         project_registry_dir: PathBuf,
-        request: ShellAgentShellRequest,
+        request: RunnerRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
             return;
@@ -4996,7 +4993,7 @@ impl JobManager {
         generation: u64,
         policy: RunnerPolicy,
         ssh: SshConfig,
-        request: ShellAgentShellRequest,
+        request: RunnerRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
             return;
@@ -5476,7 +5473,7 @@ fn handle_one_poll(
     persistent_shells: &webcodex_runner::PersistentShellManager,
     project_cache: &mut RunnerProjectCache,
     project_inventory_page: Option<ShellProjectInventoryPage>,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     lsp: &webcodex_runner::LspSupervisor,
     shutdown: &Arc<AtomicBool>,
     dispatches: &ActivityTracker,
@@ -5496,17 +5493,17 @@ fn handle_one_poll(
                     revision,
                 )
             });
-    let poll = ShellAgentPollPayload {
-        request: ShellAgentPollRequest {
+    let poll = RunnerPollPayload {
+        request: RunnerPollRequest {
             client_id: cfg.client_id.clone(),
-            agent_instance_id: agent_instance_id.to_string(),
+            runner_instance_id: runner_instance_id.to_string(),
         },
         tool_providers: provider_update
             .as_ref()
             .map(|(status, _, _)| status.clone()),
         project_inventory_page,
     };
-    let response: ShellAgentPollResponse = match post_json(client, cfg, AGENT_POLL_PATH, &poll) {
+    let response: RunnerPollResponse = match post_json(client, cfg, RUNNER_POLL_PATH, &poll) {
         Ok(response) => response,
         Err(error) => {
             if let Some((_, provider, revision)) = provider_update {
@@ -5532,7 +5529,7 @@ fn handle_one_poll(
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
         client_id: cfg.client_id.clone(),
-        agent_instance_id: agent_instance_id.to_string(),
+        runner_instance_id: runner_instance_id.to_string(),
         shutdown: Arc::clone(shutdown),
     });
     jobs.install_sink(sink.clone());

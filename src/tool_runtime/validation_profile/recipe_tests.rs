@@ -556,7 +556,7 @@ fn cwd_symlink_escape_is_rejected() {
 
 #[test]
 fn manifestless_explicit_python_uses_stable_unittest_plan() {
-    use crate::shell_protocol::ShellJobValidationStep;
+    use crate::runner_protocol::ShellJobValidationStep;
     use sha2::{Digest, Sha256};
 
     let temp = tempfile::tempdir().unwrap();

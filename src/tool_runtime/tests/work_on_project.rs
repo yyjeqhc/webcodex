@@ -7,8 +7,8 @@
 
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
-use crate::lsp_bridge::{AgentLspRequest, AgentLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::lsp_bridge::{RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
+use crate::runner_protocol::RunnerCapabilities;
 use crate::tool_runtime::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
 };
@@ -163,14 +163,14 @@ async fn record_startup_requests(
         if request.kind == AGENT_LSP_REQUEST_KIND {
             assert_eq!(
                 request.lsp.as_ref().map(|payload| &payload.request),
-                Some(&AgentLspRequest::Status)
+                Some(&RunnerLspRequest::Status)
             );
             complete_patch_agent_request(
                 runtime,
                 client_id,
                 &request.request_id,
                 0,
-                &AgentLspResultEnvelope::err(
+                &RunnerLspResultEnvelope::err(
                     "lsp_status_unavailable",
                     "fixture intentionally has no language server",
                 )
@@ -887,7 +887,8 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
     let root = tempfile::tempdir().unwrap();
     init_git_repo(root.path());
     let runtime = ToolRuntime::new_for_tests();
-    let project = register_agent_project_at_path(&runtime, "wop-create", "demo", root.path()).await;
+    let project =
+        register_runner_project_at_path(&runtime, "wop-create", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let result = dispatch_coding_call_in_window(
@@ -1077,7 +1078,7 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1194,7 +1195,7 @@ async fn path_source_explicit_session_mismatch_fails_before_registration() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1260,7 +1261,7 @@ async fn path_source_unknown_session_fails_before_registration() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1304,7 +1305,7 @@ async fn path_source_cross_project_recording_session_fails_before_registration()
     let target_path = target_root.path().canonicalize().unwrap();
     let target_path = target_path.to_string_lossy().to_string();
     let runtime = ToolRuntime::new_for_tests();
-    let recorder_project = register_agent_project_at_path(
+    let recorder_project = register_runner_project_at_path(
         &runtime,
         "wop-recorder-owner",
         "recorder",
@@ -1316,7 +1317,7 @@ async fn path_source_cross_project_recording_session_fails_before_registration()
         &runtime,
         target_client,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1468,7 +1469,7 @@ async fn path_source_requires_project_write_scope_before_runner_enqueue() {
         &runtime,
         "oauth-client",
         &auth,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             ..Default::default()
@@ -1504,7 +1505,7 @@ async fn path_source_respects_restricted_authority_before_runner_enqueue() {
         &runtime,
         client_id,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             ..Default::default()
@@ -1534,7 +1535,7 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     init_git_repo(root.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-continue", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "wop-continue", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let first = dispatch_coding_call_in_window(
@@ -1610,7 +1611,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
         &runtime,
         "wop-fail",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1623,8 +1624,8 @@ async fn work_on_project_failures_never_create_or_fall_back() {
         ],
     )
     .await;
-    let project_a = crate::tool_runtime::agent_project_runtime_id("wop-fail", "a");
-    let project_b = crate::tool_runtime::agent_project_runtime_id("wop-fail", "b");
+    let project_a = crate::tool_runtime::runner_project_runtime_id("wop-fail", "a");
+    let project_b = crate::tool_runtime::runner_project_runtime_id("wop-fail", "b");
     let auth = auth_context(None, true);
 
     // Create a stable active session on project A, plus a closed one.
@@ -1819,7 +1820,7 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
         &runtime,
         "wop-repo",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -1831,7 +1832,7 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
         vec![registered_project("demo", &root.path().to_string_lossy())],
     )
     .await;
-    let project = crate::tool_runtime::agent_project_runtime_id("wop-repo", "demo");
+    let project = crate::tool_runtime::runner_project_runtime_id("wop-repo", "demo");
     let auth = auth_context(None, true);
 
     let (result, request_kinds) = dispatch_recording_startup_requests(
@@ -1949,9 +1950,13 @@ async fn work_on_project_can_omit_instruction_bodies_for_a_fresh_session() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "caller already knows this rule");
     let runtime = ToolRuntime::new_for_tests();
-    let project =
-        register_agent_project_at_path(&runtime, "wop-instruction-projection", "demo", root.path())
-            .await;
+    let project = register_runner_project_at_path(
+        &runtime,
+        "wop-instruction-projection",
+        "demo",
+        root.path(),
+    )
+    .await;
     let auth = auth_context(None, true);
 
     let first = dispatch_coding_call_in_window(
@@ -2035,7 +2040,7 @@ async fn work_on_project_can_omit_static_workflow_guidance() {
     seed_coding_repository(root.path(), "keep repository guidance visible");
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-workflow-projection", "demo", root.path())
+        register_runner_project_at_path(&runtime, "wop-workflow-projection", "demo", root.path())
             .await;
     let auth = auth_context(None, true);
 
@@ -2080,7 +2085,7 @@ async fn work_on_project_static_projection_is_caller_explicit_not_window_state()
     seed_coding_repository(root.path(), "static caller-explicit rule");
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-explicit", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "wop-explicit", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let first = dispatch_coding_call_in_window(
@@ -2176,7 +2181,7 @@ async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules
     seed_coding_repository(root.path(), "old body");
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-suppressed-change", "demo", root.path())
+        register_runner_project_at_path(&runtime, "wop-suppressed-change", "demo", root.path())
             .await;
     let auth = auth_context(None, true);
 
@@ -2261,7 +2266,7 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "first rule body");
     let runtime = ToolRuntime::new_for_tests();
-    let project = register_agent_project_at_path(&runtime, "wop-reuse", "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, "wop-reuse", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let first = dispatch_coding_call_in_window(
@@ -2344,7 +2349,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         &runtime,
         "wop-size",
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             git: true,
             file_read: true,
@@ -2355,7 +2360,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         vec![registered_project("demo", &root.path().to_string_lossy())],
     )
     .await;
-    let project = crate::tool_runtime::agent_project_runtime_id("wop-size", "demo");
+    let project = crate::tool_runtime::runner_project_runtime_id("wop-size", "demo");
     let auth = auth_context(None, true);
 
     let (fresh, fresh_requests) = dispatch_recording_startup_requests(
@@ -2510,7 +2515,7 @@ async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
     let runtime = ToolRuntime::new_for_tests()
         .with_repository_overview_probe_timeout(std::time::Duration::from_millis(50));
     let project =
-        register_agent_project_at_path(&runtime, "wop-timeout", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "wop-timeout", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -2556,7 +2561,7 @@ async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
             // Intentionally never complete it; the probe must time out.
             continue;
         }
-        let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+        let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
         complete_patch_agent_request(
             &runtime,
             "wop-timeout",
@@ -2590,9 +2595,9 @@ async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
     if let Some(request_id) = overview_request {
         let expired = runtime
             .runner_registry
-            .complete(crate::shell_protocol::ShellAgentResultRequest {
+            .complete(crate::runner_protocol::RunnerResultRequest {
                 client_id: "wop-timeout".to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id,
                 exit_code: Some(0),
                 stdout: Some("{}".to_string()),
@@ -2675,7 +2680,7 @@ async fn dispatch_coding_workflow_diagnostic_with_overview_stdout(
             .await;
             continue;
         }
-        let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+        let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
         complete_patch_agent_request(
             runtime,
             client_id,
@@ -2710,7 +2715,7 @@ async fn coding_workflow_standard_repository_overview_rejects_malformed_runner_r
     seed_coding_repository(root.path(), "rules load despite malformed overview");
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-malformed", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "wop-malformed", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let valid = valid_agent_overview_stdout(&runtime, "wop-malformed", root.path());
@@ -2858,7 +2863,7 @@ async fn coding_workflow_standard_overview_strips_unknown_runner_fields_and_stay
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "rules load despite extra runner fields");
     let runtime = ToolRuntime::new_for_tests();
-    let project = register_agent_project_at_path(&runtime, "wop-strip", "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, "wop-strip", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let valid = valid_agent_overview_stdout(&runtime, "wop-strip", root.path());
@@ -2935,7 +2940,7 @@ async fn coding_workflow_standard_and_full_accept_valid_repository_overview() {
     seed_coding_repository(root.path(), "rules load with valid overview");
     let runtime = ToolRuntime::new_for_tests();
     let project =
-        register_agent_project_at_path(&runtime, "wop-valid-overview", "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, "wop-valid-overview", "demo", root.path()).await;
 
     let auth = auth_context(None, true);
     for detail in [StartupDetail::Standard, StartupDetail::Full] {

@@ -1078,7 +1078,7 @@ async fn internal_handoff_projection_does_not_append_events_or_enqueue_agent_req
     init_git_repo(root.path());
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "handoff-brief-no-probe";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("handoff read".to_string()));
@@ -1130,7 +1130,7 @@ async fn public_handoff_dispatch_records_only_standard_telemetry_and_preserves_g
     let auth = bootstrap_auth_context();
     let client_id = "handoff-brief-public-dispatch";
     let project =
-        register_agent_project_at_path_with_auth(&runtime, client_id, "demo", root.path(), &auth)
+        register_runner_project_at_path_with_auth(&runtime, client_id, "demo", root.path(), &auth)
             .await;
     let session = runtime
         .sessions
@@ -1265,7 +1265,7 @@ async fn finish_and_handoff_surfaces_return_the_same_brief_for_the_same_snapshot
     commit_file(root.path(), "README.md", "hello\n", "initial");
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "handoff-brief-shared";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("shared builder".to_string()));

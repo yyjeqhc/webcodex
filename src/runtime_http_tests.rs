@@ -260,13 +260,13 @@ fn effective_status(resp: &Response) -> StatusCode {
 
 async fn register_import_agent_with_capabilities(
     root: &std::path::Path,
-    capabilities: Option<crate::shell_protocol::ShellClientCapabilities>,
+    capabilities: Option<crate::runner_protocol::RunnerCapabilities>,
 ) -> (Arc<ToolRuntime>, Arc<RunnerRegistry>) {
-    use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientRegisterRequest};
+    use crate::runner_protocol::{RunnerProjectSummary, RunnerRegisterRequest};
     let registry = Arc::new(RunnerRegistry::default());
     registry
         .register(crate::test_support::current_runner_registration(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -274,8 +274,8 @@ async fn register_import_agent_with_capabilities(
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: "importer".to_string(),
-                agent_instance_id: "inst-import".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "inst-import".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -290,7 +290,7 @@ async fn register_import_agent_with_capabilities(
         &registry,
         "importer",
         "inst-import",
-        vec![ShellAgentProjectSummary {
+        vec![RunnerProjectSummary {
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: root.to_string_lossy().to_string(),
@@ -325,12 +325,12 @@ async fn complete_one_agent_request(
     stderr: impl Into<String>,
     exit_code: i32,
 ) {
-    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+    use crate::runner_protocol::{RunnerPollRequest, RunnerResultRequest};
     let request = loop {
         if let Some(request) = registry
-            .poll(ShellAgentPollRequest {
+            .poll(RunnerPollRequest {
                 client_id: "importer".to_string(),
-                agent_instance_id: "inst-import".to_string(),
+                runner_instance_id: "inst-import".to_string(),
             })
             .await
             .unwrap()
@@ -340,9 +340,9 @@ async fn complete_one_agent_request(
         tokio::time::sleep(Duration::from_millis(5)).await;
     };
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "importer".to_string(),
-            agent_instance_id: "inst-import".to_string(),
+            runner_instance_id: "inst-import".to_string(),
             request_id: request.request_id,
             exit_code: Some(exit_code),
             stdout: Some(stdout.into()),
@@ -355,12 +355,10 @@ async fn complete_one_agent_request(
 }
 
 fn spawn_startup_agent_executor(registry: Arc<RunnerRegistry>) -> tokio::task::JoinHandle<()> {
-    use crate::shell_protocol::{
-        ShellAgentPollRequest, ShellAgentResultRequest, ShellAgentShellRequest,
-    };
+    use crate::runner_protocol::{RunnerPollRequest, RunnerRequest, RunnerResultRequest};
     use std::path::Path;
 
-    fn execute(request: &ShellAgentShellRequest) -> (i32, String, String) {
+    fn execute(request: &RunnerRequest) -> (i32, String, String) {
         if request.kind == "file_read" {
             return (1, String::new(), "No such file or directory".to_string());
         }
@@ -401,18 +399,18 @@ fn spawn_startup_agent_executor(registry: Arc<RunnerRegistry>) -> tokio::task::J
     tokio::spawn(async move {
         loop {
             if let Some(request) = registry
-                .poll(ShellAgentPollRequest {
+                .poll(RunnerPollRequest {
                     client_id: "importer".to_string(),
-                    agent_instance_id: "inst-import".to_string(),
+                    runner_instance_id: "inst-import".to_string(),
                 })
                 .await
                 .unwrap()
             {
                 let (exit_code, stdout, stderr) = execute(&request);
                 registry
-                    .complete(ShellAgentResultRequest {
+                    .complete(RunnerResultRequest {
                         client_id: "importer".to_string(),
-                        agent_instance_id: "inst-import".to_string(),
+                        runner_instance_id: "inst-import".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(exit_code),
                         stdout: Some(stdout),
@@ -1625,16 +1623,14 @@ async fn http_tools_call_generic_path_dispatches_representative_project_tools() 
 
 #[tokio::test]
 async fn api_show_changes_with_session_id() {
-    use crate::shell_protocol::{
-        ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
-    };
+    use crate::runner_protocol::{RunnerCapabilities, RunnerPollRequest, RunnerResultRequest};
 
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
     let (runtime, registry) = register_import_agent_with_capabilities(
         tmp_proj.path(),
-        Some(ShellClientCapabilities {
+        Some(RunnerCapabilities {
             shell: true,
             git: true,
             internal_posix_script: true,
@@ -1674,9 +1670,9 @@ async fn api_show_changes_with_session_id() {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let req = loop {
             let req = registry
-                .poll(ShellAgentPollRequest {
+                .poll(RunnerPollRequest {
                     client_id: "importer".to_string(),
-                    agent_instance_id: "inst-import".to_string(),
+                    runner_instance_id: "inst-import".to_string(),
                 })
                 .await
                 .unwrap();
@@ -1708,9 +1704,9 @@ async fn api_show_changes_with_session_id() {
             )
         );
         registry
-            .complete(ShellAgentResultRequest {
+            .complete(RunnerResultRequest {
                 client_id: "importer".to_string(),
-                agent_instance_id: "inst-import".to_string(),
+                runner_instance_id: "inst-import".to_string(),
                 request_id: req.request_id,
                 exit_code: Some(0),
                 stdout: Some(stdout),

@@ -3,7 +3,7 @@ use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use crate::project_overview::build_project_overview;
 use crate::runner_config::DEFAULT_MAX_OUTPUT_BYTES;
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -66,7 +66,7 @@ pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
 
 pub(crate) fn handle_basic_file_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -135,7 +135,7 @@ fn delete_project_files_error(start: Instant, message: &'static str) -> CommandR
 }
 
 fn handle_delete_project_files_request(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved_project_root: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -241,10 +241,7 @@ struct ProjectOverviewRunnerOptions {
     limit: Option<usize>,
 }
 
-fn handle_project_overview_request(
-    request: &ShellAgentShellRequest,
-    start: Instant,
-) -> CommandResult {
+fn handle_project_overview_request(request: &RunnerRequest, start: Instant) -> CommandResult {
     let Some(project_root) = request.cwd.as_deref() else {
         return CommandResult {
             exit_code: None,
@@ -307,7 +304,7 @@ fn read_file_reason_message(reason: ReadFileReason) -> String {
 }
 
 fn ensure_file_read_target_in_project(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
 ) -> Result<(), ReadFileReason> {
     let project_root = request.cwd.as_deref().ok_or(ReadFileReason::InvalidPath)?;
@@ -328,7 +325,7 @@ fn ensure_file_read_target_in_project(
 
 fn handle_file_read_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -574,7 +571,7 @@ fn canonical_skill_resource_request_path(package_root: &str, path: &str) -> bool
 }
 
 fn handle_skill_list_packages_request(
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -656,7 +653,7 @@ fn handle_skill_list_packages_request(
 
 fn handle_skill_read_file_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -801,7 +798,7 @@ fn file_read_error_message(error: &std::io::Error) -> String {
 
 fn handle_file_write_request(
     policy: &RunnerPolicy,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {

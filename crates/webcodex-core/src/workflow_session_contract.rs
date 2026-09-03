@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub const TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: &str = "__webcodex_stateless_context_request";
 
 pub const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize =
-    crate::shell_protocol::VALIDATION_ASSERTION_NAME_MAX_CHARS;
+    crate::runner_protocol::VALIDATION_ASSERTION_NAME_MAX_CHARS;
 pub const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session_id";
 pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
 pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =

@@ -21,7 +21,7 @@ use crate::runner_http::{
     effective_register_owner, enforce_register_owner, require_runner_transport_scope,
     RunnerRegistry,
 };
-use crate::shell_protocol::{AgentEnvelope, ShellAgentPollRequest, ShellClientRegisterRequest};
+use crate::runner_protocol::{RunnerEnvelope, RunnerPollRequest, RunnerRegisterRequest};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch, Notify};
@@ -91,7 +91,7 @@ impl RegisterPreludeError {
 /// effective owner and the caller proceeds to mutate the registry.
 pub(crate) fn register_session_prelude(
     auth: Option<&AuthContext>,
-    register_payload: &mut ShellClientRegisterRequest,
+    register_payload: &mut RunnerRegisterRequest,
 ) -> Result<(), RegisterPreludeError> {
     if let Err(e) = require_runner_transport_scope(auth, SCOPE_AGENT_REGISTER) {
         return Err(RegisterPreludeError::ForbiddenScope(e));
@@ -111,7 +111,7 @@ pub(crate) fn register_session_prelude(
 #[derive(Debug)]
 pub(crate) enum RecvOutcome {
     /// A decoded envelope ready to dispatch.
-    Envelope(AgentEnvelope),
+    Envelope(RunnerEnvelope),
     /// A frame was consumed but yielded no envelope (e.g. a non-text
     /// WebSocket frame, or a malformed envelope that was logged and skipped).
     /// The reader loop continues.
@@ -133,7 +133,7 @@ pub(crate) trait RunnerReader {
 pub(crate) struct SessionContext<'a> {
     pub(crate) registry: &'a Arc<RunnerRegistry>,
     pub(crate) client_id: &'a str,
-    pub(crate) agent_instance_id: &'a str,
+    pub(crate) runner_instance_id: &'a str,
     pub(crate) connection_id: &'a str,
     pub(crate) notify: Arc<Notify>,
     /// Exact process-local cancellation lease for this streaming connection.
@@ -147,14 +147,14 @@ pub(crate) struct SessionContext<'a> {
 /// replacement cancellation, writer health, and bounded teardown.
 ///
 /// The caller owns the transport-specific **writer task** (`writer_task`),
-/// which drains `out_tx` (an `AgentEnvelope` mpsc) onto the wire. This function
+/// which drains `out_tx` (an `RunnerEnvelope` mpsc) onto the wire. This function
 /// owns the connection-scoped **request pump** and directly observes its task,
 /// the reader, the writer, and the exact replacement-cancellation lease. A
 /// silent pump exit therefore cannot leave a pending reader/writer registered
 /// as a zombie session.
 pub(crate) async fn run_runner_session(
     ctx: SessionContext<'_>,
-    out_tx: mpsc::Sender<AgentEnvelope>,
+    out_tx: mpsc::Sender<RunnerEnvelope>,
     reader: impl RunnerReader,
     writer_task: JoinHandle<WriterExit>,
 ) {
@@ -174,11 +174,11 @@ fn classify_pump_poll_error(error: &str) -> PumpExit {
 
 fn spawn_request_pump(
     ctx: &SessionContext<'_>,
-    pump_tx: mpsc::Sender<AgentEnvelope>,
+    pump_tx: mpsc::Sender<RunnerEnvelope>,
 ) -> JoinHandle<PumpExit> {
     let pump_registry = Arc::clone(ctx.registry);
     let pump_client_id = ctx.client_id.to_string();
-    let pump_instance_id = ctx.agent_instance_id.to_string();
+    let pump_instance_id = ctx.runner_instance_id.to_string();
     let pump_connection_id = ctx.connection_id.to_string();
     let pump_notify = Arc::clone(&ctx.notify);
     tokio::spawn(async move {
@@ -186,19 +186,19 @@ fn spawn_request_pump(
             // Create the notified future before polling so an enqueue that
             // happens while poll returns None is not missed.
             let notified = pump_notify.notified();
-            let poll_req = ShellAgentPollRequest {
+            let poll_req = RunnerPollRequest {
                 client_id: pump_client_id.clone(),
-                agent_instance_id: pump_instance_id.clone(),
+                runner_instance_id: pump_instance_id.clone(),
             };
             match pump_registry
                 .poll_for_connection(poll_req, &pump_connection_id)
                 .await
             {
                 Ok(Some(request)) => {
-                    // Do not retain/log SendError<AgentEnvelope>: it can include
+                    // Do not retain/log SendError<RunnerEnvelope>: it can include
                     // command/stdin payloads. The semantic channel exit is enough.
                     if pump_tx
-                        .send(AgentEnvelope::Request { request })
+                        .send(RunnerEnvelope::Request { request })
                         .await
                         .is_err()
                     {
@@ -214,7 +214,7 @@ fn spawn_request_pump(
 
 async fn run_runner_session_with_pump(
     ctx: SessionContext<'_>,
-    out_tx: mpsc::Sender<AgentEnvelope>,
+    out_tx: mpsc::Sender<RunnerEnvelope>,
     mut reader: impl RunnerReader,
     writer_task: JoinHandle<WriterExit>,
     pump_task: JoinHandle<PumpExit>,
@@ -222,7 +222,7 @@ async fn run_runner_session_with_pump(
     let SessionContext {
         registry,
         client_id,
-        agent_instance_id,
+        runner_instance_id,
         connection_id,
         notify: _,
         mut cancel,
@@ -289,12 +289,12 @@ async fn run_runner_session_with_pump(
             received = reader.recv() => {
                 match received {
                     RecvOutcome::Envelope(env) => {
-                        let is_goodbye = matches!(&env, AgentEnvelope::Goodbye { .. });
+                        let is_goodbye = matches!(&env, RunnerEnvelope::Goodbye { .. });
                         dispatch_inbound(
                             env,
                             registry,
                             client_id,
-                            agent_instance_id,
+                            runner_instance_id,
                             connection_id,
                             &out_tx,
                             transport_label,
@@ -367,24 +367,24 @@ async fn run_runner_session_with_pump(
         }
     }
     registry
-        .reconcile_disconnect_for_connection(client_id, agent_instance_id, connection_id)
+        .reconcile_disconnect_for_connection(client_id, runner_instance_id, connection_id)
         .await;
 }
 
 /// Dispatch one inbound envelope into the connection-scoped registry lease.
 async fn dispatch_inbound(
-    env: AgentEnvelope,
+    env: RunnerEnvelope,
     registry: &Arc<RunnerRegistry>,
     client_id: &str,
-    agent_instance_id: &str,
+    runner_instance_id: &str,
     connection_id: &str,
-    out_tx: &mpsc::Sender<AgentEnvelope>,
+    out_tx: &mpsc::Sender<RunnerEnvelope>,
     transport_label: &'static str,
 ) {
     match env {
-        AgentEnvelope::Result { payload } => {
+        RunnerEnvelope::Result { payload } => {
             if payload.result.client_id != client_id
-                || payload.result.agent_instance_id != agent_instance_id
+                || payload.result.runner_instance_id != runner_instance_id
             {
                 tracing::warn!(
                     client_id = client_id,
@@ -409,8 +409,8 @@ async fn dispatch_inbound(
                 );
             }
         }
-        AgentEnvelope::PersistentShellResult { payload } => {
-            if payload.client_id != client_id || payload.agent_instance_id != agent_instance_id {
+        RunnerEnvelope::PersistentShellResult { payload } => {
+            if payload.client_id != client_id || payload.runner_instance_id != runner_instance_id {
                 tracing::warn!(
                     client_id = client_id,
                     "agent {} persistent shell result rejected: envelope identity does not match registered connection",
@@ -430,8 +430,8 @@ async fn dispatch_inbound(
                 );
             }
         }
-        AgentEnvelope::JobUpdate { payload } => {
-            if payload.client_id != client_id || payload.agent_instance_id != agent_instance_id {
+        RunnerEnvelope::JobUpdate { payload } => {
+            if payload.client_id != client_id || payload.runner_instance_id != runner_instance_id {
                 tracing::warn!(
                     client_id = client_id,
                     "agent {} job_update rejected: envelope identity does not match registered connection",
@@ -451,13 +451,13 @@ async fn dispatch_inbound(
                 );
             }
         }
-        AgentEnvelope::Ping { ts } => {
+        RunnerEnvelope::Ping { ts } => {
             // Keepalive: refresh liveness before replying so an idle agent (no
             // pending requests) is not aged out of the online window. Without
             // this touch a connected-but-idle agent decays to "stale" even
             // though its socket is healthy.
             if let Err(e) = registry
-                .touch_runner_for_connection(client_id, agent_instance_id, connection_id)
+                .touch_runner_for_connection(client_id, runner_instance_id, connection_id)
                 .await
             {
                 tracing::warn!(
@@ -471,7 +471,7 @@ async fn dispatch_inbound(
             // channel is full (a slow agent must not stall inbound processing).
             // try_send drops the pong when saturated; the agent treats a
             // missing pong as a soft liveness signal, not a fatal error.
-            if let Err(e) = out_tx.try_send(AgentEnvelope::Pong { ts }) {
+            if let Err(e) = out_tx.try_send(RunnerEnvelope::Pong { ts }) {
                 let reason = match e {
                     tokio::sync::mpsc::error::TrySendError::Full(_) => "full",
                     tokio::sync::mpsc::error::TrySendError::Closed(_) => "closed",
@@ -484,13 +484,13 @@ async fn dispatch_inbound(
                 );
             }
         }
-        AgentEnvelope::Pong { .. } => {
+        RunnerEnvelope::Pong { .. } => {
             // Pong is a normal keepalive response. The server does not
             // currently originate Pings, but a Pong must still count as live
             // traffic so the client does not decay to stale, and must never be
             // treated as an unexpected envelope.
             if let Err(e) = registry
-                .touch_runner_for_connection(client_id, agent_instance_id, connection_id)
+                .touch_runner_for_connection(client_id, runner_instance_id, connection_id)
                 .await
             {
                 tracing::debug!(
@@ -501,21 +501,21 @@ async fn dispatch_inbound(
                 );
             }
         }
-        AgentEnvelope::RuntimeMetadata { tool_providers } => {
+        RunnerEnvelope::RuntimeMetadata { tool_providers } => {
             let _ = registry
                 .update_tool_providers_for_connection(
                     client_id,
-                    agent_instance_id,
+                    runner_instance_id,
                     connection_id,
                     Some(tool_providers),
                 )
                 .await;
         }
-        AgentEnvelope::ProjectInventoryPage { page } => {
+        RunnerEnvelope::ProjectInventoryPage { page } => {
             match registry
                 .apply_project_inventory_page_for_connection(
                     client_id,
-                    agent_instance_id,
+                    runner_instance_id,
                     connection_id,
                     page,
                 )
@@ -525,7 +525,7 @@ async fn dispatch_inbound(
                     // Bounded best-effort acknowledgement. A full outbound
                     // channel must not make project inventory a liveness fence;
                     // the Runner can restart the snapshot on reconnect.
-                    let _ = out_tx.try_send(AgentEnvelope::ProjectInventoryStatus { status });
+                    let _ = out_tx.try_send(RunnerEnvelope::ProjectInventoryStatus { status });
                 }
                 Err(error) => {
                     tracing::debug!(
@@ -536,10 +536,10 @@ async fn dispatch_inbound(
                 }
             }
         }
-        AgentEnvelope::ProjectInventoryStatus { .. } => {
+        RunnerEnvelope::ProjectInventoryStatus { .. } => {
             // Server-to-Runner only; ignore if a peer reflects it.
         }
-        AgentEnvelope::Goodbye { reason } => {
+        RunnerEnvelope::Goodbye { reason } => {
             tracing::debug!(
                 client_id = client_id,
                 reason = reason.as_deref().unwrap_or("unspecified"),
@@ -547,10 +547,10 @@ async fn dispatch_inbound(
                 transport_label
             );
             registry
-                .reconcile_disconnect_for_connection(client_id, agent_instance_id, connection_id)
+                .reconcile_disconnect_for_connection(client_id, runner_instance_id, connection_id)
                 .await;
         }
-        AgentEnvelope::Register { .. } => {
+        RunnerEnvelope::Register { .. } => {
             // Ignore a redundant register mid-session.
         }
         other => {

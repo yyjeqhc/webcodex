@@ -2,9 +2,8 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentResultPayload, ShellAgentResultRequest, ShellClientCapabilities,
-    ShellCommandExecutionState,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerResultPayload, RunnerResultRequest, ShellCommandExecutionState,
 };
 
 fn context(cwd: Option<&str>, shell: Option<ExecutionShell>) -> sessions::SessionExecutionContext {
@@ -33,7 +32,7 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
     std::fs::create_dir_all(&override_dir).unwrap();
 
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "context-shell", "demo", &root).await;
+    let project = register_runner_project_at_path(&runtime, "context-shell", "demo", &root).await;
     let auth = auth_context(None, true);
     let session = runtime
         .sessions
@@ -188,7 +187,8 @@ async fn outer_recorder_does_not_override_business_session_execution_context() {
     std::fs::create_dir_all(&business_dir).unwrap();
 
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "context-recorder", "demo", &root).await;
+    let project =
+        register_runner_project_at_path(&runtime, "context-recorder", "demo", &root).await;
     let auth = auth_context(None, true);
     let recorder = runtime
         .sessions
@@ -275,7 +275,7 @@ async fn run_job_inherits_session_cwd_and_shell() {
     std::fs::create_dir_all(&frontend).unwrap();
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         async_shell_jobs: true,
         ..Default::default()
     };
@@ -318,7 +318,7 @@ async fn run_job_inherits_session_cwd_and_shell() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["cwd"], "frontend");
     assert_eq!(result.output["shell"], "bash");
-    let request = wait_for_agent_request_for_client(&runtime, "context-job").await;
+    let request = wait_for_runner_request_for_client(&runtime, "context-job").await;
     assert_eq!(request.kind, "start_job");
     assert_eq!(
         request.cwd.as_deref(),
@@ -331,7 +331,7 @@ async fn run_job_inherits_session_cwd_and_shell() {
 async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_and_jobs() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         ssh_shell: true,
         jobs: true,
         async_jobs: true,
@@ -382,7 +382,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
                 .await
         }
     });
-    let shell_request = wait_for_agent_request_for_client(&runtime, "context-ssh").await;
+    let shell_request = wait_for_runner_request_for_client(&runtime, "context-ssh").await;
     assert_eq!(shell_request.cwd.as_deref(), Some("/remote/override"));
     let shell_context = shell_request
         .job_context
@@ -427,7 +427,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
     assert_eq!(job.output["ssh_resource"], "tmp");
     assert_eq!(job.output["cwd"], "/remote/default");
     let job_id = job.output["job_id"].as_str().unwrap().to_string();
-    let job_request = wait_for_agent_request_for_client(&runtime, "context-ssh").await;
+    let job_request = wait_for_runner_request_for_client(&runtime, "context-ssh").await;
     assert_eq!(job_request.kind, "start_job");
     assert_eq!(job_request.cwd.as_deref(), Some("/remote/default"));
     assert_eq!(
@@ -465,7 +465,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
 async fn session_ssh_resource_rejects_structured_cargo_before_direct_sync_start() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         ssh_shell: true,
         ..Default::default()
     };
@@ -532,7 +532,7 @@ async fn session_ssh_resource_rejects_mutating_cargo_fmt_before_start() {
 
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         ssh_shell: true,
         ..Default::default()
     };
@@ -593,7 +593,7 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
         &runtime,
         "context-ssh-no-capability",
         &auth,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![registered_project("demo", "/runner-local-project")],
     )
     .await;
@@ -644,7 +644,7 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
 async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         ssh_shell: true,
         ..Default::default()
     };
@@ -690,13 +690,13 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
                 .await
         }
     });
-    let request = wait_for_agent_request_for_client(&runtime, "context-ssh-transport").await;
+    let request = wait_for_runner_request_for_client(&runtime, "context-ssh-transport").await;
     runtime
         .runner_registry
-        .complete(ShellAgentResultPayload {
-            result: ShellAgentResultRequest {
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
                 client_id: "context-ssh-transport".to_string(),
-                agent_instance_id: "inst-context-ssh-transport".to_string(),
+                runner_instance_id: "inst-context-ssh-transport".to_string(),
                 request_id: request.request_id,
                 exit_code: Some(255),
                 stdout: Some(String::new()),
@@ -734,9 +734,9 @@ async fn mismatch_and_invalid_context_fail_closed_without_root_fallback() {
     std::fs::create_dir_all(&second_root).unwrap();
     let runtime = test_runtime();
     let first_project =
-        register_agent_project_at_path(&runtime, "context-first", "demo", &first_root).await;
+        register_runner_project_at_path(&runtime, "context-first", "demo", &first_root).await;
     let second_project =
-        register_agent_project_at_path(&runtime, "context-second", "demo", &second_root).await;
+        register_runner_project_at_path(&runtime, "context-second", "demo", &second_root).await;
     let auth = auth_context(None, true);
     let session = runtime
         .sessions
@@ -798,7 +798,7 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
     let root = temp.path().join("project");
     std::fs::create_dir_all(&root).unwrap();
     let runtime = test_runtime();
-    let project = register_agent_project_at_path(&runtime, "context-missing", "demo", &root).await;
+    let project = register_runner_project_at_path(&runtime, "context-missing", "demo", &root).await;
     let auth = auth_context(None, true);
     let session = runtime
         .sessions
@@ -839,9 +839,9 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
     );
     runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "context-missing".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: None,
             stdout: None,
@@ -880,7 +880,7 @@ async fn update_session_context_requires_authorized_exact_project_and_preserves_
         &runtime,
         "context-owner",
         &owner,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         vec![
             registered_project("first", &first_root.to_string_lossy()),
             registered_project("second", &second_root.to_string_lossy()),

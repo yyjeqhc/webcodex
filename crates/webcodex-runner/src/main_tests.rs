@@ -334,8 +334,8 @@ fn run_profile_shell(
     )
 }
 
-fn shell_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn shell_job_request(cwd: &Path, command: &str) -> RunnerRequest {
+    RunnerRequest {
         request_id: "req-job".to_string(),
         client_id: "ws-client".to_string(),
         kind: "start_job".to_string(),
@@ -380,7 +380,7 @@ fn runner_recovery_context_rejects_cross_product_go_test_metadata() {
     let context = request.job_context.as_mut().unwrap();
     context.purpose = Some("validation".to_string());
     context.validation_steps = vec!["test".to_string()];
-    context.validation = Some(shell_protocol::ShellJobValidationMetadata {
+    context.validation = Some(runner_protocol::ShellJobValidationMetadata {
         tool: "go_test".to_string(),
         kind: "test".to_string(),
         steps: vec![cargo_step],
@@ -401,7 +401,7 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
     let temp = tempfile::tempdir().unwrap();
     let mut request = shell_job_request(temp.path(), "");
     request.kind = "start_process_job".to_string();
-    request.process = Some(shell_protocol::ShellProcessArgv {
+    request.process = Some(runner_protocol::ShellProcessArgv {
         executable: "cargo".to_string(),
         args: vec!["test".to_string(), "focused".to_string()],
     });
@@ -409,7 +409,7 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
     context.purpose = Some("test".to_string());
     context.shell = Some("direct_argv".to_string());
     context.command_preview = "cargo test focused".to_string();
-    context.structured_execution = Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+    context.structured_execution = Some(runner_protocol::ShellJobStructuredExecutionMetadata {
         execution_source: "run_process".to_string(),
         language: None,
         script_bytes: None,
@@ -447,9 +447,9 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
 }
 
 fn wait_for_job_envelope(
-    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
     message: &str,
-) -> AgentEnvelope {
+) -> RunnerEnvelope {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match rx.try_recv() {
@@ -480,8 +480,8 @@ fn json_file_op_request(
     kind: &str,
     path: &str,
     payload: serde_json::Value,
-) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+) -> RunnerRequest {
+    RunnerRequest {
         request_id: format!("req-{kind}"),
         client_id: "agent-1".to_string(),
         kind: kind.to_string(),
@@ -1099,7 +1099,7 @@ fn server_url_to_ws_converts_http_https_and_rejects_bare() {
 }
 
 #[test]
-fn generated_agent_instance_id_is_non_empty_uuid_like() {
+fn generated_runner_instance_id_is_non_empty_uuid_like() {
     // `run_runner` generates the instance id the same way; verify the
     // format here without driving the full agent loop.
     let id = uuid::Uuid::new_v4().to_string();
@@ -1112,33 +1112,33 @@ fn generated_agent_instance_id_is_non_empty_uuid_like() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let body = build_register_request(&cfg, &id, 0);
-    assert_eq!(body.agent_instance_id, id);
-    assert!(!body.agent_instance_id.is_empty());
+    assert_eq!(body.runner_instance_id, id);
+    assert!(!body.runner_instance_id.is_empty());
     assert_eq!(
-        body.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2,
+        body.runner_protocol_generation, RUNNER_PROTOCOL_GENERATION_V2,
         "current Runner registration must explicitly declare protocol generation 2"
     );
 }
 
-fn ws_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
-    let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+fn ws_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<RunnerEnvelope>) {
+    let (tx, rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
     (
         RunnerSink::WebSocket {
             tx,
             client_id: client_id.to_string(),
-            agent_instance_id: "ws-inst".to_string(),
+            runner_instance_id: "ws-inst".to_string(),
         },
         rx,
     )
 }
 
-fn quic_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
-    let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+fn quic_sink(client_id: &str) -> (RunnerSink, tokio::sync::mpsc::Receiver<RunnerEnvelope>) {
+    let (tx, rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
     (
         RunnerSink::Quic {
             tx,
             client_id: client_id.to_string(),
-            agent_instance_id: "quic-inst".to_string(),
+            runner_instance_id: "quic-inst".to_string(),
         },
         rx,
     )
@@ -1165,7 +1165,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
         "running-job".to_string(),
         RunningJob {
             client_id: "ws-client".to_string(),
-            agent_instance_id: "ws-instance".to_string(),
+            runner_instance_id: "ws-instance".to_string(),
             snapshot: test_job_snapshot("running-job"),
             child: Some(Arc::clone(&running_child)),
             stop_requested: stop_requested.clone(),
@@ -1173,7 +1173,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
         },
     );
     let (sink, mut rx) = ws_sink("ws-client");
-    let request = ShellAgentShellRequest {
+    let request = RunnerRequest {
         request_id: "req-queued".to_string(),
         client_id: "ws-client".to_string(),
         kind: "start_job".to_string(),
@@ -1217,7 +1217,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
         },
     );
     match wait_for_job_envelope(&mut rx, "queued status was sent") {
-        AgentEnvelope::JobUpdate { payload } => {
+        RunnerEnvelope::JobUpdate { payload } => {
             assert_eq!(payload.job_id, "queued-job");
             assert_eq!(payload.status, "agent_queued");
         }
@@ -1252,8 +1252,8 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     let rejected = (0..2)
         .find_map(
             |_| match wait_for_job_envelope(&mut rejected_rx, "shutdown update was sent") {
-                AgentEnvelope::JobUpdate { payload } if payload.finished => Some(payload),
-                AgentEnvelope::JobUpdate { .. } => None,
+                RunnerEnvelope::JobUpdate { payload } if payload.finished => Some(payload),
+                RunnerEnvelope::JobUpdate { .. } => None,
                 other => panic!("expected job_update, got {:?}", other.kind()),
             },
         )
@@ -1272,8 +1272,8 @@ fn project_policy(root: &Path) -> RunnerPolicy {
     }
 }
 
-fn project_request(kind: &str, payload: serde_json::Value) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn project_request(kind: &str, payload: serde_json::Value) -> RunnerRequest {
+    RunnerRequest {
         request_id: format!("req-{}", kind),
         client_id: "oe".to_string(),
         kind: kind.to_string(),
@@ -1382,11 +1382,11 @@ fn http_sink_client_id_matches_config() {
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
         client_id: cfg.client_id.clone(),
-        agent_instance_id: "inst-1".to_string(),
+        runner_instance_id: "inst-1".to_string(),
         shutdown: Arc::new(AtomicBool::new(false)),
     });
     assert_eq!(sink.client_id(), "oe");
-    assert_eq!(sink.agent_instance_id(), "inst-1");
+    assert_eq!(sink.runner_instance_id(), "inst-1");
 }
 
 #[test]
@@ -1426,7 +1426,7 @@ fn canonical_registered_client_json(instance_id: &str, transport: &str) -> serde
         "pending_requests": 0,
         "projects": [],
         "project_inventory": ShellProjectInventoryStatus::pending(0),
-        "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
+        "agent_protocol_generation": RUNNER_PROTOCOL_GENERATION_V2.get(),
         "transport": transport
     })
 }
@@ -1521,14 +1521,14 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
 
         // Read Register.
         let reg_msg = ws.next().await.unwrap().unwrap();
-        let reg_env = AgentEnvelope::from_slice(reg_msg.into_text().unwrap().as_bytes()).unwrap();
-        assert!(matches!(reg_env, AgentEnvelope::Register { .. }));
+        let reg_env = RunnerEnvelope::from_slice(reg_msg.into_text().unwrap().as_bytes()).unwrap();
+        assert!(matches!(reg_env, RunnerEnvelope::Register { .. }));
 
         // Ack register with the canonical generation-2 inventory negotiation state.
         let client =
             serde_json::from_value(canonical_registered_client_json("inst-1", "websocket"))
                 .unwrap();
-        let ack = AgentEnvelope::Registered {
+        let ack = RunnerEnvelope::Registered {
             success: true,
             client: Some(client),
             error: None,
@@ -1544,10 +1544,10 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
             .expect("agent did not publish startup project inventory")
             .expect("stream open for startup inventory")
             .expect("startup inventory message is valid");
-        let page = match AgentEnvelope::from_slice(inventory_msg.into_text().unwrap().as_bytes())
+        let page = match RunnerEnvelope::from_slice(inventory_msg.into_text().unwrap().as_bytes())
             .unwrap()
         {
-            AgentEnvelope::ProjectInventoryPage { page } => page,
+            RunnerEnvelope::ProjectInventoryPage { page } => page,
             other => panic!("expected project inventory page, got {:?}", other.kind()),
         };
         assert!(
@@ -1560,7 +1560,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
         status.total_reported = Some(page.total_reported);
         status.total_synced = page.total_reported;
         ws.send(WsMessage::Text(
-            AgentEnvelope::ProjectInventoryStatus { status }
+            RunnerEnvelope::ProjectInventoryStatus { status }
                 .to_json()
                 .unwrap()
                 .into(),
@@ -1570,7 +1570,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
 
         // Send a Pong — the Runner must accept it as keepalive and stay
         // connected (this is the regression we are guarding against).
-        let pong = AgentEnvelope::Pong { ts: 42 };
+        let pong = RunnerEnvelope::Pong { ts: 42 };
         ws.send(WsMessage::Text(pong.to_json().unwrap().into()))
             .await
             .unwrap();
@@ -1579,7 +1579,7 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
         // agent had broken out of its read loop on the Pong above, this
         // would time out.
         ws.send(WsMessage::Text(
-            AgentEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
+            RunnerEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
         ))
         .await
         .unwrap();
@@ -1588,8 +1588,8 @@ async fn websocket_session_accepts_pong_without_error_or_disconnect() {
             .expect("agent did not reply to ping after pong (session exited on pong)")
             .expect("stream open")
             .expect("ok message");
-        match AgentEnvelope::from_slice(reply.into_text().unwrap().as_bytes()).unwrap() {
-            AgentEnvelope::Pong { ts } => assert_eq!(ts, 7),
+        match RunnerEnvelope::from_slice(reply.into_text().unwrap().as_bytes()).unwrap() {
+            RunnerEnvelope::Pong { ts } => assert_eq!(ts, 7),
             other => panic!("expected pong reply, got {:?}", other.kind()),
         }
 

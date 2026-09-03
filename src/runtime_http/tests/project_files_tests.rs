@@ -52,7 +52,7 @@ async fn dedicated_read_project_file_with_session_id_records_event() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::shell_protocol::ShellClientCapabilities {
+    let caps = crate::runner_protocol::RunnerCapabilities {
         file_read: true,
         ..Default::default()
     };
@@ -126,7 +126,7 @@ async fn dedicated_read_project_file_without_session_id_succeeds() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::shell_protocol::ShellClientCapabilities {
+    let caps = crate::runner_protocol::RunnerCapabilities {
         file_read: true,
         ..Default::default()
     };

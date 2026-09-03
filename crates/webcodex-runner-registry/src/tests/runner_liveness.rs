@@ -4,7 +4,7 @@ use super::*;
 async fn touch_runner_refreshes_stale_client_back_to_online() {
     let registry = RunnerRegistry::default();
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,8 +12,8 @@ async fn touch_runner_refreshes_stale_client_back_to_online() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -57,7 +57,7 @@ async fn touch_runner_rejects_stale_instance_and_accepts_active() {
         .await;
     // Instance B replaces A.
     let view_b = register_with_instance(&registry, "oe", "inst-b").await;
-    assert_eq!(view_b.agent_instance_id, "inst-b");
+    assert_eq!(view_b.runner_instance_id, "inst-b");
     assert!(view_b.connected);
 
     // Capture B's last_seen right after registration.

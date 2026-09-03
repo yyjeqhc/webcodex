@@ -1,8 +1,8 @@
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    PersistentShellResult, ShellAgentPersistentShellResultRequest, ShellAgentProjectSummary,
-    ShellClientCapabilities,
+use crate::runner_protocol::{
+    PersistentShellResult, RunnerCapabilities, RunnerPersistentShellResultRequest,
+    RunnerProjectSummary,
 };
 
 const CLIENT: &str = "persistent-agent";
@@ -19,12 +19,12 @@ async fn setup(
         &runtime,
         CLIENT,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             persistent_shell,
             ..Default::default()
         },
-        vec![ShellAgentProjectSummary {
+        vec![RunnerProjectSummary {
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),
@@ -43,7 +43,7 @@ async fn setup(
         }],
     )
     .await;
-    let project = crate::tool_runtime::agent_project_runtime_id(CLIENT, PROJECT_ID);
+    let project = crate::tool_runtime::runner_project_runtime_id(CLIENT, PROJECT_ID);
     let mut options = sessions::SessionCreateOptions::new(
         Some(project.clone()),
         Some("persistent shell".to_string()),
@@ -60,9 +60,7 @@ async fn setup(
     (runtime, project, session)
 }
 
-async fn next_persistent_request(
-    runtime: &ToolRuntime,
-) -> crate::shell_protocol::ShellAgentShellRequest {
+async fn next_persistent_request(runtime: &ToolRuntime) -> crate::runner_protocol::RunnerRequest {
     let request = wait_for_patch_agent_request(runtime, CLIENT).await;
     assert_eq!(request.kind, "persistent_shell");
     request
@@ -70,7 +68,7 @@ async fn next_persistent_request(
 
 async fn complete(
     runtime: &ToolRuntime,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    request: &crate::runner_protocol::RunnerRequest,
     shell_state: &str,
     execution_state: &str,
     stdout: &str,
@@ -100,7 +98,7 @@ async fn complete(
 
 async fn complete_with_cwds(
     runtime: &ToolRuntime,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    request: &crate::runner_protocol::RunnerRequest,
     shell_state: &str,
     execution_state: &str,
     stdout: &str,
@@ -112,9 +110,9 @@ async fn complete_with_cwds(
     let operation = request.persistent_shell.as_ref().unwrap();
     runtime
         .runner_registry
-        .complete_persistent_shell(ShellAgentPersistentShellResultRequest {
+        .complete_persistent_shell(RunnerPersistentShellResultRequest {
             client_id: CLIENT.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: request.request_id.clone(),
             result: PersistentShellResult {
                 shell_id: operation.shell_id.clone(),
@@ -772,7 +770,7 @@ async fn setup_ssh_with_capabilities(
         &runtime,
         CLIENT,
         None,
-        ShellClientCapabilities {
+        RunnerCapabilities {
             shell: true,
             async_jobs: true,
             persistent_shell: true,
@@ -780,7 +778,7 @@ async fn setup_ssh_with_capabilities(
             ssh_persistent_shell,
             ..Default::default()
         },
-        vec![ShellAgentProjectSummary {
+        vec![RunnerProjectSummary {
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),
@@ -799,7 +797,7 @@ async fn setup_ssh_with_capabilities(
         }],
     )
     .await;
-    let project = crate::tool_runtime::agent_project_runtime_id(CLIENT, PROJECT_ID);
+    let project = crate::tool_runtime::runner_project_runtime_id(CLIENT, PROJECT_ID);
     let context = sessions::SessionExecutionContext {
         default_cwd: None,
         default_shell: None,

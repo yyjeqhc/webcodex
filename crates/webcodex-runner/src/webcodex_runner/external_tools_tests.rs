@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::runner_protocol::RunnerRequest;
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -191,13 +191,8 @@ fn process_ids(provider: &ClaudeCodeMcpProvider) -> Vec<u32> {
         .collect()
 }
 
-fn agent_request(
-    kind: &str,
-    root: &Path,
-    path: &str,
-    content: Option<Value>,
-) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn runner_request(kind: &str, root: &Path, path: &str, content: Option<Value>) -> RunnerRequest {
+    RunnerRequest {
         request_id: "request".to_string(),
         client_id: "client".to_string(),
         kind: kind.to_string(),
@@ -353,7 +348,7 @@ search_project_text = "project_search"
         strategy: ToolProviderStrategy::ClaudeCode,
         claude_code: ClaudeCodeMcpConfig::default(),
     });
-    let mut request = agent_request("run_shell", root.path(), ".", None);
+    let mut request = runner_request("run_shell", root.path(), ".", None);
     request.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     request.stdin = Some(search_request().to_string());
     let ExternalRoute::Handled(result) = router.route(&permissive_test_policy(), &request) else {
@@ -429,7 +424,7 @@ fn search_mapping_normalizes_results() {
         strategy: ToolProviderStrategy::ClaudeCode,
         claude_code: fixture.config.clone(),
     });
-    let mut search = agent_request("run_shell", &fixture.root, ".", None);
+    let mut search = runner_request("run_shell", &fixture.root, ".", None);
     search.command = format!("{EXTERNAL_SEARCH_REQUEST_PREFIX}\nignored native command");
     search.stdin = Some(search_request().to_string());
     let ExternalRoute::Handled(search) = router.route(&permissive_test_policy(), &search) else {
@@ -460,7 +455,7 @@ fn fallback_and_failure_routes_record_bounded_last_call_evidence() {
         strategy: ToolProviderStrategy::ClaudeCodeThenNative,
         claude_code: unmapped_search,
     });
-    let mut search = agent_request("run_shell", &fixture.root, ".", None);
+    let mut search = runner_request("run_shell", &fixture.root, ".", None);
     search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     search.stdin = Some(search_request().to_string());
     let ExternalRoute::NativeFallback(fallback) = router.route(&permissive_test_policy(), &search)
@@ -502,7 +497,7 @@ fn status_revisions_are_changed_only_and_registration_reads_latest_snapshot() {
     router.mark_status_reported(initial_revision);
     assert!(router.claim_status_update().is_none());
 
-    let mut search = agent_request("run_shell", &fixture.root, ".", None);
+    let mut search = runner_request("run_shell", &fixture.root, ".", None);
     search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     search.stdin = Some(search_request().to_string());
     assert!(matches!(
@@ -558,7 +553,7 @@ fn router_rejects_absolute_parent_and_symlink_escape_paths() {
             .to_string(),
     ];
     for path in cases {
-        let mut search = agent_request("run_shell", &fixture.root, ".", None);
+        let mut search = runner_request("run_shell", &fixture.root, ".", None);
         search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
         search.stdin = Some(search_request_with_path(&path).to_string());
         let ExternalRoute::Handled(result) = router.route(&RunnerPolicy::default(), &search) else {
@@ -571,7 +566,7 @@ fn router_rejects_absolute_parent_and_symlink_escape_paths() {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(outside.path(), fixture.root.join("escape")).unwrap();
-        let mut search = agent_request("run_shell", &fixture.root, ".", None);
+        let mut search = runner_request("run_shell", &fixture.root, ".", None);
         search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
         search.stdin = Some(search_request_with_path("escape/outside.txt").to_string());
         let ExternalRoute::Handled(result) = router.route(&RunnerPolicy::default(), &search) else {
@@ -654,7 +649,7 @@ fn timeout_removes_pending_request() {
         strategy: ToolProviderStrategy::ClaudeCodeThenNative,
         claude_code: unmapped,
     });
-    let mut request = agent_request("run_shell", &fixture.root, ".", None);
+    let mut request = runner_request("run_shell", &fixture.root, ".", None);
     request.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     request.stdin = Some(search_request().to_string());
     assert!(matches!(
@@ -796,7 +791,7 @@ fn native_strategy_does_not_start_claude() {
         strategy: ToolProviderStrategy::Native,
         claude_code: fixture.config.clone(),
     });
-    let mut request = agent_request("run_shell", &fixture.root, ".", None);
+    let mut request = runner_request("run_shell", &fixture.root, ".", None);
     request.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     request.stdin = Some(search_request().to_string());
     assert!(matches!(
@@ -816,7 +811,7 @@ fn retiring_router_keeps_inflight_search_alive_then_reaps_its_process() {
         claude_code: fixture.config.clone(),
     }));
     let weak = Arc::downgrade(&old);
-    let mut request = agent_request("run_shell", &fixture.root, ".", None);
+    let mut request = runner_request("run_shell", &fixture.root, ".", None);
     request.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     request.stdin = Some(search_request().to_string());
     let worker_router = Arc::clone(&old);
@@ -834,7 +829,7 @@ fn retiring_router_keeps_inflight_search_alive_then_reaps_its_process() {
     let pid = process_ids(&old.claude)[0];
 
     let replacement = ExternalToolRouter::new(&ToolProvidersConfig::default());
-    let mut new_request = agent_request("run_shell", &fixture.root, ".", None);
+    let mut new_request = runner_request("run_shell", &fixture.root, ".", None);
     new_request.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
     new_request.stdin = Some(search_request().to_string());
     assert!(matches!(

@@ -17,7 +17,7 @@ use super::tool_inputs::{
 use crate::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
 };
-use crate::shell_protocol::ShellScriptLanguage;
+use crate::runner_protocol::ShellScriptLanguage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};

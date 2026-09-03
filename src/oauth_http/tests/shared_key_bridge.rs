@@ -247,7 +247,7 @@ async fn register_shared_key_runner(registry: &crate::RunnerRegistry, shared_key
         shared_key,
         "bridge-runner",
         "bridge-instance",
-        crate::shell_protocol::ShellClientCapabilities::default(),
+        crate::runner_protocol::RunnerCapabilities::default(),
     )
     .await;
 }
@@ -257,15 +257,15 @@ async fn register_shared_key_runner_with_capabilities(
     shared_key: &str,
     client_id: &str,
     instance_id: &str,
-    capabilities: crate::shell_protocol::ShellClientCapabilities,
+    capabilities: crate::runner_protocol::RunnerCapabilities,
 ) {
     let auth = crate::auth::shared_key_context(shared_key);
     registry
         .register_with_auth(
-            crate::shell_protocol::ShellClientRegisterRequest {
+            crate::runner_protocol::RunnerRegisterRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: instance_id.to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: instance_id.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -285,8 +285,8 @@ async fn register_shared_key_runner_with_capabilities(
         .unwrap();
 }
 
-fn all_optional_computer_capabilities() -> crate::shell_protocol::ShellClientCapabilities {
-    crate::shell_protocol::ShellClientCapabilities {
+fn all_optional_computer_capabilities() -> crate::runner_protocol::RunnerCapabilities {
+    crate::runner_protocol::RunnerCapabilities {
         computer_application_discovery: true,
         computer_application_launch: true,
         computer_display_observe: true,
@@ -1198,7 +1198,7 @@ async fn bridge_picker_requires_capabilities_on_one_same_runner_and_rechecks_pos
         shared_key,
         "display-only-runner",
         "display-only-instance",
-        crate::shell_protocol::ShellClientCapabilities {
+        crate::runner_protocol::RunnerCapabilities {
             computer_display_observe: true,
             ..Default::default()
         },
@@ -1209,7 +1209,7 @@ async fn bridge_picker_requires_capabilities_on_one_same_runner_and_rechecks_pos
         shared_key,
         "pointer-only-runner",
         "pointer-only-instance",
-        crate::shell_protocol::ShellClientCapabilities {
+        crate::runner_protocol::RunnerCapabilities {
             computer_pointer_control: true,
             ..Default::default()
         },
@@ -1248,7 +1248,7 @@ async fn bridge_picker_requires_capabilities_on_one_same_runner_and_rechecks_pos
         shared_key,
         "display-only-runner",
         "display-only-instance",
-        crate::shell_protocol::ShellClientCapabilities::default(),
+        crate::runner_protocol::RunnerCapabilities::default(),
     )
     .await;
     let before = auth_code_count(&db);

@@ -235,15 +235,15 @@ fi
 # Stage 11: static — no python runtime helper regressions
 # ----------------------------------------------------------------------------
 stage_start "static: no python runtime helper regressions"
-if grep -R "python3 -c" -n src/tool_runtime src/shell_client crates/webcodex-runner/src; then
+if grep -R "python3 -c" -n src/tool_runtime src/runner_http crates/webcodex-runner/src; then
     die "python3 -c in runtime paths"
 else
     ok "no python3 -c in runtime paths"
 fi
-if grep -R "run_agent_helper" -n src/tool_runtime src/shell_client crates/webcodex-runner/src; then
-    die "run_agent_helper in runtime paths"
+if grep -R "run_runner_helper" -n src/tool_runtime src/runner_http crates/webcodex-runner/src; then
+    die "run_runner_helper in runtime paths"
 else
-    ok "no run_agent_helper in runtime paths"
+    ok "no run_runner_helper in runtime paths"
 fi
 
 # ----------------------------------------------------------------------------

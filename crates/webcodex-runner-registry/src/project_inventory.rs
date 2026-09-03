@@ -1,8 +1,8 @@
 use super::state::{ProjectInventoryStaging, ProjectInventoryState, RunnerRecord};
-use super::validation::{sha256_hex, validate_agent_instance_id, validate_project_summary_batch};
+use super::validation::{sha256_hex, validate_project_summary_batch, validate_runner_instance_id};
 use super::{now_ts, RunnerRegistry};
 use std::collections::{HashSet, VecDeque};
-use webcodex_core::shell_protocol::{
+use webcodex_core::runner_protocol::{
     ShellProjectInventoryPage, ShellProjectInventoryStatus, PROJECT_INVENTORY_GENERATION_MAX_BYTES,
     PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
@@ -174,23 +174,23 @@ impl RunnerRegistry {
     pub async fn apply_project_inventory_page(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         page: ShellProjectInventoryPage,
     ) -> Result<ShellProjectInventoryStatus, String> {
-        self.apply_project_inventory_page_checked(client_id, agent_instance_id, None, page)
+        self.apply_project_inventory_page_checked(client_id, runner_instance_id, None, page)
             .await
     }
 
     pub async fn apply_project_inventory_page_for_connection(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         connection_id: &str,
         page: ShellProjectInventoryPage,
     ) -> Result<ShellProjectInventoryStatus, String> {
         self.apply_project_inventory_page_checked(
             client_id,
-            agent_instance_id,
+            runner_instance_id,
             Some(connection_id),
             page,
         )
@@ -200,11 +200,11 @@ impl RunnerRegistry {
     async fn apply_project_inventory_page_checked(
         &self,
         client_id: &str,
-        agent_instance_id: &str,
+        runner_instance_id: &str,
         expected_connection_id: Option<&str>,
         page: ShellProjectInventoryPage,
     ) -> Result<ShellProjectInventoryStatus, String> {
-        validate_agent_instance_id(agent_instance_id)?;
+        validate_runner_instance_id(runner_instance_id)?;
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         // Capacity admission must not count abandoned expired snapshots. Cleanup
@@ -222,7 +222,7 @@ impl RunnerRegistry {
         let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if runner.agent_instance_id != agent_instance_id {
+        if runner.runner_instance_id != runner_instance_id {
             return Err(format!(
                 "runner {client_id} is no longer the active instance (stale or replaced)"
             ));

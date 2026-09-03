@@ -19,7 +19,7 @@ use crate::auth::AuthContext;
 use crate::runner_http::{
     command_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
 };
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest, ShellRunRequest, ShellRunResponse,
 };
 
@@ -873,7 +873,7 @@ fn decorate_execution_output(
 #[cfg(test)]
 mod lifecycle_tests {
     use super::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
-    use crate::shell_protocol::{ShellCommandExecutionState, ShellRunResponse};
+    use crate::runner_protocol::{ShellCommandExecutionState, ShellRunResponse};
 
     #[test]
     fn capture_wait_uncertainty_requires_definite_undispatch_evidence() {

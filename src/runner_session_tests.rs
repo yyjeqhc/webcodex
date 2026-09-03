@@ -1,6 +1,6 @@
 use super::*;
 use crate::runner_http::{RunnerTransport, TRANSPORT_WEBSOCKET};
-use crate::shell_protocol::{ShellClientCapabilities, ShellJobOpRequest};
+use crate::runner_protocol::{RunnerCapabilities, ShellJobOpRequest};
 use tokio::time::Instant;
 
 const SESSION_TEST_TIMEOUT: Duration = Duration::from_millis(250);
@@ -17,11 +17,11 @@ fn deadline() -> Instant {
     Instant::now() + SESSION_TEST_TIMEOUT
 }
 
-fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClientRegisterRequest {
-    let mut capabilities = ShellClientCapabilities::default();
+fn streaming_registration(client_id: &str, runner_instance_id: &str) -> RunnerRegisterRequest {
+    let mut capabilities = RunnerCapabilities::default();
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
-    crate::test_support::current_runner_registration(ShellClientRegisterRequest {
+    crate::test_support::current_runner_registration(RunnerRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -29,8 +29,8 @@ fn streaming_registration(client_id: &str, agent_instance_id: &str) -> ShellClie
         coding_agent_providers: None,
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
-        agent_instance_id: agent_instance_id.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: runner_instance_id.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
@@ -76,7 +76,7 @@ async fn register_streaming(
     (notify, cancel)
 }
 
-fn alive_writer() -> (mpsc::Sender<AgentEnvelope>, JoinHandle<WriterExit>) {
+fn alive_writer() -> (mpsc::Sender<RunnerEnvelope>, JoinHandle<WriterExit>) {
     let (out_tx, mut out_rx) = mpsc::channel(OUTGOING_CHANNEL_CAPACITY);
     let writer = tokio::spawn(async move {
         while out_rx.recv().await.is_some() {}
@@ -102,7 +102,7 @@ async fn writer_failure_terminates_session_and_reconciles_active_job() {
             SessionContext {
                 registry: &registry,
                 client_id: "writer-fail",
-                agent_instance_id: "inst-a",
+                runner_instance_id: "inst-a",
                 connection_id: "conn-a",
                 notify,
                 cancel,
@@ -134,7 +134,7 @@ async fn writer_task_panic_terminates_session() {
             SessionContext {
                 registry: &registry,
                 client_id: "writer-panic",
-                agent_instance_id: "inst-a",
+                runner_instance_id: "inst-a",
                 connection_id: "conn-a",
                 notify,
                 cancel,
@@ -174,7 +174,7 @@ async fn pump_exit_terminates_pending_reader_and_reconciles_exact_connection() {
                 SessionContext {
                     registry: &registry,
                     client_id,
-                    agent_instance_id: "inst-a",
+                    runner_instance_id: "inst-a",
                     connection_id: "conn-a",
                     notify,
                     cancel,
@@ -210,7 +210,7 @@ async fn pump_task_panic_terminates_session() {
             SessionContext {
                 registry: &registry,
                 client_id: "pump-panic",
-                agent_instance_id: "inst-a",
+                runner_instance_id: "inst-a",
                 connection_id: "conn-a",
                 notify,
                 cancel,
@@ -250,7 +250,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
             SessionContext {
                 registry: &session_registry,
                 client_id: "replace-active",
-                agent_instance_id: "inst-a",
+                runner_instance_id: "inst-a",
                 connection_id: "conn-a",
                 notify: notify_a,
                 cancel: cancel_a,
@@ -322,7 +322,7 @@ async fn stale_writer_failure_cannot_reconcile_replacement_connection() {
             SessionContext {
                 registry: &registry,
                 client_id: "writer-stale",
-                agent_instance_id: "inst-a",
+                runner_instance_id: "inst-a",
                 connection_id: "conn-a",
                 notify: notify_a,
                 cancel: cancel_a,

@@ -133,11 +133,11 @@ fn go_test_schema_and_audit_projection_are_bounded_and_explicit() {
     assert_eq!(packages["minItems"], 1);
     assert_eq!(
         packages["maxItems"],
-        crate::shell_protocol::GO_TEST_PACKAGE_MAX_ITEMS
+        crate::runner_protocol::GO_TEST_PACKAGE_MAX_ITEMS
     );
     assert_eq!(
         packages["items"]["maxLength"],
-        crate::shell_protocol::GO_TEST_PACKAGE_MAX_BYTES
+        crate::runner_protocol::GO_TEST_PACKAGE_MAX_BYTES
     );
 
     let raw = serde_json::json!({

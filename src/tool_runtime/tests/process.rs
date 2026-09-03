@@ -2,9 +2,9 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
-    ShellClientCapabilities, ShellCommandExecutionState,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
+    ShellCommandExecutionState,
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
@@ -44,7 +44,7 @@ async fn register_process_agent(
     root: &std::path::Path,
     structured_process_argv: bool,
 ) -> String {
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         structured_validation_argv: true,
         structured_process_argv,
@@ -58,7 +58,7 @@ async fn register_process_agent(
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
 }
 
 async fn register_process_job_agent(
@@ -66,7 +66,7 @@ async fn register_process_job_agent(
     client_id: &str,
     root: &std::path::Path,
 ) -> String {
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -84,7 +84,7 @@ async fn register_process_job_agent(
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
 }
 
 async fn register_detached_process_job_agent(
@@ -93,7 +93,7 @@ async fn register_detached_process_job_agent(
     root: &std::path::Path,
     detached_process_jobs: bool,
 ) -> String {
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -111,7 +111,7 @@ async fn register_detached_process_job_agent(
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
-    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
 }
 
 fn detached_process_call_with(
@@ -147,7 +147,7 @@ fn detached_process_call(project: String) -> ToolCall {
 async fn update_process_job(
     runtime: &ToolRuntime,
     client_id: &str,
-    request: &crate::shell_protocol::ShellAgentShellRequest,
+    request: &crate::runner_protocol::RunnerRequest,
     status: &str,
     state: Option<ShellCommandExecutionState>,
     exit_code: Option<i32>,
@@ -157,9 +157,9 @@ async fn update_process_job(
 ) {
     runtime
         .runner_registry
-        .update_job(ShellAgentJobUpdateRequest {
+        .update_job(RunnerJobUpdateRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             job_id: request.job_id.clone().expect("structured Job id"),
             request_id: Some(request.request_id.clone()),
             update_seq: None,
@@ -192,10 +192,10 @@ async fn complete_process_lifecycle(
 ) {
     runtime
         .runner_registry
-        .complete(ShellAgentResultPayload {
-            result: ShellAgentResultRequest {
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id,
                 exit_code,
                 stdout: Some(stdout.to_string()),
@@ -218,7 +218,7 @@ async fn dispatch_process_until_request(
     auth: crate::auth::AuthContext,
 ) -> (
     tokio::task::JoinHandle<ToolResult>,
-    crate::shell_protocol::ShellAgentShellRequest,
+    crate::runner_protocol::RunnerRequest,
 ) {
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -306,7 +306,7 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
 async fn detached_process_requires_job_run_and_detach_scopes_before_any_admission() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -324,7 +324,7 @@ async fn detached_process_requires_job_run_and_detach_scopes_before_any_admissio
         vec![registered_project("demo", &temp.path().to_string_lossy())],
     )
     .await;
-    let project = crate::tool_runtime::agent_project_runtime_id("detached-scope-gate", "demo");
+    let project = crate::tool_runtime::runner_project_runtime_id("detached-scope-gate", "demo");
 
     for (label, mut auth, key) in [
         (
@@ -601,7 +601,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
     let restarted = test_runtime();
-    let capabilities = ShellClientCapabilities {
+    let capabilities = RunnerCapabilities {
         shell: true,
         async_jobs: true,
         async_shell_jobs: true,
@@ -615,13 +615,13 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     };
     restarted
         .runner_registry
-        .register(crate::shell_protocol::ShellClientRegisterRequest {
+        .register(crate::runner_protocol::RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
-            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+            job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
-                jobs: vec![crate::shell_protocol::ShellJobSnapshot {
+                jobs: vec![crate::runner_protocol::ShellJobSnapshot {
                     job_id: job_id.clone(),
                     request_id: request.request_id.clone(),
                     status: "running".to_string(),
@@ -642,8 +642,8 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "detached-restart-recovery".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -661,7 +661,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     )
     .await;
     let restarted_project =
-        crate::tool_runtime::agent_project_runtime_id("detached-restart-recovery", "demo");
+        crate::tool_runtime::runner_project_runtime_id("detached-restart-recovery", "demo");
     let retry = restarted
         .dispatch_with_auth(
             detached_process_call_with(
@@ -972,7 +972,7 @@ async fn run_process_fast_terminal_projection_does_not_silently_drop_retained_li
         .map(|line| format!("retained-line-{line:03}\n"))
         .collect::<String>();
     assert!(
-        retained_stdout.len() < crate::shell_protocol::JOB_SNAPSHOT_STREAM_MAX_BYTES,
+        retained_stdout.len() < crate::runner_protocol::JOB_SNAPSHOT_STREAM_MAX_BYTES,
         "fixture must fit the Runner-retained snapshot bound"
     );
     assert!(

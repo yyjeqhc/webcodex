@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
 use crate::auth::SCOPE_PROJECT_READ;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk};
 use crate::tool_runtime::registry::output_schema_for_tool;
 use crate::tool_runtime::sessions::{
@@ -150,7 +150,7 @@ async fn validation_summary_is_guard_safe_read_only_and_does_not_pollute_ledger(
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "validation-summary-safe", "demo", tmp.path())
+        register_runner_project_at_path(&runtime, "validation-summary-safe", "demo", tmp.path())
             .await;
     let session = runtime
         .sessions
@@ -218,7 +218,7 @@ async fn validation_summary_preserves_history_bounds_and_safe_diagnostics() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "validation-summary-history", "demo", tmp.path())
+        register_runner_project_at_path(&runtime, "validation-summary-history", "demo", tmp.path())
             .await;
     let session = runtime
         .sessions
@@ -551,7 +551,7 @@ async fn validation_summary_keeps_zero_tests_from_resolving_cargo_test_failure()
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "validation-summary-zero", "demo", tmp.path())
+        register_runner_project_at_path(&runtime, "validation-summary-zero", "demo", tmp.path())
             .await;
     let session = runtime
         .sessions
@@ -625,7 +625,7 @@ async fn validation_summary_rejects_unknown_mismatched_and_unauthorized_sessions
         &runtime,
         "validation-summary-auth",
         &owner,
-        ShellClientCapabilities::default(),
+        RunnerCapabilities::default(),
         projects,
     )
     .await;

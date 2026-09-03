@@ -4,7 +4,7 @@ use super::*;
 async fn terminal_observed_poll_complete_and_log() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -12,8 +12,8 @@ async fn terminal_observed_poll_complete_and_log() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -60,9 +60,9 @@ async fn terminal_observed_poll_complete_and_log() {
         Some("crid-1")
     );
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -71,9 +71,9 @@ async fn terminal_observed_poll_complete_and_log() {
     let running = registry.get_job(&job.job_id).await.unwrap();
     assert_eq!(running.status, "agent_queued");
     registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: polled.request_id,
             exit_code: Some(0),
             stdout: Some("hello\n".to_string()),
@@ -121,7 +121,7 @@ async fn terminal_observed_poll_complete_and_log() {
 async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -129,8 +129,8 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -165,9 +165,9 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
     let request_a = job_a.request_id.clone().expect("job A request id");
     let request_b = job_b.request_id.clone().expect("job B request id");
 
-    let update = |request_id: String| ShellAgentJobUpdateRequest {
+    let update = |request_id: String| RunnerJobUpdateRequest {
         client_id: "oe".to_string(),
-        agent_instance_id: "inst".to_string(),
+        runner_instance_id: "inst".to_string(),
         job_id: job_b.job_id.clone(),
         request_id: Some(request_id),
         update_seq: None,
@@ -200,7 +200,7 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
 async fn terminal_observed_queued_stop_records_server_time() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -208,8 +208,8 @@ async fn terminal_observed_queued_stop_records_server_time() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -250,9 +250,9 @@ async fn terminal_observed_queued_stop_records_server_time() {
         assert_eq!(record.terminal_observed_at, record.ended_at);
     }
     let polled = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap();
@@ -263,7 +263,7 @@ async fn terminal_observed_queued_stop_records_server_time() {
 async fn registry_shell_job_stop_running_delivers_stop_to_client() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -271,8 +271,8 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -302,9 +302,9 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .await
         .unwrap();
     let started = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -317,9 +317,9 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .unwrap();
     assert_eq!(stop_requested.status, "stop_requested");
     let stop = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -332,7 +332,7 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
 async fn registry_marks_running_job_lost_when_client_stale() {
     let registry = RunnerRegistry::default();
     registry
-        .register(ShellClientRegisterRequest {
+        .register(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -340,8 +340,8 @@ async fn registry_marks_running_job_lost_when_client_stale() {
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: None,
             hostname: None,
@@ -371,9 +371,9 @@ async fn registry_marks_running_job_lost_when_client_stale() {
         .await
         .unwrap();
     let _ = registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: "oe".to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()

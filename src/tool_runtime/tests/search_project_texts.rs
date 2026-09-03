@@ -2,9 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellAgentShellRequest,
-};
+use crate::runner_protocol::{RunnerPollRequest, RunnerRequest, RunnerResultRequest};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -23,7 +21,7 @@ fn query(pattern: &str, mode: Option<SearchResultMode>) -> SearchProjectTextsQue
     }
 }
 
-fn request_pattern(request: &ShellAgentShellRequest) -> String {
+fn request_pattern(request: &RunnerRequest) -> String {
     request
         .stdin
         .as_deref()
@@ -50,7 +48,7 @@ fn search_stdout(mode: &str, path: &str, preview: &str) -> String {
 async fn complete_search_success(
     runtime: &ToolRuntime,
     client_id: &str,
-    request: &ShellAgentShellRequest,
+    request: &RunnerRequest,
     path: &str,
 ) {
     let payload: Value = serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
@@ -66,15 +64,12 @@ async fn complete_search_success(
     .await;
 }
 
-async fn poll_agent_request(
-    runtime: &ToolRuntime,
-    client_id: &str,
-) -> Option<ShellAgentShellRequest> {
+async fn poll_agent_request(runtime: &ToolRuntime, client_id: &str) -> Option<RunnerRequest> {
     runtime
         .runner_registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap()
@@ -96,7 +91,7 @@ async fn run_single_agent_batch_response(
 ) -> ToolResult {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -301,7 +296,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-sparse-single";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(Some(project.clone()), None);
     let session_id = session.session_id.clone();
     let auth = auth_context(None, true);
@@ -403,7 +398,7 @@ async fn search_project_text_nondefault_success_keeps_effective_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-noteworthy-single";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -454,7 +449,7 @@ async fn search_project_text_literal_mode_keeps_effective_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-literal-single";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -502,7 +497,7 @@ async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output(
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-literal-batch";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
     let mut literal = query("RuntimeInfo {", None);
     literal.pattern_mode = Some(SearchPatternMode::Literal);
@@ -547,7 +542,7 @@ async fn search_project_text_grep_fallback_keeps_backend_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-grep-visible";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -598,7 +593,7 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-sparse-batch";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
@@ -687,7 +682,7 @@ async fn search_project_texts_dispatch_large_default_batch_uses_sparse_fit_befor
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-sparse-budget-order";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let auth = auth_context(None, true);
     let patterns = (0..8)
         .map(|index| format!("needle-{index}"))
@@ -751,7 +746,7 @@ async fn search_project_texts_dispatch_mixed_batch_only_sparsifies_success_item(
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-sparse-mixed-batch";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let expected_project = project.clone();
     let auth = auth_context(None, true);
     let mut invalid = query("invalid", None);
@@ -838,7 +833,7 @@ async fn search_project_texts_retries_one_dropped_agent_request_and_restores_ord
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-retry-once";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -892,7 +887,7 @@ async fn search_project_texts_stops_after_two_dropped_agent_attempts() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-retry-dropped-twice";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -932,7 +927,7 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-retry-slot";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -990,7 +985,7 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
     let runtime =
         ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_secs(6));
     let client_id = "batch-search-retry-deadline";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1022,7 +1017,7 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
     let runtime =
         ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_millis(150));
     let client_id = "batch-search-expired-deadline";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1051,9 +1046,9 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
     assert_no_agent_request(&runtime, client_id).await;
     let late = runtime
         .runner_registry
-        .complete(ShellAgentResultRequest {
+        .complete(RunnerResultRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
             request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(search_stdout("matches", "src/late.rs", "late")),
@@ -1073,7 +1068,7 @@ async fn search_project_texts_does_not_retry_nontransient_agent_failures() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-no-retry-invalid";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let mut invalid = query("invalid", None);
     invalid.path = Some("../outside".to_string());
     let invalid_result = runtime
@@ -1309,7 +1304,7 @@ async fn search_project_texts_mixed_batch_preserves_failure_and_empty_result_fid
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-provenance-mixed";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1395,7 +1390,7 @@ async fn search_project_texts_restores_input_order_after_out_of_order_runner_com
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-order";
     let runtime_project =
-        register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+        register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1464,7 +1459,7 @@ async fn search_project_texts_isolates_validation_no_match_and_protected_path_re
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-mixed";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let mut invalid_path = query("invalid-path", None);
     invalid_path.path = Some("../outside".to_string());
     let mut invalid_glob = query("invalid-glob", None);
@@ -1535,7 +1530,7 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-search-concurrency";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1556,9 +1551,9 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
     ];
     let third_before_completion = runtime
         .runner_registry
-        .poll(ShellAgentPollRequest {
+        .poll(RunnerPollRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            runner_instance_id: "inst".to_string(),
         })
         .await
         .unwrap();
@@ -1593,7 +1588,7 @@ async fn search_project_texts_deadline_preserves_fast_result_and_cancels_unfinis
     let runtime =
         ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_millis(100));
     let client_id = "batch-search-deadline";
-    register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -1639,9 +1634,9 @@ async fn search_project_texts_deadline_preserves_fast_result_and_cancels_unfinis
     for request in unfinished {
         let late = runtime
             .runner_registry
-            .complete(ShellAgentResultRequest {
+            .complete(RunnerResultRequest {
                 client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
+                runner_instance_id: "inst".to_string(),
                 request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some(search_stdout("matches", "src/late.rs", "late")),
@@ -1661,7 +1656,7 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
     let ledger = ledger_dir.path().join("sessions.json");
     let runtime = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
     let client_id = "batch-search-session";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("batch search".to_string()));
@@ -1763,7 +1758,7 @@ async fn search_project_texts_outer_recording_session_preserves_complete_sparse_
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-outer-sparse";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("outer sparse search".to_string()),
@@ -1845,7 +1840,7 @@ async fn search_project_texts_outer_recording_session_keeps_final_response_under
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-final-cap";
-    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(
         Some(project.clone()),
         Some("search final response cap".to_string()),

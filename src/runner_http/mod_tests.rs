@@ -1,6 +1,6 @@
 use super::*;
-use crate::shell_protocol::{
-    AGENT_PROTOCOL_GENERATION_V2, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+use crate::runner_protocol::{
+    RUNNER_PROTOCOL_GENERATION_V2, RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
 };
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
@@ -74,8 +74,8 @@ fn oauth_bridge_auth_context(hash: &str, scopes: Vec<&str>) -> crate::auth::Auth
     }
 }
 
-fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
+fn project_summary(id: &str, path: &str) -> RunnerProjectSummary {
+    RunnerProjectSummary {
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),
@@ -96,10 +96,10 @@ fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
 
 fn runner_registration(
     client_id: &str,
-    agent_instance_id: &str,
-    _projects: Vec<ShellAgentProjectSummary>,
-) -> ShellClientRegisterRequest {
-    ShellClientRegisterRequest {
+    runner_instance_id: &str,
+    _projects: Vec<RunnerProjectSummary>,
+) -> RunnerRegisterRequest {
+    RunnerRegisterRequest {
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -107,8 +107,8 @@ fn runner_registration(
         coding_agent_providers: None,
         coding_agent_inventory: None,
         client_id: client_id.to_string(),
-        agent_instance_id: agent_instance_id.to_string(),
-        agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+        runner_instance_id: runner_instance_id.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
         display_name: None,
         owner: None,
         hostname: None,
@@ -118,18 +118,18 @@ fn runner_registration(
     }
 }
 
-fn v2_baseline_capabilities() -> ShellClientCapabilities {
+fn v2_baseline_capabilities() -> RunnerCapabilities {
     let mut value = serde_json::Map::new();
     // Shell remains RegistrationRequired in generation 2, so pin it false in
     // the baseline-only fixture.
     value.insert("shell".to_string(), serde_json::Value::Bool(false));
-    for capability in AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
+    for capability in RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
         value.insert((*capability).to_string(), serde_json::Value::Bool(true));
     }
     serde_json::from_value(serde_json::Value::Object(value)).unwrap()
 }
 
-fn async_job_capabilities() -> ShellClientCapabilities {
+fn async_job_capabilities() -> RunnerCapabilities {
     let mut capabilities = v2_baseline_capabilities();
     capabilities.shell = true;
     capabilities

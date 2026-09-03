@@ -2,13 +2,13 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 
 #[tokio::test]
 async fn git_status_with_session_id_records_git_read_event() {
     let runtime = runtime_with_agent_project("telemetry-git");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         git: true,
         shell: false,
         ..Default::default()
@@ -62,7 +62,7 @@ async fn git_log_parses_commits() {
     commit_file(root, "a.txt", "two\n", "second commit");
     let stdout = git_log_stdout(root, 20, 0);
     let runtime = runtime_with_agent_project("git-log-parse");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         git: true,
         ..Default::default()
     };
@@ -122,7 +122,7 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
     commit_file(root, "a.txt", "three\n", "third commit");
     let stdout = git_log_stdout(root, 1, 1);
     let runtime = runtime_with_agent_project("git-log-page");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         git: true,
         ..Default::default()
     };
@@ -165,7 +165,7 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
 #[tokio::test]
 async fn git_log_unknown_project_and_unknown_session_are_structured_errors() {
     let runtime = runtime_with_agent_project("git-log-errors");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         git: true,
         ..Default::default()
     };
@@ -203,7 +203,7 @@ async fn git_log_read_only_session_allowed_and_recorded() {
     commit_file(root, "a.txt", "one\n", "first commit");
     let stdout = git_log_stdout(root, 5, 0);
     let runtime = runtime_with_agent_project("git-log-readonly");
-    let caps = ShellClientCapabilities {
+    let caps = RunnerCapabilities {
         git: true,
         ..Default::default()
     };

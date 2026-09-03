@@ -90,7 +90,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
     let runner_registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     runner_registry
         .register(crate::test_support::current_runner_registration(
-            ShellClientRegisterRequest {
+            RunnerRegisterRequest {
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -98,13 +98,13 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
                 coding_agent_providers: None,
                 coding_agent_inventory: None,
                 client_id: "mcp-observation-agent".to_string(),
-                agent_instance_id: "inst-mcp-observation".to_string(),
-                agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+                runner_instance_id: "inst-mcp-observation".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: None,
                 owner: None,
                 hostname: None,
                 host_context: None,
-                capabilities: ShellClientCapabilities::default(),
+                capabilities: RunnerCapabilities::default(),
                 policy: None,
             },
         ))
@@ -115,7 +115,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
         "mcp-observation-agent",
         "inst-mcp-observation",
         vec![
-            crate::shell_protocol::ShellAgentProjectSummary {
+            crate::runner_protocol::RunnerProjectSummary {
                 id: "shared".to_string(),
                 name: Some("Shared observation project".to_string()),
                 path: "/tmp/mcp-observation-shared".to_string(),
@@ -132,7 +132,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
                 updated_at: 1,
                 shell_profile: None,
             },
-            crate::shell_protocol::ShellAgentProjectSummary {
+            crate::runner_protocol::RunnerProjectSummary {
                 id: "foreign".to_string(),
                 name: Some("Foreign observation project".to_string()),
                 path: "/tmp/mcp-observation-foreign".to_string(),
@@ -161,9 +161,9 @@ fn spawn_stateless_observation_agent_executor(
     tokio::spawn(async move {
         loop {
             if let Some(request) = registry
-                .poll(crate::shell_protocol::ShellAgentPollRequest {
+                .poll(crate::runner_protocol::RunnerPollRequest {
                     client_id: "mcp-observation-agent".to_string(),
-                    agent_instance_id: "inst-mcp-observation".to_string(),
+                    runner_instance_id: "inst-mcp-observation".to_string(),
                 })
                 .await
                 .unwrap()
@@ -174,9 +174,9 @@ fn spawn_stateless_observation_agent_executor(
                     (-1, "unexpected observation fixture agent request")
                 };
                 registry
-                    .complete(crate::shell_protocol::ShellAgentResultRequest {
+                    .complete(crate::runner_protocol::RunnerResultRequest {
                         client_id: "mcp-observation-agent".to_string(),
-                        agent_instance_id: "inst-mcp-observation".to_string(),
+                        runner_instance_id: "inst-mcp-observation".to_string(),
                         request_id: request.request_id,
                         exit_code: Some(exit_code),
                         stdout: Some(String::new()),
@@ -1598,9 +1598,9 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     let runner_registry = stateless_observation_runner_registry().await;
     let agent_executor = spawn_stateless_observation_agent_executor(runner_registry.clone());
     let shared_project =
-        crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "shared");
+        crate::tool_runtime::runner_project_runtime_id("mcp-observation-agent", "shared");
     let foreign_project =
-        crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "foreign");
+        crate::tool_runtime::runner_project_runtime_id("mcp-observation-agent", "foreign");
     let runtime = Arc::new(
         ToolRuntime::new_for_tests_with_runner_registry(runner_registry.clone())
             .with_session_ledger(&ledger)

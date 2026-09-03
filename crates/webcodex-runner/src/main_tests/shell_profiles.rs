@@ -167,13 +167,13 @@ fn project_shell_profile_overrides_default_profile() {
 }
 
 fn wait_for_job_stdout(
-    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
 ) -> (String, Option<ShellCommandExecutionState>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stdout = String::new();
     while Instant::now() < deadline {
         match rx.try_recv() {
-            Ok(AgentEnvelope::JobUpdate { payload }) => {
+            Ok(RunnerEnvelope::JobUpdate { payload }) => {
                 let command_execution_state = payload.command_execution_state;
                 if let Some(snapshot) = payload.log_snapshot {
                     stdout = snapshot.stdout.tail;

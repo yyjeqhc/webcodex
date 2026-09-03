@@ -1,15 +1,13 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 #[cfg(test)]
-use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
-    ShellClientRegisterRequest,
+use crate::runner_protocol::{
+    RunnerCapabilities, RunnerPollRequest, RunnerProjectSummary, RunnerRegisterRequest,
 };
-use crate::shell_protocol::{
-    ShellClientJobLogRequest, ShellClientJobLogResponse, ShellClientJobStatusRequest,
-    ShellClientJobStatusResponse, ShellClientJobStopRequest, ShellClientJobStopResponse,
-    ShellClientJobsListRequest, ShellClientJobsListResponse, ShellFileOpRequest,
-    ShellFileOpResponse, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
-    ShellRunResponse,
+use crate::runner_protocol::{
+    RunnerJobLogRequest, RunnerJobLogResponse, RunnerJobStatusRequest, RunnerJobStatusResponse,
+    RunnerJobStopRequest, RunnerJobStopResponse, RunnerJobsListRequest, RunnerJobsListResponse,
+    ShellFileOpRequest, ShellFileOpResponse, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse,
+    ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -140,7 +138,7 @@ fn record_shell_job_action(
 
 fn record_shell_job_status_action(
     audit: &ActionAudit,
-    response: &ShellClientJobStatusResponse,
+    response: &RunnerJobStatusResponse,
     http_status: StatusCode,
 ) {
     audit.record(
@@ -161,7 +159,7 @@ fn record_shell_job_status_action(
 
 fn record_shell_job_log_action(
     audit: &ActionAudit,
-    response: &ShellClientJobLogResponse,
+    response: &RunnerJobLogResponse,
     http_status: StatusCode,
 ) {
     audit.record(
@@ -182,7 +180,7 @@ fn record_shell_job_log_action(
 
 fn record_shell_job_stop_action(
     audit: &ActionAudit,
-    response: &ShellClientJobStopResponse,
+    response: &RunnerJobStopResponse,
     http_status: StatusCode,
 ) {
     audit.record(
@@ -195,7 +193,7 @@ fn record_shell_job_stop_action(
 
 fn record_shell_jobs_list_action(
     audit: &ActionAudit,
-    response: &ShellClientJobsListResponse,
+    response: &RunnerJobsListResponse,
     http_status: StatusCode,
 ) {
     audit.record(
@@ -221,7 +219,7 @@ fn render_shell_job_status(
     res: &mut Response,
     audit: &ActionAudit,
     status: StatusCode,
-    response: ShellClientJobStatusResponse,
+    response: RunnerJobStatusResponse,
 ) {
     res.status_code(status);
     record_shell_job_status_action(audit, &response, status);
@@ -232,7 +230,7 @@ fn render_shell_job_log(
     res: &mut Response,
     audit: &ActionAudit,
     status: StatusCode,
-    response: ShellClientJobLogResponse,
+    response: RunnerJobLogResponse,
 ) {
     res.status_code(status);
     record_shell_job_log_action(audit, &response, status);
@@ -243,7 +241,7 @@ fn render_shell_job_stop_response(
     res: &mut Response,
     audit: &ActionAudit,
     status: StatusCode,
-    response: ShellClientJobStopResponse,
+    response: RunnerJobStopResponse,
 ) {
     res.status_code(status);
     record_shell_job_stop_action(audit, &response, status);
@@ -254,7 +252,7 @@ fn render_shell_jobs_list(
     res: &mut Response,
     audit: &ActionAudit,
     status: StatusCode,
-    response: ShellClientJobsListResponse,
+    response: RunnerJobsListResponse,
 ) {
     res.status_code(status);
     record_shell_jobs_list_action(audit, &response, status);
@@ -604,8 +602,8 @@ fn shell_job_error_response(op: String, error: String) -> ShellJobOpResponse {
     }
 }
 
-fn shell_job_status_response_from_job(job: ShellJobInfo) -> ShellClientJobStatusResponse {
-    ShellClientJobStatusResponse {
+fn shell_job_status_response_from_job(job: ShellJobInfo) -> RunnerJobStatusResponse {
+    RunnerJobStatusResponse {
         success: true,
         job_id: Some(job.job_id.clone()),
         client_id: Some(job.client_id.clone()),
@@ -619,8 +617,8 @@ fn shell_job_status_response_from_job(job: ShellJobInfo) -> ShellClientJobStatus
     }
 }
 
-fn shell_job_status_error_response(error: String) -> ShellClientJobStatusResponse {
-    ShellClientJobStatusResponse {
+fn shell_job_status_error_response(error: String) -> RunnerJobStatusResponse {
+    RunnerJobStatusResponse {
         success: false,
         job_id: None,
         client_id: None,
@@ -634,8 +632,8 @@ fn shell_job_status_error_response(error: String) -> ShellClientJobStatusRespons
     }
 }
 
-fn shell_job_log_error_response(error: String) -> ShellClientJobLogResponse {
-    ShellClientJobLogResponse {
+fn shell_job_log_error_response(error: String) -> RunnerJobLogResponse {
+    RunnerJobLogResponse {
         success: false,
         job_id: None,
         client_id: None,
@@ -648,8 +646,8 @@ fn shell_job_log_error_response(error: String) -> ShellClientJobLogResponse {
     }
 }
 
-fn shell_job_stop_error_response(error: String) -> ShellClientJobStopResponse {
-    ShellClientJobStopResponse {
+fn shell_job_stop_error_response(error: String) -> RunnerJobStopResponse {
+    RunnerJobStopResponse {
         success: false,
         job_id: None,
         status: None,
@@ -658,8 +656,8 @@ fn shell_job_stop_error_response(error: String) -> ShellClientJobStopResponse {
     }
 }
 
-fn shell_jobs_list_error_response(client_id: String, error: String) -> ShellClientJobsListResponse {
-    ShellClientJobsListResponse {
+fn shell_jobs_list_error_response(client_id: String, error: String) -> RunnerJobsListResponse {
+    RunnerJobsListResponse {
         success: false,
         client_id,
         jobs: Vec::new(),
@@ -987,7 +985,7 @@ pub async fn shell_job_status(req: &mut Request, depot: &mut Depot, res: &mut Re
         );
         return;
     };
-    let body: ShellClientJobStatusRequest = match req.parse_json().await {
+    let body: RunnerJobStatusRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             render_shell_job_status(
@@ -1032,7 +1030,7 @@ pub async fn shell_job_log(req: &mut Request, depot: &mut Depot, res: &mut Respo
         );
         return;
     };
-    let body: ShellClientJobLogRequest = match req.parse_json().await {
+    let body: RunnerJobLogRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             render_shell_job_log(
@@ -1072,7 +1070,7 @@ pub async fn shell_job_log(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 res,
                 &audit,
                 StatusCode::OK,
-                ShellClientJobLogResponse {
+                RunnerJobLogResponse {
                     success: true,
                     job_id: Some(job.job_id.clone()),
                     client_id: Some(job.client_id.clone()),
@@ -1108,7 +1106,7 @@ pub async fn shell_job_stop(req: &mut Request, depot: &mut Depot, res: &mut Resp
         );
         return;
     };
-    let body: ShellClientJobStopRequest = match req.parse_json().await {
+    let body: RunnerJobStopRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             render_shell_job_stop_response(
@@ -1137,7 +1135,7 @@ pub async fn shell_job_stop(req: &mut Request, depot: &mut Depot, res: &mut Resp
             res,
             &audit,
             StatusCode::OK,
-            ShellClientJobStopResponse {
+            RunnerJobStopResponse {
                 success: true,
                 job_id: Some(job.job_id.clone()),
                 status: Some(job.status.clone()),
@@ -1170,7 +1168,7 @@ pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Res
         );
         return;
     };
-    let body: ShellClientJobsListRequest = match req.parse_json().await {
+    let body: RunnerJobsListRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             render_shell_jobs_list(
@@ -1206,7 +1204,7 @@ pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Res
             res,
             &audit,
             StatusCode::OK,
-            ShellClientJobsListResponse {
+            RunnerJobsListResponse {
                 success: true,
                 client_id,
                 jobs,

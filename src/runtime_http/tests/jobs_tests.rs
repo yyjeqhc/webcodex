@@ -44,7 +44,7 @@ async fn dedicated_run_shell_with_session_id_records_event() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::shell_protocol::ShellClientCapabilities::default();
+    let caps = crate::runner_protocol::RunnerCapabilities::default();
     let (runtime, registry) =
         super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
     let service = Service::new(super::build_projects_router(config, db, runtime));

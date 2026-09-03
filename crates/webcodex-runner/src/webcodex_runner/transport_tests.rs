@@ -1,8 +1,6 @@
 use super::super::config::{RunnerPolicy, ShellConfig};
 use super::*;
-use crate::shell_protocol::{
-    ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_GENERATION_V2,
-};
+use crate::runner_protocol::{RunnerCapabilities, RunnerRequest, RUNNER_PROTOCOL_GENERATION_V2};
 #[cfg(unix)]
 use crate::POLLING_DISPATCH_MAX_IN_FLIGHT;
 use futures_util::{SinkExt, StreamExt};
@@ -29,9 +27,9 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
         legacy_projects_dir: None,
         deprecated_temporary_projects_root: None,
         poll_interval_ms: 10,
-        capabilities: Some(ShellClientCapabilities {
+        capabilities: Some(RunnerCapabilities {
             git: true,
-            ..ShellClientCapabilities::default()
+            ..RunnerCapabilities::default()
         }),
         max_concurrent_jobs: Some(1),
         // Transport tests run jobs in a temp dir and are not about the
@@ -59,12 +57,12 @@ fn polling_runner_config(server_url: String, project_registry_dir: PathBuf) -> R
     cfg
 }
 
-fn synthetic_project_summary(index: usize, path_bytes: Option<usize>) -> ShellAgentProjectSummary {
+fn synthetic_project_summary(index: usize, path_bytes: Option<usize>) -> RunnerProjectSummary {
     let path = match path_bytes {
         Some(bytes) => format!("/{}", "x".repeat(bytes.saturating_sub(1))),
         None => format!("/tmp/project-{index:04}"),
     };
-    ShellAgentProjectSummary {
+    RunnerProjectSummary {
         id: format!("project-{index:04}"),
         name: Some(format!("Project {index:04}")),
         path,
@@ -263,8 +261,8 @@ fn runtime_shutdown_wakes_and_joins_reload_listener() {
     assert_eq!(reload.resources, 1);
 }
 
-fn test_project(id: &str) -> ShellAgentProjectSummary {
-    ShellAgentProjectSummary {
+fn test_project(id: &str) -> RunnerProjectSummary {
+    RunnerProjectSummary {
         id: id.to_string(),
         name: Some(id.to_string()),
         path: format!("/tmp/{}", id),
@@ -516,7 +514,7 @@ enum ScriptStep {
     },
     PollDeliver(&'static str),
     #[cfg(unix)]
-    PollDeliverRequest(ShellAgentShellRequest),
+    PollDeliverRequest(RunnerRequest),
     PollEmpty,
     PollResponse {
         status: &'static str,
@@ -698,8 +696,8 @@ fn start_concurrent_polling_server(
     }
 }
 
-fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn sync_file_request(request_id: &str) -> RunnerRequest {
+    RunnerRequest {
         request_id: request_id.to_string(),
         client_id: "oe".to_string(),
         kind: "file_read".to_string(),
@@ -730,8 +728,8 @@ fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
 }
 
 #[cfg(unix)]
-fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> RunnerRequest {
+    RunnerRequest {
         request_id: request_id.to_string(),
         client_id: "oe".to_string(),
         kind: "run_shell".to_string(),
@@ -767,7 +765,7 @@ fn polling_job_request(
     job_id: &str,
     cwd: &Path,
     command: String,
-) -> ShellAgentShellRequest {
+) -> RunnerRequest {
     let mut request = polling_shell_request(request_id, cwd, command);
     request.kind = "start_job".to_string();
     request.job_id = Some(job_id.to_string());
@@ -781,12 +779,12 @@ fn polling_persistent_shell_request(
     action: &str,
     shell_id: &str,
     command: Option<String>,
-) -> ShellAgentShellRequest {
+) -> RunnerRequest {
     let mut request = sync_file_request(request_id);
     request.kind = "persistent_shell".to_string();
     request.command = command.clone().unwrap_or_default();
     request.timeout_secs = 30;
-    request.persistent_shell = Some(crate::shell_protocol::PersistentShellRequest {
+    request.persistent_shell = Some(crate::runner_protocol::PersistentShellRequest {
         action: action.to_string(),
         shell_id: shell_id.to_string(),
         workflow_session_id: "wc_sess_polling_e1".to_string(),
@@ -817,7 +815,7 @@ fn gated_marker_command(started: &Path, release: &Path, marker: &Path, value: &s
     )
 }
 
-fn poll_delivery_response(request: Option<&ShellAgentShellRequest>) -> ConcurrentHttpResponse {
+fn poll_delivery_response(request: Option<&RunnerRequest>) -> ConcurrentHttpResponse {
     let request = request
         .map(serde_json::to_value)
         .transpose()
@@ -845,7 +843,7 @@ fn register_inventory_support_response() -> ConcurrentHttpResponse {
                 "capabilities": {},
                 "pending_requests": 0,
                 "projects": [],
-                "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
+                "agent_protocol_generation": RUNNER_PROTOCOL_GENERATION_V2.get(),
                 "project_inventory": {
                     "sync_state": "pending",
                     "generation": null,
@@ -977,7 +975,7 @@ fn accept_with_deadline(listener: &StdTcpListener, deadline: Duration) -> TcpStr
     }
 }
 
-fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
+fn start_scripted_runner_server(steps: Vec<ScriptStep>) -> ScriptedServer {
     let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1964,7 +1962,7 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
 
 #[test]
 fn polling_502_reregisters_once_then_processes_request() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "502 Bad Gateway",
@@ -2014,7 +2012,7 @@ fn polling_502_reregisters_once_then_processes_request() {
 #[test]
 fn polling_503_and_504_stay_live_without_registration_storm() {
     for status in ["503 Service Unavailable", "504 Gateway Timeout"] {
-        let server = start_scripted_agent_server(vec![
+        let server = start_scripted_runner_server(vec![
             ScriptStep::Register,
             ScriptStep::PollResponse {
                 status,
@@ -2041,7 +2039,7 @@ fn polling_503_and_504_stay_live_without_registration_storm() {
 
 #[test]
 fn polling_connection_closed_enters_session_recovery() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollClose,
         ScriptStep::Register,
@@ -2063,7 +2061,7 @@ fn polling_connection_closed_enters_session_recovery() {
 
 #[test]
 fn polling_transient_after_successful_inventory_recovery_starts_a_new_episode() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "502 Bad Gateway",
@@ -2114,7 +2112,7 @@ fn polling_transient_after_successful_inventory_recovery_starts_a_new_episode() 
 
 #[test]
 fn polling_truncated_json_recovers_and_stays_live() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "200 OK",
@@ -2139,7 +2137,7 @@ fn polling_truncated_json_recovers_and_stays_live() {
 
 #[test]
 fn polling_register_truncated_json_recovers_and_stays_live() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::RegisterResponse {
             status: "200 OK",
             body: r#"{"success":true,"client":"#,
@@ -2162,7 +2160,7 @@ fn polling_register_truncated_json_recovers_and_stays_live() {
 
 #[test]
 fn polling_http_200_html_bad_gateway_recovers() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollTypedResponse {
             status: "200 OK",
@@ -2188,7 +2186,7 @@ fn polling_http_200_html_bad_gateway_recovers() {
 
 #[test]
 fn polling_register_http_200_html_service_unavailable_recovers() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::RegisterTypedResponse {
             status: "200 OK",
             content_type: "text/html",
@@ -2212,7 +2210,7 @@ fn polling_register_http_200_html_service_unavailable_recovers() {
 
 #[test]
 fn polling_complete_schema_mismatch_is_terminal_without_recovery() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "200 OK",
@@ -2237,7 +2235,7 @@ fn polling_complete_schema_mismatch_is_terminal_without_recovery() {
 
 #[test]
 fn polling_unknown_json_shape_is_terminal_without_recovery() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "200 OK",
@@ -2261,7 +2259,7 @@ fn polling_unknown_json_shape_is_terminal_without_recovery() {
 
 #[test]
 fn polling_register_complete_schema_mismatch_is_terminal_without_retry() {
-    let server = start_scripted_agent_server(vec![ScriptStep::RegisterResponse {
+    let server = start_scripted_runner_server(vec![ScriptStep::RegisterResponse {
         status: "200 OK",
         body: r#"{"success":"yes","client":null,"error":null}"#,
     }]);
@@ -2282,7 +2280,7 @@ fn polling_register_complete_schema_mismatch_is_terminal_without_retry() {
 
 #[test]
 fn polling_register_unknown_json_shape_is_terminal_without_retry() {
-    let server = start_scripted_agent_server(vec![ScriptStep::RegisterResponse {
+    let server = start_scripted_runner_server(vec![ScriptStep::RegisterResponse {
         status: "200 OK",
         body: r#"{"unexpected":true}"#,
     }]);
@@ -2303,10 +2301,10 @@ fn polling_register_unknown_json_shape_is_terminal_without_retry() {
 
 #[test]
 fn polling_oversized_response_is_terminal_without_loading_the_body() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollOversized {
-            declared_len: crate::AGENT_HTTP_RESPONSE_BODY_MAX_BYTES + 1,
+            declared_len: crate::RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES + 1,
         },
     ]);
     let error = run_polling_runner_against_scripted_server(&server, false)
@@ -2340,7 +2338,7 @@ fn polling_404_and_non_session_400_are_terminal_without_retry() {
             "server permanently rejected polling",
         ),
     ] {
-        let server = start_scripted_agent_server(vec![
+        let server = start_scripted_runner_server(vec![
             ScriptStep::Register,
             ScriptStep::PollResponse { status, body },
         ]);
@@ -2358,7 +2356,7 @@ fn polling_404_and_non_session_400_are_terminal_without_retry() {
 
 #[test]
 fn polling_unknown_session_reregisters_then_resumes() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "400 Bad Request",
@@ -2383,7 +2381,7 @@ fn polling_unknown_session_reregisters_then_resumes() {
 
 #[test]
 fn polling_initial_register_502_recovers_without_supervisor_restart() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::RegisterResponse {
             status: "502 Bad Gateway",
             body: "<html>bad gateway</html>",
@@ -2408,7 +2406,7 @@ fn polling_initial_register_502_recovers_without_supervisor_restart() {
 
 #[test]
 fn polling_recovery_register_502_retries_then_resumes() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "502 Bad Gateway",
@@ -2438,7 +2436,7 @@ fn polling_recovery_register_502_retries_then_resumes() {
 
 #[test]
 fn polling_active_instance_lease_conflict_waits_then_registers() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::RegisterResponse {
             status: "400 Bad Request",
             body: r#"{"success":false,"error":"agent client oe is already online with a different instance"}"#,
@@ -2491,7 +2489,7 @@ fn polling_register_auth_404_and_identity_mismatch_are_terminal() {
         ),
     ] {
         let server =
-            start_scripted_agent_server(vec![ScriptStep::RegisterResponse { status, body }]);
+            start_scripted_runner_server(vec![ScriptStep::RegisterResponse { status, body }]);
         let error = run_polling_runner_against_scripted_server(&server, false)
             .expect_err("fatal register response must stop");
         server.handle.join().unwrap();
@@ -2506,7 +2504,7 @@ fn polling_register_auth_404_and_identity_mismatch_are_terminal() {
 
 #[test]
 fn polling_once_retries_transient_registration_until_canonical_inventory_completes() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::RegisterResponse {
             status: "502 Bad Gateway",
             body: "bad gateway",
@@ -2524,7 +2522,7 @@ fn polling_once_retries_transient_registration_until_canonical_inventory_complet
 
 #[test]
 fn polling_shutdown_interrupts_session_recovery_without_extra_request() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "502 Bad Gateway",
@@ -2549,7 +2547,7 @@ fn polling_shutdown_interrupts_session_recovery_without_extra_request() {
 
 #[test]
 fn polling_shutdown_uses_the_process_coordinator_once() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollResponse {
             status: "502 Bad Gateway",
@@ -2590,7 +2588,7 @@ fn polling_result_permanent_400_is_dropped_once_and_polling_continues() {
     ));
     #[cfg(not(unix))]
     let delivery = ScriptStep::PollDeliver("req-expired");
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         delivery,
         ScriptStep::Result {
@@ -2651,7 +2649,7 @@ fn polling_result_permanent_400_is_dropped_once_and_polling_continues() {
 
 #[test]
 fn polling_result_transient_500_retries_same_payload_then_succeeds() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollDeliver("req-transient"),
         ScriptStep::Result {
@@ -2686,7 +2684,7 @@ fn polling_result_transient_500_retries_same_payload_then_succeeds() {
 
 #[test]
 fn polling_result_503_retries_same_payload_then_continues() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollDeliver("req-503"),
         ScriptStep::Result {
@@ -2735,7 +2733,7 @@ fn polling_result_server_unavailable_retry_exhaustion_drops_then_continues() {
     ));
     #[cfg(not(unix))]
     let delivery = ScriptStep::PollDeliver("req-exhausted");
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         delivery,
         ScriptStep::Result {
@@ -2789,7 +2787,7 @@ fn polling_result_server_unavailable_retry_exhaustion_drops_then_continues() {
 
 #[test]
 fn submit_result_503_retry_exhaustion_returns_dropped_outcome() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Result {
             status: "503 Service Unavailable",
             body: r#"{"success":false,"error":"temporary gateway failure"}"#,
@@ -2815,7 +2813,7 @@ fn submit_result_503_retry_exhaustion_returns_dropped_outcome() {
         server_url: server.server_url.clone(),
         token: "test-token".to_string(),
         client_id: "oe".to_string(),
-        agent_instance_id: "inst-exhausted".to_string(),
+        runner_instance_id: "inst-exhausted".to_string(),
         shutdown: Arc::new(AtomicBool::new(false)),
     });
     let outcome = sink
@@ -2841,7 +2839,7 @@ fn submit_result_503_retry_exhaustion_returns_dropped_outcome() {
 
 #[test]
 fn submit_result_retry_backoff_is_shutdown_aware() {
-    let server = start_scripted_agent_server(vec![ScriptStep::Result {
+    let server = start_scripted_runner_server(vec![ScriptStep::Result {
         status: "503 Service Unavailable",
         body: r#"{"success":false,"error":"temporary gateway failure"}"#,
     }]);
@@ -2853,7 +2851,7 @@ fn submit_result_retry_backoff_is_shutdown_aware() {
         server_url: server.server_url.clone(),
         token: "test-token".to_string(),
         client_id: "oe".to_string(),
-        agent_instance_id: "inst-shutdown".to_string(),
+        runner_instance_id: "inst-shutdown".to_string(),
         shutdown: Arc::new(AtomicBool::new(true)),
     });
     let started = Instant::now();
@@ -2886,7 +2884,7 @@ fn result_submission_gateway_and_connection_classes_are_transient() {
         reqwest::StatusCode::SERVICE_UNAVAILABLE,
         reqwest::StatusCode::GATEWAY_TIMEOUT,
     ] {
-        let error = RunnerHttpError::status(AGENT_RESULT_PATH, status, "{}");
+        let error = RunnerHttpError::status(RUNNER_RESULT_PATH, status, "{}");
         assert_eq!(error.kind, RunnerHttpErrorKind::ServerUnavailable);
         assert_eq!(
             result_http_error_disposition(&error.kind),
@@ -2936,7 +2934,7 @@ fn result_submission_gateway_and_connection_classes_are_transient() {
 #[test]
 fn polling_result_401_and_403_are_terminal_auth_errors_without_credentials() {
     for status in ["401 Unauthorized", "403 Forbidden"] {
-        let server = start_scripted_agent_server(vec![
+        let server = start_scripted_runner_server(vec![
             ScriptStep::Register,
             ScriptStep::PollDeliver("req-auth"),
             ScriptStep::Result {
@@ -2973,7 +2971,7 @@ fn polling_fatal_background_submission_reaches_control_without_reexecution() {
         temp.path(),
         format!("printf '%s\\n' 'ran' >> {}", posix_quote(&marker)),
     );
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollDeliverRequest(request),
         ScriptStep::Result {
@@ -2999,7 +2997,7 @@ fn polling_fatal_background_submission_reaches_control_without_reexecution() {
 
 #[test]
 fn polling_result_404_is_terminal_protocol_error_without_retry() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollDeliver("req-missing-endpoint"),
         ScriptStep::Result {
@@ -3026,7 +3024,7 @@ fn polling_result_404_is_terminal_protocol_error_without_retry() {
 
 #[test]
 fn polling_result_success_submits_once_and_continues() {
-    let server = start_scripted_agent_server(vec![
+    let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollDeliver("req-success"),
         ScriptStep::Result {
@@ -3101,14 +3099,14 @@ fn dropped_result_log_line_is_bounded_and_redacted() {
 
 async fn read_register(
     ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-) -> crate::shell_protocol::ShellClientRegisterRequest {
+) -> crate::runner_protocol::RunnerRegisterRequest {
     let msg = ws
         .next()
         .await
         .expect("agent sent register")
         .expect("register message is ok");
-    match AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
-        AgentEnvelope::Register { payload, .. } => payload,
+    match RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
+        RunnerEnvelope::Register { payload, .. } => payload,
         other => panic!("expected register envelope, got {}", other.kind()),
     }
 }
@@ -3123,7 +3121,7 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
         "capabilities": {},
         "pending_requests": 0,
         "projects": [],
-        "agent_protocol_generation": AGENT_PROTOCOL_GENERATION_V2.get(),
+        "agent_protocol_generation": RUNNER_PROTOCOL_GENERATION_V2.get(),
         "project_inventory": {
             "sync_state": "pending",
             "generation": null,
@@ -3136,7 +3134,7 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
         }
     }))
     .unwrap();
-    let ack = AgentEnvelope::Registered {
+    let ack = RunnerEnvelope::Registered {
         success: true,
         client: Some(client),
         error: None,
@@ -3154,8 +3152,8 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
         if !msg.is_text() {
             continue;
         }
-        let page = match AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
-            AgentEnvelope::ProjectInventoryPage { page } => page,
+        let page = match RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
+            RunnerEnvelope::ProjectInventoryPage { page } => page,
             other => panic!(
                 "expected project inventory page after registered ack, got {}",
                 other.kind()
@@ -3178,7 +3176,7 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
         );
         let complete = page.complete;
         ws.send(WsMessage::Text(
-            AgentEnvelope::ProjectInventoryStatus { status }
+            RunnerEnvelope::ProjectInventoryStatus { status }
                 .to_json()
                 .unwrap()
                 .into(),
@@ -3194,7 +3192,7 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
 async fn send_register_rejected_ack(
     ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
 ) {
-    let ack = AgentEnvelope::Registered {
+    let ack = RunnerEnvelope::Registered {
         success: false,
         client: None,
         error: Some("unauthorized".to_string()),
@@ -3204,8 +3202,8 @@ async fn send_register_rejected_ack(
         .unwrap();
 }
 
-fn start_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn start_job_request(cwd: &Path, command: &str) -> RunnerRequest {
+    RunnerRequest {
         request_id: "req-active-job".to_string(),
         client_id: "oe".to_string(),
         kind: "start_job".to_string(),
@@ -3683,7 +3681,7 @@ fn polling_once_completes_canonical_inventory_without_extra_business_poll() {
 
 #[test]
 fn polling_register_and_ordinary_poll_both_omit_inline_projects() {
-    let server = start_scripted_agent_server(vec![ScriptStep::Register, ScriptStep::PollEmpty]);
+    let server = start_scripted_runner_server(vec![ScriptStep::Register, ScriptStep::PollEmpty]);
     run_polling_runner_against_scripted_server(&server, false)
         .expect("empty polling turn should stop cleanly with scripted shutdown");
     server.handle.join().unwrap();
@@ -3807,17 +3805,17 @@ async fn streaming_project_inventory_retry_preserves_pending_page_after_backpres
         .unwrap()
         .expect("first pending page");
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tx.try_send(AgentEnvelope::Ping { ts: 1 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 1 }).unwrap();
 
     try_queue_project_inventory_page(StreamTransport::WebSocket, &mut sync, &tx);
     assert!(matches!(
         rx.recv().await,
-        Some(AgentEnvelope::Ping { ts: 1 })
+        Some(RunnerEnvelope::Ping { ts: 1 })
     ));
 
     try_queue_project_inventory_page(StreamTransport::WebSocket, &mut sync, &tx);
     let retried = match rx.recv().await {
-        Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+        Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
         other => panic!("expected retried project inventory page, got {other:?}"),
     };
     assert_eq!(
@@ -3846,7 +3844,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
 
         try_queue_project_inventory_page(transport, &mut sync, &tx);
         let sent_page0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected initial project inventory page, got {other:?}"),
         };
         assert_eq!(
@@ -3895,7 +3893,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
         // page 0, and repeated transient pressure advances only the backoff.
         try_queue_project_inventory_page(transport, &mut sync, &tx);
         let retry_page0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected retried project inventory page, got {other:?}"),
         };
         assert_eq!(
@@ -3916,7 +3914,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
 
         try_queue_project_inventory_page(transport, &mut sync, &tx);
         let accepted_retry_page0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected second retried page 0, got {other:?}"),
         };
         assert_eq!(
@@ -3940,7 +3938,7 @@ async fn streaming_project_inventory_staging_capacity_retries_exact_page_for_web
             ProjectInventoryStatusAction::None
         );
         let page1 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected page 1 after accepted retry, got {other:?}"),
         };
         assert_eq!(page1.page_index, 1);
@@ -4024,7 +4022,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
 
         coordinator.queue_pending(transport, &tx);
         let page_a0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation A page 0, got {other:?}"),
         };
         assert_eq!(page_a0.generation, generation_a);
@@ -4041,7 +4039,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
             &tx,
         );
         let page_a1 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation A page 1, got {other:?}"),
         };
         assert_eq!(page_a1.generation, generation_a);
@@ -4069,7 +4067,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
             "project_inventory_local_project_mutation",
         );
         let page_b0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected eager generation B page 0, got {other:?}"),
         };
         let generation_b = page_b0.generation.clone();
@@ -4107,7 +4105,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
             &tx,
         );
         let page_c0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected fresh generation C page 0, got {other:?}"),
         };
         let generation_c = page_c0.generation.clone();
@@ -4135,7 +4133,7 @@ async fn streaming_stale_generation_resnapshots_current_projects_for_websocket_a
             &tx,
         );
         let page_c1 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation C final page, got {other:?}"),
         };
         assert_eq!(page_c1.generation, generation_c);
@@ -4175,7 +4173,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
 
         coordinator.queue_pending(transport, &tx);
         let page_a0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation A page 0, got {other:?}"),
         };
         coordinator.handle_status(
@@ -4186,7 +4184,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
             &tx,
         );
         let page_a1 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation A page 1, got {other:?}"),
         };
         assert_eq!(page_a1.page_index, 1);
@@ -4224,7 +4222,7 @@ async fn streaming_delayed_success_ack_does_not_discard_current_sync() {
         coordinator.retry_at = None;
         coordinator.queue_pending(transport, &tx);
         let page_b0 = match rx.recv().await {
-            Some(AgentEnvelope::ProjectInventoryPage { page }) => page,
+            Some(RunnerEnvelope::ProjectInventoryPage { page }) => page,
             other => panic!("expected generation B page 0, got {other:?}"),
         };
         let generation_b = page_b0.generation.clone();
@@ -4292,7 +4290,7 @@ async fn streaming_permanent_inventory_error_does_not_fresh_resnapshot() {
         coordinator.queue_pending(transport, &tx);
         assert!(matches!(
             rx.recv().await,
-            Some(AgentEnvelope::ProjectInventoryPage { .. })
+            Some(RunnerEnvelope::ProjectInventoryPage { .. })
         ));
 
         coordinator.handle_status(
@@ -4343,7 +4341,7 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
                 assert!(payload.get("agent_protocol_version").is_none());
                 assert_eq!(
                     payload["agent_protocol_generation"],
-                    AGENT_PROTOCOL_GENERATION_V2.get()
+                    RUNNER_PROTOCOL_GENERATION_V2.get()
                 );
                 assert!(payload["capabilities"]["shell"].is_boolean());
                 register_inventory_support_response()
@@ -4983,7 +4981,7 @@ async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
         let cfg = test_runner_config("http://127.0.0.1:9".to_string());
         let runtime = test_runtime(&cfg);
         let registered_jobs = ShellJobInventory::default();
-        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
         let (_read_tx, read_rx) = tokio::sync::mpsc::channel::<StreamRead>(1);
         let writer_task = tokio::spawn(async { StreamWriterExit::TransportFailed });
 
@@ -5018,11 +5016,11 @@ async fn streaming_graceful_writer_completion_is_not_a_failure_signal() {
     let cfg = test_runner_config("http://127.0.0.1:9".to_string());
     let runtime = test_runtime(&cfg);
     let registered_jobs = ShellJobInventory::default();
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
     let (_read_tx, read_rx) = tokio::sync::mpsc::channel::<StreamRead>(1);
     let writer_task = tokio::spawn(async move {
         while let Some(env) = out_rx.recv().await {
-            if matches!(env, AgentEnvelope::Goodbye { .. }) {
+            if matches!(env, RunnerEnvelope::Goodbye { .. }) {
                 return StreamWriterExit::GracefulClose;
             }
         }
@@ -5059,9 +5057,9 @@ async fn websocket_close_returns_transport_disconnect_not_shutdown() {
         if let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_millis(200), ws.next()).await
         {
             if msg.is_text() {
-                let env = AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap();
+                let env = RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap();
                 assert!(
-                    !matches!(env, AgentEnvelope::Goodbye { .. }),
+                    !matches!(env, RunnerEnvelope::Goodbye { .. }),
                     "ordinary transport disconnect must not send Goodbye"
                 );
             }
@@ -5099,7 +5097,10 @@ async fn websocket_disconnect_with_active_job_returns_without_waiting_for_job() 
         let _register = read_register(&mut ws).await;
         send_registered_ack(&mut ws).await;
         ws.send(WsMessage::Text(
-            AgentEnvelope::Request { request }.to_json().unwrap().into(),
+            RunnerEnvelope::Request { request }
+                .to_json()
+                .unwrap()
+                .into(),
         ))
         .await
         .unwrap();
@@ -5110,8 +5111,8 @@ async fn websocket_disconnect_with_active_job_returns_without_waiting_for_job() 
                 if !msg.is_text() {
                     continue;
                 }
-                match AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
-                    AgentEnvelope::JobUpdate { payload }
+                match RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
+                    RunnerEnvelope::JobUpdate { payload }
                         if payload.job_id == "job-active" && !payload.finished =>
                     {
                         break;
@@ -5299,10 +5300,10 @@ async fn websocket_disconnect_loop_reregisters_identity_generation_and_capabilit
     let second = reg_rx.recv().await.expect("second register");
     for register in [first, second] {
         assert_eq!(register.client_id, "oe");
-        assert_eq!(register.agent_instance_id, "inst-reconnect");
+        assert_eq!(register.runner_instance_id, "inst-reconnect");
         assert_eq!(
-            register.agent_protocol_generation,
-            AGENT_PROTOCOL_GENERATION_V2
+            register.runner_protocol_generation,
+            RUNNER_PROTOCOL_GENERATION_V2
         );
         let caps = register.capabilities;
         assert!(caps.shell);
@@ -5396,7 +5397,7 @@ async fn websocket_process_shutdown_exits_gracefully() {
         let _register = read_register(&mut ws).await;
         send_registered_ack(&mut ws).await;
         ws.send(WsMessage::Text(
-            serde_json::to_string(&AgentEnvelope::Ping { ts: 1 })
+            serde_json::to_string(&RunnerEnvelope::Ping { ts: 1 })
                 .unwrap()
                 .into(),
         ))
@@ -5408,8 +5409,8 @@ async fn websocket_process_shutdown_exits_gracefully() {
             .expect("stream open")
             .expect("pong message ok");
         assert!(matches!(
-            AgentEnvelope::from_slice(pong.into_text().unwrap().as_bytes()).unwrap(),
-            AgentEnvelope::Pong { ts: 1 }
+            RunnerEnvelope::from_slice(pong.into_text().unwrap().as_bytes()).unwrap(),
+            RunnerEnvelope::Pong { ts: 1 }
         ));
         registered_tx.send(()).unwrap();
         let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
@@ -5417,8 +5418,8 @@ async fn websocket_process_shutdown_exits_gracefully() {
             .expect("agent did not send shutdown goodbye")
             .expect("stream open")
             .expect("message ok");
-        match AgentEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
-            AgentEnvelope::Goodbye { reason } => goodbye_tx.send(reason).unwrap(),
+        match RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap() {
+            RunnerEnvelope::Goodbye { reason } => goodbye_tx.send(reason).unwrap(),
             other => panic!("expected goodbye, got {}", other.kind()),
         }
     });

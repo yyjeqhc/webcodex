@@ -52,7 +52,7 @@ async fn dispatch_hygiene_with_agent(
                 .expect("hygiene diagnostics must carry a typed internal script");
             assert_eq!(
                 payload.language,
-                crate::shell_protocol::ShellScriptLanguage::Sh
+                crate::runner_protocol::ShellScriptLanguage::Sh
             );
             assert!(payload.args.is_empty());
             assert!(
@@ -78,7 +78,7 @@ async fn setup_clean_git_repo(
     let tmp = TempDir::new().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial commit");
-    let project = register_agent_project_at_path(runtime, client_id, project_id, tmp.path()).await;
+    let project = register_runner_project_at_path(runtime, client_id, project_id, tmp.path()).await;
     (tmp, project)
 }
 
@@ -529,7 +529,7 @@ async fn workspace_hygiene_check_non_git_project_does_not_fail() {
     // Do NOT git init — this is a non-git project.
     fs::write(tmp.path().join("README.md"), "hello\n").unwrap();
 
-    let project = register_agent_project_at_path(&runtime, "hyc-nongit", "demo", tmp.path()).await;
+    let project = register_runner_project_at_path(&runtime, "hyc-nongit", "demo", tmp.path()).await;
 
     let result =
         dispatch_hygiene_with_agent(&runtime, "hyc-nongit", project, None, None, None).await;

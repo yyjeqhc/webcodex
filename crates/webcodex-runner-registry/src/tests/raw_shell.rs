@@ -5,7 +5,7 @@ fn validate_run_request_uses_the_internal_raw_shell_wire_bound() {
     let exact = ShellRunRequest {
         client_id: "client-1".to_string(),
         cwd: None,
-        command: "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES),
+        command: "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES),
         stdin: None,
         timeout_secs: 10,
         wait_timeout_secs: 1,
@@ -24,7 +24,7 @@ fn validate_run_request_allows_bounded_stdin_beyond_command_limit() {
         client_id: "client-1".to_string(),
         cwd: None,
         command: "cat >/dev/null".to_string(),
-        stdin: Some("x".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES + 1024)),
+        stdin: Some("x".repeat(crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES + 1024)),
         timeout_secs: 10,
         wait_timeout_secs: 1,
     };

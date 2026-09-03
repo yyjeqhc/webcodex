@@ -18,7 +18,7 @@ use super::validation_profile::{
 use super::{ExecutionPurpose, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::ShellJobStartMetadata;
-use crate::shell_protocol::{
+use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationStep,
 };
@@ -283,11 +283,11 @@ fn resolve_cargo_test_minimum(
     no_run: Option<bool>,
 ) -> Result<Option<u64>, ToolResult> {
     if let Some(minimum) = min_tests {
-        if !(1..=crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum) {
+        if !(1..=crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum) {
             return Err(cargo_test_assertion_rejection(
                 format!(
                     "cargo_test min_tests must be between 1 and {}",
-                    crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX
+                    crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX
                 ),
                 "pass a bounded positive min_tests value, or omit it.",
             ));
@@ -1540,7 +1540,8 @@ fn validation_step(
                 // Whitespace-only filter means "no filter", matching the
                 // synchronous path. Option-like filters are rejected by the
                 // shared filter contract before any argv is built.
-                if let Some(normalized) = crate::shell_protocol::normalize_rust_test_filter(filter)?
+                if let Some(normalized) =
+                    crate::runner_protocol::normalize_rust_test_filter(filter)?
                 {
                     args.push(normalized);
                 }
@@ -1563,7 +1564,7 @@ fn validation_step(
         }
         "go_test" => {
             let packages =
-                crate::shell_protocol::normalize_go_test_packages(options.go_packages.as_deref())
+                crate::runner_protocol::normalize_go_test_packages(options.go_packages.as_deref())
                     .map_err(|reason| format!("packages {reason}"))?;
             let mut args = vec!["test".to_string(), "-json".to_string()];
             args.extend(packages);
@@ -1593,7 +1594,7 @@ fn push_paired_arg(args: &mut Vec<String>, flag: &str, value: Option<&str>) -> R
     let Some(value) = value else {
         return Ok(());
     };
-    let Some(normalized) = crate::shell_protocol::normalize_cargo_value(value)? else {
+    let Some(normalized) = crate::runner_protocol::normalize_cargo_value(value)? else {
         return Ok(());
     };
     args.push(flag.to_string());
@@ -1739,7 +1740,7 @@ mod structured_cargo_arg_parity_tests {
             resolve_cargo_test_minimum(None, Some(0), None),
             resolve_cargo_test_minimum(
                 None,
-                Some(crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX + 1),
+                Some(crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX + 1),
                 None,
             ),
             resolve_cargo_test_minimum(Some(true), None, Some(true)),
@@ -1885,7 +1886,7 @@ mod structured_cargo_arg_parity_tests {
             (
                 "cargo_check",
                 ValidationCommandOptions {
-                    features: Some("a".repeat(crate::shell_protocol::CARGO_VALUE_MAX_BYTES + 1)),
+                    features: Some("a".repeat(crate::runner_protocol::CARGO_VALUE_MAX_BYTES + 1)),
                     ..ValidationCommandOptions::default()
                 },
             ),

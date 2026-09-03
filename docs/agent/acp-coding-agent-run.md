@@ -875,8 +875,8 @@ Add a narrow transport-neutral coding-agent protocol module (for example
 - Run cancel request/result;
 - bounded active/recent-terminal Run inventory for same-Runner reconciliation.
 
-Extend `ShellClientCapabilities` / Runner registration with a coding-agent-run
-capability and sanitized provider inventory. Extend the existing agent transport
+Extend `RunnerCapabilities` / Runner registration with a coding-agent-run
+capability and sanitized provider inventory. Extend the existing Runner transport
 with a closed typed coding-agent operation/update path. Do not tunnel arbitrary
 ACP JSON-RPC.
 

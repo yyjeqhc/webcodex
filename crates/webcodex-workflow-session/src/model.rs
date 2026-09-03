@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 200;
 /// identities can represent it without turning the Session ledger into an
 /// unbounded Job-id history.
 pub const MAX_MATERIALIZED_VALIDATION_JOB_IDS: usize =
-    webcodex_core::shell_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS;
+    webcodex_core::runner_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS;
 /// Maximum project-relative exploration paths retained on one ledger event.
 /// This covers the largest currently supported structured search/LSP result
 /// while keeping every event independently bounded.

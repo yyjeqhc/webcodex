@@ -1656,7 +1656,7 @@ fn persisted_validation_job_materialization_ids_are_additive_sanitized_and_bound
         .unwrap();
     assert_eq!(
         ids.len(),
-        crate::shell_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS
+        crate::runner_protocol::JOB_INVENTORY_MAX_TERMINAL_JOBS
     );
     assert!(ids.iter().all(|value| {
         value
@@ -2009,7 +2009,7 @@ async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_roo
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "validation-shell", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "validation-shell", "demo", tmp.path()).await;
     let auth = auth_context(None, true);
     let session = runtime
         .sessions
@@ -2080,7 +2080,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let capabilities = crate::shell_protocol::ShellClientCapabilities {
+    let capabilities = crate::runner_protocol::RunnerCapabilities {
         async_shell_jobs: true,
         ..Default::default()
     };
@@ -2126,13 +2126,13 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     assert_eq!(execution.output["cwd"], ".");
     assert_eq!(execution.output["shell"], "bash");
     let job_id = execution.output["job_id"].as_str().unwrap().to_string();
-    let request = wait_for_agent_request_for_client(&runtime, "validation-job").await;
+    let request = wait_for_runner_request_for_client(&runtime, "validation-job").await;
     assert_eq!(request.kind, "start_job");
     runtime
         .runner_registry
-        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+        .update_job(crate::runner_protocol::RunnerJobUpdateRequest {
             client_id: "validation-job".to_string(),
-            agent_instance_id: "inst-validation-job".to_string(),
+            runner_instance_id: "inst-validation-job".to_string(),
             update_seq: None,
             job_id: job_id.clone(),
             request_id: Some(request.request_id),
@@ -2194,7 +2194,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
         &runtime,
         "validation-process-job",
         &auth,
-        crate::shell_protocol::ShellClientCapabilities {
+        crate::runner_protocol::RunnerCapabilities {
             shell: true,
             async_jobs: true,
             async_shell_jobs: true,
@@ -2241,7 +2241,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
                 .await
         }
     });
-    let request = wait_for_agent_request_for_client(&runtime, "validation-process-job").await;
+    let request = wait_for_runner_request_for_client(&runtime, "validation-process-job").await;
     assert_eq!(request.kind, "start_process_job");
     assert_eq!(request.process.as_ref().unwrap().executable, "cargo");
     let handoff = task.await.unwrap();
@@ -2263,9 +2263,9 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
 
     runtime
         .runner_registry
-        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+        .update_job(crate::runner_protocol::RunnerJobUpdateRequest {
             client_id: "validation-process-job".to_string(),
-            agent_instance_id: "inst-validation-process-job".to_string(),
+            runner_instance_id: "inst-validation-process-job".to_string(),
             update_seq: None,
             job_id: job_id.clone(),
             request_id: Some(request.request_id),
@@ -2281,7 +2281,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
             exit_code: Some(0),
             duration_ms: Some(12),
             error: None,
-            command_execution_state: Some(crate::shell_protocol::ShellCommandExecutionState::Completed),
+            command_execution_state: Some(crate::runner_protocol::ShellCommandExecutionState::Completed),
             validation_progress: None,
             finished: true,
         })
@@ -2363,7 +2363,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     );
     let runtime = test_runtime();
     let project =
-        register_agent_project_at_path(&runtime, "validation-finish", "demo", tmp.path()).await;
+        register_runner_project_at_path(&runtime, "validation-finish", "demo", tmp.path()).await;
     let auth = auth_context(None, true);
 
     let start = runtime

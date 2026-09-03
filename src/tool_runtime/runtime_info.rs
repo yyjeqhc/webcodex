@@ -3,7 +3,7 @@
 use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_protocol::{ShellClientView, ShellJobInfo};
+use crate::runner_protocol::{RunnerView, ShellJobInfo};
 use serde_json::{json, Value};
 
 const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
@@ -183,11 +183,11 @@ impl ToolRuntime {
                 .map(|client| {
                     json!({
                         "client_id": client.client_id,
-                        "agent_instance_id": client.agent_instance_id,
+                        "agent_instance_id": client.runner_instance_id,
                         "display_name": client.display_name,
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_generation": client.agent_protocol_generation.get(),
+                        "agent_protocol_generation": client.runner_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
                         "pending_requests": client.pending_requests,
@@ -205,14 +205,14 @@ impl ToolRuntime {
                 .map(|client| {
                     let mut value = json!({
                         "client_id": client.client_id,
-                        "agent_instance_id": client.agent_instance_id,
+                        "agent_instance_id": client.runner_instance_id,
                         "display_name": client.display_name,
                         "owner": client.owner,
                         "hostname": client.hostname,
                         "host_context": host_context_projection(client.host_context.as_ref()),
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_generation": client.agent_protocol_generation.get(),
+                        "agent_protocol_generation": client.runner_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen": client.last_seen,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
@@ -338,13 +338,13 @@ impl ToolRuntime {
             .map(|c| {
                 json!({
                     "client_id": c.client_id,
-                    "agent_instance_id": c.agent_instance_id,
+                    "agent_instance_id": c.runner_instance_id,
                     "display_name": c.display_name,
                     "owner": c.owner,
                     "status": c.status,
                     "host_context": host_context_projection(c.host_context.as_ref()),
                     "connected": c.connected,
-                    "agent_protocol_generation": c.agent_protocol_generation.get(),
+                    "agent_protocol_generation": c.runner_protocol_generation.get(),
                     "transport": c.transport,
                     "last_seen": c.last_seen,
                     "last_seen_age_secs": last_seen_age_secs(c, now),
@@ -610,17 +610,17 @@ impl ToolRuntime {
             },
             "count": project_count,
         });
-        let agents = json!({
+        let runners = json!({
             "count": 1,
             "online_count": usize::from(client.connected),
             "stale_count": usize::from(!client.connected),
             "clients": [{
                 "client_id": client.client_id,
-                "agent_instance_id": client.agent_instance_id,
+                "agent_instance_id": client.runner_instance_id,
                 "display_name": client.display_name,
                 "status": client.status,
                 "connected": client.connected,
-                "agent_protocol_generation": client.agent_protocol_generation.get(),
+                "agent_protocol_generation": client.runner_protocol_generation.get(),
                 "transport": client.transport,
                 "last_seen": client.last_seen,
                 "last_seen_age_secs": last_seen_age_secs(&client, now),
@@ -662,7 +662,7 @@ impl ToolRuntime {
                 "client_id": client.client_id,
                 "connected": client.connected,
                 "status": client.status,
-                "agent_instance_id": client.agent_instance_id,
+                "agent_instance_id": client.runner_instance_id,
                 "build": client.build,
                 "project_count": project_count,
                 "active_jobs": runner_active,
@@ -681,7 +681,7 @@ impl ToolRuntime {
                 "mixed_builds_present": mismatched_agents_count > 0 || source_mismatched_agents_count > 0,
             },
             "projects": projects,
-            "agents": agents,
+            "agents": runners,
             "version_compatibility": target_compatibility,
             "jobs": jobs,
             "tools": tools,
@@ -796,7 +796,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
 }
 
 fn compact_runner_clients(status: &Value) -> Vec<Value> {
-    let agents = status
+    let runners = status
         .pointer("/agents/clients")
         .and_then(Value::as_array)
         .cloned()
@@ -807,32 +807,32 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
         .cloned()
         .unwrap_or_default();
 
-    agents
+    runners
         .iter()
-        .filter_map(|agent| {
-            let client_id = agent.get("client_id")?.as_str()?;
+        .filter_map(|runner| {
+            let client_id = runner.get("client_id")?.as_str()?;
             let compat = compatibility
                 .iter()
                 .find(|candidate| candidate.get("client_id").and_then(Value::as_str) == Some(client_id));
             let mut compact = json!({
                 "client_id": client_id,
-                "agent_instance_id": agent.get("agent_instance_id").cloned().unwrap_or(Value::Null),
-                "status": agent.get("status").cloned().unwrap_or(Value::Null),
-                "transport": agent.get("transport").cloned().unwrap_or(Value::Null),
+                "agent_instance_id": runner.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+                "status": runner.get("status").cloned().unwrap_or(Value::Null),
+                "transport": runner.get("transport").cloned().unwrap_or(Value::Null),
                 "build_git_commit": compat.and_then(|value| value.get("build_git_commit")).cloned().unwrap_or(Value::Null),
                 "build_git_dirty": compat.and_then(|value| value.get("build_git_dirty")).cloned().unwrap_or(Value::Null),
                 "version_matches_server": compat.and_then(|value| value.get("version_matches_server")).cloned().unwrap_or(Value::Null),
                 "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
             });
             if status.get("focus").is_none() {
-                compact["host_context"] = agent.get("host_context").cloned().unwrap_or(Value::Null);
+                compact["host_context"] = runner.get("host_context").cloned().unwrap_or(Value::Null);
             }
             Some(compact)
         })
         .collect()
 }
 
-fn host_context_projection(context: Option<&crate::shell_protocol::AgentHostContext>) -> Value {
+fn host_context_projection(context: Option<&crate::runner_protocol::RunnerHostContext>) -> Value {
     match context {
         Some(context) => json!({
             "source": "runner_config",
@@ -880,7 +880,7 @@ fn layer_observation(
 }
 
 fn connection_layers(
-    clients: &[ShellClientView],
+    clients: &[RunnerView],
     registered_projects: usize,
     online_projects: usize,
     observations: &super::observations::RuntimeObservations,
@@ -889,7 +889,7 @@ fn connection_layers(
 ) -> Value {
     // Freshest client drives single-value observations; counts stay explicit.
     let freshest = clients.iter().max_by_key(|c| c.last_seen);
-    let online: Vec<&ShellClientView> = clients.iter().filter(|c| c.connected).collect();
+    let online: Vec<&RunnerView> = clients.iter().filter(|c| c.connected).collect();
     let freshest_online = online.iter().max_by_key(|c| c.last_seen).copied();
 
     // -- runner_process: process observation, distinct from transport --------
@@ -911,7 +911,7 @@ fn connection_layers(
                 now,
                 json!({
                     "client_id": client.client_id,
-                    "agent_instance_id": client.agent_instance_id,
+                    "agent_instance_id": client.runner_instance_id,
                     "process_started_at": client.process_started_at,
                 }),
             )
@@ -925,7 +925,7 @@ fn connection_layers(
             now,
             json!({
                 "client_id": client.client_id,
-                "agent_instance_id": client.agent_instance_id,
+                "agent_instance_id": client.runner_instance_id,
                 "process_started_at": client.process_started_at,
             }),
         ),
@@ -952,7 +952,7 @@ fn connection_layers(
             json!({
                 "connected_clients": online.len(),
                 "transport": client.transport,
-                "connection_instance": client.agent_instance_id,
+                "connection_instance": client.runner_instance_id,
                 "connected_at": client.connected_at,
                 "last_heartbeat_at": client.last_seen,
             }),
@@ -967,7 +967,7 @@ fn connection_layers(
             json!({
                 "connected_clients": 0,
                 "transport": client.transport,
-                "connection_instance": client.agent_instance_id,
+                "connection_instance": client.runner_instance_id,
                 "connected_at": client.connected_at,
                 "disconnected_at": client.disconnected_at,
             }),
@@ -994,7 +994,7 @@ fn connection_layers(
             now,
             json!({
                 "registered_clients": clients.len(),
-                "runner_instance": client.agent_instance_id,
+                "runner_instance": client.runner_instance_id,
                 "registered_at": client.registered_at,
                 "last_refreshed_at": client.last_seen,
             }),
@@ -1008,7 +1008,7 @@ fn connection_layers(
             now,
             json!({
                 "registered_clients": clients.len(),
-                "runner_instance": client.agent_instance_id,
+                "runner_instance": client.runner_instance_id,
                 "registered_at": client.registered_at,
                 "last_refreshed_at": client.last_seen,
             }),
@@ -1046,7 +1046,7 @@ fn connection_layers(
             json!({
                 "registered_projects": registered_projects,
                 "online_projects": online_projects,
-                "providing_instance": freshest_online.map(|c| c.agent_instance_id.clone()),
+                "providing_instance": freshest_online.map(|c| c.runner_instance_id.clone()),
             }),
         )
     } else {
@@ -1159,7 +1159,7 @@ fn connection_layers(
 /// Mixed-version diagnostics: a connected runner is not automatically
 /// capability-compatible. Reports facts about which side to upgrade without
 /// exposing paths or environment.
-fn version_compatibility(clients: &[ShellClientView]) -> Value {
+fn version_compatibility(clients: &[RunnerView]) -> Value {
     let build = crate::build_info::runtime_build_info();
     version_compatibility_against(
         clients,
@@ -1171,7 +1171,7 @@ fn version_compatibility(clients: &[ShellClientView]) -> Value {
 }
 
 fn version_compatibility_against(
-    clients: &[ShellClientView],
+    clients: &[RunnerView],
     server_version: &str,
     server_git_commit: Option<&str>,
     server_git_dirty: Option<bool>,
@@ -1248,7 +1248,7 @@ fn version_compatibility_against(
             }
             json!({
                 "client_id": client.client_id,
-                "agent_protocol_generation": client.agent_protocol_generation.get(),
+                "agent_protocol_generation": client.runner_protocol_generation.get(),
                 "build_version": build_version,
                 "build_git_commit": build_git_commit,
                 "build_git_dirty": build_git_dirty,
@@ -1285,7 +1285,7 @@ fn valid_target_client_id(client_id: &str) -> bool {
 
 #[cfg(test)]
 pub(crate) fn version_compatibility_for_test(
-    clients: &[ShellClientView],
+    clients: &[RunnerView],
     server_version: &str,
     server_git_commit: Option<&str>,
     server_git_dirty: Option<bool>,
@@ -1303,7 +1303,7 @@ pub(crate) fn version_compatibility_for_test(
     )
 }
 
-fn enabled_projects_count(client: &ShellClientView) -> usize {
+fn enabled_projects_count(client: &RunnerView) -> usize {
     client
         .projects
         .iter()
@@ -1311,7 +1311,7 @@ fn enabled_projects_count(client: &ShellClientView) -> usize {
         .count()
 }
 
-fn last_seen_age_secs(client: &ShellClientView, now: i64) -> i64 {
+fn last_seen_age_secs(client: &RunnerView, now: i64) -> i64 {
     now.saturating_sub(client.last_seen)
 }
 
@@ -1333,7 +1333,7 @@ fn job_status_is_runner_queued(status: &str) -> bool {
     RUNNER_QUEUED_JOB_STATUSES.contains(&status)
 }
 
-fn job_concurrency_for_client(client: &ShellClientView, runner_jobs: &[ShellJobInfo]) -> Value {
+fn job_concurrency_for_client(client: &RunnerView, runner_jobs: &[ShellJobInfo]) -> Value {
     let mut running = 0usize;
     let mut queued = 0usize;
     for job in runner_jobs
@@ -1351,7 +1351,7 @@ fn job_concurrency_for_client(client: &ShellClientView, runner_jobs: &[ShellJobI
 }
 
 fn runner_health_clients(
-    clients: &[ShellClientView],
+    clients: &[RunnerView],
     runner_jobs: &[ShellJobInfo],
     now: i64,
 ) -> Vec<Value> {
@@ -1373,11 +1373,7 @@ fn runner_health_clients(
         .collect()
 }
 
-fn runner_health_summary(
-    clients: &[ShellClientView],
-    runner_jobs: &[ShellJobInfo],
-    now: i64,
-) -> Value {
+fn runner_health_summary(clients: &[RunnerView], runner_jobs: &[ShellJobInfo], now: i64) -> Value {
     let online = clients.iter().filter(|client| client.connected).count();
     let stale = clients
         .iter()
@@ -1400,7 +1396,7 @@ fn runner_health_summary(
 /// contents, and full Runner config contents are NEVER included. Older agents
 /// that registered without a policy produce `Value::Null` so the field is
 /// present-but-null for clients that expect it.
-fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySummary>) -> Value {
+fn sanitized_policy_summary(policy: Option<&crate::runner_protocol::RunnerPolicySummary>) -> Value {
     match policy {
         Some(p) => json!({
             "allow_raw_shell": p.allow_raw_shell,
@@ -1421,7 +1417,7 @@ fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySu
 /// full env snapshot. Older agents that did not report a summary produce
 /// `Value::Null`.
 fn sanitized_shell_profiles_summary(
-    summary: Option<&crate::shell_protocol::ShellProfilesSummary>,
+    summary: Option<&crate::runner_protocol::ShellProfilesSummary>,
 ) -> Value {
     match summary {
         Some(s) => {
@@ -1539,9 +1535,9 @@ mod phase_e2_status_tests {
             }
         }
 
-        let client = ShellClientView {
+        let client = RunnerView {
             client_id: "shared-runner".to_string(),
-            agent_instance_id: "shared-instance".to_string(),
+            runner_instance_id: "shared-instance".to_string(),
             display_name: None,
             owner: None,
             hostname: None,
@@ -1554,7 +1550,7 @@ mod phase_e2_status_tests {
             pending_requests: 0,
             projects: Vec::new(),
             project_inventory: None,
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             transport: "websocket".to_string(),
             policy: None,
             registered_at: 0,

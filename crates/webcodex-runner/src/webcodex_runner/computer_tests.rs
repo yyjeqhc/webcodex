@@ -1,7 +1,7 @@
 use super::*;
 
-fn request(kind: &str, payload: &str) -> ShellAgentShellRequest {
-    ShellAgentShellRequest {
+fn request(kind: &str, payload: &str) -> RunnerRequest {
+    RunnerRequest {
         request_id: "computer-test".to_string(),
         client_id: "runner".to_string(),
         kind: kind.to_string(),
@@ -366,14 +366,15 @@ fn computer_text_input_uses_the_larger_wire_payload_bound() {
     })
     .to_string();
     assert!(
-        escaped_payload.len() > crate::shell_protocol::SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES
+        escaped_payload.len() > crate::runner_protocol::SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES
     );
     assert!(
-        escaped_payload.len() <= crate::shell_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
+        escaped_payload.len()
+            <= crate::runner_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
     );
     assert_eq!(
         shell_computer_request_payload_max_bytes("computer_input_text"),
-        crate::shell_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
+        crate::runner_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
     );
 }
 

@@ -240,32 +240,43 @@ impl ToolRuntime {
                     result
                 }
                 Ok(HiddenStructuredJobWait::Continued {
-                    job,
+                    observation,
                     execution_state,
                     command_started,
-                }) => ToolResult::ok(json!({
-                    "execution_state": execution_state,
-                    "command_started": command_started,
-                    "command_completed": false,
-                    "command_ok": false,
-                    "exit_code": null,
-                    "failure_kind": null,
-                    "tool_failure": false,
-                    "promoted_to_job": true,
-                    "terminal": false,
-                    "job_id": job.job_id,
-                    "job_status": job.status,
-                    "observation_token": job.observation_token,
-                    "effective_timeout_secs": timeout,
-                    "sync_wait_secs": budget.sync_wait_secs,
-                    "async_handoff_available": true,
-                    "stdout_tail": "",
-                    "stderr_tail": "",
-                    "stdout_lines": 0,
-                    "stderr_lines": 0,
-                    "stdout_truncated": false,
-                    "stderr_truncated": false,
-                })),
+                }) => {
+                    let detected_summary = crate::tool_runtime::jobs::detected_job_summary(
+                        Some(&summary),
+                        Some(declared_purpose.as_str()),
+                        &observation.job.status,
+                        observation.job.exit_code.map(i64::from),
+                        &observation.stdout_tail,
+                        &observation.stderr_tail,
+                    );
+                    ToolResult::ok(json!({
+                        "execution_state": execution_state,
+                        "command_started": command_started,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "exit_code": null,
+                        "failure_kind": null,
+                        "tool_failure": false,
+                        "promoted_to_job": true,
+                        "terminal": false,
+                        "job_id": observation.job.job_id,
+                        "job_status": observation.job.status,
+                        "observation_token": observation.job.observation_token,
+                        "effective_timeout_secs": timeout,
+                        "sync_wait_secs": budget.sync_wait_secs,
+                        "async_handoff_available": true,
+                        "stdout_tail": observation.stdout_tail,
+                        "stderr_tail": observation.stderr_tail,
+                        "stdout_lines": observation.stdout_lines,
+                        "stderr_lines": observation.stderr_lines,
+                        "stdout_truncated": observation.stdout_truncated,
+                        "stderr_truncated": observation.stderr_truncated,
+                        "detected_summary": detected_summary,
+                    }))
+                }
                 Err(error) => outcome_unknown_result(format!(
                     "the durable script Job could not be observed during handoff: {error}"
                 )),

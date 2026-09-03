@@ -778,6 +778,17 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["promoted_to_job"], true);
+    assert!(result.output["stdout_tail"]
+        .as_str()
+        .is_some_and(|tail| tail.contains("Checking demo v0.1.0")));
+    assert_eq!(
+        result.output["detected_summary"]["progress"]["reason_code"],
+        "cargo_checking"
+    );
+    assert_eq!(
+        result.output["detected_summary"]["progress"]["state"],
+        "working"
+    );
     assert_eq!(result.output["job_id"], job_id);
     let observation_token = result.output["observation_token"]
         .as_str()

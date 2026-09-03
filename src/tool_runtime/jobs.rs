@@ -72,6 +72,44 @@ pub(crate) fn detected_job_summary(
         "kind": kind,
         "outcome": outcome,
     });
+    if outcome == "in_progress" {
+        let lower = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let cargo_command = normalized == "cargo" || normalized.starts_with("cargo ");
+        let progress = if cargo_command && lower.contains("blocking waiting for file lock") {
+            Some(json!({
+                "state": "waiting",
+                "reason_code": "cargo_build_lock",
+                "summary": "Waiting for Cargo build lock",
+            }))
+        } else if cargo_command
+            && matches!(kind, "test" | "check" | "build" | "format")
+            && lower
+                .lines()
+                .any(|line| line.trim_start().starts_with("compiling "))
+        {
+            Some(json!({
+                "state": "working",
+                "reason_code": "cargo_compiling",
+                "summary": "Cargo compilation in progress",
+            }))
+        } else if cargo_command
+            && matches!(kind, "test" | "check" | "build" | "format")
+            && lower
+                .lines()
+                .any(|line| line.trim_start().starts_with("checking "))
+        {
+            Some(json!({
+                "state": "working",
+                "reason_code": "cargo_checking",
+                "summary": "Cargo checking in progress",
+            }))
+        } else {
+            None
+        };
+        if let Some(progress) = progress {
+            detected["progress"] = progress;
+        }
+    }
     if kind == "test" {
         let combined = format!("{stdout}\n{stderr}");
         let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
@@ -82,6 +120,45 @@ pub(crate) fn detected_job_summary(
         detected["tests_failed"] = json!(metadata.tests_failed);
     }
     detected
+}
+
+#[cfg(test)]
+mod detected_summary_tests {
+    use super::detected_job_summary;
+
+    #[test]
+    fn cargo_progress_is_advisory_and_command_scoped() {
+        let locked = detected_job_summary(
+            Some("cargo check -p webcodex"),
+            Some("validation"),
+            "running",
+            None,
+            "",
+            "Blocking waiting for file lock on build directory\n",
+        );
+        assert_eq!(locked["progress"]["state"], "waiting");
+        assert_eq!(locked["progress"]["reason_code"], "cargo_build_lock");
+
+        let compiling = detected_job_summary(
+            Some("cargo test -p webcodex"),
+            Some("test"),
+            "running",
+            None,
+            "",
+            "   Compiling webcodex v0.3.9\n",
+        );
+        assert_eq!(compiling["progress"]["reason_code"], "cargo_compiling");
+
+        let unrelated = detected_job_summary(
+            Some("custom-tool"),
+            Some("operation"),
+            "running",
+            None,
+            "Blocking waiting for file lock on build directory\n",
+            "",
+        );
+        assert!(unrelated.get("progress").is_none());
+    }
 }
 
 #[derive(Debug, Clone)]

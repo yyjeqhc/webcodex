@@ -1,3 +1,4 @@
+use super::helpers::{bounded_tail, COMMAND_STDIO_TAIL_CHARS};
 use crate::auth::AuthContext;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
@@ -9,6 +10,7 @@ use std::time::Duration;
 use webcodex_runner_registry::RunnerAccess;
 
 pub(crate) const STRUCTURED_EXECUTION_SYNC_WAIT_SECS: u64 = 10;
+pub(crate) const INITIAL_JOB_HANDOFF_TAIL_LINES: usize = 40;
 pub(crate) use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,10 +67,54 @@ pub(crate) enum HiddenStructuredJobWait {
         stderr: String,
     },
     Continued {
-        job: ShellJobInfo,
+        observation: StructuredJobObservation,
         execution_state: &'static str,
         command_started: bool,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StructuredJobObservation {
+    pub(crate) job: ShellJobInfo,
+    pub(crate) stdout_tail: String,
+    pub(crate) stderr_tail: String,
+    pub(crate) stdout_lines: usize,
+    pub(crate) stderr_lines: usize,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+}
+
+pub(crate) async fn structured_job_observation(
+    clients: &ShellClientRegistry,
+    access: Option<&RunnerAccess>,
+    job_id: &str,
+) -> Result<StructuredJobObservation, String> {
+    let (job, stdout, stderr, next_stdout_line, next_stderr_line) = clients
+        .hidden_job_log_for_auth(access, job_id, Some(INITIAL_JOB_HANDOFF_TAIL_LINES))
+        .await?;
+    let stdout = stdout.unwrap_or_default();
+    let stderr = stderr.unwrap_or_default();
+    let stdout_lines = next_stdout_line.saturating_sub(1);
+    let stderr_lines = next_stderr_line.saturating_sub(1);
+    let (stdout_tail, stdout_char_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
+    let (stderr_tail, stderr_char_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
+    let stdout_truncated = job.stdout_log_truncated
+        || job.stdout_retained_from_line.is_some_and(|line| line > 1)
+        || stdout.lines().count() < stdout_lines
+        || stdout_char_truncated;
+    let stderr_truncated = job.stderr_log_truncated
+        || job.stderr_retained_from_line.is_some_and(|line| line > 1)
+        || stderr.lines().count() < stderr_lines
+        || stderr_char_truncated;
+    Ok(StructuredJobObservation {
+        job,
+        stdout_tail,
+        stderr_tail,
+        stdout_lines,
+        stderr_lines,
+        stdout_truncated,
+        stderr_truncated,
+    })
 }
 
 pub(crate) async fn await_hidden_structured_job(
@@ -103,7 +149,13 @@ pub(crate) async fn await_hidden_structured_job(
         guard.disarm();
         return Ok(terminal);
     }
-    let (execution_state, command_started) = match promoted.status.as_str() {
+    let observation = structured_job_observation(&clients, access.as_ref(), &job_id).await?;
+    if crate::tool_runtime::jobs::is_terminal_job_status(&observation.job.status) {
+        let terminal = hidden_terminal_snapshot(&clients, access.as_ref(), &job_id).await?;
+        guard.disarm();
+        return Ok(terminal);
+    }
+    let (execution_state, command_started) = match observation.job.status.as_str() {
         "queued" | "agent_queued" | "started" => ("queued", false),
         "running" => ("running", true),
         "stop_requested" if promoted.started_at.is_some() => ("running", true),
@@ -115,7 +167,7 @@ pub(crate) async fn await_hidden_structured_job(
     };
     guard.disarm();
     Ok(HiddenStructuredJobWait::Continued {
-        job: promoted,
+        observation,
         execution_state,
         command_started,
     })

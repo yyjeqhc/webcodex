@@ -1114,7 +1114,7 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         "running",
         None,
         None,
-        None,
+        Some("progress already available\n"),
         None,
         None,
     )
@@ -1130,6 +1130,13 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
     assert_eq!(handoff.output["command_completed"], false);
     assert_eq!(handoff.output["effective_timeout_secs"], 121);
     assert_eq!(handoff.output["sync_wait_secs"], 45);
+    assert_eq!(
+        handoff.output["stdout_tail"],
+        "progress already available\n"
+    );
+    assert_eq!(handoff.output["stdout_lines"], 1);
+    assert_eq!(handoff.output["stdout_truncated"], false);
+    assert_eq!(handoff.output["detected_summary"]["outcome"], "in_progress");
     let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 

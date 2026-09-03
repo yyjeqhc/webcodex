@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    cargo_test_count_assertion_schema, nullable_schema, permission_decision_schema, schema_type,
-    session_hint_schema,
+    cargo_test_count_assertion_schema, nullable_schema, open_object_schema,
+    permission_decision_schema, schema_type, session_hint_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -128,6 +128,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("command_ok", schema_type("boolean", "Whether execution completed successfully.")),
             ("tool_failure", schema_type("boolean", "Whether rejection happened before execution.")),
             ("async_handoff_available", schema_type("boolean", "Whether this Runner supports validation Job handoff.")),
+            ("detected_summary", open_object_schema("Current bounded validation/progress summary at the initial durable Job handoff; advisory only and never retry authority.")),
             ("session_hint", session_hint_schema()),
             ("permission", permission_decision_schema()),
     ];

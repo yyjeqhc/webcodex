@@ -330,6 +330,12 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
                 "Whether this Runner can continue the same original execution as a durable Job. Omitted after ordinary synchronous terminal success; exposed only when this tool's durable handoff path is relevant.",
             ),
         ),
+        (
+            "detected_summary",
+            super::common::open_object_schema(
+                "Current bounded operation/build/check/test summary at the initial durable Job handoff; advisory only and never retry authority.",
+            ),
+        ),
     ]
 }
 

@@ -51,12 +51,8 @@ pub(in crate::tool_runtime::tests) fn sample_tool_args_for_spec(spec: &ToolSpec)
         .collect();
     // Conditional project-source schemas cannot express one representative
     // source through the top-level `required` array. Keep fixtures aligned with
-    // each tool's metadata contract: start_coding_task may create/resolve its
-    // project, while work_on_project is always project-scoped.
+    // each tool's metadata contract.
     match spec.name.as_str() {
-        "start_coding_task" => {
-            args.insert("client_id".to_string(), json!("oe"));
-        }
         "work_on_project" => {
             args.insert("project".to_string(), json!(SAMPLE_PROJECT));
         }

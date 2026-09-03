@@ -1,12 +1,11 @@
-//! Focused tests for the `work_on_project` thin coding-task entry point.
+//! Focused tests for the canonical `work_on_project` coding entry point.
 //!
-//! `work_on_project` is a model-facing wrapper over `start_coding_task`: it
-//! validates one of two project sources plus the task inputs, maps them onto
-//! normal coding-task defaults, delegates the business implementation, and
-//! projects a compact startup result. It never binds a current window, never
-//! guesses a recent Session, and never falls back to a credential-wide Session.
+//! `work_on_project` validates one of two project sources plus the task inputs,
+//! invokes the shared coding workflow engine, and projects a compact startup
+//! result. It never binds a current window, never guesses a recent Session, and
+//! never falls back to a credential-wide Session.
 
-use super::reconnect::dispatch_start_coding_task_in_window;
+use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
 use crate::lsp_bridge::{AgentLspRequest, AgentLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
 use crate::shell_protocol::ShellClientCapabilities;
@@ -74,21 +73,6 @@ fn path_work_on_project_call(
     }
 }
 
-fn start_coding_task_call(project: &str, instruction: &str, detail: StartupDetail) -> ToolCall {
-    ToolCall::StartCodingTask {
-        project: project.to_string(),
-        client_id: None,
-        path: None,
-        title: Some(instruction.to_string()),
-        mode: SessionMode::Normal,
-        detail,
-        deny_write_tools: false,
-        deny_shell_tools: false,
-        resume_session_id: None,
-        execution_context: None,
-    }
-}
-
 /// Drive any coding startup to completion while recording every Runner request.
 /// The typed LSP status probe gets a valid bounded error envelope; file/Git and
 /// overview requests use the existing local fixture implementation.
@@ -116,6 +100,51 @@ async fn dispatch_recording_startup_requests(
                 .await
         }
     });
+    record_startup_requests(runtime, client_id, task).await
+}
+
+async fn dispatch_recording_coding_workflow_diagnostic(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    instruction: &str,
+    detail: StartupDetail,
+    auth: Option<&crate::auth::AuthContext>,
+) -> (ToolResult, Vec<String>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let instruction = instruction.to_string();
+        let auth = auth.cloned();
+        async move {
+            runtime
+                .start_coding_workflow_for_test(
+                    project,
+                    None,
+                    None,
+                    Some(instruction),
+                    SessionMode::Normal,
+                    false,
+                    false,
+                    detail,
+                    None,
+                    None,
+                    auth.as_ref(),
+                    None,
+                    None,
+                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                )
+                .await
+        }
+    });
+    record_startup_requests(runtime, client_id, task).await
+}
+
+async fn record_startup_requests(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    task: tokio::task::JoinHandle<ToolResult>,
+) -> (ToolResult, Vec<String>) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut request_kinds = Vec::new();
     loop {
@@ -478,7 +507,7 @@ fn work_on_project_schema_and_registration() {
         );
     }
 
-    // The wrapper must not expose advanced start_coding_task controls.
+    // The canonical entry must not expose internal diagnostic controls.
     for hidden in [
         "resume_session_id",
         "mode",
@@ -644,7 +673,7 @@ fn work_on_project_tool_call_enforces_authoritative_source_contract() {
         );
     }
     // The schema declares additionalProperties: false so advanced
-    // start_coding_task controls are not part of the wrapper surface.
+    // internal diagnostic controls are not part of the canonical entry surface.
     let spec = registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == "work_on_project")
@@ -861,7 +890,7 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
     let project = register_agent_project_at_path(&runtime, "wop-create", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
-    let result = dispatch_start_coding_task_in_window(
+    let result = dispatch_coding_call_in_window(
         &runtime,
         "wop-create",
         work_on_project_call("demo", "first root instruction", None),
@@ -951,7 +980,7 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
 
     // A second call in the same window/project without session_id must create a
     // distinct Workflow Session instead of continuing the first implicitly.
-    let second = dispatch_start_coding_task_in_window(
+    let second = dispatch_coding_call_in_window(
         &runtime,
         "wop-create",
         work_on_project_call("demo", "second root instruction", None),
@@ -1036,7 +1065,7 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
 }
 
 #[tokio::test]
-async fn path_source_auto_registers_reuses_and_supports_both_coding_entries() {
+async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry() {
     let root = tempfile::tempdir().unwrap();
     init_git_repo(root.path());
     std::fs::write(root.path().join("hello.txt"), "hello\n").unwrap();
@@ -1114,38 +1143,6 @@ async fn path_source_auto_registers_reuses_and_supports_both_coding_entries() {
         "reused_existing_registration"
     );
     assert_eq!(instruction_events(&runtime, &session_id).len(), 2);
-
-    let advanced: ToolCall = serde_json::from_value(json!({
-        "tool": "start_coding_task",
-        "params": {
-            "client_id": client_id,
-            "path": project_path,
-            "title": "internal path entry",
-            "detail": "standard"
-        }
-    }))
-    .unwrap();
-    let advanced = dispatch_with_path_runner(
-        &runtime,
-        client_id,
-        advanced,
-        "repo-a1b2c3d4",
-        &project_path,
-        "reused_existing_registration",
-        false,
-    )
-    .await;
-    assert!(advanced.success, "{:?}", advanced.error);
-    assert_eq!(advanced.output["permission"]["status"], "auto_approved");
-    assert_eq!(
-        advanced.output["permission"]["tool_name"],
-        "register_project"
-    );
-    assert_eq!(advanced.output["project_resolution"]["source"], "path");
-    assert_eq!(
-        advanced.output["project_resolution"]["resolved_project"],
-        "agent:wop-path:repo-a1b2c3d4"
-    );
 
     let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
     assert!(listed.success);
@@ -1245,36 +1242,6 @@ async fn path_source_explicit_session_mismatch_fails_before_registration() {
         mismatch.output["request_project"],
         format!("path:{client_id}:{second_path}")
     );
-    assert_eq!(instruction_events(&runtime, session_id).len(), 1);
-
-    let advanced_mismatch: ToolCall = serde_json::from_value(json!({
-        "tool": "start_coding_task",
-        "params": {
-            "client_id": client_id,
-            "path": second_path,
-            "resume_session_id": session_id,
-            "detail": "standard"
-        }
-    }))
-    .unwrap();
-    let advanced_mismatch = dispatch_with_path_runner(
-        &runtime,
-        client_id,
-        advanced_mismatch,
-        "second-a1b2c3d4",
-        &second_path,
-        "reused_existing_registration",
-        false,
-    )
-    .await;
-    assert!(!advanced_mismatch.success);
-    assert_eq!(
-        advanced_mismatch.output["error_kind"],
-        "session_project_mismatch"
-    );
-    assert_eq!(advanced_mismatch.output["state_changed"], false);
-    assert!(advanced_mismatch.output.get("permission").is_none());
-    assert!(advanced_mismatch.output.get("project_resolution").is_none());
     assert_eq!(instruction_events(&runtime, session_id).len(), 1);
 
     let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
@@ -1570,7 +1537,7 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
         register_agent_project_at_path(&runtime, "wop-continue", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-continue",
         work_on_project_call(&project, "root objective", None),
@@ -1583,7 +1550,7 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     let before = instruction_events(&runtime, &session_id);
     assert_eq!(before.len(), 1);
 
-    let continued = dispatch_start_coding_task_in_window(
+    let continued = dispatch_coding_call_in_window(
         &runtime,
         "wop-continue",
         work_on_project_call(&project, "follow-up instruction", Some(&session_id)),
@@ -1661,7 +1628,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
     let auth = auth_context(None, true);
 
     // Create a stable active session on project A, plus a closed one.
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-fail",
         work_on_project_call(&project_a, "stable session", None),
@@ -1683,7 +1650,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
     runtime.sessions.close_session(&closed_id).unwrap();
 
     // Unknown Session: no creation, structured unknown_session_id failure.
-    let unknown = dispatch_start_coding_task_in_window(
+    let unknown = dispatch_coding_call_in_window(
         &runtime,
         "wop-fail",
         work_on_project_call(&project_a, "must not create", Some("wc_sess_missing")),
@@ -1695,7 +1662,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
     assert_eq!(unknown.output["error_kind"], "unknown_session_id");
 
     // Closed Session: no creation, structured session_closed failure.
-    let closed = dispatch_start_coding_task_in_window(
+    let closed = dispatch_coding_call_in_window(
         &runtime,
         "wop-fail",
         work_on_project_call(&project_a, "must not reopen", Some(&closed_id)),
@@ -1708,7 +1675,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
     assert_eq!(closed.output["lifecycle"], "closed");
 
     // Project mismatch: no fallback to any other session.
-    let mismatch = dispatch_start_coding_task_in_window(
+    let mismatch = dispatch_coding_call_in_window(
         &runtime,
         "wop-fail",
         work_on_project_call(&project_b, "must not cross", Some(&active_id)),
@@ -1722,7 +1689,7 @@ async fn work_on_project_failures_never_create_or_fall_back() {
     assert_eq!(mismatch.output["request_project"], project_b);
 
     // Invalid Session id fails before execution (no session created).
-    let invalid = dispatch_start_coding_task_in_window(
+    let invalid = dispatch_coding_call_in_window(
         &runtime,
         "wop-fail",
         work_on_project_call(&project_a, "must not run", Some("not-a-session")),
@@ -1987,7 +1954,7 @@ async fn work_on_project_can_omit_instruction_bodies_for_a_fresh_session() {
             .await;
     let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-instruction-projection",
         work_on_project_call(&project, "first task", None),
@@ -2072,7 +2039,7 @@ async fn work_on_project_can_omit_static_workflow_guidance() {
             .await;
     let auth = auth_context(None, true);
 
-    let result = dispatch_start_coding_task_in_window(
+    let result = dispatch_coding_call_in_window(
         &runtime,
         "wop-workflow-projection",
         work_on_project_call_with_projections(
@@ -2116,7 +2083,7 @@ async fn work_on_project_static_projection_is_caller_explicit_not_window_state()
         register_agent_project_at_path(&runtime, "wop-explicit", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-explicit",
         work_on_project_call(&project, "first", None),
@@ -2128,7 +2095,7 @@ async fn work_on_project_static_projection_is_caller_explicit_not_window_state()
     let session_id = first.output["session_id"].as_str().unwrap().to_string();
     assert!(first.output["workflow"].is_object());
 
-    let repeated = dispatch_start_coding_task_in_window(
+    let repeated = dispatch_coding_call_in_window(
         &runtime,
         "wop-explicit",
         work_on_project_call(&project, "repeat true", Some(&session_id)),
@@ -2141,7 +2108,7 @@ async fn work_on_project_static_projection_is_caller_explicit_not_window_state()
     assert_eq!(repeated.output["instructions"]["status"], "reused");
     assert_eq!(repeated.output["instructions"]["content_included"], true);
 
-    let suppressed = dispatch_start_coding_task_in_window(
+    let suppressed = dispatch_coding_call_in_window(
         &runtime,
         "wop-explicit",
         work_on_project_call_with_projections(
@@ -2172,7 +2139,7 @@ async fn work_on_project_static_projection_is_caller_explicit_not_window_state()
     assert!(suppressed_agents.get("headings").is_none());
     assert!(suppressed_agents.get("read_more").is_none());
 
-    let restored_other_window = dispatch_start_coding_task_in_window(
+    let restored_other_window = dispatch_coding_call_in_window(
         &runtime,
         "wop-explicit",
         work_on_project_call(&project, "true in another window", Some(&session_id)),
@@ -2213,7 +2180,7 @@ async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules
             .await;
     let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-suppressed-change",
         work_on_project_call(&project, "first", None),
@@ -2238,7 +2205,7 @@ async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules
         .collect::<Vec<_>>()
         .join("\n");
     overwrite_agents_rule(root.path(), &long_changed_body);
-    let changed = dispatch_start_coding_task_in_window(
+    let changed = dispatch_coding_call_in_window(
         &runtime,
         "wop-suppressed-change",
         work_on_project_call_with_instruction_projection(
@@ -2268,7 +2235,7 @@ async fn work_on_project_suppressed_instruction_bodies_still_track_changed_rules
     assert!(changed_agents.get("headings").is_none());
     assert!(changed_agents.get("read_more").is_none());
 
-    let projected = dispatch_start_coding_task_in_window(
+    let projected = dispatch_coding_call_in_window(
         &runtime,
         "wop-suppressed-change",
         work_on_project_call(&project, "project current body", Some(&session_id)),
@@ -2297,7 +2264,7 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     let project = register_agent_project_at_path(&runtime, "wop-reuse", "demo", root.path()).await;
     let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
+    let first = dispatch_coding_call_in_window(
         &runtime,
         "wop-reuse",
         work_on_project_call(&project, "root objective", None),
@@ -2310,7 +2277,7 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
 
     // Exact resume with unchanged rules: repository delta status remains reused,
     // while the caller-explicit default still projects the current bounded body.
-    let reused = dispatch_start_coding_task_in_window(
+    let reused = dispatch_coding_call_in_window(
         &runtime,
         "wop-reuse",
         work_on_project_call(&project, "follow-up", Some(&session_id)),
@@ -2339,7 +2306,7 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
 
     // Change the rule then resume: status=changed, changed_sources includes it.
     overwrite_agents_rule(root.path(), "changed rule body");
-    let changed = dispatch_start_coding_task_in_window(
+    let changed = dispatch_coding_call_in_window(
         &runtime,
         "wop-reuse",
         work_on_project_call(&project, "after rule change", Some(&session_id)),
@@ -2431,16 +2398,13 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert!(workflow_omitted.success, "{:?}", workflow_omitted.error);
     assert!(workflow_omitted.output.get("workflow").is_none());
 
-    let (standard, standard_requests) = dispatch_recording_startup_requests(
+    let (standard, standard_requests) = dispatch_recording_coding_workflow_diagnostic(
         &runtime,
         "wop-size",
-        start_coding_task_call(
-            &project,
-            "same fixture standard startup",
-            StartupDetail::Standard,
-        ),
+        &project,
+        "same fixture standard startup",
+        StartupDetail::Standard,
         Some(&auth),
-        "wop-size-standard",
     )
     .await;
     assert!(standard.success, "{:?}", standard.error);
@@ -2539,7 +2503,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
 }
 
 #[tokio::test]
-async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking() {
+async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "rules load despite overview timeout");
     // Tight overview timeout so the probe expires quickly.
@@ -2554,18 +2518,22 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
         let auth = auth.clone();
         let project = project.clone();
         async move {
-            let window = crate::client_window::ClientWindow::for_test("wop-timeout-window");
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
-                    start_coding_task_call(
-                        &project,
-                        "start despite overview timeout",
-                        StartupDetail::Standard,
-                    ),
+                .start_coding_workflow_for_test(
+                    project,
+                    None,
+                    None,
+                    Some("start despite overview timeout".to_string()),
+                    SessionMode::Normal,
+                    false,
+                    false,
+                    StartupDetail::Standard,
+                    None,
+                    None,
                     Some(&auth),
+                    None,
+                    None,
                     crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    Default::default(),
-                    Some(&window),
                 )
                 .await
         }
@@ -2641,11 +2609,11 @@ async fn start_coding_task_standard_repository_overview_timeout_is_nonblocking()
     }
 }
 
-/// Drive an advanced `start_coding_task` dispatch to completion, completing the
+/// Drive a coding-workflow diagnostic to completion, completing the
 /// `file_project_overview` probe with `overview_stdout` (exit code 0, no error)
 /// while servicing every other agent request locally. Returns the startup
 /// result and the overview request id that was answered.
-async fn dispatch_start_coding_task_with_overview_stdout(
+async fn dispatch_coding_workflow_diagnostic_with_overview_stdout(
     runtime: &ToolRuntime,
     client_id: &str,
     project: &str,
@@ -2654,22 +2622,30 @@ async fn dispatch_start_coding_task_with_overview_stdout(
     overview_stdout: String,
     auth: Option<&crate::auth::AuthContext>,
 ) -> (crate::tool_runtime::ToolResult, Option<String>) {
-    use crate::client_window::ClientWindow;
     use crate::tool_runtime::sessions::SessionTransport;
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let auth = auth.cloned();
-        let call = start_coding_task_call(project, instruction, detail);
+        let project = project.to_string();
+        let instruction = instruction.to_string();
         async move {
-            let window = ClientWindow::for_test("overview-window");
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
-                    call,
+                .start_coding_workflow_for_test(
+                    project,
+                    None,
+                    None,
+                    Some(instruction),
+                    SessionMode::Normal,
+                    false,
+                    false,
+                    detail,
+                    None,
+                    None,
                     auth.as_ref(),
+                    None,
+                    None,
                     SessionTransport::Mcp,
-                    Default::default(),
-                    Some(&window),
                 )
                 .await
         }
@@ -2729,7 +2705,7 @@ fn valid_agent_overview_stdout(
 }
 
 #[tokio::test]
-async fn start_coding_task_standard_repository_overview_rejects_malformed_runner_responses() {
+async fn coding_workflow_standard_repository_overview_rejects_malformed_runner_responses() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "rules load despite malformed overview");
     let runtime = ToolRuntime::new_for_tests();
@@ -2808,7 +2784,7 @@ async fn start_coding_task_standard_repository_overview_rejects_malformed_runner
 
     for (label, payload) in cases {
         let stdout = payload.to_string();
-        let (result, overview_id) = dispatch_start_coding_task_with_overview_stdout(
+        let (result, overview_id) = dispatch_coding_workflow_diagnostic_with_overview_stdout(
             &runtime,
             "wop-malformed",
             &project,
@@ -2878,7 +2854,7 @@ async fn start_coding_task_standard_repository_overview_rejects_malformed_runner
 }
 
 #[tokio::test]
-async fn start_coding_task_standard_overview_strips_unknown_runner_fields_and_stays_bounded() {
+async fn coding_workflow_standard_overview_strips_unknown_runner_fields_and_stays_bounded() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "rules load despite extra runner fields");
     let runtime = ToolRuntime::new_for_tests();
@@ -2895,7 +2871,7 @@ async fn start_coding_task_standard_overview_strips_unknown_runner_fields_and_st
     payload["scan"]["nested"] = json!({"deep": json!(["Y".repeat(10_000), 1, 2])});
     payload["runner_secret"] = json!("/absolute/leak");
 
-    let (result, overview_id) = dispatch_start_coding_task_with_overview_stdout(
+    let (result, overview_id) = dispatch_coding_workflow_diagnostic_with_overview_stdout(
         &runtime,
         "wop-strip",
         &project,
@@ -2954,7 +2930,7 @@ async fn start_coding_task_standard_overview_strips_unknown_runner_fields_and_st
 }
 
 #[tokio::test]
-async fn start_coding_task_standard_and_full_accept_valid_repository_overview() {
+async fn coding_workflow_standard_and_full_accept_valid_repository_overview() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "rules load with valid overview");
     let runtime = ToolRuntime::new_for_tests();
@@ -2964,7 +2940,7 @@ async fn start_coding_task_standard_and_full_accept_valid_repository_overview() 
     let auth = auth_context(None, true);
     for detail in [StartupDetail::Standard, StartupDetail::Full] {
         let stdout = valid_agent_overview_stdout(&runtime, "wop-valid-overview", root.path());
-        let (result, overview_id) = dispatch_start_coding_task_with_overview_stdout(
+        let (result, overview_id) = dispatch_coding_workflow_diagnostic_with_overview_stdout(
             &runtime,
             "wop-valid-overview",
             &project,
@@ -3007,11 +2983,12 @@ async fn start_coding_task_standard_and_full_accept_valid_repository_overview() 
         let serialized = repository.to_string();
         assert!(!serialized.contains(&root.path().to_string_lossy().to_string()));
 
-        let schema = crate::tool_runtime::registry::output_schema_for_tool("start_coding_task");
+        let schema =
+            crate::tool_runtime::registry::coding_workflow_diagnostic_output_schema_for_test();
         let instance = json!({"success": true, "output": result.output});
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
             .unwrap_or_else(|error| {
-                panic!("{detail:?} advanced startup must match strict schema: {error}")
+                panic!("{detail:?} coding workflow diagnostic must match strict schema: {error}")
             });
     }
 }

@@ -12,7 +12,7 @@ use super::sessions::{
 use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
     default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
-    ExecutionShell, SessionMode, StartupDetail,
+    ExecutionShell, SessionMode,
 };
 use crate::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
@@ -296,50 +296,9 @@ pub enum ToolCall {
         execution_context: Option<SessionExecutionContext>,
     },
 
-    /// Create a task session and return deterministic startup context: project
-    /// resolution, runtime/git summaries scaled by `detail`, and recommended
-    /// flow. Never calls an LLM.
-    ///
-    /// `detail` is the only projection control. The removed legacy startup
-    /// flags (`compact_startup`, `include_*`, `tool_manifest_*`) are rejected
-    /// as unknown fields by strict argument validation.
-    StartCodingTask {
-        /// Existing runtime project id. Omit this with `client_id` plus
-        /// `path` for Runner-side path resolution/registration.
-        #[serde(default)]
-        project: String,
-        /// Runner client that owns `path`.
-        #[serde(default)]
-        client_id: Option<String>,
-        /// Existing absolute directory on the selected Runner. The Runner
-        /// canonicalizes, policy-checks, reuses, or permanently registers it.
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        title: Option<String>,
-        #[serde(default)]
-        mode: SessionMode,
-        #[serde(default)]
-        deny_write_tools: bool,
-        #[serde(default)]
-        deny_shell_tools: bool,
-        #[serde(default)]
-        detail: StartupDetail,
-        /// Explicitly continue one existing Workflow Session. This business
-        /// input is distinct from project-tool `session_id` and wrapper-level
-        /// `recording_session_id` metadata. Omission always creates a fresh
-        /// Workflow Session.
-        #[serde(default)]
-        resume_session_id: Option<String>,
-        /// Optional complete replacement. Omission preserves the current value
-        /// on continuation; `{}` explicitly clears it.
-        #[serde(default)]
-        execution_context: Option<SessionExecutionContext>,
-    },
-
-    /// Start a normal coding task with practical defaults, or continue one by
-    /// `session_id`. Thin wrapper over `start_coding_task` that never creates a
-    /// temporary project and returns only a compact startup projection.
+    /// Start a normal coding workflow with practical defaults, or continue one
+    /// by `session_id`. This is the canonical coding entry and returns only a
+    /// compact startup projection.
     /// `session_id` is explicit business input for the exact Workflow Session
     /// to continue; omission always creates a fresh Session.
     WorkOnProject {
@@ -2492,7 +2451,6 @@ impl ToolCall {
         match self {
             Self::ListTools { .. } => "list_tools",
             Self::StartSession { .. } => "start_session",
-            Self::StartCodingTask { .. } => "start_coding_task",
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::SessionSummary { .. } => "session_summary",
@@ -2839,9 +2797,6 @@ impl ToolCall {
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
             Self::CallHierarchy { project, .. } => Some(project.as_str()),
-            Self::StartCodingTask { project, .. } if !project.trim().is_empty() => {
-                Some(project.as_str())
-            }
             Self::WorkOnProject { project, .. } if !project.trim().is_empty() => {
                 Some(project.as_str())
             }

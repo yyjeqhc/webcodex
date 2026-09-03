@@ -1,4 +1,4 @@
-//! Shared model-facing projection for `start_coding_task`.
+//! Shared model-facing projection for canonical coding workflow startup.
 //!
 //! The runtime builds this once and every transport carries the same core
 //! value. The projection is deterministic, bounded, path-safe, and contains

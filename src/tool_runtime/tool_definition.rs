@@ -525,19 +525,6 @@ const fn context_recovery_only(definition: ToolDefinition) -> ToolDefinition {
     context_continuity(definition, ToolContextContinuityPolicy::RECOVERY_ONLY)
 }
 
-const fn extra_accepted_flattened_args(
-    definition: ToolDefinition,
-    fields: &'static [&'static str],
-) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            extra_accepted_flattened_args: fields,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
-
 const fn permission_risk(
     definition: ToolDefinition,
     permission_risk: &'static str,

@@ -13,36 +13,6 @@ impl ToolRuntime {
         trusted_recording_session_project: Option<&str>,
     ) -> ToolResult {
         match call {
-            ToolCall::StartCodingTask {
-                project,
-                client_id,
-                path,
-                title,
-                mode,
-                deny_write_tools,
-                deny_shell_tools,
-                detail,
-                resume_session_id,
-                execution_context,
-            } => {
-                self.start_coding_task(
-                    project,
-                    client_id,
-                    path,
-                    title,
-                    mode,
-                    deny_write_tools,
-                    deny_shell_tools,
-                    detail,
-                    resume_session_id,
-                    execution_context,
-                    auth,
-                    trusted_recording_session_id,
-                    trusted_recording_session_project,
-                    transport,
-                )
-                .await
-            }
             ToolCall::WorkOnProject {
                 project,
                 client_id,

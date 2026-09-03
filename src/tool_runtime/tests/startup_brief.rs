@@ -1,4 +1,4 @@
-use super::reconnect::dispatch_start_coding_task_in_window;
+use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
 use crate::shell_client::ShellJobStartMetadata;
 use crate::shell_protocol::{
@@ -14,43 +14,72 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-fn start_call(
-    project: &str,
-    detail: StartupDetail,
-    title: &str,
-    resume_session_id: Option<&str>,
-) -> ToolCall {
-    ToolCall::StartCodingTask {
-        project: project.to_string(),
-        client_id: None,
-        path: None,
-        title: Some(title.to_string()),
-        mode: SessionMode::Normal,
-        detail,
-        deny_write_tools: false,
-        deny_shell_tools: false,
-        resume_session_id: resume_session_id.map(str::to_string),
-        execution_context: None,
-    }
-}
-
 async fn start(
     runtime: &ToolRuntime,
     client_id: &str,
     project: &str,
-    window: &str,
+    _window: &str,
     detail: StartupDetail,
     title: &str,
     resume_session_id: Option<&str>,
 ) -> ToolResult {
-    dispatch_start_coding_task_in_window(
-        runtime,
-        client_id,
-        start_call(project, detail, title, resume_session_id),
-        Some(&auth_context(None, true)),
-        window,
-    )
-    .await
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let title = title.to_string();
+        let resume_session_id = resume_session_id.map(str::to_string);
+        let auth = auth_context(None, true);
+        async move {
+            runtime
+                .start_coding_workflow_for_test(
+                    project,
+                    None,
+                    None,
+                    Some(title),
+                    SessionMode::Normal,
+                    false,
+                    false,
+                    detail,
+                    resume_session_id,
+                    None,
+                    Some(&auth),
+                    None,
+                    None,
+                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                )
+                .await
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "coding workflow did not finish within the 10-second test deadline"
+        );
+        if let Some(req) = runtime
+            .shell_clients
+            .poll(crate::shell_protocol::ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+            })
+            .await
+            .unwrap()
+        {
+            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &req.request_id,
+                exit_code,
+                &stdout,
+                &stderr,
+            )
+            .await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    }
+    task.await.unwrap()
 }
 
 fn seed_rules(root: &Path) {
@@ -739,12 +768,14 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
     let runtime1 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
     let project =
         register_agent_project_at_path(&runtime1, "rules-restart", "demo", root.path()).await;
-    let first = dispatch_start_coding_task_in_window(
+    let first = start(
         &runtime1,
         "rules-restart",
-        start_call(&project, StartupDetail::Standard, "before restart", None),
-        Some(&auth),
+        &project,
         "rules-restart-window",
+        StartupDetail::Standard,
+        "before restart",
+        None,
     )
     .await;
     assert!(first.success, "{:?}", first.error);
@@ -752,7 +783,7 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
         .as_str()
         .unwrap()
         .to_string();
-    let read = dispatch_start_coding_task_in_window(
+    let read = dispatch_coding_call_in_window(
         &runtime1,
         "rules-restart",
         ToolCall::ReadFile {
@@ -777,17 +808,14 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
 
     let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
     register_agent_project_at_path(&runtime2, "rules-restart", "demo", root.path()).await;
-    let restored = dispatch_start_coding_task_in_window(
+    let restored = start(
         &runtime2,
         "rules-restart",
-        start_call(
-            &project,
-            StartupDetail::Standard,
-            "after restart",
-            Some(&session_id),
-        ),
-        Some(&auth),
+        &project,
         "rules-restart-window",
+        StartupDetail::Standard,
+        "after restart",
+        Some(&session_id),
     )
     .await;
 
@@ -1151,14 +1179,21 @@ async fn startup_runner_health_uses_the_exact_project_client() {
 
     let auth = auth_context(None, true);
     let unavailable = runtime
-        .dispatch_with_auth(
-            start_call(
-                &target_project,
-                StartupDetail::Full,
-                "inspect unavailable target runner",
-                None,
-            ),
+        .start_coding_workflow_for_test(
+            target_project.clone(),
+            None,
+            None,
+            Some("inspect unavailable target runner".to_string()),
+            SessionMode::Normal,
+            false,
+            false,
+            StartupDetail::Full,
+            None,
+            None,
             Some(&auth),
+            None,
+            None,
+            crate::tool_runtime::sessions::SessionTransport::Api,
         )
         .await;
     assert!(unavailable.success, "{:?}", unavailable.error);
@@ -1226,13 +1261,13 @@ async fn startup_runner_health_uses_the_exact_project_client() {
 }
 
 #[tokio::test]
-async fn minimal_standard_and_full_coding_task_outputs_validate_against_strict_schema() {
+async fn minimal_standard_and_full_coding_workflow_diagnostics_validate_against_strict_schema() {
     let root = tempfile::tempdir().unwrap();
     seed_rules(root.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
         register_agent_project_at_path(&runtime, "rules-schema", "demo", root.path()).await;
-    let schema = registry::output_schema_for_tool("start_coding_task");
+    let schema = registry::coding_workflow_diagnostic_output_schema_for_test();
     let recorder = runtime.sessions.start_session_with_guards(
         Some(project.clone()),
         Some("startup schema recorder".to_string()),
@@ -1388,7 +1423,7 @@ async fn worst_case_startup_with_huge_repository_stays_below_hard_limit() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["repository"]["status"], "available");
 
-    let schema = registry::output_schema_for_tool("start_coding_task");
+    let schema = registry::coding_workflow_diagnostic_output_schema_for_test();
     let value = json!({
         "success": result.success,
         "output": result.output,

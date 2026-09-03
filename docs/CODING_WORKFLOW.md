@@ -40,8 +40,9 @@ role selector.
 - `work_on_project` is the canonical external coding bootstrap and continuation
   entry. The retired `start_coding_task` wire/API tool name now fails closed with
   guidance to use `work_on_project`; its advanced startup fields are not a public
-  compatibility surface. An internal `StartCodingTask` primitive remains only as
-  shared implementation plumbing for the canonical workflow.
+  compatibility surface. Internally, `work_on_project` calls the shared coding
+  workflow engine directly; bounded minimal/full diagnostic projections remain
+  test-only implementation seams rather than a second tool identity.
 - Choose behavioral roles in the **task instruction**. For implementation work,
   explicitly say to use `implementation_owner` guidance. For a separate review,
   explicitly say to use `independent_review` guidance.

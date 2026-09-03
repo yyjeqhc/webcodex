@@ -442,7 +442,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             copy_keys(obj, &mut out, &["limit", "status"]);
         }
-        "start_session" | "start_coding_task" | "update_session_context" => {
+        "start_session" | "update_session_context" => {
             copy_keys(
                 obj,
                 &mut out,
@@ -458,12 +458,40 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "session_id",
                 ],
             );
-            if tool_name == "start_coding_task" {
-                out.insert(
-                    "path_source_requested".to_string(),
-                    Value::Bool(obj.contains_key("path")),
-                );
-            }
+            let context = obj
+                .get("execution_context")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<super::sessions::SessionExecutionContext>(value).ok()
+                })
+                .map(|context| context.audit_summary())
+                .unwrap_or(Value::Null);
+            out.insert("execution_context".to_string(), context);
+        }
+        // Compatibility-only audit sanitizer for the retired wire name. The
+        // kernel records a bounded request summary before ToolCall parsing, so
+        // a rejected legacy request still passes through this branch. This is
+        // not a current ToolCall identity or dispatch path.
+        "start_coding_task" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "client_id",
+                    "title",
+                    "mode",
+                    "deny_write_tools",
+                    "deny_shell_tools",
+                    "detail",
+                    "resume_session_id",
+                    "session_id",
+                ],
+            );
+            out.insert(
+                "path_source_requested".to_string(),
+                Value::Bool(obj.contains_key("path")),
+            );
             let context = obj
                 .get("execution_context")
                 .cloned()
@@ -5484,31 +5512,6 @@ impl ToolCall {
                 "mode": mode,
                 "deny_write_tools": deny_write_tools,
                 "deny_shell_tools": deny_shell_tools,
-                "execution_context": execution_context
-                    .as_ref()
-                    .map(super::sessions::SessionExecutionContext::audit_summary),
-            }),
-            Self::StartCodingTask {
-                project,
-                client_id,
-                path,
-                title,
-                mode,
-                deny_write_tools,
-                deny_shell_tools,
-                detail,
-                resume_session_id,
-                execution_context,
-            } => serde_json::json!({
-                "project": project,
-                "client_id": client_id,
-                "path_source_requested": path.is_some(),
-                "title": title,
-                "mode": mode,
-                "deny_write_tools": deny_write_tools,
-                "deny_shell_tools": deny_shell_tools,
-                "detail": detail,
-                "resume_session_id": resume_session_id,
                 "execution_context": execution_context
                     .as_ref()
                     .map(super::sessions::SessionExecutionContext::audit_summary),

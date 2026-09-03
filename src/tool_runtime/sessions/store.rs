@@ -2283,7 +2283,7 @@ fn coding_instruction_event(
         logical_invocation_id: None,
         logical_invocation_role: None,
         transport: transport.as_str().to_string(),
-        tool_name: "start_coding_task".to_string(),
+        tool_name: "work_on_project".to_string(),
         project: Some(project.to_string()),
         resolved_project: Some(project.to_string()),
         risk_class: "read_only".to_string(),

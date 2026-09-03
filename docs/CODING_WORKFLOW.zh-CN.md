@@ -34,8 +34,9 @@ instructions；它不是 role selector。
   Job state 仍会显式返回。
 - `work_on_project` 是唯一 canonical 的外部 coding bootstrap / continuation 入口。
   `start_coding_task` 这一旧 wire/API tool name 已退休，调用会 fail closed 并提示改用
-  `work_on_project`；其 advanced startup fields 不再构成公共兼容面。内部仍保留
-  `StartCodingTask` primitive，仅作为 canonical workflow 的共享实现细节。
+  `work_on_project`；其 advanced startup fields 不再构成公共兼容面。内部由
+  `work_on_project` 直接调用共享 coding workflow engine；bounded minimal/full diagnostic
+  projection 只保留为 test-only implementation seam，不再形成第二个 tool identity。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用
   `implementation_owner` guidance；独立评审明确写使用 `independent_review` guidance。
 - 返回的 role guidance 永远只是 model guidance。它不会创建 authority、permission、

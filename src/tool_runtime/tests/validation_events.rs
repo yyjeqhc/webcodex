@@ -2336,26 +2336,20 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
 
     let start = runtime
         .dispatch_with_auth(
-            ToolCall::StartCodingTask {
+            ToolCall::WorkOnProject {
                 project: project.clone(),
                 client_id: None,
                 path: None,
-                title: Some("validation finish".to_string()),
-                mode: SessionMode::Normal,
-                detail: Default::default(),
-                deny_write_tools: false,
-                deny_shell_tools: false,
-                resume_session_id: None,
-                execution_context: None,
+                instruction: "validation finish".to_string(),
+                session_id: None,
+                include_project_instructions: true,
+                include_workflow_guidance: true,
             },
             Some(&auth),
         )
         .await;
     assert!(start.success, "{:?}", start.error);
-    let session_id = start.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let session_id = start.output["session_id"].as_str().unwrap().to_string();
 
     let check_task = tokio::spawn({
         let runtime = runtime.clone();

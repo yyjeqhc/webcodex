@@ -1707,46 +1707,89 @@ fn jobs_block_recovering_hidden_beyond_truncated_recent_still_reported() {
 }
 
 // =========================================================================
-// Real entry integration: start_coding_task pre-instruction attempt
+// Canonical coding workflow integration: pre-instruction attempt
 // =========================================================================
 
-use crate::tool_runtime::tests::reconnect::dispatch_start_coding_task_in_window;
-use crate::tool_runtime::{StartupDetail, ToolCall};
+use crate::tool_runtime::{StartupDetail, ToolCall, ToolResult};
 
-fn coding_call(project: &str, instruction: &str, resume: Option<&str>) -> ToolCall {
-    ToolCall::StartCodingTask {
-        project: project.to_string(),
-        client_id: None,
-        path: None,
-        title: Some(instruction.to_string()),
-        mode: SessionMode::Normal,
-        deny_write_tools: false,
-        deny_shell_tools: false,
-        // These integration assertions exercise the complete underlying
-        // continuation_feedback block retained by full diagnostics. Standard
-        // uses the separately tested bounded model-facing projection.
-        detail: StartupDetail::Full,
-        resume_session_id: resume.map(str::to_string),
-        execution_context: None,
+async fn diagnostic_coding_workflow(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    instruction: &str,
+    resume: Option<&str>,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let instruction = instruction.to_string();
+        let resume = resume.map(str::to_string);
+        let auth = auth_context(None, true);
+        async move {
+            runtime
+                .start_coding_workflow_for_test(
+                    project,
+                    None,
+                    None,
+                    Some(instruction),
+                    SessionMode::Normal,
+                    false,
+                    false,
+                    // These integration assertions exercise the complete
+                    // continuation_feedback block retained by full diagnostics.
+                    StartupDetail::Full,
+                    resume,
+                    None,
+                    Some(&auth),
+                    None,
+                    None,
+                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                )
+                .await
+        }
+    });
+    while !task.is_finished() {
+        if let Some(req) = runtime
+            .shell_clients
+            .poll(crate::shell_protocol::ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+            })
+            .await
+            .unwrap()
+        {
+            let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &req.request_id,
+                exit_code,
+                &stdout,
+                &stderr,
+            )
+            .await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
     }
+    task.await.unwrap()
 }
 
 #[tokio::test]
-async fn start_coding_task_continuation_describes_previous_attempt_not_empty_new_one() {
+async fn coding_workflow_continuation_describes_previous_attempt_not_empty_new_one() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project =
         register_agent_project_at_path(&runtime, "continuation-agent", "demo", dir.path()).await;
-    let auth = auth_context(None, true);
 
-    // First start_coding_task creates the session with instruction A.
-    let first = dispatch_start_coding_task_in_window(
+    // First coding workflow creates the session with instruction A.
+    let first = diagnostic_coding_workflow(
         &runtime,
         "continuation-agent",
-        coding_call(&project, "instruction A", None),
-        Some(&auth),
-        "continuation-window",
+        &project,
+        "instruction A",
+        None,
     )
     .await;
     assert!(first.success, "{:?}", first.error);
@@ -1773,13 +1816,13 @@ async fn start_coding_task_continuation_describes_previous_attempt_not_empty_new
         .events
         .len();
 
-    // Second start_coding_task continues with instruction B on the same session.
-    let second = dispatch_start_coding_task_in_window(
+    // Second coding workflow continues with instruction B on the same session.
+    let second = diagnostic_coding_workflow(
         &runtime,
         "continuation-agent",
-        coding_call(&project, "instruction B", Some(&session_id)),
-        Some(&auth),
-        "continuation-window",
+        &project,
+        "instruction B",
+        Some(&session_id),
     )
     .await;
     assert!(second.success, "{:?}", second.error);
@@ -1837,21 +1880,14 @@ async fn start_coding_task_continuation_describes_previous_attempt_not_empty_new
 }
 
 #[tokio::test]
-async fn start_coding_task_fresh_session_continuation_is_not_applicable() {
+async fn coding_workflow_fresh_session_continuation_is_not_applicable() {
     let dir = tempfile::tempdir().unwrap();
     init_git_repo(dir.path());
     let runtime = ToolRuntime::new_for_tests();
     let project = register_agent_project_at_path(&runtime, "fresh-agent", "demo", dir.path()).await;
-    let auth = auth_context(None, true);
 
-    let first = dispatch_start_coding_task_in_window(
-        &runtime,
-        "fresh-agent",
-        coding_call(&project, "fresh start", None),
-        Some(&auth),
-        "fresh-window",
-    )
-    .await;
+    let first =
+        diagnostic_coding_workflow(&runtime, "fresh-agent", &project, "fresh start", None).await;
     assert!(first.success, "{:?}", first.error);
     assert_eq!(first.output["session"]["continuation"], "created");
     let feedback = &first.output["continuation_feedback"];

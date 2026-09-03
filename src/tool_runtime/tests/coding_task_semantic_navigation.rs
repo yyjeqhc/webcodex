@@ -8,8 +8,8 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 };
 use crate::tool_runtime::{
-    known_tool_names, model_hidden_tool_names, registered_tool_specs, SessionMode, ToolCall,
-    ToolResult, ToolRuntime,
+    known_tool_names, model_hidden_tool_names, registered_tool_specs, SessionMode, ToolResult,
+    ToolRuntime,
 };
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
@@ -43,21 +43,6 @@ async fn register_semantic_agent(
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 
-fn start_call(project: String, mode: SessionMode) -> ToolCall {
-    ToolCall::StartCodingTask {
-        project,
-        client_id: None,
-        path: None,
-        title: Some("semantic navigation startup".to_string()),
-        mode,
-        detail: Default::default(),
-        deny_write_tools: false,
-        deny_shell_tools: false,
-        resume_session_id: None,
-        execution_context: None,
-    }
-}
-
 fn spawn_start(
     runtime: &ToolRuntime,
     project: String,
@@ -66,7 +51,22 @@ fn spawn_start(
     let runtime = runtime.clone();
     tokio::spawn(async move {
         runtime
-            .dispatch_with_auth(start_call(project, mode), Some(&auth_context(None, true)))
+            .start_coding_workflow_for_test(
+                project,
+                None,
+                None,
+                Some("semantic navigation startup".to_string()),
+                mode,
+                false,
+                false,
+                Default::default(),
+                None,
+                None,
+                Some(&auth_context(None, true)),
+                None,
+                None,
+                crate::tool_runtime::sessions::SessionTransport::Api,
+            )
             .await
     })
 }
@@ -153,8 +153,8 @@ fn seed_clean_repo(root: &std::path::Path) {
     commit_file(root, "README.md", "# demo\n", "chore: seed fixture");
 }
 
-/// Standard-detail startup inspects git through the agent; service those
-/// remaining requests locally until start_coding_task finishes.
+/// Standard-detail startup inspects Git through the Runner; service those
+/// remaining requests locally until the coding workflow finishes.
 async fn finish_start_servicing_locally(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -164,7 +164,7 @@ async fn finish_start_servicing_locally(
     while !task.is_finished() {
         assert!(
             Instant::now() < deadline,
-            "start_coding_task did not finish within the 10-second test deadline"
+            "coding workflow did not finish within the 10-second test deadline"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             complete_agent_request_by_running_locally(runtime, client_id, request).await;
@@ -298,9 +298,21 @@ async fn coding_task_semantic_navigation_disconnected_agent_is_nonblocking() {
         .reconcile_disconnect("offline-agent", "inst")
         .await;
     let result = runtime
-        .dispatch_with_auth(
-            start_call(project, SessionMode::Normal),
+        .start_coding_workflow_for_test(
+            project,
+            None,
+            None,
+            Some("semantic navigation startup".to_string()),
+            SessionMode::Normal,
+            false,
+            false,
+            Default::default(),
+            None,
+            None,
             Some(&auth_context(None, true)),
+            None,
+            None,
+            crate::tool_runtime::sessions::SessionTransport::Api,
         )
         .await;
     assert!(result.success, "{result:?}");
@@ -476,7 +488,7 @@ async fn coding_task_semantic_navigation_read_only_keeps_compact_shape() {
 }
 
 #[test]
-fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_are_stable() {
+fn coding_workflow_semantic_navigation_output_schema_is_explicit_and_surface_counts_are_stable() {
     let specs = registered_tool_specs();
     let runtime_tool_count = specs.len();
     assert_eq!(
@@ -484,7 +496,7 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
         known_tool_names().count(),
         "visible runtime tool count + hidden tools must cover every known tool"
     );
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("start_coding_task");
+    let schema = crate::tool_runtime::registry::coding_workflow_diagnostic_output_schema_for_test();
     let standard = schema["properties"]["output"]["oneOf"]
         .as_array()
         .unwrap()

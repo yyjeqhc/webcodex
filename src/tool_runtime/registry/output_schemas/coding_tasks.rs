@@ -2,11 +2,14 @@ use serde_json::{json, Value};
 
 use super::super::input_schemas::session_execution_context_schema;
 use super::common::{
-    array_schema, authority_profile_schema, continuation_feedback_schema, evidence_history_schema,
-    evidence_integrity_schema, exploration_tool_name_schema, handoff_brief_schema,
-    job_lifecycle_summary_schema, nullable_schema, open_object_schema, permission_decision_schema,
-    permission_summary_schema, schema_type, session_hint_schema, task_outcome_schema,
-    wrapped_output_schema,
+    array_schema, continuation_feedback_schema, evidence_history_schema, evidence_integrity_schema,
+    handoff_brief_schema, job_lifecycle_summary_schema, nullable_schema, open_object_schema,
+    permission_summary_schema, schema_type, task_outcome_schema, wrapped_output_schema,
+};
+#[cfg(test)]
+use super::common::{
+    authority_profile_schema, exploration_tool_name_schema, permission_decision_schema,
+    session_hint_schema,
 };
 use super::files::{
     key_file_schema, path_kind_schema, project_type_schema, scan_schema, suggested_read_schema,
@@ -19,7 +22,6 @@ use crate::tool_runtime::startup_brief::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "start_coding_task" => Some(start_coding_task_output_schema()),
         "work_on_project" => Some(work_on_project_output_schema()),
         "finish_coding_task" => Some(wrapped_output_schema(vec![
             (
@@ -136,7 +138,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     }
 }
 
-fn start_coding_task_output_schema() -> Value {
+#[cfg(test)]
+pub(super) fn coding_workflow_diagnostic_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -160,12 +163,14 @@ fn start_coding_task_output_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_brief_output_schema(detail: &str) -> Value {
     let mut schema = startup_brief_schema(detail);
     add_startup_model_metadata(&mut schema);
     schema
 }
 
+#[cfg(test)]
 fn add_startup_model_metadata(schema: &mut Value) {
     let properties = schema
         .get_mut("properties")
@@ -175,6 +180,7 @@ fn add_startup_model_metadata(schema: &mut Value) {
     properties.insert("permission".to_string(), permission_decision_schema());
 }
 
+#[cfg(test)]
 fn startup_brief_schema(detail: &str) -> Value {
     json!({
         "type": "object",
@@ -217,6 +223,7 @@ fn startup_brief_schema(detail: &str) -> Value {
     })
 }
 
+#[cfg(test)]
 fn full_startup_output_schema() -> Value {
     let mut schema = json!({
         "type": "object",
@@ -300,6 +307,7 @@ fn project_resolution_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_session_schema() -> Value {
     json!({
         "type": "object",
@@ -327,6 +335,7 @@ fn startup_session_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_project_schema() -> Value {
     json!({
         "type": "object",
@@ -356,6 +365,7 @@ fn startup_project_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_workspace_schema() -> Value {
     json!({
         "type": "object",
@@ -451,6 +461,7 @@ fn startup_workflow_role_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_instructions_schema() -> Value {
     json!({
         "type": "object",
@@ -549,6 +560,7 @@ fn startup_instruction_source_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_continuation_schema(detail: &str) -> Value {
     let exploration_limit = if detail == "minimal" { 3 } else { 12 };
     json!({
@@ -665,6 +677,7 @@ fn startup_continuation_schema(detail: &str) -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_validation_schema() -> Value {
     json!({
         "type": "object",
@@ -698,6 +711,7 @@ fn startup_validation_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_failure_schema() -> Value {
     json!({
         "type": "object",
@@ -717,6 +731,7 @@ fn startup_failure_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn bounded_list_schema(items: Value, max_items: usize) -> Value {
     json!({
         "type": "object",
@@ -731,6 +746,7 @@ fn bounded_list_schema(items: Value, max_items: usize) -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_semantic_navigation_schema() -> Value {
     json!({
         "type": "object",
@@ -867,6 +883,7 @@ fn startup_issue_list_schema(blockers: bool) -> Value {
     })
 }
 
+#[cfg(test)]
 fn startup_verdict_schema() -> Value {
     json!({
         "type": "object",
@@ -884,6 +901,7 @@ fn startup_verdict_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn semantic_navigation_schema() -> Value {
     json!({
         "type": "object",

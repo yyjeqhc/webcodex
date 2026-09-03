@@ -805,29 +805,6 @@ fn work_on_project_parses_path_source_and_rejects_ambiguous_sources() {
 
 #[test]
 fn session_execution_context_parses_as_strongly_typed_replacement() {
-    let call: ToolCall = serde_json::from_value(json!({
-        "tool": "start_coding_task",
-        "params": {
-            "project": "agent:oe:demo",
-            "execution_context": {
-                "default_cwd": "frontend",
-                "default_shell": "bash"
-            }
-        }
-    }))
-    .unwrap();
-    assert!(matches!(
-        call,
-        ToolCall::StartCodingTask {
-            execution_context: Some(sessions::SessionExecutionContext {
-                default_cwd: Some(ref cwd),
-                default_shell: Some(ExecutionShell::Bash),
-                ..
-            }),
-            ..
-        } if cwd == "frontend"
-    ));
-
     let ssh = ToolCall::from_tool_name(
         "update_session_context",
         json!({
@@ -1372,6 +1349,21 @@ fn retired_start_coding_task_wire_name_is_rejected() {
         .expect_err("retired start_coding_task entry must fail closed");
     assert!(error.contains("no longer supported"), "{error}");
     assert!(error.contains("work_on_project"), "{error}");
+
+    // Kernel audit recording happens before ToolCall parsing, so rejected
+    // legacy requests keep a bounded compatibility sanitizer without reviving
+    // a current ToolCall identity or retaining the raw path.
+    let audit = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "start_coding_task",
+        &json!({
+            "project": "agent:legacy:demo",
+            "path": "/private/legacy/path",
+            "title": "legacy request"
+        }),
+    );
+    assert_eq!(audit["path_source_requested"], true);
+    assert!(audit.get("path").is_none());
+    assert!(!audit.to_string().contains("/private/legacy/path"));
 }
 
 #[test]

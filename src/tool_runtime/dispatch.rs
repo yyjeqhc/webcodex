@@ -898,7 +898,8 @@ impl ToolRuntime {
         };
         // work_on_project.session_id is explicit coding-resume business input,
         // never a generic tool recorder. Its implementation delegates exact
-        // Session/project/lifecycle/authority handling to start_coding_task.
+        // Session/project/lifecycle/authority handling to the coding workflow
+        // engine.
         let defer_work_session = matches!(&call, ToolCall::WorkOnProject { .. });
         // session_handoff_summary.session_id remains business input for direct
         // internal dispatch. When the kernel already has an explicit outer
@@ -1362,9 +1363,7 @@ impl ToolRuntime {
                 self.dispatch_session_tool(call, auth, transport).await
             }
 
-            call @ (ToolCall::StartCodingTask { .. }
-            | ToolCall::WorkOnProject { .. }
-            | ToolCall::FinishCodingTask { .. }) => {
+            call @ (ToolCall::WorkOnProject { .. } | ToolCall::FinishCodingTask { .. }) => {
                 self.dispatch_coding_task_tool(
                     call,
                     auth,

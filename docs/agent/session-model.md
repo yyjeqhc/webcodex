@@ -346,10 +346,10 @@ the audit ledger.
 
 `work_on_project` is the canonical external full-runtime start-or-continue
 aggregate. The former `start_coding_task` tool name and advanced direct/API
-schema are retired and fail closed before dispatch. The Rust
-`ToolCall::StartCodingTask` variant remains internal implementation plumbing for
-shared startup behavior and tests; it is not an external Session-selection or
-compatibility surface.
+schema are retired and fail closed before dispatch. No internal `ToolCall`
+variant remains for that retired name; `work_on_project` calls the shared coding
+workflow engine directly, with diagnostic projection controls available only to
+tests rather than as a Session-selection or compatibility surface.
 
 `work_on_project` deliberately does not use Workflow Session identity, transport
 identity, a client-window key, credentials, project identity, or Server lifetime

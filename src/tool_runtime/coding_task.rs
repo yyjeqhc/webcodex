@@ -82,10 +82,11 @@ struct CodingStartupOptions {
 }
 
 impl CodingStartupOptions {
-    fn start_coding_task(detail: StartupDetail) -> Self {
+    #[cfg(test)]
+    fn diagnostic(detail: StartupDetail) -> Self {
         Self {
             detail,
-            tool_name: "start_coding_task",
+            tool_name: "work_on_project",
             include_repository_overview: true,
             include_project_instructions: true,
             include_reused_instruction_content: false,
@@ -276,43 +277,6 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn start_coding_task(
-        &self,
-        project: String,
-        client_id: Option<String>,
-        path: Option<String>,
-        title: Option<String>,
-        mode: SessionMode,
-        deny_write_tools: bool,
-        deny_shell_tools: bool,
-        detail: StartupDetail,
-        resume_session_id: Option<String>,
-        execution_context: Option<sessions::SessionExecutionContext>,
-        auth: Option<&AuthContext>,
-        trusted_recording_session_id: Option<&str>,
-        trusted_recording_session_project: Option<&str>,
-        transport: SessionTransport,
-    ) -> ToolResult {
-        self.start_coding_task_with_options(
-            project,
-            client_id,
-            path,
-            title,
-            mode,
-            deny_write_tools,
-            deny_shell_tools,
-            CodingStartupOptions::start_coding_task(detail),
-            resume_session_id,
-            execution_context,
-            auth,
-            trusted_recording_session_id,
-            trusted_recording_session_project,
-            transport,
-        )
-        .await
-    }
-
     async fn explicit_coding_session_project(
         &self,
         session_id: &str,
@@ -370,7 +334,7 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn start_coding_task_with_options(
+    async fn start_coding_workflow(
         &self,
         project: String,
         client_id: Option<String>,
@@ -665,8 +629,8 @@ impl ToolRuntime {
             }
         }
         // Semantic-navigation and fixed project-instruction observation remain
-        // mandatory startup probes. The advanced start_coding_task entry also
-        // runs the independent repository overview concurrently. The ordinary
+        // mandatory startup probes. Diagnostic test projections also run the
+        // independent repository overview concurrently. The ordinary
         // work_on_project entry deliberately omits that optional scan/request.
         let (semantic_navigation, project_instructions, repository_overview) =
             if startup.include_repository_overview {
@@ -735,7 +699,7 @@ impl ToolRuntime {
             runtime_status_call_failed,
         );
         let git = self
-            .start_coding_task_git_summary(
+            .coding_startup_git_summary(
                 &resolved.resolved_id,
                 include_recent_commits,
                 &mut warnings,
@@ -817,7 +781,7 @@ impl ToolRuntime {
                 return attach_project_resolution(
                     ToolResult::err_with_output(
                         format!(
-                            "{error_kind}: start_coding_task cannot resume a {} session",
+                            "{error_kind}: work_on_project cannot resume a {} session",
                             lifecycle.as_str()
                         ),
                         json!({
@@ -946,7 +910,7 @@ impl ToolRuntime {
             .active_jobs_summary(Some(&resolved.resolved_id), auth, 10)
             .await;
         let continuation_feedback = self
-            .start_continuation_feedback(
+            .startup_continuation_feedback(
                 &session_outcome.summary,
                 session_outcome.pre_instruction_summary.as_ref(),
                 continuation_kind,
@@ -1024,8 +988,8 @@ impl ToolRuntime {
         // against (fresh session, or a session whose rules were never
         // persisted, e.g. restored after a restart). Otherwise the shared
         // brief compares fingerprints and reports reused/changed. Whether a
-        // reused body is projected is intentionally separate: advanced
-        // start_coding_task stays incremental, while work_on_project follows
+        // reused body is projected is intentionally separate: diagnostic test
+        // projections stay incremental, while work_on_project follows
         // its caller-explicit include_project_instructions preference.
         let force_instruction_load = previous_instructions.is_none();
         let canonical_repository_root_matches = if resume_requested {
@@ -1068,11 +1032,51 @@ impl ToolRuntime {
         attach_permission(result, project_resolution.permission.as_ref())
     }
 
-    /// Thin `start_coding_task` wrapper for the daily model coding loop.
+    /// Test-only diagnostic projection over the same canonical coding workflow
+    /// engine used by `work_on_project`. This is deliberately not a ToolCall or
+    /// a model/API identity.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn start_coding_workflow_for_test(
+        &self,
+        project: String,
+        client_id: Option<String>,
+        path: Option<String>,
+        title: Option<String>,
+        mode: SessionMode,
+        deny_write_tools: bool,
+        deny_shell_tools: bool,
+        detail: StartupDetail,
+        resume_session_id: Option<String>,
+        execution_context: Option<sessions::SessionExecutionContext>,
+        auth: Option<&AuthContext>,
+        trusted_recording_session_id: Option<&str>,
+        trusted_recording_session_project: Option<&str>,
+        transport: SessionTransport,
+    ) -> ToolResult {
+        self.start_coding_workflow(
+            project,
+            client_id,
+            path,
+            title,
+            mode,
+            deny_write_tools,
+            deny_shell_tools,
+            CodingStartupOptions::diagnostic(detail),
+            resume_session_id,
+            execution_context,
+            auth,
+            trusted_recording_session_id,
+            trusted_recording_session_project,
+            transport,
+        )
+        .await
+    }
+
+    /// Canonical entry for the daily model coding loop.
     ///
-    /// The wrapper validates its simple inputs, maps them onto normal coding-task
-    /// defaults, delegates the business implementation to `start_coding_task`,
-    /// and projects a compact startup result. With `session_id` present, it
+    /// This validates the public inputs, maps them onto the shared coding
+    /// workflow engine, and projects a compact startup result. With `session_id` present, it
     /// exactly resumes that one Workflow Session after project/lifecycle/access/
     /// capability checks; without it, it always creates a fresh Session.
     pub(crate) async fn work_on_project(
@@ -1135,13 +1139,13 @@ impl ToolRuntime {
             Some(session_id) => Some(session_id),
             None => None,
         };
-        // Map onto the existing coding-task business implementation. The
-        // internal work-on-project profile keeps the standard shared brief,
+        // Map onto the canonical coding workflow engine. The work-on-project
+        // profile keeps the standard shared brief,
         // including rules, semantic navigation, workspace, and job metadata,
         // while deliberately skipping the optional repository overview. Without
         // an explicit session_id this always creates a fresh Workflow Session.
         let result = self
-            .start_coding_task_with_options(
+            .start_coding_workflow(
                 project.clone(),
                 client_id,
                 path,
@@ -1468,14 +1472,14 @@ impl ToolRuntime {
         ToolResult::ok(output)
     }
 
-    /// Build the bounded continuation feedback projection for `start_coding_task`.
+    /// Build the bounded continuation feedback projection for coding startup.
     ///
     /// Pure read-only: validation is derived from the session ledger only
     /// (`validation_summary_from_events`, no job-status enrichment), jobs come
     /// from the bounded `active_jobs_summary` metadata, and guidance is read
     /// from the message board without marking anything read or resolved. No
     /// shell, no file reads, no Agent requests, no ledger mutation.
-    async fn start_continuation_feedback(
+    async fn startup_continuation_feedback(
         &self,
         summary: &sessions::SessionSummary,
         pre_instruction_summary: Option<&sessions::SessionSummary>,
@@ -1550,7 +1554,7 @@ impl ToolRuntime {
         }
     }
 
-    async fn start_coding_task_git_summary(
+    async fn coding_startup_git_summary(
         &self,
         project: &str,
         include_recent_commits: bool,
@@ -1988,8 +1992,8 @@ fn is_default_work_on_project_repository(repository: &Value) -> bool {
     })
 }
 
-/// Convert a successful `start_coding_task` result into the compact
-/// `work_on_project` contract. The delegated call may already have changed
+/// Convert a successful canonical coding-startup result into the compact
+/// `work_on_project` contract. The delegated engine may already have changed
 /// Session state, so protocol drift fails closed with `state_changed=true`.
 #[cfg(test)]
 pub(crate) fn project_work_on_project_output(project: String, output: Value) -> ToolResult {
@@ -2189,7 +2193,7 @@ fn work_on_project_projection_failed(
         json!({
             "error_kind": "work_on_project_projection_failed",
             "failure_kind": "work_on_project_projection_failed",
-            "underlying_tool": "start_coding_task",
+            "underlying_tool": "work_on_project",
             "field": field,
             "expected": expected,
             "actual": actual,

@@ -6,7 +6,7 @@
 //! output; this is test/baseline data, not product telemetry.
 
 use super::support::*;
-use crate::tool_runtime::tool_inputs::{ExecutionPurpose, SessionMode, StartupDetail};
+use crate::tool_runtime::tool_inputs::ExecutionPurpose;
 use crate::tool_runtime::{ToolCall, ToolResult, ToolRuntime};
 use serde_json::Value;
 use sha2::Digest;
@@ -150,31 +150,26 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     // 1. Startup: one call, no manifest/runtime probing required afterwards.
     let start = dispatch_with_local_agent(
         &runtime,
-        ToolCall::StartCodingTask {
+        ToolCall::WorkOnProject {
             project: project.clone(),
             client_id: None,
             path: None,
-            title: Some("trusted agent smoke".to_string()),
-            mode: SessionMode::Normal,
-            deny_write_tools: false,
-            deny_shell_tools: false,
-            detail: StartupDetail::Standard,
-            resume_session_id: None,
-            execution_context: None,
+            instruction: "trusted agent smoke".to_string(),
+            session_id: None,
+            include_project_instructions: true,
+            include_workflow_guidance: true,
         },
         &poll_calls,
     )
     .await;
     track(&start);
     assert!(start.success, "{:?}", start.error);
-    assert_no_approval_interruption(&start, "start_coding_task");
-    let session_id = start.output["session"]["session_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    // Dirty worktree is advisory context, not a blocker.
-    assert_ne!(start.output["startup_verdict"]["status"], "fail");
-    assert_eq!(start.output["startup_verdict"]["blocking"], false);
+    assert_no_approval_interruption(&start, "work_on_project");
+    let session_id = start.output["session_id"].as_str().unwrap().to_string();
+    // Dirty worktree is advisory context, not a blocker. The canonical compact
+    // entry intentionally omits the old full diagnostic startup_verdict.
+    assert!(start.output.get("startup_verdict").is_none());
+    assert_ne!(start.output["readiness"]["status"], "fail");
 
     // 2. Edit: add a script whose assertion initially fails.
     let write = dispatch_with_local_agent(

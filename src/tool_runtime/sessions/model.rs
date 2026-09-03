@@ -480,7 +480,7 @@ impl SessionCreateOptions {
     }
 }
 
-/// Atomic create-or-explicit-resume request used by `start_coding_task`.
+/// Atomic create-or-explicit-resume request used by coding workflow startup.
 ///
 /// The Workflow Session, instruction event, and capability transition are
 /// committed under one store lock. This is deliberately an internal Workflow

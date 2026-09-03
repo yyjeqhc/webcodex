@@ -391,7 +391,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         extra_accepted_flattened_arg_tools,
-        vec![("start_coding_task", vec!["session_id"])]
+        Vec::<(&str, Vec<&str>)>::new()
     );
 
     let unit_argument_tools = tool_definitions()

@@ -1000,7 +1000,7 @@ async fn deny_shell_only_allows_write_tools() {
 fn project_tool_schemas_include_optional_session_id() {
     let specs = registered_tool_specs();
     // `start_session` is ModelHidden (the model coding line is covered by
-    // `start_coding_task`): it has no public ToolSpec, so its guard schema is
+    // `work_on_project`): it has no public ToolSpec, so its guard schema is
     // verified directly from the output schema builder rather than via
     // `spec_named`, keeping the session guard-field contract asserted at the
     // implementation level.

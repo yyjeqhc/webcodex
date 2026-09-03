@@ -84,3 +84,8 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
 
     default_output_schema()
 }
+
+#[cfg(test)]
+pub(crate) fn coding_workflow_diagnostic_output_schema_for_test() -> Value {
+    coding_tasks::coding_workflow_diagnostic_output_schema()
+}

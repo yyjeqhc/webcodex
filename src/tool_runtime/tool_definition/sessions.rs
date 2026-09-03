@@ -1,8 +1,8 @@
 use super::AgentCapability::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, context_recovery_only, def, extra_accepted_flattened_args, model_spec,
-    permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
+    adaptive_runtime_direct, context_recovery_only, def, model_spec, permission_risk,
+    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::tool_runtime::metadata::{
@@ -37,27 +37,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    extra_accepted_flattened_args(
-        def(
-            "start_coding_task",
-            ModelHidden,
-            "workflow",
-            Some(GitOrShell),
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::WorkflowManage,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-        ),
-        &["session_id"],
     ),
     adaptive_runtime_direct(
         context_recovery_only(model_spec(

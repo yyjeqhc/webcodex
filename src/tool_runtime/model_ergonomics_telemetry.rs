@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_tools_do_not_start_generic_model_usage_telemetry() {
+    fn retired_and_internal_tools_do_not_start_generic_model_usage_telemetry() {
         assert!(ModelErgonomicsTimer::start("start_coding_task").is_none());
         assert!(ModelErgonomicsTimer::start("definitely_internal_helper").is_none());
     }

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use webcodex_core::shell_protocol::ShellJobValidationStep;
 use webcodex_runner_registry::RunnerAccess;
 
@@ -125,6 +126,22 @@ pub struct ConnectorExecutionAuthority {
     pub mode: String,
     pub source: String,
     pub resolved_rule: String,
+}
+
+#[derive(Clone)]
+pub struct ConnectorCallContext {
+    pub access: ConnectorAccess,
+    pub execution_authority: ConnectorExecutionAuthority,
+    pub host: Arc<dyn ConnectorExecutionHost>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectorCallOutcome {
+    pub ok: bool,
+    pub body: Value,
+    pub http_status: u16,
+    pub required_permission: Option<ConnectorPermission>,
+    pub protocol_error: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

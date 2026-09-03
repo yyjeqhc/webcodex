@@ -1877,7 +1877,10 @@ fn seed_ready_console(
             now,
         })
         .unwrap();
-    let prepared = manager.prepare(&context, task_id, run_id, false).unwrap();
+    let prepared = webcodex_connector_runtime::workspace::root_test_support::prepare(
+        &manager, &context, task_id, run_id, false,
+    )
+    .unwrap();
     let task = fixture
         .db
         .start_connector_task(crate::db::NewConnectorTask {
@@ -1899,7 +1902,9 @@ fn seed_ready_console(
         })
         .unwrap();
     fs::write(Path::new(&task.execution_root).join("README.md"), "after\n").unwrap();
-    let captured = manager.capture_result(&task).unwrap();
+    let captured =
+        webcodex_connector_runtime::workspace::root_test_support::capture_result(&manager, &task)
+            .unwrap();
     let result_id = format!(
         "wc_result_{}",
         &task_id["wc_task_".len().."wc_task_".len() + 16]

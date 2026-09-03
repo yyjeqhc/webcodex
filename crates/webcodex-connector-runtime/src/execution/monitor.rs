@@ -1,5 +1,5 @@
 use super::*;
-use webcodex_connector_runtime::ConnectorValidationEvidenceRequest;
+use crate::ConnectorValidationEvidenceRequest;
 
 struct MonitorRegistration {
     execution_id: String,
@@ -388,7 +388,7 @@ fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
 }
 
 fn executor_failure_code(error: &str) -> Option<&'static str> {
-    crate::shell_protocol::validation_infrastructure_failure_code(error)
+    webcodex_core::shell_protocol::validation_infrastructure_failure_code(error)
         .or_else(|| validation_protocol_failure_code(error))
 }
 

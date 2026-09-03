@@ -62,9 +62,9 @@ pub(crate) use webcodex_core::{
     sensitive_paths, shell_protocol, validation_bridge,
 };
 pub(crate) use webcodex_runner_config as runner_config;
+pub(crate) use webcodex_workspace::project_overview;
 #[cfg(test)]
 pub(crate) use webcodex_workspace::workspace_checkpoint;
-pub(crate) use webcodex_workspace::{project_context, project_overview};
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;

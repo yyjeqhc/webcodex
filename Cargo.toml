@@ -115,6 +115,7 @@ codegen-units = 16
 incremental = true
 
 [dev-dependencies]
+webcodex-connector-runtime = { path = "crates/webcodex-connector-runtime", features = ["root-test-support"] }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry", features = ["root-test-support"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 webcodex-store = { path = "crates/webcodex-store", features = ["root-test-support"] }

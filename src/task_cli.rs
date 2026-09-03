@@ -767,7 +767,10 @@ mod tests {
         .unwrap();
         let task_id = "wc_task_4123456789abcdef0123456789abcdef";
         let run_id = "wc_run_4123456789abcdef0123456789abcdef";
-        let prepared = manager.prepare(&context, task_id, run_id, false).unwrap();
+        let prepared = webcodex_connector_runtime::workspace::root_test_support::prepare(
+            &manager, &context, task_id, run_id, false,
+        )
+        .unwrap();
         let task = db
             .start_connector_task(NewConnectorTask {
                 task_id,
@@ -788,7 +791,10 @@ mod tests {
             })
             .unwrap();
         std::fs::write(Path::new(&task.execution_root).join("README.md"), "after\n").unwrap();
-        let captured = manager.capture_result(&task).unwrap();
+        let captured = webcodex_connector_runtime::workspace::root_test_support::capture_result(
+            &manager, &task,
+        )
+        .unwrap();
         db.finish_connector_task(
             task_id,
             &context.project_id,
@@ -806,7 +812,12 @@ mod tests {
             3,
         )
         .unwrap();
-        assert_eq!(manager.release_task_workspace(&task), None);
+        assert_eq!(
+            webcodex_connector_runtime::workspace::root_test_support::release_task_workspace(
+                &manager, &task,
+            ),
+            None
+        );
         drop(db);
 
         let output = run(TaskCliCommand::Accept {
@@ -832,9 +843,14 @@ mod tests {
 
         let abandoned_task_id = "wc_task_5123456789abcdef0123456789abcdef";
         let abandoned_run_id = "wc_run_5123456789abcdef0123456789abcdef";
-        let prepared = manager
-            .prepare(&context, abandoned_task_id, abandoned_run_id, false)
-            .unwrap();
+        let prepared = webcodex_connector_runtime::workspace::root_test_support::prepare(
+            &manager,
+            &context,
+            abandoned_task_id,
+            abandoned_run_id,
+            false,
+        )
+        .unwrap();
         let interrupted = db
             .start_connector_task(NewConnectorTask {
                 task_id: abandoned_task_id,

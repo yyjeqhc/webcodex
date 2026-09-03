@@ -8,18 +8,20 @@
 //! rendering approval/result/review/validation projections. They live here so
 //! the runtime module reads as orchestration rather than a wall of formatting.
 
-use super::wire_models::FilesSearchInput;
-use super::{execution, ConnectorCallOutcome, CONNECTOR_SEARCH_WINDOW};
-use crate::auth::AuthContext;
-use crate::db::{
-    ConnectorApproval, ConnectorApprovalGate, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, ConnectorWindowBinding,
-};
-use crate::project_context::{ContextRefreshSummary, ProjectContextFingerprint};
-use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode};
+use super::wire_models::{FilesSearchInput, SearchResultMode};
+use super::{execution, ConnectorCallOutcome};
+use crate::{ConnectorPermission, ConnectorValidationPlanError, ConnectorWindowId};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use webcodex_core::apply_edits_shared::ApplyFileChangeInput;
+use webcodex_store::{
+    ConnectorApproval, ConnectorApprovalGate, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, ConnectorWindowBinding,
+};
+use webcodex_workspace::project_context::{ContextRefreshSummary, ProjectContextFingerprint};
+
+pub(crate) const CONNECTOR_SEARCH_WINDOW: usize = 200;
 
 // NOTE: The subject is intentionally passed explicitly rather than stored as
 // current connector state. Two devices for one user share a subject; two users
@@ -28,7 +30,7 @@ use sha2::{Digest, Sha256};
 #[derive(Debug)]
 pub(super) enum KernelFailure {
     Scope {
-        required_permission: Option<webcodex_connector_runtime::ConnectorPermission>,
+        required_permission: Option<ConnectorPermission>,
         message: String,
     },
     Adapter(String),
@@ -58,7 +60,7 @@ impl ConnectorCallOutcome {
                 "blocking": false
             }),
             http_status: 200,
-            required_scope: None,
+            required_permission: None,
             protocol_error: false,
         }
     }
@@ -85,7 +87,7 @@ impl ConnectorCallOutcome {
                 "blocking": blocking
             }),
             http_status: 200,
-            required_scope: None,
+            required_permission: None,
             protocol_error: false,
         }
     }
@@ -98,7 +100,7 @@ impl ConnectorCallOutcome {
         retryable: bool,
         user_action_required: bool,
         suggested_action: Option<&str>,
-        required_scope: Option<&'static str>,
+        required_permission: Option<ConnectorPermission>,
         protocol_error: bool,
     ) -> Self {
         Self {
@@ -115,7 +117,7 @@ impl ConnectorCallOutcome {
                 suggested_action,
             ),
             http_status,
-            required_scope,
+            required_permission,
             protocol_error,
         }
     }
@@ -129,7 +131,7 @@ impl ConnectorCallOutcome {
         user_action_required: bool,
         suggested_action: Option<&str>,
         data: Value,
-        required_scope: Option<&'static str>,
+        required_permission: Option<ConnectorPermission>,
         protocol_error: bool,
     ) -> Self {
         Self {
@@ -146,7 +148,7 @@ impl ConnectorCallOutcome {
                 suggested_action,
             ),
             http_status,
-            required_scope,
+            required_permission,
             protocol_error,
         }
     }
@@ -212,7 +214,7 @@ impl ConnectorCallOutcome {
         task: &ConnectorTaskSnapshot,
         cursor: i64,
         data: Value,
-        required_scope: Option<&'static str>,
+        required_permission: Option<ConnectorPermission>,
     ) -> Self {
         Self {
             ok: false,
@@ -228,20 +230,20 @@ impl ConnectorCallOutcome {
                 suggested_action,
             ),
             http_status,
-            required_scope,
+            required_permission,
             protocol_error: false,
         }
     }
 
-    pub(super) fn scope_denied(scope: &'static str) -> Self {
+    pub(super) fn scope_denied(permission: ConnectorPermission) -> Self {
         Self::error(
             403,
             "insufficient_scope",
-            format!("missing required scope: {scope}"),
+            "missing required connector permission",
             false,
             true,
             Some("Grant the required scope to this connector credential."),
-            Some(scope),
+            Some(permission),
             false,
         )
     }
@@ -279,7 +281,7 @@ pub(super) fn error_envelope(
 
 pub(super) fn host_review_projection(
     envelope: &Value,
-    guidance_read_state: Option<crate::db::GuidanceReadState>,
+    guidance_read_state: Option<webcodex_store::GuidanceReadState>,
 ) -> Value {
     let mut review = envelope["data"].clone();
     review["task_id"] = envelope["task_id"].clone();
@@ -332,7 +334,7 @@ pub(super) fn invalid_input(capability: &str, message: impl Into<String>) -> Con
     )
 }
 
-pub(crate) fn store_error_outcome(
+pub fn store_error_outcome(
     error: ConnectorTaskStoreError,
     task: Option<&ConnectorTaskSnapshot>,
 ) -> ConnectorCallOutcome {
@@ -489,7 +491,7 @@ pub(super) fn approval_gate_outcome(
     )
 }
 
-pub(crate) fn approval_projection(approval: &ConnectorApproval) -> Value {
+pub fn approval_projection(approval: &ConnectorApproval) -> Value {
     json!({
         "approval_id": approval.approval_id,
         "action_kind": approval.action_kind,
@@ -506,7 +508,7 @@ pub(crate) fn approval_projection(approval: &ConnectorApproval) -> Value {
 
 pub(super) fn validation_recipe_error(
     task: &ConnectorTaskSnapshot,
-    error: webcodex_connector_runtime::ConnectorValidationPlanError,
+    error: ConnectorValidationPlanError,
 ) -> ConnectorCallOutcome {
     ConnectorCallOutcome::error_for_task(
         409,
@@ -715,7 +717,7 @@ pub(super) fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
     })
 }
 
-pub(crate) fn result_projection(result: &ConnectorTaskResult) -> Value {
+pub fn result_projection(result: &ConnectorTaskResult) -> Value {
     json!({
         "result_id": result.result_id,
         "summary": result.summary,
@@ -731,7 +733,7 @@ pub(crate) fn result_projection(result: &ConnectorTaskResult) -> Value {
     })
 }
 
-pub(crate) fn durable_task_review_projection(
+pub fn durable_task_review_projection(
     task: &ConnectorTaskSnapshot,
     result: Option<&ConnectorTaskResult>,
 ) -> Value {
@@ -893,7 +895,7 @@ pub(super) fn context_refresh_payload(refresh: &ContextRefreshSummary) -> Value 
 }
 
 pub(super) fn connector_window_binding<'a>(
-    window: &'a webcodex_connector_runtime::ConnectorWindowId,
+    window: &'a ConnectorWindowId,
     fingerprint: &'a ProjectContextFingerprint,
     now: i64,
 ) -> ConnectorWindowBinding<'a> {
@@ -908,7 +910,7 @@ pub(super) fn connector_window_binding<'a>(
 }
 
 pub(super) fn navigation_payload(
-    activation: Option<&crate::db::WindowProjectActivation>,
+    activation: Option<&webcodex_store::WindowProjectActivation>,
     reused_context: bool,
 ) -> Value {
     let restored_previous_context = reused_context
@@ -924,7 +926,9 @@ pub(super) fn navigation_payload(
     })
 }
 
-pub(super) fn validation_projection(execution: Option<&crate::db::ConnectorExecution>) -> Value {
+pub(super) fn validation_projection(
+    execution: Option<&webcodex_store::ConnectorExecution>,
+) -> Value {
     let Some(execution) = execution else {
         return json!({ "status": "not_run", "execution_id": null, "checks": [] });
     };
@@ -941,7 +945,7 @@ pub(super) fn validation_projection(execution: Option<&crate::db::ConnectorExecu
 
 pub(super) fn checks_stale_outcome(
     task: &ConnectorTaskSnapshot,
-    execution: &crate::db::ConnectorExecution,
+    execution: &webcodex_store::ConnectorExecution,
     message: &str,
 ) -> ConnectorCallOutcome {
     ConnectorCallOutcome::error_for_task(
@@ -991,10 +995,6 @@ pub(super) fn model_next_action(task_status: &str, host_action: &str) -> &'stati
     }
 }
 
-pub(super) fn stable_subject_id(auth: &AuthContext) -> Result<String, String> {
-    super::integration::stable_subject_id(auth)
-}
-
 pub(super) fn validate_task_id(task_id: &str) -> Result<(), &'static str> {
     let suffix = task_id.strip_prefix("wc_task_").unwrap_or_default();
     if suffix.len() != 32
@@ -1037,7 +1037,7 @@ pub(super) fn validate_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub(crate) fn validate_opaque_id(value: &str, prefix: &str, label: &str) -> Result<(), String> {
+pub fn validate_opaque_id(value: &str, prefix: &str, label: &str) -> Result<(), String> {
     let suffix = value.strip_prefix(prefix).unwrap_or_default();
     if suffix.len() < 10
         || !suffix

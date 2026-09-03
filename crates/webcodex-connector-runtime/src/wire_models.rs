@@ -8,15 +8,21 @@
 //! host/http layers reference them directly; the rest are `pub(super)` for the
 //! runtime module's own dispatch.
 
-use crate::lsp_bridge::{
-    CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
-};
-use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode};
+use crate::{ConnectorRecipeId as RecipeId, ConnectorSemanticCheck as SemanticCheck};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use webcodex_connector_runtime::{
-    ConnectorRecipeId as RecipeId, ConnectorSemanticCheck as SemanticCheck,
+use webcodex_core::apply_edits_shared::ApplyFileChangeInput;
+use webcodex_core::lsp_bridge::{
+    CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SearchResultMode {
+    Matches,
+    FilesWithMatches,
+    Count,
+}
 
 pub(super) fn sanitize_value(
     value: &mut Value,
@@ -266,26 +272,26 @@ pub(super) struct TaskResumeInput {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TaskReviewInput {
-    pub(crate) task_id: String,
+pub struct TaskReviewInput {
+    pub task_id: String,
     #[serde(default)]
-    pub(crate) include_diff: Option<bool>,
+    pub include_diff: Option<bool>,
     #[serde(default)]
-    pub(crate) after_cursor: Option<i64>,
+    pub after_cursor: Option<i64>,
     #[serde(default)]
-    pub(crate) wait_ms: Option<u64>,
+    pub wait_ms: Option<u64>,
     #[serde(default)]
-    pub(crate) max_events: Option<usize>,
+    pub max_events: Option<usize>,
     #[serde(default)]
-    pub(crate) include_output_tail: Option<bool>,
+    pub include_output_tail: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TaskCancelInput {
-    pub(crate) task_id: String,
+pub struct TaskCancelInput {
+    pub task_id: String,
     #[serde(default)]
-    pub(crate) reason: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

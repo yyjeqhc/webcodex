@@ -5211,10 +5211,21 @@ dependencies = [
 name = "webcodex-connector-runtime"
 version = "0.3.9"
 dependencies = [
+ "chrono",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
  "webcodex-core",
+ "webcodex-runner-config",
  "webcodex-runner-registry",
+ "webcodex-store",
+ "webcodex-tool-contracts",
+ "webcodex-workspace",
 ]
 
 [[package]]

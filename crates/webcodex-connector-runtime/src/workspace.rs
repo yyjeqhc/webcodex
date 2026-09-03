@@ -5,10 +5,7 @@
 //! the target checkout still matches the captured base on every changed path.
 
 use super::ConnectorContext;
-use crate::db::{
-    ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, Database,
-};
+use crate::projections::short_oid;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -18,6 +15,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
+use webcodex_store::{
+    ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, Database,
+};
 
 const MAX_RESULT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESULT_CHANGED_PATHS: usize = 1_000;
@@ -70,7 +71,7 @@ impl std::fmt::Display for WorkspacePreparationError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WritableWorkspaceReadinessStatus {
+pub enum WritableWorkspaceReadinessStatus {
     Uninitialized,
     Reusable,
     Occupied,
@@ -78,7 +79,7 @@ pub(crate) enum WritableWorkspaceReadinessStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WritableWorkspaceReadiness {
+pub struct WritableWorkspaceReadiness {
     pub status: WritableWorkspaceReadinessStatus,
     pub reason_code: &'static str,
     pub summary: &'static str,
@@ -110,7 +111,7 @@ struct ResultSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct PatchPreview {
+pub struct PatchPreview {
     pub text: String,
     pub shown_bytes: usize,
     pub total_bytes: usize,
@@ -118,7 +119,7 @@ pub(crate) struct PatchPreview {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalResultDecision {
+pub enum LocalResultDecision {
     Accept,
     Reject,
 }
@@ -134,14 +135,14 @@ impl LocalResultDecision {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct DirectoryUsage {
+pub struct DirectoryUsage {
     pub bytes: u64,
     pub entries: usize,
     pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct WorkspaceResourceStatus {
+pub struct WorkspaceResourceStatus {
     pub writable_slot: String,
     pub slot_state: String,
     pub occupied_task_id: Option<String>,
@@ -151,14 +152,14 @@ pub(crate) struct WorkspaceResourceStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct WorkspaceManager {
+pub struct WorkspaceManager {
     runs_root: PathBuf,
     results_root: PathBuf,
     project_registry_dir: PathBuf,
 }
 
 impl WorkspaceManager {
-    pub(crate) fn new(context: &ConnectorContext) -> Result<Self, String> {
+    pub fn new(context: &ConnectorContext) -> Result<Self, String> {
         let manager = Self {
             runs_root: PathBuf::from(&context.runs_root),
             results_root: PathBuf::from(&context.results_root),
@@ -412,7 +413,7 @@ impl WorkspaceManager {
         })
     }
 
-    pub(crate) fn writable_readiness(
+    pub fn writable_readiness(
         target_root: &Path,
         runs_root: &Path,
         results_root: &Path,
@@ -775,10 +776,7 @@ impl WorkspaceManager {
         warnings
     }
 
-    pub(crate) fn resource_status(
-        runs_root: &Path,
-        cargo_target: &Path,
-    ) -> WorkspaceResourceStatus {
+    pub fn resource_status(runs_root: &Path, cargo_target: &Path) -> WorkspaceResourceStatus {
         let slot_root = runs_root.join(WRITE_SLOT_NAME);
         let lease_path = workspace_lease_path(runs_root, WRITE_SLOT_NAME);
         let lease = read_workspace_lease(&lease_path).ok();
@@ -932,8 +930,8 @@ impl WorkspaceManager {
                 "target_checkout_changed",
                 format!(
                 "target HEAD changed since task start (expected {}, found {}); result was not applied",
-                super::short_oid(baseline),
-                super::short_oid(&current_head)
+                short_oid(baseline),
+                short_oid(&current_head)
             )));
         }
         let patch = read_verified_patch(result)?;
@@ -982,7 +980,7 @@ impl WorkspaceManager {
         Ok(cleanup_task_workspace(task))
     }
 
-    pub(crate) fn patch_preview(
+    pub fn patch_preview(
         result: &ConnectorTaskResult,
         max_bytes: usize,
     ) -> Result<Option<PatchPreview>, String> {
@@ -1001,7 +999,7 @@ impl WorkspaceManager {
         }))
     }
 
-    pub(crate) fn validate_resume(
+    pub fn validate_resume(
         task: &ConnectorTaskSnapshot,
         runs_root: &Path,
         project_registry_dir: &Path,
@@ -1040,7 +1038,7 @@ impl WorkspaceManager {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn decide_connector_result_local(
+    pub fn decide_connector_result_local(
         db: &Database,
         project_id: &str,
         task_id: &str,
@@ -1175,7 +1173,7 @@ impl WorkspaceManager {
         )
     }
 
-    pub(crate) fn recover_result_decisions(
+    pub fn recover_result_decisions(
         db: &Database,
         project_id: &str,
         target_root: &Path,
@@ -1363,7 +1361,7 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
     let runs_root = execution_root.parent()?;
     let registry_base = runs_root.parent()?.join("agent");
     let project_registry_dir =
-        match crate::runner_config::paths::select_project_registry_dir(&registry_base) {
+        match webcodex_runner_config::paths::select_project_registry_dir(&registry_base) {
             Ok(path) => path,
             Err(error) => return Some(error),
         };
@@ -1746,7 +1744,8 @@ fn is_generated_untracked_path(path: &str) -> bool {
 
 fn project_brief_evidence(root: &Path) -> (Option<Value>, Option<bool>, Option<usize>) {
     let overview =
-        crate::project_overview::build_project_overview(root, ".", Some(2), Some(200)).ok();
+        webcodex_workspace::project_overview::build_project_overview(root, ".", Some(2), Some(200))
+            .ok();
     let status = git_output(root, ["status", "--porcelain"])
         .ok()
         .and_then(|output| output.status.success().then_some(output.stdout))
@@ -2637,5 +2636,69 @@ mod tests {
             );
         }
         assert!(!is_safe_result_relative_path("../x"));
+    }
+}
+
+#[cfg(any(test, feature = "root-test-support"))]
+pub mod root_test_support {
+    use super::*;
+
+    #[derive(Debug, Clone)]
+    pub struct PreparedWorkspaceFixture {
+        pub run_id: String,
+        pub execution_executor_ref: String,
+        pub execution_root: String,
+        pub baseline_commit: Option<String>,
+        pub baseline_tree: Option<String>,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct CapturedResultFixture {
+        pub patch_artifact: Option<String>,
+        pub patch_sha256: Option<String>,
+        pub patch_bytes: usize,
+        pub changed_paths: Vec<String>,
+        pub warnings: Vec<String>,
+    }
+
+    pub fn prepare(
+        manager: &WorkspaceManager,
+        context: &ConnectorContext,
+        task_id: &str,
+        run_id: &str,
+        non_writable: bool,
+    ) -> Result<PreparedWorkspaceFixture, String> {
+        manager
+            .prepare(context, task_id, run_id, non_writable)
+            .map(|prepared| PreparedWorkspaceFixture {
+                run_id: prepared.run_id,
+                execution_executor_ref: prepared.execution_executor_ref,
+                execution_root: prepared.execution_root,
+                baseline_commit: prepared.baseline_commit,
+                baseline_tree: prepared.baseline_tree,
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn capture_result(
+        manager: &WorkspaceManager,
+        task: &ConnectorTaskSnapshot,
+    ) -> Result<CapturedResultFixture, String> {
+        manager
+            .capture_result(task)
+            .map(|captured| CapturedResultFixture {
+                patch_artifact: captured.patch_artifact,
+                patch_sha256: captured.patch_sha256,
+                patch_bytes: captured.patch_bytes,
+                changed_paths: captured.changed_paths,
+                warnings: captured.warnings,
+            })
+    }
+
+    pub fn release_task_workspace(
+        manager: &WorkspaceManager,
+        task: &ConnectorTaskSnapshot,
+    ) -> Option<String> {
+        manager.release_task_workspace(task)
     }
 }

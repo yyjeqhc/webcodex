@@ -4,8 +4,25 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+root-test-support = []
+
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
+webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-runner-registry = { path = "../webcodex-runner-registry" }
+webcodex-store = { path = "../webcodex-store" }
+webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }
+webcodex-workspace = { path = "../webcodex-workspace" }
+chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+webcodex-store = { path = "../webcodex-store", features = ["root-test-support"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"

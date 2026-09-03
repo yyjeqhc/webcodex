@@ -122,9 +122,9 @@ pub(crate) use tool_definition::{
     known_tool_names, model_hidden_tool_names, runtime_tool_category as tool_manifest_category,
     RunnerCapabilityRequirement,
 };
-pub use tool_inputs::{
-    default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, ListToolsOptions,
-};
+#[cfg(test)]
+pub use tool_inputs::ApplyFileChangeInput;
+pub use tool_inputs::{default_true, ExecutionPurpose, ExecutionShell, ListToolsOptions};
 #[cfg(test)]
 pub use tool_inputs::{
     ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, CheckpointValidationInput,

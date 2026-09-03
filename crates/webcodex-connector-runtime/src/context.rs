@@ -8,13 +8,12 @@
 //! here so the rest of the runtime module reads as orchestration rather than
 //! env plumbing.
 
-use super::validate_opaque_id;
 use std::path::Path;
 
-pub(crate) const CONNECTOR_SURFACE_ENV: &str = "WEBCODEX_CONNECTOR_SURFACE";
-pub(crate) const CONNECTOR_SURFACE_TASK_V1: &str = "task-v1";
-pub(crate) const PROJECT_CREDENTIAL_FILE_ENV: &str = "WEBCODEX_PROJECT_CREDENTIAL_FILE";
-pub(crate) const PROJECT_AGENT_TOKEN_FILE_ENV: &str = "WEBCODEX_PROJECT_AGENT_TOKEN_FILE";
+pub const CONNECTOR_SURFACE_ENV: &str = "WEBCODEX_CONNECTOR_SURFACE";
+pub const CONNECTOR_SURFACE_TASK_V1: &str = "task-v1";
+pub const PROJECT_CREDENTIAL_FILE_ENV: &str = "WEBCODEX_PROJECT_CREDENTIAL_FILE";
+pub const PROJECT_AGENT_TOKEN_FILE_ENV: &str = "WEBCODEX_PROJECT_AGENT_TOKEN_FILE";
 const PROJECT_REGISTRY_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECT_REGISTRY_DIR";
 const LEGACY_PROJECTS_DIR_ENV: &str = "WEBCODEX_CONNECTOR_PROJECTS_DIR";
 
@@ -34,7 +33,7 @@ const CONNECTOR_CONFIGURATION_ENV_NAMES: &[&str] = &[
     PROJECT_AGENT_TOKEN_FILE_ENV,
 ];
 
-pub(crate) fn required_env(name: &str) -> Result<String, String> {
+pub fn required_env(name: &str) -> Result<String, String> {
     nonempty_env(name)
         .ok_or_else(|| format!("{name} is required when connector surface is enabled"))
 }
@@ -62,21 +61,21 @@ fn project_registry_dir_env() -> Result<String, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConnectorContext {
-    pub(crate) project_id: String,
-    pub(crate) project_name: String,
-    pub(crate) workspace_id: String,
-    pub(crate) executor_project: String,
-    pub(crate) executor_root: String,
-    pub(crate) runs_root: String,
-    pub(crate) results_root: String,
-    pub(crate) project_registry_dir: String,
-    pub(crate) profile: String,
-    pub(crate) project_grant_id: String,
+pub struct ConnectorContext {
+    pub project_id: String,
+    pub project_name: String,
+    pub workspace_id: String,
+    pub executor_project: String,
+    pub executor_root: String,
+    pub runs_root: String,
+    pub results_root: String,
+    pub project_registry_dir: String,
+    pub profile: String,
+    pub project_grant_id: String,
 }
 
 impl ConnectorContext {
-    pub(crate) fn from_env() -> Result<Option<Self>, String> {
+    pub fn from_env() -> Result<Option<Self>, String> {
         let surface = nonempty_env(CONNECTOR_SURFACE_ENV);
         let Some(surface) = surface else {
             if let Some(name) = CONNECTOR_CONFIGURATION_ENV_NAMES
@@ -111,7 +110,7 @@ impl ConnectorContext {
         Ok(Some(context))
     }
 
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         validate_opaque_id(&self.project_id, "wc_proj_", "connector project id")?;
         validate_opaque_id(&self.workspace_id, "wc_ws_", "connector workspace id")?;
         if !self.executor_project.starts_with("agent:") {
@@ -138,7 +137,7 @@ impl ConnectorContext {
         Ok(())
     }
 
-    pub(crate) fn executor_client_id(&self) -> Result<&str, String> {
+    pub fn executor_client_id(&self) -> Result<&str, String> {
         self.executor_project
             .strip_prefix("agent:")
             .and_then(|value| value.split_once(':'))
@@ -146,4 +145,16 @@ impl ConnectorContext {
             .filter(|client_id| !client_id.is_empty())
             .ok_or_else(|| "connector executor reference is malformed".to_string())
     }
+}
+
+fn validate_opaque_id(value: &str, prefix: &str, label: &str) -> Result<(), String> {
+    let suffix = value.strip_prefix(prefix).unwrap_or_default();
+    if suffix.len() < 10
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(format!("{label} must use the {prefix}<lowercase-id> form"));
+    }
+    Ok(())
 }

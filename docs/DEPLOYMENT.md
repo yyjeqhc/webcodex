@@ -550,7 +550,7 @@ is invalid.
 
 ```bash
 webcodex ops status --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE" --strict
-webcodex ops agents --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+webcodex ops runners --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
 webcodex ops projects --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
 webcodex ops smoke-preflight --server-url "$SERVER_URL" \
   --token-file "$USER_TOKEN_FILE" --project agent:workstation:my-repo
@@ -567,7 +567,7 @@ Recommended production smoke sequence:
 1. `webcodex ops status ... --strict` passes.
 2. `POST /api/runtime/status` returns `service=webcodex` and the expected
    public URL.
-3. `listAgents` shows at least one online agent.
+3. `list_runners` shows at least one online Runner.
 4. `listProjects` shows `agent:<client_id>:<project_id>` ids.
 5. Read-only project tools work on a known project.
 6. Write/replace/validate tests are limited to disposable smoke projects.

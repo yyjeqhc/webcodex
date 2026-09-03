@@ -118,7 +118,8 @@ pub(crate) async fn run_pairing_create(opts: PairingCreateOptions) -> Result<Str
     if let Some(name) = &opts.user_token_name {
         body["user_token_name"] = json!(name);
     }
-    if let Some(name) = &opts.agent_token_name {
+    if let Some(name) = &opts.runner_token_name {
+        // Stable pairing API field retained for Server compatibility.
         body["agent_token_name"] = json!(name);
     }
     let value = post_json_authed(ApiCall {

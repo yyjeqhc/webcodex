@@ -81,11 +81,11 @@ pub(crate) use pairing::run_pairing_create;
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
 pub(crate) use profiles::{
-    client_profile_agent_token_file, client_profile_agent_token_file_for_scope,
-    client_profile_project_registry_dir, client_profile_runner_config, client_profile_state_dir,
-    client_profile_user_token_file, client_profile_user_token_file_for_scope, current_user_home,
-    runner_config_for_scope, runner_service_file_for_scope, validate_client_profile,
-    validate_service_file_scope,
+    client_profile_project_registry_dir, client_profile_runner_config,
+    client_profile_runner_token_file, client_profile_runner_token_file_for_scope,
+    client_profile_state_dir, client_profile_user_token_file,
+    client_profile_user_token_file_for_scope, current_user_home, runner_config_for_scope,
+    runner_service_file_for_scope, validate_client_profile, validate_service_file_scope,
 };
 pub(crate) use project::{
     register_existing_project, run_project_register, ProjectRegisterOptions, ProjectRegistration,
@@ -116,14 +116,14 @@ pub(crate) use system::{
 };
 #[cfg(test)]
 pub(crate) use token_commands::resolve_account_credential;
-pub(crate) use token_commands::{run_agent_token_create_local, run_token_create_local};
+pub(crate) use token_commands::{run_runner_token_create_local, run_token_create_local};
 pub(crate) use tokens::{
-    generate_bootstrap_token, generate_local_agent_token, generate_local_api_token,
+    generate_bootstrap_token, generate_local_api_token, generate_local_runner_token,
     hash_local_token, local_token_prefix, render_token_generate, token_prefix,
 };
 pub(crate) use usage::{
-    connect_usage, disconnect_usage, login_usage, logout_usage, ops_agents_usage,
-    ops_projects_usage, ops_runner_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    connect_usage, disconnect_usage, login_usage, logout_usage, ops_projects_usage,
+    ops_runner_usage, ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
     pairing_create_usage, pairing_usage, project_register_usage, runner_init_usage,
     runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
     server_install_service_usage, server_status_usage, server_usage, status_usage, usage,

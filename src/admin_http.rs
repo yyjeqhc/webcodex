@@ -416,7 +416,7 @@ async fn dashboard(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     };
 
     let status = runtime.runtime_status(Some(&auth)).await;
-    let agents = runtime.list_agents(Some(&auth)).await;
+    let agents = runtime.list_runners(Some(&auth)).await;
     let projects = runtime.list_projects(Some(&auth)).await;
     let activity = db
         .list_workspace_activity_for_clients(ACTIVITY_LIMIT, None, ActivityVisibility::Global, &[])

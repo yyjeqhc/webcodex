@@ -863,7 +863,8 @@ pub fn session_input_summary_for_tool(tool_name: &str, arguments: &Value) -> Val
             object.remove("project");
             object.remove("query");
         }
-        "list_agents" => {
+        // `list_agents` is retained only for historical pre-0.4 Session events.
+        "list_runners" | "list_agents" => {
             object.remove("client_id");
             object.remove("client_ids");
         }

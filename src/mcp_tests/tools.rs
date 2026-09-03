@@ -44,6 +44,8 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         .iter()
         .map(|s| s.name.clone())
         .collect();
+    assert!(runtime_names.iter().any(|name| name == "list_runners"));
+    assert!(!runtime_names.iter().any(|name| name == "list_agents"));
     let legacy_runtime_names: Vec<String> = runtime_names
         .iter()
         .filter(|name| name.as_str() != "export_project_artifact")
@@ -88,6 +90,8 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             names, legacy_runtime_names,
             "legacy tools/list must equal runtime registry minus stateless-only tools (compact={compact})"
         );
+        assert!(names.iter().any(|name| name == "list_runners"));
+        assert!(!names.iter().any(|name| name == "list_agents"));
 
         let stateless_outcome = handle_mcp_request(
             &runtime,
@@ -113,6 +117,8 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             stateless_names, stateless_runtime_names,
             "stateless-2026 unauthenticated tools/list must equal the full runtime registry plus fixed Skill runtime tools; Memory tools require explicit authority (compact={compact})"
         );
+        assert!(stateless_names.iter().any(|name| name == "list_runners"));
+        assert!(!stateless_names.iter().any(|name| name == "list_agents"));
         for tool in stateless_value["result"]["tools"].as_array().unwrap() {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
             let recorder = properties

@@ -349,7 +349,7 @@ fn tool_specs_covers_expected_tool_set() {
     for expected in [
         "list_tools",
         "list_projects",
-        "list_agents",
+        "list_runners",
         "runtime_status",
         "create_agent_task",
         "list_agent_tasks",

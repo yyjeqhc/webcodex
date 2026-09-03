@@ -103,7 +103,7 @@ pub fn list_projects_input_schema() -> Value {
     })
 }
 
-pub fn list_agents_input_schema() -> Value {
+pub fn list_runners_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -147,7 +147,7 @@ pub fn runtime_status_input_schema() -> Value {
             },
             "compact": {
                 "type": "boolean",
-                "description": "When true, return compact runtime observability with service/version, build revision, tool/job counts, agent health summary, and project effective/server status. Defaults to false."
+                "description": "When true, return compact runtime observability with service/version, build revision, tool/job counts, Runner health summary, and project effective/server status. Defaults to false."
             },
             "summary_only": {
                 "type": "boolean",

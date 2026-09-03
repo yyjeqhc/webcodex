@@ -3425,20 +3425,20 @@ impl ConnectorRuntime {
             json!("Human guidance from the project owner — adjust course before continuing.");
     }
 
-    /// Host-side entry: the read-only devices view. Reuses the list_agents
+    /// Host-side entry: the read-only devices view. Reuses the list_runners
     /// projection (connection, transport, last_seen, capabilities, provider
     /// health) under the caller's own visibility rules.
-    /// Agent clients this caller may see, or `None` for principals entitled to
+    /// Runner clients this caller may see, or `None` for principals entitled to
     /// host-global visibility.
     ///
     /// Shares its source with [`Self::host_devices`] on purpose: the devices
-    /// panel and the activity ledger must never disagree about which agents
+    /// panel and the activity ledger must never disagree about which Runners
     /// exist for a given caller.
     /// What this caller may read from the activity ledger: the durable scope
-    /// its rows must carry, plus the agent clients it can currently see.
+    /// its rows must carry, plus the Runner clients it can currently see.
     ///
     /// The client list shares its source with [`Self::host_devices`] so the
-    /// devices panel and the ledger agree about which agents exist. It is a
+    /// devices panel and the ledger agree about which Runners exist. It is a
     /// display filter within the scope, though — never the authorization
     /// boundary, which is the grant recorded on each row.
     pub(crate) async fn activity_visibility<'a>(
@@ -3470,7 +3470,7 @@ impl ConnectorRuntime {
     }
 
     pub(crate) async fn host_devices(&self, auth: &AuthContext) -> crate::tool_runtime::ToolResult {
-        self.tools.list_agents(Some(auth)).await
+        self.tools.list_runners(Some(auth)).await
     }
 
     /// Host-side entry: record a human guidance message on a task. Delivered

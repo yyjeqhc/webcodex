@@ -37,7 +37,7 @@ pub(crate) struct OpsRunnerOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OpsCommand {
     Status(OpsCommonOptions),
-    Agents(OpsCommonOptions),
+    Runners(OpsCommonOptions),
     Runner(OpsRunnerOptions),
     Projects(OpsCommonOptions),
     SmokePreflight(OpsSmokePreflightOptions),
@@ -46,7 +46,7 @@ pub(crate) enum OpsCommand {
 impl OpsCommand {
     pub(crate) fn strict(&self) -> bool {
         match self {
-            OpsCommand::Status(opts) | OpsCommand::Agents(opts) | OpsCommand::Projects(opts) => {
+            OpsCommand::Status(opts) | OpsCommand::Runners(opts) | OpsCommand::Projects(opts) => {
                 opts.strict
             }
             OpsCommand::Runner(opts) => opts.common.strict,
@@ -135,7 +135,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
             };
             render_ops_command_output(report, opts.json, render_ops_status)
         }
-        OpsCommand::Agents(opts) => {
+        OpsCommand::Runners(opts) => {
             let token = resolve_ops_token(&opts)?;
             let report = match fetch_ops_json_output(
                 &opts.server_url,
@@ -146,7 +146,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
             )
             .await
             {
-                Ok(runtime) => ops_agents_report(&opts.server_url, &Some(runtime)),
+                Ok(runtime) => ops_runners_report(&opts.server_url, &Some(runtime)),
                 Err(failure) => ops_http_failure_report(
                     &opts.server_url,
                     "runtime_status",
@@ -154,7 +154,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     token.is_some(),
                 ),
             };
-            render_ops_command_output(report, opts.json, render_ops_agents)
+            render_ops_command_output(report, opts.json, render_ops_runners)
         }
         OpsCommand::Runner(opts) => {
             let token = resolve_ops_token(&opts.common)?;
@@ -653,8 +653,8 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         );
     }
 
-    let online = agent_count(runtime, "online_count", "online");
-    let stale = agent_count(runtime, "stale_count", "stale");
+    let online = runner_count(runtime, "online_count", "online");
+    let stale = runner_count(runtime, "stale_count", "stale");
     if online == 0 {
         verdict.fail_reason(
             "no_online_agents",
@@ -664,7 +664,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         if stale > 0 {
             verdict.warn_reason(
                 format!("stale_agents:{}", stale),
-                "inspect stale agents with ops agents",
+                "inspect stale Runners with ops runners",
             );
         }
     }
@@ -676,7 +676,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
                 "projects_effective_status:{}",
                 effective_status.unwrap_or_else(|| "unknown".to_string())
             ),
-            "inspect project registration and connected agents",
+            "inspect Project registration and connected Runners",
         );
     }
 
@@ -696,7 +696,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         "agents": {
             "online_count": online,
             "stale_count": stale,
-            "clients": agent_clients(runtime),
+            "clients": runner_clients(runtime),
         },
         "projects": {
             "effective": {
@@ -712,7 +712,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
     }
 }
 
-pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> OpsReport {
+pub(crate) fn ops_runners_report(server_url: &str, runtime: &Option<Value>) -> OpsReport {
     let mut verdict = OpsVerdict::pass();
     let Some(runtime) = runtime.as_ref() else {
         verdict.fail_reason(
@@ -725,9 +725,9 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
             source: source_json(server_url, None, "runtime_status"),
         };
     };
-    let clients = agent_clients(runtime);
-    let online = agent_count(runtime, "online_count", "online");
-    let stale = agent_count(runtime, "stale_count", "stale");
+    let clients = runner_clients(runtime);
+    let online = runner_count(runtime, "online_count", "online");
+    let stale = runner_count(runtime, "stale_count", "stale");
     let active_jobs = clients
         .iter()
         .filter_map(|client| client.get("active_jobs").and_then(Value::as_u64))
@@ -735,19 +735,19 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
     if online == 0 {
         verdict.fail_reason(
             "no_online_agents",
-            "start a webcodex-runner and rerun ops agents",
+            "start a webcodex-runner and rerun ops runners",
         );
     }
     if stale > 0 {
         verdict.warn_reason(
             format!("stale_agents:{}", stale),
-            "inspect stale agents and transport health",
+            "inspect stale Runners and transport health",
         );
     }
     if active_jobs > 0 {
         verdict.warn_reason(
             format!("active_agent_jobs:{}", active_jobs),
-            "wait for active agent jobs to finish before smoke validation",
+            "wait for active Runner jobs to finish before smoke validation",
         );
     }
     let summary = json!({
@@ -837,7 +837,7 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
         .count();
     let stale = projects_list
         .iter()
-        .filter(|project| project_agent_status(project).as_deref() == Some("stale"))
+        .filter(|project| project_runner_status(project).as_deref() == Some("stale"))
         .count();
     let recommended = projects_list
         .iter()
@@ -853,12 +853,12 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
     if total == 0 {
         verdict.fail_reason(
             "no_projects",
-            "register an agent project and rerun ops projects",
+            "register a Runner Project and rerun ops projects",
         );
     } else if online == 0 {
         verdict.fail_reason(
             "no_online_projects",
-            "start the owning agent for at least one project",
+            "start the owning Runner for at least one Project",
         );
     }
     if total > 0 && recommended == 0 {
@@ -870,19 +870,19 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
     if disconnected > 0 {
         verdict.warn_reason(
             format!("disconnected_projects:{}", disconnected),
-            "inspect disconnected projects and restart their owning agents if needed",
+            "inspect disconnected Projects and restart their owning Runners if needed",
         );
     }
     if stale > 0 {
         verdict.warn_reason(
             format!("stale_projects:{}", stale),
-            "inspect stale projects with ops agents",
+            "inspect stale Projects with ops runners",
         );
     }
     if recommended_smoke_offline > 0 {
         verdict.warn_reason(
             format!("recommended_smoke_offline:{}", recommended_smoke_offline),
-            "start the recommended smoke project agent or select another connected git project",
+            "start the recommended smoke Project Runner or select another connected git Project",
         );
     }
     let summary = json!({
@@ -930,13 +930,13 @@ pub(crate) fn ops_smoke_preflight_report(
             if !target_state.connected {
                 verdict.fail_reason(
                     "project_disconnected",
-                    "start the owning agent and wait for the project to reconnect",
+                    "start the owning Runner and wait for the Project to reconnect",
                 );
             }
-            if !target_state.agent_online {
+            if !target_state.runner_online {
                 verdict.fail_reason(
                     "project_offline",
-                    "start the owning agent and wait for the project status to become online",
+                    "start the owning Runner and wait for the Project status to become online",
                 );
             }
             if !target_state.git_available {
@@ -1071,7 +1071,7 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
         "  active_count: {}\n",
         display_value(&report.summary["jobs"]["active_count"])
     ));
-    out.push_str("Agents:\n");
+    out.push_str("Runners:\n");
     out.push_str(&format!(
         "  online/stale: {}/{}\n",
         display_value(&report.summary["agents"]["online_count"]),
@@ -1105,13 +1105,13 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
     Ok(out)
 }
 
-pub(crate) fn render_ops_agents(report: &OpsReport, json_output: bool) -> Result<String, String> {
+pub(crate) fn render_ops_runners(report: &OpsReport, json_output: bool) -> Result<String, String> {
     if json_output {
         return render_ops_json(report);
     }
     let mut out = render_overall_header(report);
     out.push_str(&render_http_failure(report));
-    out.push_str("Agents:\n");
+    out.push_str("Runners:\n");
     out.push_str("  client_id status transport projects_count active_jobs pending_requests last_seen_age_secs\n");
     for client in report.summary["agents"].as_array().into_iter().flatten() {
         out.push_str(&format!(
@@ -1166,7 +1166,7 @@ pub(crate) fn render_ops_projects(report: &OpsReport, json_output: bool) -> Resu
     let mut out = render_overall_header(report);
     out.push_str(&render_http_failure(report));
     out.push_str("Projects:\n");
-    out.push_str("  id client_id agent_status connected git_available recommended_for_smoke safe_smoke_project allow_patch path\n");
+    out.push_str("  id client_id runner_status connected git_available recommended_for_smoke safe_smoke_project allow_patch path\n");
     for project in report.summary["projects"].as_array().into_iter().flatten() {
         out.push_str(&format!(
             "  {} {} {} {} {} {} {} {} {}\n",
@@ -1345,7 +1345,8 @@ fn str_pointer(value: &Value, pointer: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn agent_count(runtime: &Value, field: &str, summary_field: &str) -> u64 {
+fn runner_count(runtime: &Value, field: &str, summary_field: &str) -> u64 {
+    // `/agents` remains the stable runtime_status JSON compatibility path.
     runtime
         .pointer(&format!("/agents/{field}"))
         .and_then(Value::as_u64)
@@ -1357,7 +1358,8 @@ fn agent_count(runtime: &Value, field: &str, summary_field: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn agent_clients(runtime: &Value) -> Vec<Value> {
+fn runner_clients(runtime: &Value) -> Vec<Value> {
+    // `/agents` remains the stable runtime_status JSON compatibility path.
     let clients = runtime
         .pointer("/agents/summary/clients")
         .or_else(|| runtime.pointer("/agents/clients"))
@@ -1424,19 +1426,20 @@ fn project_connected(project: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn project_agent_status(project: &Value) -> Option<String> {
+fn project_runner_status(project: &Value) -> Option<String> {
+    // `agent_status` remains the stable list_projects JSON compatibility key.
     project
         .get("agent_status")
         .and_then(Value::as_str)
         .map(ToString::to_string)
 }
 
-fn project_agent_online(project: &Value) -> bool {
-    project_agent_status(project).as_deref() == Some("online")
+fn project_runner_online(project: &Value) -> bool {
+    project_runner_status(project).as_deref() == Some("online")
 }
 
 fn project_online(project: &Value) -> bool {
-    project_connected(project) && project_agent_online(project)
+    project_connected(project) && project_runner_online(project)
 }
 
 fn project_bool(project: &Value, pointer: &str) -> bool {
@@ -1457,7 +1460,7 @@ fn verdict_status(value: Option<&Value>) -> Option<String> {
 struct SmokePreflightTargetState {
     ready: bool,
     connected: bool,
-    agent_online: bool,
+    runner_online: bool,
     git_available: bool,
 }
 
@@ -1466,17 +1469,17 @@ fn smoke_preflight_target_ready(project: Option<&Value>) -> SmokePreflightTarget
         return SmokePreflightTargetState {
             ready: false,
             connected: false,
-            agent_online: false,
+            runner_online: false,
             git_available: false,
         };
     };
     let connected = project_connected(project);
-    let agent_online = project_agent_online(project);
+    let runner_online = project_runner_online(project);
     let git_available = project_bool(project, "/capabilities/git_available");
     SmokePreflightTargetState {
-        ready: connected && agent_online && git_available,
+        ready: connected && runner_online && git_available,
         connected,
-        agent_online,
+        runner_online,
         git_available,
     }
 }

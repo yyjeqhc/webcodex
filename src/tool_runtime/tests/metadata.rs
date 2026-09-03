@@ -94,8 +94,8 @@ fn list_projects_call() -> ToolCall {
     }
 }
 
-fn list_agents_call() -> ToolCall {
-    ToolCall::ListAgents {
+fn list_runners_call() -> ToolCall {
+    ToolCall::ListRunners {
         client_id: None,
         client_ids: None,
         include_projects: None,
@@ -1204,7 +1204,7 @@ async fn project_path_registration_capability_is_projected_safely() {
     )
     .await;
 
-    let listed = runtime.dispatch(list_agents_call()).await;
+    let listed = runtime.dispatch(list_runners_call()).await;
     assert!(listed.success, "{:?}", listed.error);
     assert_eq!(
         listed.output["agents"][0]["capabilities"]["project_path_registration"],
@@ -1355,7 +1355,7 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
 }
 
 #[tokio::test]
-async fn agent_capability_rejection_matrix_names_required_capability() {
+async fn runner_capability_rejection_matrix_names_required_capability() {
     enum CapabilityCase {
         RunShell,
         GitStatus,
@@ -1369,7 +1369,7 @@ async fn agent_capability_rejection_matrix_names_required_capability() {
                 ..Default::default()
             },
             CapabilityCase::RunShell,
-            vec!["does not support shell", "agent client cap-shell"],
+            vec!["does not support shell", "Runner cap-shell"],
         ),
         (
             "cap-git",
@@ -1418,7 +1418,7 @@ async fn agent_capability_rejection_matrix_names_required_capability() {
 }
 
 #[tokio::test]
-async fn agent_tool_unknown_client_returns_unknown_project_error() {
+async fn runner_tool_unknown_client_returns_unknown_project_error() {
     // Project points at client "ghost" which never registered.
     let runtime = runtime_with_agent_project("ghost");
     let bootstrap = auth_context(None, true);
@@ -2758,7 +2758,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
     assert!(policy.get("env").is_none());
     assert!(policy.get("init_script").is_none());
 
-    let listed = runtime.dispatch(list_agents_call()).await;
+    let listed = runtime.dispatch(list_runners_call()).await;
     assert_eq!(
         listed.output["agents"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
         false
@@ -3105,7 +3105,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
 }
 
 #[tokio::test]
-async fn list_agents_includes_sanitized_policy_summary() {
+async fn list_runners_includes_sanitized_policy_summary() {
     use crate::shell_protocol::AgentPolicySummary;
     let registry = Arc::new(ShellClientRegistry::default());
     let mut registration = metadata_agent_registration("list-policy-agent");
@@ -3124,7 +3124,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
     });
     registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
-    let result = runtime.dispatch(list_agents_call()).await;
+    let result = runtime.dispatch(list_runners_call()).await;
     assert!(result.success);
     assert_eq!(result.output["count"], 1);
     assert_eq!(result.output["summary"]["online"], 1);
@@ -3154,7 +3154,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
     assert_eq!(policy["allow_cwd_anywhere"], true);
     assert_eq!(policy["max_timeout_secs"], 120);
     assert_eq!(policy["max_output_bytes"], 4096);
-    // No secret fields leak through listAgents either.
+    // No secret fields leak through list_runners either.
     assert!(policy.get("token").is_none());
     assert!(policy.get("env").is_none());
     assert!(policy.get("init_script").is_none());

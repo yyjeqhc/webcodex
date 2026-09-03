@@ -10,7 +10,7 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
         "list_tools",
         "computer_list_targets",
         "list_projects",
-        "list_agents",
+        "list_runners",
         "runtime_status",
     ] {
         let call = ToolCall::from_tool_name(name, Value::Null).unwrap_or_else(|e| panic!("{}", e));
@@ -20,7 +20,7 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
                 ToolCall::ListTools { .. }
                     | ToolCall::ComputerListTargets
                     | ToolCall::ListProjects { .. }
-                    | ToolCall::ListAgents { .. }
+                    | ToolCall::ListRunners { .. }
                     | ToolCall::RuntimeStatus { .. }
             ),
             "unit tool {} should parse",
@@ -33,6 +33,26 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
 fn from_tool_name_parses_unit_tools_with_empty_object() {
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
     assert!(matches!(call, ToolCall::ListTools { .. }));
+}
+
+#[test]
+fn legacy_list_agents_alias_parses_to_canonical_list_runners() {
+    let call = ToolCall::from_tool_name(
+        "list_agents",
+        json!({"client_id": "special", "include_projects": false}),
+    )
+    .unwrap();
+    assert_eq!(call.tool_name(), "list_runners");
+    assert!(matches!(
+        call,
+        ToolCall::ListRunners {
+            client_id: Some(ref client_id),
+            include_projects: Some(false),
+            ..
+        } if client_id == "special"
+    ));
+    assert!(super::super::tool_definition::lookup_tool_definition("list_agents").is_none());
+    assert!(super::super::tool_definition::lookup_tool_definition("list_runners").is_some());
 }
 
 #[test]

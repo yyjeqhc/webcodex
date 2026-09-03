@@ -11,7 +11,7 @@ use crate::shell_protocol::{
 use crate::tool_runtime::metadata::{
     ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect, ToolIdempotency, ToolRisk,
 };
-use crate::tool_runtime::tool_definition::{lookup_tool_definition, AgentCapability};
+use crate::tool_runtime::tool_definition::{lookup_tool_definition, RunnerCapabilityRequirement};
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolRuntime};
 use serde_json::json;
 use std::sync::Arc;
@@ -119,7 +119,10 @@ fn agent_task_tools_are_definition_owned_and_a4a_adds_execution_authority_explic
         );
         assert_eq!(definition.category, "agent_task");
         assert!(!definition.metadata.requires_project);
-        assert_eq!(definition.agent_capability, None::<AgentCapability>);
+        assert_eq!(
+            definition.runner_capability,
+            None::<RunnerCapabilityRequirement>
+        );
         assert_eq!(definition.metadata.provider_id, "control");
     }
 
@@ -128,8 +131,8 @@ fn agent_task_tools_are_definition_owned_and_a4a_adds_execution_authority_explic
     assert_eq!(start_coding.category, "agent_task");
     assert!(start_coding.metadata.requires_project);
     assert_eq!(
-        start_coding.agent_capability,
-        Some(AgentCapability::CodingAgentRuns)
+        start_coding.runner_capability,
+        Some(RunnerCapabilityRequirement::CodingAgentRuns)
     );
     assert_eq!(start_coding.metadata.provider_id, "agent");
     assert_eq!(start_coding.metadata.effect, ToolEffect::Execute);
@@ -153,7 +156,10 @@ fn agent_task_tools_are_definition_owned_and_a4a_adds_execution_authority_explic
     assert!(reconcile.model_spec.is_some());
     assert_eq!(reconcile.category, "agent_task");
     assert!(!reconcile.metadata.requires_project);
-    assert_eq!(reconcile.agent_capability, None::<AgentCapability>);
+    assert_eq!(
+        reconcile.runner_capability,
+        None::<RunnerCapabilityRequirement>
+    );
     assert_eq!(reconcile.metadata.provider_id, "agent");
     assert_eq!(reconcile.metadata.effect, ToolEffect::Mutate);
     assert_eq!(reconcile.metadata.risk, ToolRisk::WorkflowManage);
@@ -907,7 +913,7 @@ fn foreign_runtime_task_ids_are_existence_hidden_and_project_reference_grants_no
 
     let definition = lookup_tool_definition("create_agent_task").unwrap();
     assert!(!definition.metadata.requires_project);
-    assert_eq!(definition.agent_capability, None);
+    assert_eq!(definition.runner_capability, None);
     assert!(!matches!(
         definition.metadata.risk,
         ToolRisk::ProjectWrite | ToolRisk::JobRun

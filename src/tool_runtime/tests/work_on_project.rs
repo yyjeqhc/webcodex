@@ -403,8 +403,8 @@ fn work_on_project_schema_and_registration() {
     let definition =
         crate::tool_runtime::tool_definition::lookup_tool_definition("work_on_project").unwrap();
     assert_eq!(
-        definition.agent_capability,
-        Some(crate::tool_runtime::AgentCapability::GitOrShell)
+        definition.runner_capability,
+        Some(crate::tool_runtime::RunnerCapabilityRequirement::GitOrShell)
     );
     assert!(!definition.requires_explicit_business_session());
 

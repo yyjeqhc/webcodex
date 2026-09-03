@@ -1,6 +1,6 @@
 //! `webcodex` — standalone management/setup binary for WebCodex.
 //!
-//! Provides canonical users / tokens / agent-tokens management (reusing the
+//! Provides canonical users / tokens / runner-tokens management (reusing the
 //! shared `admin_cli` module) and low-level `runner init` (reusing the shared
 //! `runner_config` module).
 //!
@@ -33,27 +33,27 @@ use runner_config::{
 };
 use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
-    base_dir_or_default, client_profile_agent_token_file,
-    client_profile_agent_token_file_for_scope, client_profile_project_registry_dir,
-    client_profile_runner_config, client_profile_state_dir, client_profile_user_token_file,
+    base_dir_or_default, client_profile_project_registry_dir, client_profile_runner_config,
+    client_profile_runner_token_file, client_profile_runner_token_file_for_scope,
+    client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, connect_usage, current_user_home,
     default_device_name, default_server_paths, disconnect_usage, discover_internal_binary,
-    is_effective_root, login_usage, logout_usage, ops_agents_usage, ops_projects_usage,
-    ops_runner_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage, pairing_create_usage,
-    pairing_usage, project_register_usage, read_env_file_value, render_token_generate,
-    run_agent_token_create_local, run_connect, run_disconnect, run_hosted_log_writer,
-    run_internal_binary, run_login, run_logout, run_ops_command, run_pairing_create,
-    run_project_register, run_runner_install_service, run_runner_service, run_runner_status,
-    run_server_init, run_server_install_service, run_server_service, run_server_status, run_status,
-    run_token_create_local, runner_config_for_scope, runner_init_usage,
-    runner_install_service_usage, runner_service_file_for_scope, runner_status_usage, runner_usage,
-    server_init_usage, server_install_service_usage, server_status_usage, server_usage,
-    service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
-    validate_client_profile, validate_service_file_scope, write_connect_result, ConnectAuth,
-    ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions,
-    OpsRunnerOptions, OpsSmokePreflightOptions, ProjectRegisterOptions, ServerStatusOptions,
-    ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
-    SERVER_SERVICE_UNIT,
+    is_effective_root, login_usage, logout_usage, ops_projects_usage, ops_runner_usage,
+    ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    pairing_create_usage, pairing_usage, project_register_usage, read_env_file_value,
+    render_token_generate, run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary,
+    run_login, run_logout, run_ops_command, run_pairing_create, run_project_register,
+    run_runner_install_service, run_runner_service, run_runner_status,
+    run_runner_token_create_local, run_server_init, run_server_install_service, run_server_service,
+    run_server_status, run_status, run_token_create_local, runner_config_for_scope,
+    runner_init_usage, runner_install_service_usage, runner_service_file_for_scope,
+    runner_status_usage, runner_usage, server_init_usage, server_install_service_usage,
+    server_status_usage, server_usage, service_unit_name, status_usage, system_user_home,
+    system_user_is_root, usage, validate_client_profile, validate_service_file_scope,
+    write_connect_result, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions,
+    LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions,
+    ProjectRegisterOptions, ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES,
+    RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -62,7 +62,7 @@ const SETUP_GPT_SCOPES: &[&str] = &[
     "project:write",
     "job:run",
 ];
-const SETUP_AGENT_SCOPES: &[&str] = &[
+const SETUP_RUNNER_SCOPES: &[&str] = &[
     "agent:register",
     "agent:poll",
     "agent:result",
@@ -110,7 +110,7 @@ enum CliAction {
     Admin(AdminCliCommand),
     TokenGenerate(TokenGenerateOptions),
     TokenCreateLocal(TokenCreateLocalOptions),
-    AgentTokenCreateLocal(AgentTokenCreateLocalOptions),
+    RunnerTokenCreateLocal(RunnerTokenCreateLocalOptions),
     RunnerInit(RunnerInitOptions),
     PairingCreate(PairingCreateOptions),
     Login(LoginOptions),
@@ -150,7 +150,7 @@ struct TokenCreateLocalOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct AgentTokenCreateLocalOptions {
+struct RunnerTokenCreateLocalOptions {
     admin: AdminOptions,
     username: String,
     client_id: String,
@@ -170,7 +170,7 @@ struct PairingCreateOptions {
     display_name: Option<String>,
     ttl_secs: i64,
     user_token_name: Option<String>,
-    agent_token_name: Option<String>,
+    runner_token_name: Option<String>,
     json: bool,
 }
 
@@ -263,7 +263,7 @@ struct RunnerStatusOptions {
     server_url: Option<String>,
     server_http: ServerHttpOptions,
     user_token_file: Option<PathBuf>,
-    agent_token_file: Option<PathBuf>,
+    runner_token_file: Option<PathBuf>,
     json: bool,
 }
 
@@ -342,15 +342,15 @@ where
         "ops" => parse_ops_subcommand(&args[1..]),
         "runner" => parse_runner_subcommand(&args[1..]),
         "agent-token" => cli_parse_error(
-            "`webcodex agent-token` was removed; use `webcodex agent-tokens ...`".to_string(),
+            "`webcodex agent-token` was removed; use `webcodex runner-tokens ...`".to_string(),
         ),
-        "agent-tokens" => parse_agent_token_subcommand(&args[1..]),
+        "runner-tokens" | "agent-tokens" => parse_runner_token_subcommand(&args[1..]),
         "token" => cli_parse_error(
             "`webcodex token` was removed; use `webcodex tokens ...`".to_string(),
         ),
         "tokens" => parse_token_subcommand(&args[1..]),
         group if admin_cli::is_admin_group(group) => {
-            // users / tokens / agent-tokens management: reuse admin_cli parser.
+            // users / tokens / Runner transport-token management: reuse admin_cli parser.
             match parse_admin_cli(&args) {
                 Ok(cmd) => CliAction::Admin(cmd),
                 Err(e) => CliAction::Exit {
@@ -985,36 +985,42 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
         match flag.as_str() {
             "--kind" => kind = p.value(&flag)?,
             "-h" | "--help" => {
-                return Err("Usage: webcodex tokens generate --kind api|agent".to_string())
+                return Err("Usage: webcodex tokens generate --kind api|runner".to_string())
             }
             _ => return Err(format!("unknown tokens generate flag: {}", flag)),
         }
     }
-    if kind != "api" && kind != "agent" {
-        return Err("--kind must be 'api' or 'agent'".to_string());
+    if kind == "agent" {
+        // Pre-0.4 compatibility alias; new help only teaches Runner terminology.
+        kind = "runner".to_string();
+    }
+    if kind != "api" && kind != "runner" {
+        return Err("--kind must be 'api' or 'runner'".to_string());
     }
     Ok(TokenGenerateOptions { kind })
 }
 
-fn parse_agent_token_subcommand(args: &[String]) -> CliAction {
+fn parse_runner_token_subcommand(args: &[String]) -> CliAction {
     if args.is_empty() {
         return CliAction::Exit {
             code: 2,
             stdout: String::new(),
-            stderr: "missing agent-tokens subcommand\n".to_string(),
+            stderr: "missing runner-tokens subcommand\n".to_string(),
         };
     }
     match args[0].as_str() {
-        "create-local" => match parse_agent_token_create_local(&args[1..]) {
-            Ok(opts) => CliAction::AgentTokenCreateLocal(opts),
+        "create-local" => match parse_runner_token_create_local(&args[1..]) {
+            Ok(opts) => CliAction::RunnerTokenCreateLocal(opts),
             Err(e) => local_token_parse_error(e),
         },
-        _ => forward_to_admin_cli("agent-tokens", args),
+        _ => forward_to_admin_cli("runner-tokens", args),
     }
 }
 
-fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLocalOptions, String> {
-    let mut opts = AgentTokenCreateLocalOptions::default();
+fn parse_runner_token_create_local(
+    args: &[String],
+) -> Result<RunnerTokenCreateLocalOptions, String> {
+    let mut opts = RunnerTokenCreateLocalOptions::default();
     let mut p = SimpleFlagParser::new(args);
     while let Some(flag) = p.next() {
         match flag.as_str() {
@@ -1039,8 +1045,8 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
                         .map(str::to_string),
                 );
             }
-            "-h" | "--help" => return Err("Usage: webcodex agent-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
-            _ => return Err(format!("unknown agent-tokens create-local flag: {}", flag)),
+            "-h" | "--help" => return Err("Usage: webcodex runner-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
+            _ => return Err(format!("unknown runner-tokens create-local flag: {}", flag)),
         }
     }
     opts.admin.server_http.validate()?;
@@ -1054,7 +1060,7 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
         return Err("--client-id is required".to_string());
     }
     if opts.scopes.is_empty() {
-        opts.scopes = SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect();
+        opts.scopes = SETUP_RUNNER_SCOPES.iter().map(|s| s.to_string()).collect();
     }
     Ok(opts)
 }
@@ -1271,16 +1277,16 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
                 },
             }
         }
-        "agents" => {
+        "runners" | "agents" => {
             if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
                 return CliAction::Exit {
                     code: 0,
-                    stdout: ops_agents_usage().to_string(),
+                    stdout: ops_runners_usage().to_string(),
                     stderr: String::new(),
                 };
             }
-            match parse_ops_common(&args[1..], "agents") {
-                Ok(opts) => CliAction::Ops(OpsCommand::Agents(opts)),
+            match parse_ops_common(&args[1..], "runners") {
+                Ok(opts) => CliAction::Ops(OpsCommand::Runners(opts)),
                 Err(e) => CliAction::Exit {
                     code: 2,
                     stdout: String::new(),
@@ -1968,7 +1974,7 @@ fn parse_runner_status_with_identity(
         server_url: None,
         server_http: ServerHttpOptions::default(),
         user_token_file: None,
-        agent_token_file: None,
+        runner_token_file: None,
         json: false,
     };
     let mut iter = args.iter();
@@ -1989,8 +1995,8 @@ fn parse_runner_status_with_identity(
             "--user-token-file" => {
                 opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
-            "--agent-token-file" => {
-                opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            "--runner-token-file" | "--agent-token-file" => {
+                opts.runner_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
             "--json" => opts.json = true,
             _ => return Err(format!("unknown runner status flag: {}", arg)),
@@ -2024,11 +2030,11 @@ fn parse_runner_status_with_identity(
                 client_profile_user_token_file(&profile)?
             });
         }
-        if opts.agent_token_file.is_none() {
-            opts.agent_token_file = Some(if scope_explicit {
-                client_profile_agent_token_file_for_scope(scope, &profile)?
+        if opts.runner_token_file.is_none() {
+            opts.runner_token_file = Some(if scope_explicit {
+                client_profile_runner_token_file_for_scope(scope, &profile)?
             } else {
-                client_profile_agent_token_file(&profile)?
+                client_profile_runner_token_file(&profile)?
             });
         }
     }
@@ -2194,7 +2200,9 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
                     .map_err(|_| "--ttl-secs must be an integer".to_string())?;
             }
             "--user-token-name" => opts.user_token_name = Some(next_value(&mut iter, arg)?),
-            "--agent-token-name" => opts.agent_token_name = Some(next_value(&mut iter, arg)?),
+            "--runner-token-name" | "--agent-token-name" => {
+                opts.runner_token_name = Some(next_value(&mut iter, arg)?)
+            }
             "--json" => opts.json = true,
             _ => return Err(format!("unknown pairing create flag: {}", arg)),
         }
@@ -2458,16 +2466,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::AgentTokenCreateLocal(opts) => match run_agent_token_create_local(opts).await {
-            Ok(stdout) => {
-                print!("{}", stdout);
-                std::process::exit(0);
+        CliAction::RunnerTokenCreateLocal(opts) => {
+            match run_runner_token_create_local(opts).await {
+                Ok(stdout) => {
+                    print!("{}", stdout);
+                    std::process::exit(0);
+                }
+                Err(stderr) => {
+                    eprintln!("{}", stderr);
+                    std::process::exit(1);
+                }
             }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
+        }
         CliAction::RunnerInit(opts) => match run_runner_init(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);

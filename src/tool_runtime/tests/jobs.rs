@@ -2192,7 +2192,7 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
 }
 
 #[tokio::test]
-async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group() {
+async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group() {
     let runtime = test_runtime();
     let shared_a = shared_key_auth_context("hash-a");
     let shared_b = shared_key_auth_context("hash-b");
@@ -2245,7 +2245,7 @@ async fn runtime_status_and_list_agents_filter_concurrency_counts_by_auth_group(
 
     let agents_a = runtime
         .dispatch_with_auth(
-            ToolCall::ListAgents {
+            ToolCall::ListRunners {
                 client_id: None,
                 client_ids: None,
                 include_projects: None,
@@ -2394,9 +2394,9 @@ async fn list_jobs_invalid_filters_are_fix_input() {
 }
 
 #[tokio::test]
-async fn list_jobs_requires_no_agent_capability() {
-    // list_jobs has no project and no agent capability requirement, so it
-    // succeeds even with no registered agent.
+async fn list_jobs_requires_no_runner_capability() {
+    // list_jobs has no project and no Runner capability requirement, so it
+    // succeeds even with no registered Runner.
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ListJobs {

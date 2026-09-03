@@ -1,14 +1,14 @@
 use super::output::{format_error, sanitize};
 use super::{
-    build_server_http_client, AdminCliCommand, AdminCliRequest, AdminOptions, AgentTokenCreateArgs,
-    AgentTokenRegisterHashArgs, CreateUserArgs, RevokeTokenArgs, TokenCreateArgs,
+    build_server_http_client, AdminCliCommand, AdminCliRequest, AdminOptions, CreateUserArgs,
+    RevokeTokenArgs, RunnerTokenCreateArgs, RunnerTokenRegisterHashArgs, TokenCreateArgs,
     TokenRegisterHashArgs, UsernameArgs,
 };
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-const DEFAULT_AGENT_SCOPES: &[&str] = &[
+const DEFAULT_RUNNER_SCOPES: &[&str] = &[
     "agent:register",
     "agent:poll",
     "agent:result",
@@ -52,7 +52,7 @@ impl FlagParser {
 }
 
 pub fn is_admin_group(arg: &str) -> bool {
-    matches!(arg, "users" | "tokens" | "agent-tokens")
+    matches!(arg, "users" | "tokens" | "runner-tokens" | "agent-tokens")
 }
 
 pub fn usage() -> &'static str {
@@ -63,10 +63,10 @@ pub fn usage() -> &'static str {
       webcodex tokens register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
-      webcodex agent-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
-      webcodex agent-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
-      webcodex agent-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
-      webcodex agent-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
+      webcodex runner-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
+      webcodex runner-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
+      webcodex runner-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
+      webcodex runner-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
     Token fallback: WEBCODEX_TOKEN\n\
     Proxy: standard HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY environment by default;\n\
            --proxy http://HOST:PORT overrides it, --no-system-proxy forces direct.\n\
@@ -87,10 +87,12 @@ pub fn parse_admin_cli(args: &[String]) -> Result<AdminCliCommand, String> {
         ("tokens", "register-hash") => parse_tokens_register_hash(rest),
         ("tokens", "list") => parse_tokens_list(rest),
         ("tokens", "revoke") => parse_tokens_revoke(rest),
-        ("agent-tokens", "create") => parse_agent_tokens_create(rest),
-        ("agent-tokens", "register-hash") => parse_agent_tokens_register_hash(rest),
-        ("agent-tokens", "list") => parse_agent_tokens_list(rest),
-        ("agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
+        ("runner-tokens" | "agent-tokens", "create") => parse_runner_tokens_create(rest),
+        ("runner-tokens" | "agent-tokens", "register-hash") => {
+            parse_runner_tokens_register_hash(rest)
+        }
+        ("runner-tokens" | "agent-tokens", "list") => parse_runner_tokens_list(rest),
+        ("runner-tokens" | "agent-tokens", "revoke") => parse_runner_tokens_revoke(rest),
         _ => Err(format!(
             "unknown admin command: {} {}\n{}",
             group,
@@ -257,9 +259,9 @@ fn parse_tokens_revoke(args: &[String]) -> Result<AdminCliCommand, String> {
     Ok(AdminCliCommand::TokensRevoke(opts, revoke))
 }
 
-fn parse_agent_tokens_create(args: &[String]) -> Result<AdminCliCommand, String> {
+fn parse_runner_tokens_create(args: &[String]) -> Result<AdminCliCommand, String> {
     let mut opts = AdminOptions::default();
-    let mut t = AgentTokenCreateArgs::default();
+    let mut t = RunnerTokenCreateArgs::default();
     let mut p = FlagParser::new(args);
     while let Some(flag) = p.next() {
         if parse_common_flag(&mut opts, &mut p, &flag)? {
@@ -270,7 +272,7 @@ fn parse_agent_tokens_create(args: &[String]) -> Result<AdminCliCommand, String>
             "--client-id" => t.client_id = p.value(&flag)?,
             "--name" => t.name = Some(p.value(&flag)?),
             "--scope" => t.scopes.push(p.value(&flag)?),
-            _ => return Err(format!("unknown agent-tokens create flag: {}", flag)),
+            _ => return Err(format!("unknown runner-tokens create flag: {}", flag)),
         }
     }
     p.finish()?;
@@ -278,14 +280,17 @@ fn parse_agent_tokens_create(args: &[String]) -> Result<AdminCliCommand, String>
     require_non_empty("--username", &t.username)?;
     require_non_empty("--client-id", &t.client_id)?;
     if t.scopes.is_empty() {
-        t.scopes = DEFAULT_AGENT_SCOPES.iter().map(|s| s.to_string()).collect();
+        t.scopes = DEFAULT_RUNNER_SCOPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
-    Ok(AdminCliCommand::AgentTokensCreate(opts, t))
+    Ok(AdminCliCommand::RunnerTokensCreate(opts, t))
 }
 
-fn parse_agent_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, String> {
+fn parse_runner_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, String> {
     let mut opts = AdminOptions::default();
-    let mut t = AgentTokenRegisterHashArgs::default();
+    let mut t = RunnerTokenRegisterHashArgs::default();
     let mut p = FlagParser::new(args);
     while let Some(flag) = p.next() {
         if parse_common_flag(&mut opts, &mut p, &flag)? {
@@ -307,7 +312,12 @@ fn parse_agent_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, 
                         .map(str::to_string),
                 );
             }
-            _ => return Err(format!("unknown agent-tokens register-hash flag: {}", flag)),
+            _ => {
+                return Err(format!(
+                    "unknown runner-tokens register-hash flag: {}",
+                    flag
+                ))
+            }
         }
     }
     p.finish()?;
@@ -317,22 +327,25 @@ fn parse_agent_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, 
     require_non_empty("--hash", &t.token_hash)?;
     require_non_empty("--prefix", &t.token_prefix)?;
     if t.scopes.is_empty() {
-        t.scopes = DEFAULT_AGENT_SCOPES.iter().map(|s| s.to_string()).collect();
+        t.scopes = DEFAULT_RUNNER_SCOPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
-    Ok(AdminCliCommand::AgentTokensRegisterHash(opts, t))
+    Ok(AdminCliCommand::RunnerTokensRegisterHash(opts, t))
 }
 
-fn parse_agent_tokens_list(args: &[String]) -> Result<AdminCliCommand, String> {
-    let (opts, username) = parse_username_command(args, "agent-tokens list")?;
-    Ok(AdminCliCommand::AgentTokensList(
+fn parse_runner_tokens_list(args: &[String]) -> Result<AdminCliCommand, String> {
+    let (opts, username) = parse_username_command(args, "runner-tokens list")?;
+    Ok(AdminCliCommand::RunnerTokensList(
         opts,
         UsernameArgs { username },
     ))
 }
 
-fn parse_agent_tokens_revoke(args: &[String]) -> Result<AdminCliCommand, String> {
-    let (opts, revoke) = parse_revoke_command(args, "agent-tokens revoke")?;
-    Ok(AdminCliCommand::AgentTokensRevoke(opts, revoke))
+fn parse_runner_tokens_revoke(args: &[String]) -> Result<AdminCliCommand, String> {
+    let (opts, revoke) = parse_revoke_command(args, "runner-tokens revoke")?;
+    Ok(AdminCliCommand::RunnerTokensRevoke(opts, revoke))
 }
 
 fn parse_username_command(args: &[String], name: &str) -> Result<(AdminOptions, String), String> {
@@ -432,7 +445,7 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
             "/api/tokens/revoke",
             json!({ "username": t.username, "token_id": t.token_id }),
         ),
-        AdminCliCommand::AgentTokensCreate(opts, t) => {
+        AdminCliCommand::RunnerTokensCreate(opts, t) => {
             let mut body = json!({
                 "username": t.username,
                 "client_id": t.client_id,
@@ -443,7 +456,7 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
             }
             (opts, "/api/agent-tokens/create", body)
         }
-        AdminCliCommand::AgentTokensRegisterHash(opts, t) => {
+        AdminCliCommand::RunnerTokensRegisterHash(opts, t) => {
             let mut body = json!({
                 "username": t.username,
                 "client_id": t.client_id,
@@ -456,12 +469,12 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
             }
             (opts, "/api/agent-tokens/register_hash", body)
         }
-        AdminCliCommand::AgentTokensList(opts, t) => (
+        AdminCliCommand::RunnerTokensList(opts, t) => (
             opts,
             "/api/agent-tokens/list",
             json!({ "username": t.username }),
         ),
-        AdminCliCommand::AgentTokensRevoke(opts, t) => (
+        AdminCliCommand::RunnerTokensRevoke(opts, t) => (
             opts,
             "/api/agent-tokens/revoke",
             json!({ "username": t.username, "token_id": t.token_id }),
@@ -475,7 +488,7 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
             matches!(
                 cmd,
                 AdminCliCommand::TokensRegisterHash(_, _)
-                    | AdminCliCommand::AgentTokensRegisterHash(_, _)
+                    | AdminCliCommand::RunnerTokensRegisterHash(_, _)
                     | AdminCliCommand::TokensList(_, _)
                     | AdminCliCommand::TokensRevoke(_, _)
             ),

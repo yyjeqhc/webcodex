@@ -7,12 +7,12 @@ use crate::shell_protocol::{ShellClientView, ShellJobInfo};
 use serde_json::{json, Value};
 
 const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
-const AGENT_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
-const LIST_AGENTS_MAX_CLIENT_IDS: usize = 8;
+const RUNNER_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
+const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
 const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
 
 #[derive(Debug, Default)]
-pub(crate) struct ListAgentsOptions {
+pub(crate) struct ListRunnersOptions {
     pub(crate) client_id: Option<String>,
     pub(crate) client_ids: Option<Vec<String>>,
     pub(crate) include_projects: Option<bool>,
@@ -87,15 +87,15 @@ impl ToolRuntime {
         })
     }
 
-    pub(crate) async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
-        self.list_agents_with_options(auth, ListAgentsOptions::default())
+    pub(crate) async fn list_runners(&self, auth: Option<&AuthContext>) -> ToolResult {
+        self.list_runners_with_options(auth, ListRunnersOptions::default())
             .await
     }
 
-    pub(crate) async fn list_agents_with_options(
+    pub(crate) async fn list_runners_with_options(
         &self,
         auth: Option<&AuthContext>,
-        options: ListAgentsOptions,
+        options: ListRunnersOptions,
     ) -> ToolResult {
         if options.client_id.is_some() && options.client_ids.is_some() {
             return ToolResult::err_with_output(
@@ -121,10 +121,10 @@ impl ToolRuntime {
                     json!({"error_kind": "invalid_client_ids"}),
                 );
             }
-            if client_ids.len() > LIST_AGENTS_MAX_CLIENT_IDS {
+            if client_ids.len() > LIST_RUNNERS_MAX_CLIENT_IDS {
                 return ToolResult::err_with_output(
                     format!(
-                        "invalid_client_ids: at most {LIST_AGENTS_MAX_CLIENT_IDS} client ids are allowed"
+                        "invalid_client_ids: at most {LIST_RUNNERS_MAX_CLIENT_IDS} client ids are allowed"
                     ),
                     json!({"error_kind": "invalid_client_ids"}),
                 );
@@ -164,12 +164,12 @@ impl ToolRuntime {
             }
             true
         });
-        let mut agent_jobs = self
+        let mut runner_jobs = self
             .shell_clients
             .list_all_jobs_for_auth(access.as_ref())
             .await;
         if options.client_id.is_some() || options.client_ids.is_some() {
-            agent_jobs.retain(|job| {
+            runner_jobs.retain(|job| {
                 clients
                     .iter()
                     .any(|client| client.client_id == job.client_id)
@@ -177,7 +177,7 @@ impl ToolRuntime {
         }
         let now = chrono::Utc::now().timestamp();
         let include_projects = options.include_projects.unwrap_or(true);
-        let agents: Vec<Value> = if options.summary_only {
+        let runners: Vec<Value> = if options.summary_only {
             clients
                 .iter()
                 .map(|client| {
@@ -193,8 +193,8 @@ impl ToolRuntime {
                         "pending_requests": client.pending_requests,
                         "projects_count": enabled_projects_count(client),
                         "project_inventory": client.project_inventory,
-                        "active_jobs": active_jobs_for_client(&agent_jobs, &client.client_id),
-                        "job_concurrency": job_concurrency_for_client(client, &agent_jobs),
+                        "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
+                        "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
                         "build": client.build,
                     })
                 })
@@ -219,8 +219,8 @@ impl ToolRuntime {
                         "pending_requests": client.pending_requests,
                         "projects_count": enabled_projects_count(client),
                         "project_inventory": client.project_inventory,
-                        "active_jobs": active_jobs_for_client(&agent_jobs, &client.client_id),
-                        "job_concurrency": job_concurrency_for_client(client, &agent_jobs),
+                        "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
+                        "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
                         "capabilities": client.capabilities,
                         "policy": sanitized_policy_summary(client.policy.as_ref()),
                         "shell_profiles": sanitized_shell_profiles_summary(
@@ -242,7 +242,8 @@ impl ToolRuntime {
                 .filter(|client| client.status == "stale")
                 .count();
             return ToolResult::ok(json!({
-                "agents": agents,
+                // `agents` is a stable pre-0.4 serialized compatibility key.
+                "agents": runners,
                 "summary": {
                     "count": clients.len(),
                     "online": online,
@@ -253,9 +254,10 @@ impl ToolRuntime {
             }));
         }
         ToolResult::ok(json!({
-            "agents": agents,
-            "clients": agent_health_clients(&clients, &agent_jobs, now),
-            "summary": agent_health_summary(&clients, &agent_jobs, now),
+            // `agents` is a stable pre-0.4 serialized compatibility key.
+            "agents": runners,
+            "clients": runner_health_clients(&clients, &runner_jobs, now),
+            "summary": runner_health_summary(&clients, &runner_jobs, now),
             "count": clients.len(),
         }))
     }
@@ -263,7 +265,7 @@ impl ToolRuntime {
     /// Build the runtime observability summary. Read-only; never exposes
     /// tokens, api keys, full env, complete project path lists, or
     /// stdout/stderr. Returns a structured JSON object with service metadata,
-    /// agent-registered project status, agent client summaries, and job counts.
+    /// Runner-registered Project status, Runner summaries, and Job counts.
     pub(crate) async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
         let access = crate::shell_client::runner_access_from_auth(auth);
         let clients = self
@@ -271,8 +273,8 @@ impl ToolRuntime {
             .list_clients_for_auth(access.as_ref())
             .await;
 
-        // -- projects summary -------------------------------------------------
-        let agent_registered_count: usize = clients
+        // -- Projects summary -------------------------------------------------
+        let runner_registered_count: usize = clients
             .iter()
             .map(|client| {
                 client
@@ -282,7 +284,7 @@ impl ToolRuntime {
                     .count()
             })
             .sum();
-        let agent_registered_online_count: usize = clients
+        let runner_registered_online_count: usize = clients
             .iter()
             .filter(|client| client.connected)
             .map(|client| {
@@ -293,17 +295,18 @@ impl ToolRuntime {
                     .count()
             })
             .sum();
-        let effective_count = agent_registered_count;
+        let effective_count = runner_registered_count;
         let effective_status = if effective_count > 0 {
             "ok"
         } else {
             "no_projects"
         };
         let projects = json!({
+            // Stable pre-0.4 runtime_status compatibility identities.
             "mode": "agent_registered",
             "agent_registered": {
-                "count": agent_registered_count,
-                "online_count": agent_registered_online_count,
+                "count": runner_registered_count,
+                "online_count": runner_registered_online_count,
             },
             "effective": {
                 "count": effective_count,
@@ -313,23 +316,23 @@ impl ToolRuntime {
         });
 
         let now = chrono::Utc::now().timestamp();
-        let agent_jobs = self
+        let runner_jobs = self
             .shell_clients
             .list_all_jobs_for_auth(access.as_ref())
             .await;
 
-        // -- agents summary ---------------------------------------------------
+        // -- Runners summary --------------------------------------------------
         // Build a trimmed client list so the summary never leaks per-request
         // state. Only carry fields useful for observability. `last_seen` is a
         // unix timestamp (seconds) of the most recent heartbeat/result; the
-        // console uses it to render how stale an agent is and to make a
-        // websocket agent flipping `online` -> `stale` visually obvious.
-        let agent_count = clients.len();
+        // console uses it to render how stale a Runner is and to make a
+        // websocket Runner flipping `online` -> `stale` visually obvious.
+        let runner_count = clients.len();
         let online_count = clients.iter().filter(|c| c.connected).count();
-        // `stale_count` = registered agents whose `last_seen` is older than the
-        // online window (status == "stale"). Truly offline agents are removed
+        // `stale_count` = registered Runners whose `last_seen` is older than the
+        // online window (status == "stale"). Truly offline Runners are removed
         // from the registry on disconnect, so they never appear here.
-        let stale_count = agent_count.saturating_sub(online_count);
+        let stale_count = runner_count.saturating_sub(online_count);
         let clients_summary: Vec<Value> = clients
             .iter()
             .map(|c| {
@@ -346,8 +349,8 @@ impl ToolRuntime {
                     "last_seen": c.last_seen,
                     "last_seen_age_secs": last_seen_age_secs(c, now),
                     "pending_requests": c.pending_requests,
-                    "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
-                    "job_concurrency": job_concurrency_for_client(c, &agent_jobs),
+                    "active_jobs": active_jobs_for_client(&runner_jobs, &c.client_id),
+                    "job_concurrency": job_concurrency_for_client(c, &runner_jobs),
                     "capabilities": c.capabilities,
                     "projects_count": enabled_projects_count(c),
                     "project_inventory": c.project_inventory,
@@ -359,17 +362,17 @@ impl ToolRuntime {
                 })
             })
             .collect();
-        let agents = json!({
-            "count": agent_count,
+        let runners = json!({
+            "count": runner_count,
             "online_count": online_count,
             "stale_count": stale_count,
             "clients": clients_summary,
-            "summary": agent_health_summary(&clients, &agent_jobs, now),
+            "summary": runner_health_summary(&clients, &runner_jobs, now),
         });
         let connection_layers = connection_layers(
             &clients,
-            agent_registered_count,
-            agent_registered_online_count,
+            runner_registered_count,
+            runner_registered_online_count,
             self.observations.as_ref(),
             auth,
             now,
@@ -379,28 +382,28 @@ impl ToolRuntime {
         // -- jobs summary -----------------------------------------------------
         // Registered Project jobs are Runner-owned. Active includes same-runner
         // `recovering` jobs during restart/reconnect reconciliation.
-        let agent_known_count = agent_jobs.len();
-        let active_count = agent_jobs
+        let runner_known_count = runner_jobs.len();
+        let active_count = runner_jobs
             .iter()
             .filter(|j| webcodex_runner_registry::job_status_is_active(&j.status))
             .count();
-        let recovering_count = agent_jobs
+        let recovering_count = runner_jobs
             .iter()
             .filter(|job| job.status == "recovering")
             .count();
-        let running_count = agent_jobs
+        let running_count = runner_jobs
             .iter()
             .filter(|job| job_status_is_running(&job.status))
             .count();
-        let queued_count = agent_jobs
+        let queued_count = runner_jobs
             .iter()
-            .filter(|job| job_status_is_agent_queued(&job.status))
+            .filter(|job| job_status_is_runner_queued(&job.status))
             .count();
-        let reconciled_count = agent_jobs
+        let reconciled_count = runner_jobs
             .iter()
             .filter(|job| job.recovery_state.as_deref() == Some("reconciled"))
             .count();
-        let lost_after_reconcile_count = agent_jobs
+        let lost_after_reconcile_count = runner_jobs
             .iter()
             .filter(|job| {
                 job.status == "lost"
@@ -415,7 +418,8 @@ impl ToolRuntime {
             })
             .count();
         let jobs = json!({
-            "agent_known_count": agent_known_count,
+            // `agent_known_count` is a stable pre-0.4 runtime_status compatibility key.
+            "agent_known_count": runner_known_count,
             "active_count": active_count,
             "running_count": running_count,
             "queued_count": queued_count,
@@ -456,7 +460,8 @@ impl ToolRuntime {
             "auth_enabled": self.runtime_info.auth_enabled,
             "configured_public_url": self.runtime_info.configured_public_url,
             "projects": projects,
-            "agents": agents,
+            // `agents` remains the stable runtime_status JSON compatibility key.
+            "agents": runners,
             "connection_layers": connection_layers,
             "version_compatibility": version_compatibility,
             "jobs": jobs,
@@ -559,7 +564,7 @@ impl ToolRuntime {
                     == Some("different")
             })
             .count();
-        let agent_active = selected_jobs
+        let runner_active = selected_jobs
             .iter()
             .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
             .count();
@@ -569,7 +574,7 @@ impl ToolRuntime {
             .count();
         let queued_count = selected_jobs
             .iter()
-            .filter(|job| job_status_is_agent_queued(&job.status))
+            .filter(|job| job_status_is_runner_queued(&job.status))
             .count();
         let recovering_count = selected_jobs
             .iter()
@@ -624,11 +629,12 @@ impl ToolRuntime {
                 "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
                 "projects_count": project_count,
             }],
-            "summary": agent_health_summary(&clients, &selected_jobs, now),
+            "summary": runner_health_summary(&clients, &selected_jobs, now),
         });
         let jobs = json!({
+            // `agent_known_count` is a stable pre-0.4 runtime_status compatibility key.
             "agent_known_count": selected_jobs.len(),
-            "active_count": agent_active,
+            "active_count": runner_active,
             "running_count": running_count,
             "queued_count": queued_count,
             "recovering_count": recovering_count,
@@ -659,7 +665,7 @@ impl ToolRuntime {
                 "agent_instance_id": client.agent_instance_id,
                 "build": client.build,
                 "project_count": project_count,
-                "active_jobs": agent_active,
+                "active_jobs": runner_active,
                 "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
                 "compatibility_status": target_runner.get("status").cloned().unwrap_or(Value::Null),
                 "source_alignment": source_alignment,
@@ -1309,8 +1315,8 @@ fn last_seen_age_secs(client: &ShellClientView, now: i64) -> i64 {
     now.saturating_sub(client.last_seen)
 }
 
-fn active_jobs_for_client(agent_jobs: &[ShellJobInfo], client_id: &str) -> usize {
-    agent_jobs
+fn active_jobs_for_client(runner_jobs: &[ShellJobInfo], client_id: &str) -> usize {
+    runner_jobs
         .iter()
         .filter(|job| {
             job.client_id == client_id
@@ -1323,19 +1329,19 @@ fn job_status_is_running(status: &str) -> bool {
     RUNNING_JOB_STATUSES.contains(&status)
 }
 
-fn job_status_is_agent_queued(status: &str) -> bool {
-    AGENT_QUEUED_JOB_STATUSES.contains(&status)
+fn job_status_is_runner_queued(status: &str) -> bool {
+    RUNNER_QUEUED_JOB_STATUSES.contains(&status)
 }
 
-fn job_concurrency_for_client(client: &ShellClientView, agent_jobs: &[ShellJobInfo]) -> Value {
+fn job_concurrency_for_client(client: &ShellClientView, runner_jobs: &[ShellJobInfo]) -> Value {
     let mut running = 0usize;
     let mut queued = 0usize;
-    for job in agent_jobs
+    for job in runner_jobs
         .iter()
         .filter(|job| job.client_id == client.client_id)
     {
         running += usize::from(job_status_is_running(&job.status));
-        queued += usize::from(job_status_is_agent_queued(&job.status));
+        queued += usize::from(job_status_is_runner_queued(&job.status));
     }
     json!({
         "limit": client.job_concurrency_limit,
@@ -1344,9 +1350,9 @@ fn job_concurrency_for_client(client: &ShellClientView, agent_jobs: &[ShellJobIn
     })
 }
 
-fn agent_health_clients(
+fn runner_health_clients(
     clients: &[ShellClientView],
-    agent_jobs: &[ShellJobInfo],
+    runner_jobs: &[ShellJobInfo],
     now: i64,
 ) -> Vec<Value> {
     clients
@@ -1360,16 +1366,16 @@ fn agent_health_clients(
                 "projects_count": enabled_projects_count(client),
                 "project_inventory": client.project_inventory,
                 "pending_requests": client.pending_requests,
-                "active_jobs": active_jobs_for_client(agent_jobs, &client.client_id),
-                "job_concurrency": job_concurrency_for_client(client, agent_jobs),
+                "active_jobs": active_jobs_for_client(runner_jobs, &client.client_id),
+                "job_concurrency": job_concurrency_for_client(client, runner_jobs),
             })
         })
         .collect()
 }
 
-fn agent_health_summary(
+fn runner_health_summary(
     clients: &[ShellClientView],
-    agent_jobs: &[ShellJobInfo],
+    runner_jobs: &[ShellJobInfo],
     now: i64,
 ) -> Value {
     let online = clients.iter().filter(|client| client.connected).count();
@@ -1383,12 +1389,12 @@ fn agent_health_summary(
         "online": online,
         "offline": offline,
         "stale": stale,
-        "clients": agent_health_clients(clients, agent_jobs, now),
+        "clients": runner_health_clients(clients, runner_jobs, now),
     })
 }
 
 /// Build the sanitized policy summary JSON exposed in `runtime_status` and
-/// `listAgents`. Only the safe fields are carried: `allow_raw_shell`,
+/// `list_runners`. Only the safe fields are carried: `allow_raw_shell`,
 /// `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`,
 /// `max_output_bytes`. The agent token, shell env values, init_script
 /// contents, and full Runner config contents are NEVER included. Older agents
@@ -1408,7 +1414,7 @@ fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySu
 }
 
 /// Build the sanitized shell-profiles summary JSON exposed in
-/// `runtime_status`, `listAgents`, and `listProjects`. Only safe metadata is
+/// `runtime_status`, `list_runners`, and `list_projects`. Only safe metadata is
 /// carried: default profile name, configured count, prepared-cache count, and
 /// per-profile name / has_init_script (boolean) / env_keys_count / program /
 /// args_count. NEVER includes init_script bodies, env values, tokens, or the
@@ -1468,10 +1474,10 @@ mod phase_e2_status_tests {
     fn concurrency_counts_use_only_canonical_running_and_queued_statuses() {
         for status in ["running", "started"] {
             assert!(job_status_is_running(status), "{status}");
-            assert!(!job_status_is_agent_queued(status), "{status}");
+            assert!(!job_status_is_runner_queued(status), "{status}");
         }
         for status in ["queued", "agent_queued"] {
-            assert!(job_status_is_agent_queued(status), "{status}");
+            assert!(job_status_is_runner_queued(status), "{status}");
             assert!(!job_status_is_running(status), "{status}");
         }
         for status in [
@@ -1486,7 +1492,7 @@ mod phase_e2_status_tests {
             "cancelled",
         ] {
             assert!(!job_status_is_running(status), "{status}");
-            assert!(!job_status_is_agent_queued(status), "{status}");
+            assert!(!job_status_is_runner_queued(status), "{status}");
         }
     }
 

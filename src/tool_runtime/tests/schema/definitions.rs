@@ -143,9 +143,9 @@ fn tool_definitions_match_agent_capability_dispatch_helper() {
             definition.name
         );
         assert_eq!(
-            required_agent_capability(&call),
-            definition.agent_capability,
-            "{} agent capability mirror must match dispatch helper",
+            required_runner_capability(&call),
+            definition.runner_capability,
+            "{} Runner capability mirror must match dispatch helper",
             definition.name
         );
         assert_eq!(

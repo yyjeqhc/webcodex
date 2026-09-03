@@ -680,6 +680,20 @@ fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
     for (path, operation_id) in expected {
         assert_eq!(spec["paths"][path]["post"]["operationId"], operation_id);
     }
+    let serialized = serde_json::to_string(&spec).unwrap();
+    assert!(serialized.contains("Runner-registered"));
+    assert!(serialized.contains("list_runners"));
+    for retired_runner_term in [
+        "agent-registered",
+        "owning agent",
+        "selected agent",
+        "agent shell capability",
+    ] {
+        assert!(
+            !serialized.contains(retired_runner_term),
+            "OpenAPI must not teach retired Runner term {retired_runner_term:?}"
+        );
+    }
 }
 
 #[test]

@@ -3,11 +3,11 @@ use serde_json::json;
 
 use crate::{
     admin_cli::{self, build_admin_request, build_server_http_client, AdminCliCommand},
-    AgentTokenCreateLocalOptions, TokenCreateLocalOptions,
+    RunnerTokenCreateLocalOptions, TokenCreateLocalOptions,
 };
 
 use super::{
-    generate_local_agent_token, generate_local_api_token, hash_local_token, local_token_prefix,
+    generate_local_api_token, generate_local_runner_token, hash_local_token, local_token_prefix,
 };
 
 pub(crate) fn resolve_account_credential(
@@ -99,15 +99,15 @@ pub(crate) async fn run_token_create_local(
     ))
 }
 
-pub(crate) async fn run_agent_token_create_local(
-    opts: AgentTokenCreateLocalOptions,
+pub(crate) async fn run_runner_token_create_local(
+    opts: RunnerTokenCreateLocalOptions,
 ) -> Result<String, String> {
-    let token = generate_local_agent_token();
+    let token = generate_local_runner_token();
     let hash = hash_local_token(&token);
     let prefix = local_token_prefix(&token);
-    let cmd = AdminCliCommand::AgentTokensRegisterHash(
+    let cmd = AdminCliCommand::RunnerTokensRegisterHash(
         opts.admin,
-        admin_cli::AgentTokenRegisterHashArgs {
+        admin_cli::RunnerTokenRegisterHashArgs {
             username: opts.username,
             client_id: opts.client_id.clone(),
             name: opts.name,
@@ -119,7 +119,7 @@ pub(crate) async fn run_agent_token_create_local(
     let req = build_admin_request(&cmd)?;
     post_json_with_bearer(&req).await?;
     Ok(format!(
-        "Agent token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-runner config or WEBCODEX_AGENT_TOKEN.\nThis token will not be shown again.\n",
+        "Runner transport token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-runner config or WEBCODEX_AGENT_TOKEN.\nThis token will not be shown again.\n",
         opts.client_id, token
     ))
 }

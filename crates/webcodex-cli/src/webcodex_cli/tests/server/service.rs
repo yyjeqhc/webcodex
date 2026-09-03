@@ -897,7 +897,7 @@ allowed_roots = ["/srv/projects"]
 /// rules. On Windows the systemd service feature fails closed.
 #[cfg(unix)]
 #[test]
-fn runner_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_it() {
+fn runner_status_rejects_runner_transport_token_in_user_runtime_token_file_without_leaking_it() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set_os("PATH", OsString::new());
     let tmp = tempfile::tempdir().unwrap();
@@ -924,7 +924,7 @@ fn runner_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_
         .build()
         .unwrap();
     let error = runtime.block_on(run_runner_status(opts)).unwrap_err();
-    assert!(error.contains("Agent transport token"), "{error}");
+    assert!(error.contains("Runner transport token"), "{error}");
     assert!(error.contains("webcodex-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
@@ -1024,7 +1024,7 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
 /// service feature fails closed.
 #[cfg(unix)]
 #[tokio::test]
-async fn runner_status_detects_current_client_online_and_agent_boundary() {
+async fn runner_status_detects_current_client_online_and_runner_token_boundary() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1070,9 +1070,9 @@ transport = "websocket"
     )
     .unwrap();
     let user_token_file = tmp.path().join("webcodex-user-token");
-    let agent_token_file = tmp.path().join("webcodex-runner-token");
+    let runner_token_file = tmp.path().join("webcodex-runner-token");
     std::fs::write(&user_token_file, "pat_online_secret_1234567890\n").unwrap();
-    std::fs::write(&agent_token_file, "agent_boundary_secret_1234567890\n").unwrap();
+    std::fs::write(&runner_token_file, "runner_boundary_secret_1234567890\n").unwrap();
     let opts = parse_runner_status(&args(&[
         "--scope",
         "system",
@@ -1083,8 +1083,8 @@ transport = "websocket"
         "--no-system-proxy",
         "--user-token-file",
         user_token_file.to_str().unwrap(),
-        "--agent-token-file",
-        agent_token_file.to_str().unwrap(),
+        "--runner-token-file",
+        runner_token_file.to_str().unwrap(),
     ]))
     .unwrap();
     let output = run_runner_status(opts).await.unwrap();
@@ -1096,14 +1096,14 @@ transport = "websocket"
         .contains("authorization: bearer pat_online_secret_1234567890"));
     assert!(second_request
         .to_ascii_lowercase()
-        .contains("authorization: bearer agent_boundary_secret_1234567890"));
+        .contains("authorization: bearer runner_boundary_secret_1234567890"));
     for secret in [
         "agent_config_secret_abcdef",
         "pat_online_secret_1234567890",
-        "agent_boundary_secret_1234567890",
+        "runner_boundary_secret_1234567890",
     ] {
         assert!(!output.contains(secret));
     }
     assert!(output.contains("client online:        yes"));
-    assert!(output.contains("agent token boundary: PASS"));
+    assert!(output.contains("Runner token boundary: PASS"));
 }

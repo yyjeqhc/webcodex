@@ -609,7 +609,7 @@ impl ToolRuntime {
     /// Main dispatch — call from MCP handler or GPT Actions handler.
     ///
     /// This no-auth convenience defaults the caller context to `None`, which
-    /// means agent-backed tools are rejected (no owner can be proven). HTTP
+    /// means Runner-backed tools are rejected (no owner can be proven). HTTP
     /// wrappers should prefer `dispatch_with_auth` so the depot `AuthContext`
     /// is forwarded. Tests use this wrapper for local-executor projects.
     #[cfg(test)]
@@ -617,9 +617,9 @@ impl ToolRuntime {
         self.dispatch_with_auth(call, None).await
     }
 
-    /// Dispatch carrying the caller's auth context. Agent-backed tools enforce
+    /// Dispatch carrying the caller's auth context. Runner-backed tools enforce
     /// the owner boundary and capability requirements through
-    /// `authorize_agent_tool`; local-executor tools are unaffected. Wrappers
+    /// `authorize_runner_tool`; local-executor tools are unaffected. Wrappers
     /// stay thin: they only forward the depot `AuthContext` here.
     pub async fn dispatch_with_auth(
         &self,
@@ -779,7 +779,7 @@ impl ToolRuntime {
             tool,
             project: project.map(str::to_string),
             client: project
-                .and_then(super::activity::agent_client_from_project)
+                .and_then(super::activity::runner_client_from_project)
                 .map(str::to_string),
             command: match call {
                 ToolCall::RunProcess {
@@ -1141,7 +1141,7 @@ impl ToolRuntime {
             None
         };
         if let Err(err) = self
-            .authorize_agent_tool(
+            .authorize_runner_tool(
                 &call,
                 ssh_resource.as_deref(),
                 auth,
@@ -1352,7 +1352,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         match call {
             call @ (ToolCall::ListTools { .. }
-            | ToolCall::ListAgents { .. }
+            | ToolCall::ListRunners { .. }
             | ToolCall::RuntimeStatus { .. }
             | ToolCall::ReadToolTrace { .. }
             | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,

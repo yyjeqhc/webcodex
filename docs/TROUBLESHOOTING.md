@@ -23,7 +23,7 @@ Client:
 - `webcodex doctor` passes for a canonical project, or advanced
   `webcodex ops status --strict --server-url https://your-domain.example`
   passes for a managed deployment.
-- `listAgents` / `runtime_status` shows the agent online.
+- `list_runners` / `runtime_status` shows the Runner online.
 
 ## Common issues
 
@@ -54,7 +54,7 @@ edit internal Runner state to repair registration.
 
 By default one shared-key group can register 16 Runners and the Server process
 can hold 1,024 shared-key Runners in total. An offline shared-key Runner record
-is pruned after 24 hours. Managed Agent Tokens are not charged against those
+is pruned after 24 hours. Managed Runner Tokens are not charged against those
 shared-key count or retention limits. All Runner registrations have a
 64-project input safety limit.
 
@@ -166,16 +166,16 @@ Use the actual install path for your host.
 
 `webcodex pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webcodex login <server-url> --code <wc_pair_...>` with the short-lived `wc_pair_*` code from the server owner.
 
-Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete `runner.toml` files.
+Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, Runner tokens, env files, or complete `runner.toml` files.
 
 ### Doctor warns `binary webcodex not found in PATH` on a client
 
-That can be acceptable on agent-only client machines. Agent-only clients need the public `webcodex` CLI and `webcodex-runner`; `webcodex-server` is only required on server hosts.
+That can be acceptable on Runner-only client machines. Runner-only clients need the public `webcodex` CLI and `webcodex-runner`; `webcodex-server` is only required on server hosts.
 
 ### `client online: no`
 
 For a hosted `connect` profile, use the profile-specific status and log path
-shown above. For a systemd-managed deployment, check the agent service and its
+shown above. For a systemd-managed deployment, check the Runner service and its
 connection details:
 
 Use the same scope that installed the service:
@@ -190,7 +190,7 @@ sudo webcodex runner status --scope system
 sudo webcodex runner logs --scope system --lines 100
 ```
 
-Also verify the server URL, local token files, and agent `allowed_roots`. Missing or empty `allowed_roots` defaults to `$HOME`; explicit `allowed_roots` replaces that default.
+Also verify the server URL, local token files, and Runner `allowed_roots`. Missing or empty `allowed_roots` defaults to `$HOME`; explicit `allowed_roots` replaces that default.
 
 ### `listRuntimeTools` full response is too large
 
@@ -213,9 +213,9 @@ Reconnect or restart the MCP client so it runs a fresh `initialize` and
 `tools/list`. If the server was just upgraded, verify public HTTPS reaches the
 new service and check `journalctl -u webcodex` for startup or auth errors.
 
-### Agent is offline
+### Runner is offline
 
-Run `runtime_status` or `listAgents`, then check the agent host:
+Run `runtime_status` or `list_runners`, then check the Runner host:
 
 ```bash
 webcodex runner status --scope user
@@ -223,7 +223,7 @@ webcodex runner logs --scope user --lines 100
 # Use `sudo ... --scope system` for an administrator-managed system service.
 ```
 
-Confirm the agent server URL, token file, service user, and `allowed_roots`.
+Confirm the Runner server URL, token file, service user, and `allowed_roots`.
 
 ### Wrong token type
 
@@ -256,7 +256,7 @@ unit in the other scope.
 
 `git_status` requires a git repository for a clean deployment smoke result.
 Initialize the disposable smoke project with git and an initial commit, or point
-the smoke at another safe agent-backed git project.
+the smoke at another safe Runner-backed git project.
 
 ### `operation_count` exceeds 30
 

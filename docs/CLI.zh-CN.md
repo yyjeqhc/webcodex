@@ -117,8 +117,8 @@ Runner 配置术语中，`project_registry_dir` 是 Project registry TOML 文件
 
 | 命令 | 用途 |
 | --- | --- |
-| `webcodex ops status` | 汇总 runtime、工具、任务、agent 与项目 |
-| `webcodex ops agents` | 简洁的 agent 队列状态 |
+| `webcodex ops status` | 汇总 runtime、工具、任务、Runner 与项目 |
+| `webcodex ops runners` | 简洁的 Runner fleet 状态 |
 | `webcodex ops runner --client-id <id>` | 精确读取单个 Runner 的注册与构建状态 |
 | `webcodex ops projects` | 项目清单与 smoke 适用性 |
 | `webcodex ops smoke-preflight --project <id>` | 为某项目做 deploy smoke 预检 |
@@ -159,11 +159,11 @@ Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连�
 | `webcodex tokens create` | Admin：在服务端创建 PAT | 使用 `--server-url`。 |
 | `webcodex tokens generate` | 离线生成令牌素材 | **不会**在 Server 注册。 |
 | `webcodex tokens list` / `revoke` / `register-hash` | 列出或撤销 PAT；注册外部计算的 hash | Admin 侧；使用 `--server-url`。 |
-| `webcodex agent-tokens create-local` | 本地生成 `wc_agent_*` Runner 令牌并注册其 hash | 使用 `--server-url` 并绑定 `--client-id`。 |
-| `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin 变体 | |
+| `webcodex runner-tokens create-local` | 本地生成 `wc_agent_*` Runner 令牌并注册其 hash | 使用 `--server-url` 并绑定 `--client-id`。 |
+| `webcodex runner-tokens create` / `list` / `revoke` / `register-hash` | Admin 变体 | |
 
 所有面向 Server 的 credential 命令统一使用 canonical `--server-url`。
-本地 `tokens create-local` / `agent-tokens create-local` 使用 `--username` 与 account
+本地 `tokens create-local` / `runner-tokens create-local` 使用 `--username` 与 account
 credential；admin token management 也使用相同的 plural namespace。
 
 ### 高级与兼容命令
@@ -175,7 +175,7 @@ credential；admin token management 也使用相同的 plural namespace。
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex tokens generate` | 离线生成令牌素材 | 不注册任何东西；若需要服务端注册 hash，把输出配 `tokens register-hash` 使用。 |
 | `webcodex tokens register-hash` | Admin：注册外部计算的 PAT hash | 使用 `--server-url`；用于离线生成的素材。 |
-| `webcodex agent-tokens register-hash` | Admin：注册外部计算的 Runner 令牌 hash | 使用 `--server-url`；用于离线生成的素材。 |
+| `webcodex runner-tokens register-hash` | Admin：注册外部计算的 Runner 令牌 hash | 使用 `--server-url`；用于离线生成的素材。 |
 
 ## 术语
 
@@ -224,7 +224,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | Project Credential | （私有文件） | `webcodex setup` | 单个项目的 Connector + Runner | 其他项目、admin |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT Actions、MCP、Runner |
 | 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions、MCP、REST API | Runner 连接 |
-| Runner 令牌 | `wc_agent_...` | `webcodex agent-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
+| Runner 令牌 | `wc_agent_...` | `webcodex runner-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
 
 ### Hosted 共享 key（`wck_...`）
@@ -270,7 +270,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 ### `wc_agent_*`（Runner 令牌）
 
-- 由 `webcodex agent-tokens create-local` 本地生成并绑定 `client_id` 的 Runner
+- 由 `webcodex runner-tokens create-local` 本地生成并绑定 `client_id` 的 Runner
   传输令牌。
 - `webcodex login` 只会把它**内联**写进生成的 `runner.toml`（位于
   `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的

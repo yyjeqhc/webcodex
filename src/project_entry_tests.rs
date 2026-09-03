@@ -983,7 +983,7 @@ async fn authenticated_golden_path_emits_no_discovery_or_session_calls() {
         "tool_manifest",
         "start_session",
         "current_session",
-        "list_agents",
+        "list_runners",
     ] {
         assert!(!evidence
             .request_paths

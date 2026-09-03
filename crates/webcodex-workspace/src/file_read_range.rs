@@ -1,13 +1,13 @@
 //! Shared, bounded, streaming UTF-8 range reader for `read_file`.
 //!
-//! Both the local ToolRuntime and the agent Runner call into this module so a
+//! Both the local ToolRuntime and the Runner call into this module so a
 //! single implementation owns line-counting, full-file SHA-256, empty-line
 //! semantics, range cursors, and content-budget enforcement. Neither caller
 //! retains the full file body for a range request: this performs one sequential
 //! scan, streams the SHA-256 digest and line count, and keeps only the selected
 //! range text.
 //!
-//! Text semantics (shared by local and agent reads):
+//! Text semantics (shared by local and Runner reads):
 //! * the last line need not end with a newline;
 //! * an empty file has `total_lines == 0`;
 //! * a file containing exactly one `\n` has `total_lines == 1`;
@@ -39,7 +39,7 @@ const RAW_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Effective request range after applying the shared `read_file` defaults and
 /// clamps. `start_line` defaults to 1 (min 1); `limit` defaults to 2000 and is
-/// clamped to `1..=2000`. Both local and agent reads use these same rules.
+/// clamped to `1..=2000`. Both local and Runner reads use these same rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EffectiveRange {
     pub start_line: usize,
@@ -68,8 +68,8 @@ impl EffectiveRange {
 /// Stable, schema-backed reason codes for `read_file` failures. The shared
 /// reader maps all OS/IO errors into these codes; callers must never surface
 /// absolute paths, raw OS error text, or runner stdout/stderr to the model.
-/// The agent-only codes (`AgentUnavailable`, `Timeout`, `MalformedAgentResponse`)
-/// are produced by the ToolRuntime agent path, not the shared reader.
+/// The Runner-only codes (`RunnerUnavailable`, `Timeout`, `MalformedRunnerResponse`)
+/// are produced by the ToolRuntime Runner path, not the shared reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadFileReason {
@@ -80,9 +80,11 @@ pub enum ReadFileReason {
     PermissionDenied,
     InvalidUtf8,
     RangeTooLarge,
-    AgentUnavailable,
+    #[serde(rename = "agent_unavailable")]
+    RunnerUnavailable,
     Timeout,
-    MalformedAgentResponse,
+    #[serde(rename = "malformed_agent_response")]
+    MalformedRunnerResponse,
     IoError,
 }
 
@@ -97,9 +99,9 @@ impl ReadFileReason {
             ReadFileReason::PermissionDenied => "permission_denied",
             ReadFileReason::InvalidUtf8 => "invalid_utf8",
             ReadFileReason::RangeTooLarge => "range_too_large",
-            ReadFileReason::AgentUnavailable => "agent_unavailable",
+            ReadFileReason::RunnerUnavailable => "agent_unavailable",
             ReadFileReason::Timeout => "timeout",
-            ReadFileReason::MalformedAgentResponse => "malformed_agent_response",
+            ReadFileReason::MalformedRunnerResponse => "malformed_agent_response",
             ReadFileReason::IoError => "io_error",
         }
     }
@@ -114,9 +116,9 @@ impl ReadFileReason {
             "permission_denied" => ReadFileReason::PermissionDenied,
             "invalid_utf8" => ReadFileReason::InvalidUtf8,
             "range_too_large" => ReadFileReason::RangeTooLarge,
-            "agent_unavailable" => ReadFileReason::AgentUnavailable,
+            "agent_unavailable" => ReadFileReason::RunnerUnavailable,
             "timeout" => ReadFileReason::Timeout,
-            "malformed_agent_response" => ReadFileReason::MalformedAgentResponse,
+            "malformed_agent_response" => ReadFileReason::MalformedRunnerResponse,
             "io_error" => ReadFileReason::IoError,
             _ => return None,
         })
@@ -454,7 +456,7 @@ pub fn read_range(path: &Path, range: EffectiveRange) -> Result<FileReadRange, R
 }
 
 /// Like [`read_range`] but with a caller-supplied content budget, clamped to at
-/// most [`MAX_RANGE_CONTENT_BYTES`]. The agent runner uses this so a tighter
+/// most [`MAX_RANGE_CONTENT_BYTES`]. The Runner uses this so a tighter
 /// transport cap (`max_bytes`) can still bound a range without exceeding the
 /// shared model output limit.
 pub fn read_range_with_budget(
@@ -478,8 +480,8 @@ pub fn read_range_with_budget(
 }
 
 /// Read a bounded UTF-8 text range from an already-open reader. Used by callers
-/// that have already opened and validated the file (for example, the agent
-/// runner after a project-boundary canonicalize). Same streaming semantics and
+/// that have already opened and validated the file (for example, the Runner
+/// after a project-boundary canonicalize). Same streaming semantics and
 /// budget enforcement as [`read_range`].
 pub fn read_range_from(
     reader: impl Read,
@@ -526,6 +528,26 @@ mod tests {
     use std::collections::VecDeque;
     use std::io::{Read, Write};
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn runner_read_file_reasons_preserve_legacy_wire_codes() {
+        assert_eq!(
+            serde_json::to_value(ReadFileReason::RunnerUnavailable).unwrap(),
+            "agent_unavailable"
+        );
+        assert_eq!(
+            serde_json::to_value(ReadFileReason::MalformedRunnerResponse).unwrap(),
+            "malformed_agent_response"
+        );
+        assert_eq!(
+            ReadFileReason::from_code("agent_unavailable"),
+            Some(ReadFileReason::RunnerUnavailable)
+        );
+        assert_eq!(
+            ReadFileReason::from_code("malformed_agent_response"),
+            Some(ReadFileReason::MalformedRunnerResponse)
+        );
+    }
 
     struct RepeatedByteReader {
         byte: u8,

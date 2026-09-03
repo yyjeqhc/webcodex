@@ -407,7 +407,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             copy_keys(obj, &mut out, &["limit", "summary_only"]);
         }
-        "list_agents" => {
+        "list_runners" => {
             out.insert(
                 "client_id_present".to_string(),
                 Value::Bool(obj.get("client_id").is_some_and(|value| !value.is_null())),
@@ -5542,7 +5542,7 @@ impl ToolCall {
                 "limit": limit,
                 "summary_only": summary_only,
             }),
-            Self::ListAgents {
+            Self::ListRunners {
                 client_id,
                 client_ids,
                 include_projects,

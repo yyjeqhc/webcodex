@@ -1264,7 +1264,7 @@ impl RunnerRegistry {
         Ok(false)
     }
 
-    /// Remove a job record entirely (agent-backed).
+    /// Remove a Runner-backed Job record entirely.
     /// The caller must ensure the job is terminal or stopped first; removing a
     /// still-active record would orphan the runner process (its later updates
     /// then fail harmlessly as "unknown shell job"). Also drops any still

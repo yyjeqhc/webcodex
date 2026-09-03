@@ -185,7 +185,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. Projects are registered by agents and use runtime ids like agent:<client_id>:<project_id>. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. Projects are registered by Runners and use the stable runtime id form agent:<client_id>:<project_id>. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -206,7 +206,7 @@ pub(crate) fn build_openapi_spec() -> Value {
             "/api/projects/list": {
                 "post": operation(
                     "listProjects",
-                    "List agent-registered projects",
+                    "List Runner-registered Projects",
                     "Read-only. When a Runner or Project is already known, pass exact client_id/project instead of reading the full registry; query is bounded text filtering over already-visible metadata and summary_only returns a compact workspace-selection projection.",
                     "ListProjectsRequest",
                     "ToolResult"
@@ -216,7 +216,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "registerProject",
                     "Register an existing project",
-                    "Mutation with side effects. Registers an existing directory as a WebCodex project on the selected agent. Executes on the agent and is constrained by agent policy. Requires Bearer auth.",
+                    "Mutation with side effects. Registers an existing directory as a WebCodex project on the selected Runner. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
                     "RegisterProjectRequest",
                     "ToolResult",
                     json!({
@@ -239,7 +239,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "createProject",
                     "Create and register a new project",
-                    "Mutation with side effects. Creates a new directory on the selected agent and registers it as a WebCodex project. Executes on the agent and is constrained by agent policy. Requires Bearer auth.",
+                    "Mutation with side effects. Creates a new directory on the selected Runner and registers it as a WebCodex Project. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
                     "CreateProjectRequest",
                     "ToolResult",
                     json!({
@@ -274,7 +274,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "getRuntimeStatus",
                     "Get runtime status",
-                    "Read-only runtime health/observability with agent count/online_count/stale_count, project/Job counts, and safe allowlisted effective_config. compact=true compacts this response, not MCP schema discovery. Pass exact client_id for one Runner; omit it for fleet-wide status.",
+                    "Read-only runtime health/observability with Runner count/online_count/stale_count, project/Job counts, and safe allowlisted effective_config. compact=true compacts this response, not MCP schema discovery. Pass exact client_id for one Runner; omit it for fleet-wide status.",
                     "RuntimeStatusRequest",
                     "ToolResult"
                 )
@@ -371,7 +371,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "readProjectFile",
                     "Read a project file",
-                    "Read-only. Reads a UTF-8 project file through its owning agent. Output is bounded; use start_line and limit for pagination. The response carries one text representation only: plain by default or 1-based numbered text when with_line_numbers=true.",
+                    "Read-only. Reads a UTF-8 project file through its owning Runner. Output is bounded; use start_line and limit for pagination. The response carries one text representation only: plain by default or 1-based numbered text when with_line_numbers=true.",
                     "ReadProjectFileRequest",
                     "ToolResult",
                     json!({
@@ -399,7 +399,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getProjectGitStatus",
                     "Get project git status",
-                    "Runs `git status --porcelain` in an agent-registered project and returns stdout, stderr, and exit_code. Safe read-only project inspection; use before proposing changes or invoking mutation tools.",
+                    "Runs `git status --porcelain` in an Runner-registered Project and returns stdout, stderr, and exit_code. Safe read-only project inspection; use before proposing changes or invoking mutation tools.",
                     "ProjectIdRequest",
                     "ToolResult",
                     json!({
@@ -416,7 +416,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getProjectGitDiff",
                     "Get project git diff",
-                    "Runs `git diff` in an agent-registered project and returns stdout, stderr, and exit_code. Optional `args` scopes paths or adds flags (e.g. [\"--stat\"]). Read-only inspection; routes to the owning agent.",
+                    "Runs `git diff` in an Runner-registered Project and returns stdout, stderr, and exit_code. Optional `args` scopes paths or adds flags (e.g. [\"--stat\"]). Read-only inspection; routes to the owning Runner.",
                     "ProjectGitDiffRequest",
                     "ToolResult",
                     json!({
@@ -440,7 +440,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getProjectGitDiffSummary",
                     "Get project git diff summary",
-                    "Read-only git diff summary for an agent-registered project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree. Routes to the owning agent.",
+                    "Read-only git diff summary for an Runner-registered Project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree. Routes to the owning Runner.",
                     "ProjectIdRequest",
                     "ToolResult",
                     json!({
@@ -457,7 +457,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "listProjectFiles",
                     "List project files",
-                    "Read-only bounded file listing of an agent-registered project directory. Returns project-relative paths plus a file/dir kind. Optional `path` scopes a subdirectory; `limit` bounds the entry count. Routes to the owning agent.",
+                    "Read-only bounded file listing of an Runner-registered Project directory. Returns project-relative paths plus a file/dir kind. Optional `path` scopes a subdirectory; `limit` bounds the entry count. Routes to the owning Runner.",
                     "ListProjectFilesRequest",
                     "ToolResult",
                     json!({
@@ -503,7 +503,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "applyUnifiedDiff",
                     "Apply a unified diff to a project",
-                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and agent shell capability. Use when input is already a standard unified diff; model-generated edits should use callRuntimeTool with tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
+                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and Runner shell capability. Use when input is already a standard unified diff; model-generated edits should use callRuntimeTool with tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
                     "ApplyUnifiedDiffRequest",
                     "ApplyUnifiedDiffToolResult",
                     json!({
@@ -521,7 +521,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runProjectShellCommand",
                     "Run a shell command in a project",
-                    "Runs a shell command in an agent-registered project and returns stdout, stderr, exit_code plus command_started/command_ok/failure_kind/tool_failure. Executable with side effects; requires Bearer auth and agent shell capability.",
+                    "Runs a shell command in an Runner-registered Project and returns stdout, stderr, exit_code plus command_started/command_ok/failure_kind/tool_failure. Executable with side effects; requires Bearer auth and Runner shell capability.",
                     "RunShellRequest",
                     "ToolResult",
                     json!({
@@ -547,7 +547,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "gitRestorePaths",
                     "Restore tracked project paths",
-                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the agent `structured_process_argv` capability.",
+                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the Runner `structured_process_argv` capability.",
                     "GitRestorePathsRequest",
                     "ToolResult",
                     json!({
@@ -565,7 +565,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "discardUntrackedFiles",
                     "Discard untracked project files",
-                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the agent `structured_process_argv` capability.",
+                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the Runner `structured_process_argv` capability.",
                     "DiscardUntrackedRequest",
                     "ToolResult",
                     json!({
@@ -583,7 +583,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "importConversationFilesToProject",
                     "Import ChatGPT conversation files to a project",
-                    "Mutation with side effects. Downloads GPT Actions openaiFileIdRefs immediately and saves bounded binary files into an agent-registered project. Populate openaiFileIdRefs from current conversation files generated by image generation, user upload, or Code Interpreter; never call with an empty array.",
+                    "Mutation with side effects. Downloads GPT Actions openaiFileIdRefs immediately and saves bounded binary files into an Runner-registered Project. Populate openaiFileIdRefs from current conversation files generated by image generation, user upload, or Code Interpreter; never call with an empty array.",
                     "ImportConversationFilesRequest",
                     "ImportConversationFilesResponse",
                     json!({
@@ -608,7 +608,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "startProjectShellJob",
                     "Start an async project shell job",
-                    "Starts an async background shell job in an agent-registered project and returns a job_id. Execution with side effects; requires Bearer auth and the agent async shell job capability. Poll with getRuntimeJobStatus; read output with getRuntimeJobTail or getRuntimeJobLog.",
+                    "Starts an async background shell job in an Runner-registered Project and returns a job_id. Execution with side effects; requires Bearer auth and the Runner async shell job capability. Poll with getRuntimeJobStatus; read output with getRuntimeJobTail or getRuntimeJobLog.",
                     "StartProjectShellJobRequest",
                     "ToolResult",
                     json!({
@@ -886,7 +886,6 @@ fn is_consequential_operation(operation_id: &str) -> bool {
     match operation_id {
         "listRuntimeTools"
         | "listProjects"
-        | "listAgents"
         | "getRuntimeStatus"
         | "readProjectFile"
         | "listProjectFiles"
@@ -990,7 +989,7 @@ fn schemas() -> Value {
             "description": "Import up to 10 GPT Actions conversation files into a project. Supports image/png, image/jpeg, image/webp, application/pdf, application/zip, DOCX/PPTX/XLSX OOXML MIME types, text/plain, text/csv, application/json, and restricted application/octet-stream.",
             "properties": {
                 "openaiFileIdRefs": {"type": "array", "maxItems": 10, "items": {"$ref": "#/components/schemas/OpenAiFileIdRef"}},
-                "project": {"type": "string", "description": "Agent-registered runtime project id from listProjects."},
+                "project": {"type": "string", "description": "Runner-registered runtime Project id from listProjects."},
                 "output_dir": {"type": "string", "description": "Optional project-relative output directory, for example docs/assets or artifacts/imports."},
                 "targets": {"type": "array", "items": {"type": "string"}, "description": "Optional per-file output filenames."},
                 "overwrite": {"type": "boolean", "description": "Allow overwriting existing files. Defaults to false."}
@@ -1300,11 +1299,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "path"],
-            "description": "Read a UTF-8 file from an agent-registered project.",
+            "description": "Read a UTF-8 file from an Runner-registered Project.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "path": {
                     "type": "string",
@@ -1336,7 +1335,7 @@ fn schemas() -> Value {
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "session_id": {
                     "type": "string",
@@ -1348,11 +1347,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project"],
-            "description": "Run `git diff` in an agent-registered project. Optional `args` scopes paths or adds git diff flags.",
+            "description": "Run `git diff` in an Runner-registered Project. Optional `args` scopes paths or adds git diff flags.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "args": {
                     "type": "array",
@@ -1369,11 +1368,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "diff"],
-            "description": "Apply one bounded raw standard unified diff to an agent-registered project after the tool's own safety/applicability preflight.",
+            "description": "Apply one bounded raw standard unified diff to an Runner-registered Project after the tool's own safety/applicability preflight.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "diff": {
                     "type": "string",
@@ -1399,7 +1398,7 @@ fn schemas() -> Value {
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "paths": {
                     "type": "array",
@@ -1420,7 +1419,7 @@ fn schemas() -> Value {
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "paths": {
                     "type": "array",
@@ -1437,11 +1436,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "command"],
-            "description": "Start an async background shell job in an agent-registered project. Execution with side effects; returns a job_id to poll with getRuntimeJobStatus.",
+            "description": "Start an async background shell job in an Runner-registered Project. Execution with side effects; returns a job_id to poll with getRuntimeJobStatus.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "command": {
                     "type": "string",
@@ -1457,7 +1456,7 @@ fn schemas() -> Value {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
+                    "description": "Optional project-relative working directory. The owning Runner enforces its cwd policy."
                 }
             }
         },
@@ -1465,11 +1464,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project"],
-            "description": "List files in an agent-registered project directory. Read-only bounded listing.",
+            "description": "List files in an Runner-registered Project directory. Read-only bounded listing.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "session_id": {
                     "type": "string",
@@ -1489,11 +1488,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "pattern"],
-            "description": "Search text inside an agent-registered project. Read-only bounded matches.",
+            "description": "Search text inside an Runner-registered Project. Read-only bounded matches.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "pattern": {
                     "type": "string",
@@ -1597,11 +1596,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "command"],
-            "description": "Run a shell command in an agent-registered project. Executable with side effects; result output includes command_started, command_ok, failure_kind, and tool_failure semantics.",
+            "description": "Run a shell command in an Runner-registered Project. Executable with side effects; result output includes command_started, command_ok, failure_kind, and tool_failure semantics.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "command": {
                     "type": "string",
@@ -1617,7 +1616,7 @@ fn schemas() -> Value {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
+                    "description": "Optional project-relative working directory. The owning Runner enforces its cwd policy."
                 }
             }
         },
@@ -1764,12 +1763,12 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["client_id", "id", "name", "path"],
-            "description": "Register an existing directory as a WebCodex project on the selected agent. Mutation with side effects; executes on the agent and is constrained by agent policy.",
+            "description": "Register an existing directory as a WebCodex Project on the selected Runner. Mutation with side effects; executes on the Runner and is constrained by Runner policy.",
             "properties": {
-                "client_id": {"type": "string", "description": "Registered agent client_id from listAgents."},
+                "client_id": {"type": "string", "description": "Registered Runner client_id from the `list_runners` runtime tool."},
                 "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
                 "name": {"type": "string", "description": "Human-readable project name."},
-                "path": {"type": "string", "description": "Absolute directory path on the agent host."},
+                "path": {"type": "string", "description": "Absolute directory path on the Runner host."},
                 "description": {"type": "string", "description": "Optional project description."},
                 "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
                 "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
@@ -1779,12 +1778,12 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["client_id", "id", "name", "path"],
-            "description": "Create a new directory on the selected agent and register it as a WebCodex project. Mutation with side effects; executes on the agent and is constrained by agent policy.",
+            "description": "Create a new directory on the selected Runner and register it as a WebCodex Project. Mutation with side effects; executes on the Runner and is constrained by Runner policy.",
             "properties": {
-                "client_id": {"type": "string", "description": "Registered agent client_id from listAgents."},
+                "client_id": {"type": "string", "description": "Registered Runner client_id from the `list_runners` runtime tool."},
                 "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
                 "name": {"type": "string", "description": "Human-readable project name."},
-                "path": {"type": "string", "description": "Absolute directory path on the agent host."},
+                "path": {"type": "string", "description": "Absolute directory path on the Runner host."},
                 "description": {"type": "string", "description": "Optional project description."},
                 "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
                 "template": {"type": "string", "description": "Template: 'empty' (default) or 'basic'."},

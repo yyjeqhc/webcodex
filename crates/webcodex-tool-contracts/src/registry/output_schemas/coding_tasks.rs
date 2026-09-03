@@ -908,7 +908,7 @@ fn semantic_navigation_schema() -> Value {
         "description": "Always-present bounded Rust/Go semantic-navigation capability summary. Derived only from a typed agent status probe; never contains transport envelopes, process output, paths, environment variables, or symbol/location data.",
         "additionalProperties": false,
         "properties": {
-            "supported": schema_type("boolean", "True when the project is agent-backed, the owning agent is connected, and it advertises lsp_read_only_navigation."),
+            "supported": schema_type("boolean", "True when the Project is Runner-backed, the owning Runner is connected, and it advertises lsp_read_only_navigation."),
             "available": schema_type("boolean", "True when supported Rust/Go navigation has an available executable or an existing running/initializing server slot. A crashed slot stays available only while the agent still reports the executable as available."),
             "recommended": schema_type("boolean", "True only for available or running status."),
             "status": {

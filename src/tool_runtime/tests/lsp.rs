@@ -10,7 +10,8 @@ use crate::lsp_bridge::{
 };
 use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use crate::tool_runtime::tool_definition::{
-    lookup_tool_definition, model_visible_tool_definitions, AgentCapability, TOOL_CATEGORY_LSP,
+    lookup_tool_definition, model_visible_tool_definitions, RunnerCapabilityRequirement,
+    TOOL_CATEGORY_LSP,
 };
 use crate::tool_runtime::{ToolCall, ToolResult};
 use serde_json::{json, Value};
@@ -36,8 +37,8 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         assert!(!def.metadata.destructive, "{name}");
         assert!(!def.metadata.shell_like, "{name}");
         assert_eq!(
-            def.agent_capability,
-            Some(AgentCapability::LspReadOnlyNavigation),
+            def.runner_capability,
+            Some(RunnerCapabilityRequirement::LspReadOnlyNavigation),
             "{name}"
         );
         assert_eq!(
@@ -55,8 +56,8 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         crate::tool_runtime::metadata::ToolEffect::Observe
     );
     assert_eq!(
-        hierarchy.agent_capability,
-        Some(AgentCapability::LspCallHierarchy)
+        hierarchy.runner_capability,
+        Some(RunnerCapabilityRequirement::LspCallHierarchy)
     );
     assert_eq!(
         hierarchy.metadata.authority,

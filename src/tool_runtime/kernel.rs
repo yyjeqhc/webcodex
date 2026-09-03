@@ -1339,7 +1339,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            check_runtime_tool_scope(Some(&allowed), "list_agents"),
+            check_runtime_tool_scope(Some(&allowed), "list_runners"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
                 description: "missing required scope: runtime:read".to_string(),

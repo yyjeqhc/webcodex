@@ -1089,12 +1089,12 @@ async fn coding_workflow_runner_offline_is_still_blocking() {
         )
         .await;
 
-    // Project resolution or agent health may fail closed — either is blocking.
+    // Project resolution or Runner health may fail closed — either is blocking.
     if result.success {
         let verdict = &result.output["startup_verdict"];
         assert_eq!(
             verdict["blocking"], true,
-            "agent offline / unreachable must remain blocking: {verdict}"
+            "Runner offline / unreachable must remain blocking: {verdict}"
         );
         assert_eq!(verdict["status"], "fail");
         assert!(result.output["blockers"]

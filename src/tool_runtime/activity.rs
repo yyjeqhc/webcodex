@@ -36,9 +36,9 @@ impl ActivityRecorder for NoopActivityRecorder {
     fn record(&self, _record: ActivityRecord<'_>) {}
 }
 
-/// Executing device for an agent-backed project id (`agent:<client>:<name>`).
+/// Executing Runner for the stable legacy project id form (`agent:<client>:<name>`).
 /// Local projects have no device.
-pub(crate) fn agent_client_from_project(project: &str) -> Option<&str> {
+pub(crate) fn runner_client_from_project(project: &str) -> Option<&str> {
     project
         .strip_prefix("agent:")
         .and_then(|rest| rest.split_once(':'))
@@ -95,13 +95,13 @@ mod tests {
     }
 
     #[test]
-    fn client_extraction_handles_agent_and_local_projects() {
+    fn client_extraction_handles_runner_and_local_projects() {
         assert_eq!(
-            agent_client_from_project("agent:laptop:webcodex"),
+            runner_client_from_project("agent:laptop:webcodex"),
             Some("laptop")
         );
-        assert_eq!(agent_client_from_project("agent::webcodex"), None);
-        assert_eq!(agent_client_from_project("demo"), None);
-        assert_eq!(agent_client_from_project("agent:solo"), None);
+        assert_eq!(runner_client_from_project("agent::webcodex"), None);
+        assert_eq!(runner_client_from_project("demo"), None);
+        assert_eq!(runner_client_from_project("agent:solo"), None);
     }
 }

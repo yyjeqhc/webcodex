@@ -116,7 +116,7 @@ impl ConnectorContext {
         validate_opaque_id(&self.workspace_id, "wc_ws_", "connector workspace id")?;
         if !self.executor_project.starts_with("agent:") {
             return Err(
-                "WEBCODEX_CONNECTOR_EXECUTOR_PROJECT must be an agent-backed runtime id".into(),
+                "WEBCODEX_CONNECTOR_EXECUTOR_PROJECT must be a Runner-backed runtime id".into(),
             );
         }
         if !Path::new(&self.executor_root).is_absolute() || self.executor_root == "/" {

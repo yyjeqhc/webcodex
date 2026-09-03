@@ -5,7 +5,7 @@ use super::*;
 // ============================================================================
 //
 // These tests drive `job_log_for_auth` with `after_observation_token`/`wait_secs`
-// against a sequenced agent-backed job. A sequenced agent (`job_state_reconciliation`)
+// against a sequenced Runner-backed job. A sequenced Runner (`job_state_reconciliation`)
 // advances `last_update_seq` via `update_job`, so waiters observe real sequence
 // advancement, log growth, and terminal transitions.
 

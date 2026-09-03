@@ -91,7 +91,7 @@ mod windows_guard {
             vec!["runner", "stop", "--profile", "demo"],
             vec!["runner", "restart", "--profile", "demo"],
             vec!["runner", "logs", "--profile", "demo"],
-            vec!["agent-tokens"],
+            vec!["runner-tokens"],
             vec!["status"],
             vec!["doctor"],
         ] {

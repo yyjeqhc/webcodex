@@ -71,7 +71,7 @@ pub(super) struct ShellClientRecord {
     pub(super) transport: AgentTransport,
     /// Sanitized agent policy summary reported at registration. `None` for
     /// older agents that did not report a policy. Exposed in
-    /// `runtime_status` / `listAgents`; never carries token/env/init_script.
+    /// `runtime_status` / `list_runners`; never carries token/env/init_script.
     pub(super) policy: Option<AgentPolicySummary>,
     /// Lightweight quick-start isolation group captured at registration. This
     /// is intentionally not exposed in `ShellClientView`.

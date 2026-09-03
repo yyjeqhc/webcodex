@@ -86,14 +86,14 @@ with the provider disabled or enabled.
 The bounded version reported by MCP `initialize.serverInfo` is exposed in
 provider status after a successful start. A version is retained only when it
 matches a small version-string character allowlist. Status queries are passive:
-`runtime_status`, `list_agents`, and local snapshot reads never start Claude.
+`runtime_status`, `list_runners`, and local snapshot reads never start Claude.
 With the default Runner configuration, the expected snapshot is
 `strategy=native`, `enabled=false`, and `process_state=not_started`; this confirms
 that observability is deployed but does not mean Claude has been configured or
 started. The executable path is not exposed, and a missing command never
 prevents the agent from starting.
 
-`runtime_status` and `listAgents` expose the current bounded snapshot under
+`runtime_status` and `list_runners` expose the current bounded snapshot under
 `tool_providers`. Registration and reconnect carry a complete snapshot. Later
 changed revisions reuse the existing agent transport: polling agents attach
 them to their next poll, while WebSocket/QUIC agents send a changed-only

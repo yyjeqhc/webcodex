@@ -478,10 +478,10 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
     } else {
         read_optional_user_api_token(&opts.user_token_file, "--user-token-file")?
     };
-    let agent_token = if local.is_some() {
+    let runner_token = if local.is_some() {
         None
     } else {
-        read_optional_token(&opts.agent_token_file, "--agent-token-file")?
+        read_optional_token(&opts.runner_token_file, "--runner-token-file")?
     };
 
     let mut runtime_http: Option<HttpStatusSummary> = None;
@@ -500,10 +500,10 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         runtime_http = Some(http);
     }
 
-    let mut agent_boundary_status: Option<&'static str> = None;
-    let mut agent_boundary_detail: Option<String> = None;
+    let mut runner_token_boundary_status: Option<&'static str> = None;
+    let mut runner_token_boundary_detail: Option<String> = None;
     if let (Some(server_url), Some(token)) =
-        (effective_server_url.as_deref(), agent_token.as_deref())
+        (effective_server_url.as_deref(), runner_token.as_deref())
     {
         match http_post_json_status(
             server_url,
@@ -515,21 +515,21 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
         .await
         {
             Ok((status, content_type, _)) if status == 401 || status == 403 => {
-                agent_boundary_status = Some("PASS");
-                agent_boundary_detail =
-                    Some("agent token cannot call /api/runtime/status".to_string());
+                runner_token_boundary_status = Some("PASS");
+                runner_token_boundary_detail =
+                    Some("Runner transport token cannot call /api/runtime/status".to_string());
                 let _ = content_type;
             }
             Ok((status, content_type, _)) => {
-                agent_boundary_status = Some("FAIL");
-                agent_boundary_detail = Some(format!(
+                runner_token_boundary_status = Some("FAIL");
+                runner_token_boundary_detail = Some(format!(
                     "unexpected HTTP {} content-type {}",
                     status, content_type
                 ));
             }
             Err(e) => {
-                agent_boundary_status = Some("FAIL");
-                agent_boundary_detail = Some(e);
+                runner_token_boundary_status = Some("FAIL");
+                runner_token_boundary_detail = Some(e);
             }
         }
     }
@@ -571,13 +571,13 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
                 "checked": false,
                 "reason": "requires server URL and --user-token-file",
             })),
-            "agent_token_boundary": agent_boundary_status.map(|status| json!({
+            "agent_token_boundary": runner_token_boundary_status.map(|status| json!({
                 "checked": true,
                 "status": status,
-                "detail": agent_boundary_detail,
+                "detail": runner_token_boundary_detail,
             })).unwrap_or_else(|| json!({
                 "checked": false,
-                "reason": "requires server URL and --agent-token-file",
+                "reason": "requires server URL and --runner-token-file",
             })),
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
@@ -683,14 +683,14 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
             "  runtime check:        skipped (requires server URL and --user-token-file)\n",
         ),
     }
-    match agent_boundary_status {
+    match runner_token_boundary_status {
         Some(status) => out.push_str(&format!(
-            "  agent token boundary: {} ({})\n",
+            "  Runner token boundary: {} ({})\n",
             status,
-            agent_boundary_detail.unwrap_or_else(|| "unknown".to_string())
+            runner_token_boundary_detail.unwrap_or_else(|| "unknown".to_string())
         )),
         None => out.push_str(
-            "  agent token boundary: skipped (requires server URL and --agent-token-file)\n",
+            "  Runner token boundary: skipped (requires server URL and --runner-token-file)\n",
         ),
     }
     Ok(out)

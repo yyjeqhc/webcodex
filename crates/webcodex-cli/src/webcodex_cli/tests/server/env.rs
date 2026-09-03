@@ -70,8 +70,8 @@ fn token_generate_api_prints_token_hash_and_prefix() {
 }
 
 #[test]
-fn token_generate_agent_prints_token_hash_and_prefix() {
-    let action = cli_action(args(&["tokens", "generate", "--kind", "agent"]));
+fn token_generate_runner_prints_legacy_compatible_token_prefix() {
+    let action = cli_action(args(&["tokens", "generate", "--kind", "runner"]));
     match action {
         CliAction::TokenGenerate(opts) => {
             let out = render_token_generate(opts);
@@ -82,6 +82,14 @@ fn token_generate_agent_prints_token_hash_and_prefix() {
             assert!(out.contains("use `webcodex connect`"));
         }
         other => panic!("expected TokenGenerate, got {other:?}"),
+    }
+}
+
+#[test]
+fn token_generate_agent_kind_is_a_legacy_runner_alias() {
+    match cli_action(args(&["tokens", "generate", "--kind", "agent"])) {
+        CliAction::TokenGenerate(opts) => assert_eq!(opts.kind, "runner"),
+        other => panic!("expected Runner token generation alias, got {other:?}"),
     }
 }
 
@@ -142,7 +150,7 @@ fn token_register_hash_builds_hash_registration_request() {
 #[test]
 fn agent_token_register_hash_builds_hash_registration_request() {
     let action = cli_action(args(&[
-        "agent-tokens",
+        "runner-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -162,9 +170,9 @@ fn agent_token_register_hash_builds_hash_registration_request() {
         "agent:register,agent:poll",
     ]));
     match action {
-        CliAction::Admin(AdminCliCommand::AgentTokensRegisterHash(opts, t)) => {
+        CliAction::Admin(AdminCliCommand::RunnerTokensRegisterHash(opts, t)) => {
             let req =
-                build_admin_request(&AdminCliCommand::AgentTokensRegisterHash(opts, t)).unwrap();
+                build_admin_request(&AdminCliCommand::RunnerTokensRegisterHash(opts, t)).unwrap();
             assert_eq!(req.path, "/api/agent-tokens/register_hash");
             assert_eq!(req.token, "wc_acct_fake");
             assert_eq!(req.body["username"], "alice");
@@ -174,7 +182,7 @@ fn agent_token_register_hash_builds_hash_registration_request() {
             assert_eq!(req.body["scopes"], json!(["agent:register", "agent:poll"]));
             assert!(req.body.get("token").is_none());
         }
-        other => panic!("expected AgentTokensRegisterHash, got {other:?}"),
+        other => panic!("expected RunnerTokensRegisterHash, got {other:?}"),
     }
 }
 
@@ -202,7 +210,7 @@ fn tokens_and_agent_tokens_commands_parse_to_admin() {
     ));
 
     let action = cli_action(args(&[
-        "agent-tokens",
+        "runner-tokens",
         "create",
         "--server-url",
         "https://example.test",
@@ -214,21 +222,21 @@ fn tokens_and_agent_tokens_commands_parse_to_admin() {
         "alice-laptop",
     ]));
     match action {
-        CliAction::Admin(AdminCliCommand::AgentTokensCreate(_, t)) => {
+        CliAction::Admin(AdminCliCommand::RunnerTokensCreate(_, t)) => {
             // Default agent scopes applied.
             assert_eq!(
                 t.scopes,
-                SETUP_AGENT_SCOPES
+                SETUP_RUNNER_SCOPES
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>()
             );
         }
-        other => panic!("expected AgentTokensCreate, got {other:?}"),
+        other => panic!("expected RunnerTokensCreate, got {other:?}"),
     }
 
     let list = cli_action(args(&[
-        "agent-tokens",
+        "runner-tokens",
         "list",
         "--server-url",
         "https://example.test",
@@ -239,7 +247,7 @@ fn tokens_and_agent_tokens_commands_parse_to_admin() {
     ]));
     assert!(matches!(
         list,
-        CliAction::Admin(AdminCliCommand::AgentTokensList(_, _))
+        CliAction::Admin(AdminCliCommand::RunnerTokensList(_, _))
     ));
 
     let revoke = cli_action(args(&[
@@ -301,7 +309,7 @@ async fn token_create_local_does_not_send_plaintext_token_to_server() {
 }
 
 #[tokio::test]
-async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
+async fn runner_token_create_local_does_not_send_plaintext_token_to_server() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
@@ -326,7 +334,7 @@ async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
         )
         .unwrap();
     });
-    let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+    let out = run_runner_token_create_local(RunnerTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
             server_http: direct_server_http(),
@@ -336,11 +344,11 @@ async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
         username: "alice".to_string(),
         client_id: "alice-laptop".to_string(),
         name: Some("alice laptop".to_string()),
-        scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        scopes: SETUP_RUNNER_SCOPES.iter().map(|s| s.to_string()).collect(),
     })
     .await
     .unwrap();
-    assert!(out.contains("Agent token created locally and registered with server."));
+    assert!(out.contains("Runner transport token created locally and registered with server."));
     assert!(out.contains("Client ID:\nalice-laptop"));
     assert_eq!(out.matches("wc_agent_").count(), 1);
     handle.join().unwrap();
@@ -351,7 +359,7 @@ async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
 // operation, so the env lock is held across the awaits by contract.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "current_thread")]
-async fn agent_token_create_local_prefers_admin_token_over_default_account_credential() {
+async fn runner_token_create_local_prefers_admin_token_over_default_account_credential() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -373,7 +381,7 @@ async fn agent_token_create_local_prefers_admin_token_over_default_account_crede
         )
         .unwrap();
     });
-    let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+    let out = run_runner_token_create_local(RunnerTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
             server_http: direct_server_http(),
@@ -383,7 +391,7 @@ async fn agent_token_create_local_prefers_admin_token_over_default_account_crede
         username: "alice".to_string(),
         client_id: "alice-laptop".to_string(),
         name: None,
-        scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        scopes: SETUP_RUNNER_SCOPES.iter().map(|s| s.to_string()).collect(),
     })
     .await
     .unwrap();
@@ -396,7 +404,7 @@ async fn agent_token_create_local_prefers_admin_token_over_default_account_crede
 // operation, so the env lock is held across the awaits by contract.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "current_thread")]
-async fn agent_token_create_local_uses_default_account_credential() {
+async fn runner_token_create_local_uses_default_account_credential() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new().set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -418,7 +426,7 @@ async fn agent_token_create_local_uses_default_account_credential() {
         )
         .unwrap();
     });
-    let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+    let out = run_runner_token_create_local(RunnerTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
             server_http: direct_server_http(),
@@ -427,7 +435,7 @@ async fn agent_token_create_local_uses_default_account_credential() {
         username: "alice".to_string(),
         client_id: "alice-laptop".to_string(),
         name: None,
-        scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        scopes: SETUP_RUNNER_SCOPES.iter().map(|s| s.to_string()).collect(),
     })
     .await
     .unwrap();

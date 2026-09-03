@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub use webcodex_core::workflow_session_contract::{ExecutionShell, SessionMode};
 
 /// Serde default helper: `true`. Used by `ToolCall` variants whose `allow_patch`
-/// field defaults to true (matching the agent-side project TOML parser).
+/// field defaults to true (matching the Runner-side Project TOML parser).
 pub fn default_true() -> bool {
     true
 }

@@ -1,4 +1,4 @@
-use super::AgentCapability::{GitOrShell, OwnerOnly};
+use super::RunnerCapabilityRequirement::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     adaptive_runtime_direct, context_recovery_only, def, model_spec, permission_risk,

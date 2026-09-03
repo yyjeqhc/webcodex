@@ -245,7 +245,7 @@ mod tests {
             "register_project",
             "unregister_project",
             "create_project",
-            "list_agents",
+            "list_runners",
             "runtime_status",
             "work_on_project",
         ] {
@@ -321,7 +321,7 @@ mod tests {
         assert!(find("work_on_project")
             .description
             .contains("Git not required"));
-        for name in ["list_agents", "runtime_status"] {
+        for name in ["list_runners", "runtime_status"] {
             let description = &find(name).description;
             assert!(
                 description.contains("shared Job concurrency"),

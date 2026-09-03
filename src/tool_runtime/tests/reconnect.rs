@@ -743,7 +743,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     assert!(compact_sf.get("capabilities").is_none());
     assert!(compact_sf.get("policy").is_none());
 
-    let listed = runtime.list_agents(None).await;
+    let listed = runtime.list_runners(None).await;
     assert!(listed.success);
     let listed_sf = listed.output["agents"]
         .as_array()

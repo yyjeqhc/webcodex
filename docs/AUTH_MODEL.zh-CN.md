@@ -14,7 +14,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT/MCP/agent |
 | 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions、MCP、runtime API | Runner 连接 |
-| Runner 令牌 | `wc_agent_...` | `webcodex agent-tokens create-local` | 仅 Runner 传输 | GPT/MCP/runtime/project API |
+| Runner 令牌 | `wc_agent_...` | `webcodex runner-tokens create-local` | 仅 Runner 传输 | GPT/MCP/runtime/project API |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
 
 "我需要哪个令牌？"的快速答案见 [CLI.md](CLI.zh-CN.md#凭据我到底需要哪个令牌)。
@@ -81,7 +81,7 @@ fallback。managed `wc_*` 值与空/空白 Bearer 值永远不会回退到 share
 
 ```bash
 webcodex tokens create-local
-webcodex agent-tokens create-local
+webcodex runner-tokens create-local
 ```
 
 这两个命令本地生成明文令牌，并只向 server 注册令牌 hash。

@@ -1,4 +1,4 @@
-use super::AgentCapability::{FileRead, FileWrite};
+use super::RunnerCapabilityRequirement::{FileRead, FileWrite};
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, requires_artifact_upload_path_binding, ToolDefinition,
@@ -7,7 +7,7 @@ use super::{
 use crate::metadata::{
     ToolPathHint::Artifact,
     ToolRisk::{ProjectWrite, Read},
-    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
+    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
@@ -25,7 +25,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -96,7 +96,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -118,7 +118,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -140,7 +140,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -162,7 +162,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -185,7 +185,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -210,7 +210,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,

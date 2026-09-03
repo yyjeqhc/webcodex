@@ -273,7 +273,7 @@ impl ToolRuntime {
             Ok(())
         } else {
             Err(ToolResult::err(format!(
-                "agent client {client_id} does not support shell or git"
+                "Runner {client_id} does not support shell or git"
             )))
         }
     }
@@ -2519,7 +2519,7 @@ fn startup_verdict(
                 push_unique_action(&mut actions, "inspect active jobs before proceeding")
             }
             Some("agent_offline") => {
-                push_unique_action(&mut actions, "check agent connectivity with list_agents")
+                push_unique_action(&mut actions, "check Runner connectivity with list_runners")
             }
             Some("tool_manifest_not_requested") => push_unique_action(
                 &mut actions,

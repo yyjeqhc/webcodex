@@ -219,7 +219,7 @@ impl ToolRuntime {
             // the Runner's complete projects Vec per match).
             let (
                 client_id,
-                agent_status,
+                runner_status,
                 connected,
                 last_seen,
                 project,
@@ -262,7 +262,8 @@ impl ToolRuntime {
                     "enabled": !project.disabled,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    "agent_status": agent_status,
+                    // `agent_status` is the stable pre-0.4 serialized compatibility key.
+                    "agent_status": runner_status,
                     "connected": connected,
                     "resolved_shell_profile": resolved_shell_profile,
                     "shell_profile_status": shell_profile_status,
@@ -286,7 +287,8 @@ impl ToolRuntime {
                     "revision": project.revision,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    "agent_status": agent_status,
+                    // `agent_status` is the stable pre-0.4 serialized compatibility key.
+                    "agent_status": runner_status,
                     "connected": connected,
                     "last_seen": last_seen,
                     "shell_profile": project.shell_profile,
@@ -546,7 +548,7 @@ impl ToolRuntime {
             .await
         else {
             return ToolResult::err(format!(
-                "unknown agent client '{}'. Call listAgents to discover registered client_ids.",
+                "unknown Runner '{}'. Call list_runners to discover registered client_ids.",
                 client_id
             ));
         };

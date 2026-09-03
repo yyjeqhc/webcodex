@@ -9,7 +9,7 @@ pub(in crate::tool_runtime::tests) const SAMPLE_PROJECT: &str = "agent:oe:privat
 pub(in crate::tool_runtime::tests) const UNIT_TOOL_FIXTURES: &[&str] = &[
     "list_tools",
     "list_projects",
-    "list_agents",
+    "list_runners",
     "runtime_status",
 ];
 

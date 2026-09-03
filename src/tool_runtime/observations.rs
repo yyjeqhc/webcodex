@@ -22,7 +22,7 @@ const MAX_TOOL_CALL_OBSERVATIONS: usize = 64;
 pub(crate) const NON_MEANINGFUL_ACTIVITY_TOOLS: &[&str] = &[
     "runtime_status",
     "list_tools",
-    "list_agents",
+    "list_runners",
     "list_projects",
     "tool_manifest",
     "read_tool_trace",

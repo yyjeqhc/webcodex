@@ -1,4 +1,4 @@
-//! Runtime dispatch for read-only agent-side LSP navigation tools.
+//! Runtime dispatch for read-only Runner-side LSP navigation tools.
 
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{

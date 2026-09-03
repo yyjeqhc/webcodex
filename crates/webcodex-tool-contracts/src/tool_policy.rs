@@ -4,7 +4,7 @@ use super::metadata::{
     tool_metadata, ToolApprovalPolicy, ToolEffect, ToolMetadata, ToolPathHint, ToolRisk,
 };
 use super::tool_definition::{
-    tool_definitions, AgentCapability, ToolContextContinuityPolicy, ToolDefinition,
+    tool_definitions, RunnerCapabilityRequirement, ToolContextContinuityPolicy, ToolDefinition,
     ToolEffectAnnotations, PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE,
     PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION,
     PERMISSION_RISK_WRITE,
@@ -203,10 +203,10 @@ pub fn runtime_tool_effect_annotations(name: &str) -> ToolEffectAnnotations {
     }
 }
 
-pub fn runtime_tool_agent_capability(name: &str) -> Option<AgentCapability> {
+pub fn runtime_tool_runner_capability(name: &str) -> Option<RunnerCapabilityRequirement> {
     lookup_tool_definition(name)
         .unwrap_or_else(|| panic!("missing ToolDefinition for {name}"))
-        .agent_capability
+        .runner_capability
 }
 
 pub fn runtime_tool_category(name: &str) -> &'static str {

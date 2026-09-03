@@ -1,4 +1,4 @@
-use super::AgentCapability::{GitOrShell, Shell, StructuredProcess};
+use super::RunnerCapabilityRequirement::{GitOrShell, Shell, StructuredProcess};
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, context_recovery_only, def, git_like, model_spec, ToolDefinition,
@@ -7,7 +7,7 @@ use super::{
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, Read},
-    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     delete_project_files_input_schema, discard_untracked_input_schema,
@@ -21,7 +21,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -47,7 +47,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(Shell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -69,7 +69,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -91,7 +91,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,

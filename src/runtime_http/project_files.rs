@@ -278,7 +278,7 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
     render_result(res, &audit, "discard_untracked", project, result);
 }
 
-/// `ToolCall::ListProjectFiles`. Read-only, agent-backed file listing.
+/// `ToolCall::ListProjectFiles`. Read-only, Runner-backed file listing.
 #[handler]
 pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/list_files", "listProjectFiles");
@@ -304,7 +304,7 @@ pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut
     render_result(res, &audit, "list_project_files", Some(project), result);
 }
 
-/// `ToolCall::SearchProjectText`. Read-only, agent-backed bounded text search.
+/// `ToolCall::SearchProjectText`. Read-only, Runner-backed bounded text search.
 #[handler]
 pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/search_text", "searchProjectText");

@@ -1,11 +1,11 @@
-use super::AgentCapability::GitOrShell;
+use super::RunnerCapabilityRequirement::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, change_summary_like, context_recovery_only, def, git_like, model_spec,
     ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_AGENT,
+    ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
@@ -20,7 +20,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -43,7 +43,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -68,7 +68,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -95,7 +95,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -117,7 +117,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -139,7 +139,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -161,7 +161,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,

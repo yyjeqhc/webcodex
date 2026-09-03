@@ -23,7 +23,7 @@ Client：
 - `webcodex runner status --profile workstation` 能读取本地 Runner config（`runner.toml`）。
 - canonical project 的 `webcodex doctor` 通过；managed deployment 则使用
   `webcodex ops status --strict --server-url https://your-domain.example`。
-- `listAgents` / `runtime_status` 显示 agent online。
+- `list_runners` / `runtime_status` 显示 Runner online。
 
 ## 常见问题
 
@@ -50,7 +50,7 @@ Hosted 日志位于
 
 默认每个 shared-key group 最多注册 16 个 Runner，单个 Server 进程全局最多保留
 1,024 个 shared-key Runner。离线 shared-key Runner 记录会在 24 小时后清理。
-Managed Agent Token 不受这些 shared-key 数量和保留期限限制；所有 Runner 注册都有
+Managed Runner Token 不受这些 shared-key 数量和保留期限限制；所有 Runner 注册都有
 64 个项目的输入安全上限。
 
 ### `connect` 拒绝 `wc_*`
@@ -152,16 +152,16 @@ sudo ln -s /opt/webcodex/bin/webcodex /usr/local/bin/webcodex
 
 `webcodex pairing create` 是 server/admin-side 命令，需要 server bootstrap env file。朋友或 client 机器应运行 `webcodex login <server-url> --code <wc_pair_...>`，并使用 server owner 发来的短期 `wc_pair_*` code。
 
-机器之间只复制 `wc_pair_*` code。不要复制 `WEBCODEX_TOKEN`、user API tokens、agent tokens、env files 或完整 `runner.toml` files。
+机器之间只复制 `wc_pair_*` code。不要复制 `WEBCODEX_TOKEN`、user API tokens、Runner tokens、env files 或完整 `runner.toml` files。
 
 ### Client 上 doctor 警告 `binary webcodex not found in PATH`
 
-这在 agent-only client machines 上可能是正常的。Agent-only client 需要公开 `webcodex` CLI 和 `webcodex-runner`；`webcodex-server` 只在 server host 上需要。
+这在 Runner-only client machines 上可能是正常的。Runner-only client 需要公开 `webcodex` CLI 和 `webcodex-runner`；`webcodex-server` 只在 server host 上需要。
 
 ### `client online: no`
 
 Hosted `connect` profile 使用上面的 profile-specific status 和日志路径。
-systemd-managed deployment 则检查 agent service 和连接详情：
+systemd-managed deployment 则检查 Runner service 和连接详情：
 
 使用安装 service 时选择的同一 scope：
 
@@ -175,7 +175,7 @@ sudo webcodex runner status --scope system
 sudo webcodex runner logs --scope system --lines 100
 ```
 
-同时确认 server URL、本地 token files 和 agent `allowed_roots`。缺失或为空的 `allowed_roots` 默认使用 `$HOME`；显式 `allowed_roots` 会覆盖该默认值。
+同时确认 server URL、本地 token files 和 Runner `allowed_roots`。缺失或为空的 `allowed_roots` 默认使用 `$HOME`；显式 `allowed_roots` 会覆盖该默认值。
 
 ### `listRuntimeTools` full response 过大
 
@@ -198,9 +198,9 @@ schema；artifact upload tools 应继续作为 runtime-only tools 通过
 刚升级，确认 public HTTPS 已指向新 service，并检查 `journalctl -u webcodex`
 中是否有 startup 或 auth errors。
 
-### Agent offline
+### Runner offline
 
-先运行 `runtime_status` 或 `listAgents`，再在 agent host 上检查：
+先运行 `runtime_status` 或 `list_runners`，再在 Runner host 上检查：
 
 ```bash
 webcodex runner status --scope user
@@ -208,7 +208,7 @@ webcodex runner logs --scope user --lines 100
 # 管理员管理的 system service 使用 `sudo ... --scope system`。
 ```
 
-确认 agent server URL、token file、service user 和 `allowed_roots`。
+确认 Runner server URL、token file、service user 和 `allowed_roots`。
 
 ### Token type 错误
 
@@ -239,7 +239,7 @@ system scope 调用 system manager，并使用 `/etc/systemd/system`。
 
 `git_status` 需要 git repository，部署 smoke 才能得到 clean 结果。为 disposable
 smoke project 初始化 git 并创建初始 commit，或把 smoke 指向另一个安全的
-agent-backed git project。
+Runner-backed git project。
 
 ### `operation_count` 超过 30
 

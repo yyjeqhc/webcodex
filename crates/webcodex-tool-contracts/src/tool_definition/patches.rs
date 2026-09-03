@@ -1,11 +1,11 @@
-use super::AgentCapability::{ApplyPatch, Shell};
+use super::RunnerCapabilityRequirement::{ApplyPatch, Shell};
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
     PERMISSION_RISK_PATCH, TOOL_CATEGORY_PATCH,
 };
 use crate::metadata::{
-    ToolPathHint::Patch, ToolRisk::ProjectWrite, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+    ToolPathHint::Patch, ToolRisk::ProjectWrite, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{apply_patch_input_schema, apply_unified_diff_input_schema};
 
@@ -18,7 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(ApplyPatch),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: ProjectWrite,
@@ -45,7 +45,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(Shell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: ProjectWrite,

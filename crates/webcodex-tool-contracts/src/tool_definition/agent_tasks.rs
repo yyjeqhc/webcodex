@@ -1,4 +1,4 @@
-use super::AgentCapability::CodingAgentRuns;
+use super::RunnerCapabilityRequirement::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
@@ -7,8 +7,8 @@ use super::{
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read, WorkflowManage},
-    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_AGENT,
-    TOOL_PROVIDER_CONTROL,
+    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_CONTROL,
+    TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     assign_agent_task_input_schema, complete_agent_task_attempt_input_schema,
@@ -156,7 +156,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
                     Some(CodingAgentRuns),
-                    TOOL_PROVIDER_AGENT,
+                    TOOL_PROVIDER_RUNNER,
                     super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: JobRun,
@@ -189,7 +189,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,

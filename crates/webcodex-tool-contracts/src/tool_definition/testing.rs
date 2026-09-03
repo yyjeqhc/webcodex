@@ -1,11 +1,11 @@
-use super::AgentCapability::{OwnerOnly, Shell};
+use super::RunnerCapabilityRequirement::{OwnerOnly, Shell};
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, captures_validation_output, def, model_spec, ToolDefinition,
     TOOL_CATEGORY_VALIDATION,
 };
 use crate::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::JobRun, JOB_RUN, TOOL_PROVIDER_AGENT,
+    ToolPathHint::None as NoPath, ToolRisk::JobRun, JOB_RUN, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema, go_test_input_schema,
@@ -18,7 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_VALIDATION,
             Some(Shell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: JobRun,
@@ -41,7 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_VALIDATION,
                 Some(Shell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
@@ -66,7 +66,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_VALIDATION,
                 Some(Shell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
@@ -91,7 +91,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_VALIDATION,
                 Some(OwnerOnly),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,

@@ -20,7 +20,7 @@ pub(crate) fn generate_local_api_token() -> String {
     )
 }
 
-pub(crate) fn generate_local_agent_token() -> String {
+pub(crate) fn generate_local_runner_token() -> String {
     format!(
         "wc_agent_{}{}",
         Uuid::new_v4().simple(),
@@ -39,8 +39,8 @@ pub(crate) fn local_token_prefix(token: &str) -> String {
 }
 
 pub(crate) fn render_token_generate(opts: TokenGenerateOptions) -> String {
-    let token = if opts.kind == "agent" {
-        generate_local_agent_token()
+    let token = if opts.kind == "runner" {
+        generate_local_runner_token()
     } else {
         generate_local_api_token()
     };

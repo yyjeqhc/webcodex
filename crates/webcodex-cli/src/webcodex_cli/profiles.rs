@@ -48,7 +48,7 @@ pub(crate) fn client_profile_user_token_file_for_scope(
     )
 }
 
-pub(crate) fn client_profile_agent_token_file_for_scope(
+pub(crate) fn client_profile_runner_token_file_for_scope(
     scope: ServiceScope,
     profile: &str,
 ) -> Result<PathBuf, String> {
@@ -171,6 +171,6 @@ pub(crate) fn client_profile_user_token_file(profile: &str) -> Result<PathBuf, S
     Ok(client_profile_dir(profile)?.join("webcodex-user-token"))
 }
 
-pub(crate) fn client_profile_agent_token_file(profile: &str) -> Result<PathBuf, String> {
+pub(crate) fn client_profile_runner_token_file(profile: &str) -> Result<PathBuf, String> {
     Ok(client_profile_dir(profile)?.join("webcodex-runner-token"))
 }

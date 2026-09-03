@@ -19,7 +19,7 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             "id",
             schema_type(
                 "string",
-                "Project onboarding result metadata for registration or create-and-register responses. Runtime project id assigned after the agent registers the project. The schema does not bypass authorization, permission, allowed-root, or agent path policy and does not expose environment, token, or secret values.",
+                "Project onboarding result metadata for registration or create-and-register responses. Runtime Project id assigned after the Runner registers the Project. The schema does not bypass authorization, permission, allowed-root, or Runner path policy and does not expose environment, token, or secret values.",
             ),
         ),
         (
@@ -47,7 +47,7 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             "path",
             schema_type(
                 "string",
-                "Project onboarding result metadata path for the registered project directory; not file content, not a permission grant, and not a bypass of agent path policy.",
+                "Project onboarding result metadata path for the registered Project directory; not file content, not a permission grant, and not a bypass of Runner path policy.",
             ),
         ),
         (

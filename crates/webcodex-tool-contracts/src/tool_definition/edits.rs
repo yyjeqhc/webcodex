@@ -1,4 +1,4 @@
-use super::AgentCapability::FileWrite;
+use super::RunnerCapabilityRequirement::FileWrite;
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
@@ -7,7 +7,7 @@ use super::{
 use crate::metadata::{
     ToolPathHint::{PathList, SinglePath},
     ToolRisk::ProjectWrite,
-    PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+    PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     apply_text_edits_input_schema, write_project_file_input_schema,
@@ -21,7 +21,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_EDIT,
             Some(FileWrite),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -47,7 +47,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_EDIT,
                 Some(FileWrite),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: ProjectWrite,

@@ -1,4 +1,4 @@
-use super::AgentCapability::{
+use super::RunnerCapabilityRequirement::{
     AsyncJobs, DetachedProcess, PersistentShell, Shell, StructuredProcess, StructuredScript,
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
@@ -9,7 +9,7 @@ use super::{
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read},
-    JOB_RUN, RUNTIME_READ, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_NATIVE,
+    JOB_RUN, RUNTIME_READ, TOOL_PROVIDER_NATIVE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
@@ -28,7 +28,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(StructuredProcess),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
@@ -53,7 +53,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(DetachedProcess),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,
@@ -77,7 +77,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(StructuredScript),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: JobRun,
@@ -99,7 +99,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(Shell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: JobRun,
@@ -121,7 +121,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(PersistentShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: JobRun,
@@ -143,7 +143,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(PersistentShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: JobRun,
@@ -165,7 +165,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(PersistentShell),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -188,7 +188,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(PersistentShell),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: JobRun,
@@ -213,7 +213,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(AsyncJobs),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: JobRun,

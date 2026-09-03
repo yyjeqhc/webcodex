@@ -2434,7 +2434,7 @@ mod tests {
 
     #[test]
     fn search_local_and_agent_parse_same_stdout_identically() {
-        // The agent path parses the runner's stdout with the same function as
+        // The Runner path parses the Runner's stdout with the same function as
         // the local path, so the exact same stdout string must yield identical
         // field semantics in both. This pins that parity for the record fields
         // the task lists: backend, result_mode, matches, count, truncated,

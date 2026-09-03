@@ -15,7 +15,7 @@ surfaces.
 | Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT/MCP/agent |
 | Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, runtime API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex agent-tokens create-local` | Runner transport only | GPT/MCP/runtime/project API |
+| Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | Runner transport only | GPT/MCP/runtime/project API |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
 
 The quick answer for "which token do I need?" is in
@@ -103,7 +103,7 @@ fallback.
 
 ```bash
 webcodex tokens create-local
-webcodex agent-tokens create-local
+webcodex runner-tokens create-local
 ```
 
 Those commands generate plaintext tokens locally and register only token hashes
@@ -268,7 +268,7 @@ connection state, and bounded capability facts including `computer_observe`,
 are additive and independent; missing old-Runner fields deserialize false and are
 not inferred from platform, observation, or control.
 The same projection includes the independent `computer_display_observe`, `computer_pointer_control`, `computer_clipboard_read`, and `computer_clipboard_write` facts without exposing native display topology, pointer mapping, or clipboard content/state. These capability booleans do not grant authority; runtime calls still enforce their scopes. The projection does not expose
-the broader projects, policy, jobs, host, or provider inventory from `list_agents`.
+the broader projects, policy, jobs, host, or provider inventory from `list_runners`.
 
 `computer:display_read` is a separate, wider privacy authority for full-display observation. Both `computer_list_displays` and `computer_snapshot_display` require **both** `computer:read` and `computer:display_read`; neither scope implies the other. Both tools also require the independent `computer_display_observe` Runner capability, which is missing/default false and is not inferred from window observation, region snapshots, or platform identity. Exact native Windows and macOS backends advertise that capability; unsupported or unproven platforms remain false.
 

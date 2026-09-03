@@ -4,7 +4,6 @@
 //! No HTTP framework types here — pure Rust input/output.
 
 pub mod activity;
-mod agent_authorization;
 mod agent_task;
 mod cargo;
 mod cargo_tools;
@@ -24,6 +23,7 @@ mod file_listing;
 mod file_tools;
 pub(crate) mod files;
 mod git;
+mod runner_authorization;
 #[cfg(test)]
 pub(crate) use git::{framed_clean_show_changes_test_stdout, framed_show_changes_test_block};
 mod git_committed;
@@ -94,14 +94,14 @@ pub(crate) const MODEL_TOOL_DESCRIPTION_MAX_CHARS: usize = 600;
 #[cfg(test)]
 pub use crate::apply_edits_shared::ApplyTextLineScope;
 #[cfg(test)]
-pub(crate) use agent_authorization::required_agent_capability;
-#[cfg(test)]
 pub(crate) use files::MAX_PROJECT_ARTIFACT_BYTES;
 pub(crate) use files::{
     validate_project_artifact_export_snapshot, ProjectArtifactExportSnapshot,
     MAX_PROJECT_ARTIFACT_EXPORT_BYTES, MAX_READ_PROJECT_ARTIFACT_LENGTH,
 };
 pub(crate) use patch::MAX_UNIFIED_DIFF_BYTES;
+#[cfg(test)]
+pub(crate) use runner_authorization::required_runner_capability;
 pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;
 #[cfg(test)]
@@ -120,7 +120,7 @@ pub(crate) use tool_definition::is_model_hidden_tool_name;
 #[cfg(test)]
 pub(crate) use tool_definition::{
     known_tool_names, model_hidden_tool_names, runtime_tool_category as tool_manifest_category,
-    AgentCapability,
+    RunnerCapabilityRequirement,
 };
 pub use tool_inputs::{
     default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, ListToolsOptions,

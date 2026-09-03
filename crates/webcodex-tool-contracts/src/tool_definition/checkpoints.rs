@@ -1,4 +1,4 @@
-use super::AgentCapability::{FileRead, FileWrite, OwnerOnly};
+use super::RunnerCapabilityRequirement::{FileRead, FileWrite, OwnerOnly};
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, git_like, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_PATCH,

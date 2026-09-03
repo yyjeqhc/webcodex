@@ -1,4 +1,4 @@
-//! Typed agent-side validation bridge contract.
+//! Typed Runner-side validation bridge contract.
 //!
 //! Shared by the server runtime and `webcodex-runner`. This module intentionally
 //! carries only declarative, project-relative validation requests — never

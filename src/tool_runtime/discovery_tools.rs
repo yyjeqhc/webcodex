@@ -1,6 +1,6 @@
 //! Runtime dispatch adapters for discovery and observability tool calls.
 
-use super::runtime_info::ListAgentsOptions;
+use super::runtime_info::ListRunnersOptions;
 use super::tool_inputs::ListToolsOptions;
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -23,15 +23,15 @@ impl ToolRuntime {
                 summary_only,
                 limit,
             })),
-            ToolCall::ListAgents {
+            ToolCall::ListRunners {
                 client_id,
                 client_ids,
                 include_projects,
                 summary_only,
             } => {
-                self.list_agents_with_options(
+                self.list_runners_with_options(
                     auth,
-                    ListAgentsOptions {
+                    ListRunnersOptions {
                         client_id,
                         client_ids,
                         include_projects,

@@ -9,7 +9,7 @@ use crate::metadata::{
     PROJECT_READ, PROJECT_WRITE, RUNTIME_READ, TOOL_PROVIDER_CONTROL,
 };
 use crate::registry::input_schemas::{
-    create_project_input_schema, list_agents_input_schema, list_projects_input_schema,
+    create_project_input_schema, list_projects_input_schema, list_runners_input_schema,
     register_project_input_schema, runtime_status_input_schema, tool_manifest_input_schema,
     unregister_project_input_schema,
 };
@@ -105,7 +105,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     context_recovery_only(model_spec(
         def(
-            "list_agents",
+            "list_runners",
             ModelVisible,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -123,7 +123,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
         ),
         "List caller-visible Runners; use exact client_id/client_ids if known, summary_only + include_projects=false for health. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
-        list_agents_input_schema,
+        list_runners_input_schema,
     )),
     adaptive_runtime_direct(
         context_recovery_only(model_spec(

@@ -484,7 +484,7 @@ pub(in crate::tool_runtime::tests) async fn complete_project_overview_agent_requ
         options["max_depth"].as_u64().map(|value| value as usize),
         options["limit"].as_u64().map(|value| value as usize),
     )
-    .expect("agent-side project_overview scan");
+    .expect("Runner-side project_overview scan");
     complete_patch_agent_request(
         runtime,
         client_id,

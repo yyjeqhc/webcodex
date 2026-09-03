@@ -1,6 +1,6 @@
 //! Shared model-output normalization for `read_file`.
 //!
-//! Both the local ToolRuntime and the agent-backed path produce their final
+//! Both the local ToolRuntime and the Runner-backed path produce their final
 //! model-facing success object through [`success_output`], so the field set,
 //! cursor math, and line-numbered text representation are owned in one place.
 //! The agent path additionally validates the runner's v1 envelope (see the

@@ -1444,7 +1444,7 @@ fn job_summary_schema() -> Value {
                 "const": "agent",
                 "description": "Runner-backed Job executor."
             }),
-            "client_id": nullable_schema("string", "Agent client id for agent-backed jobs, when available."),
+            "client_id": nullable_schema("string", "Runner client_id for Runner-backed Jobs, when available."),
             "created_at": schema_type("integer", "Job creation timestamp."),
             "started_at": nullable_schema("integer", "Job start timestamp, when available."),
             "ended_at": nullable_schema("integer", "Job end timestamp, when available."),

@@ -1509,7 +1509,7 @@ mod tests {
     }
 
     /// A QUIC-registered agent must surface protocol generation 2 and the
-    /// `quic` transport in `list_clients` (used by runtime_status / listAgents).
+    /// `quic` transport in `list_clients` (used by runtime_status / list_runners).
     #[tokio::test]
     async fn quic_agent_surfaces_transport_and_protocol_in_list() {
         let (cert_der, key_der) = self_signed_cert();

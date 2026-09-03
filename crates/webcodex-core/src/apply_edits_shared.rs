@@ -1,5 +1,5 @@
 //! Types, limits, and the sensitive-path guard shared by the `apply_text_edits`
-//! host write path (`tool_runtime::files`) and the agent-side wire boundary.
+//! host write path (`tool_runtime::files`) and the Runner-side wire boundary.
 //! Both sides consume this module from `webcodex-core`.
 //!
 //! It must stay dependency-light: only `serde` and `std`, which both binaries

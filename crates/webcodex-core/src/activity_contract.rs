@@ -49,7 +49,7 @@ pub struct ActivityRecord<'a> {
     pub project: Option<&'a str>,
     /// Client surface that issued the call (for example `mcp` or `api`).
     pub surface: &'a str,
-    /// Executing device for agent-backed projects.
+    /// Executing Runner for Runner-backed Projects.
     pub client: Option<&'a str>,
     pub success: bool,
     pub session_id: Option<&'a str>,

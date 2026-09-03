@@ -27,7 +27,7 @@ Advanced / operator:\n\
   ops                           Read-only operator workflow checks\n\
   users                         Manage users\n\
   tokens                        Manage personal API credentials\n\
-  agent-tokens                  Manage Runner transport credentials\n\n\
+  runner-tokens                 Manage Runner transport credentials\n\n\
 Options:\n\
   -h, --help                    Print help and exit\n\
   -V, --version                 Print version and exit\n"
@@ -114,7 +114,7 @@ pub(crate) fn pairing_create_usage() -> &'static str {
        --display-name NAME       Optional display name for a newly created user\n\
        --ttl-secs SECS           Pairing code lifetime [default: 600; range: 60..3600]\n\
        --user-token-name NAME    Name for the user API token created during enroll\n\
-       --agent-token-name NAME   Name for the agent token created during enroll\n\
+       --runner-token-name NAME  Name for the Runner transport token created during enroll\n\
        --json                    Print machine-readable output\n\
        -h, --help                Print help and exit\n\n\
      Server/admin-side command:\n\
@@ -133,8 +133,8 @@ pub(crate) fn ops_usage() -> &'static str {
     "Usage: webcodex ops <COMMAND>\n\n\
      Read-only operator workflow checks for WebCodex.\n\n\
      Commands:\n\
-       status                  Summarize runtime, tools, jobs, agents, and projects\n\
-       agents                  Show compact agent fleet status\n\
+       status                  Summarize runtime, tools, jobs, Runners, and projects\n\
+       runners                 Show compact Runner fleet status\n\
        runner                  Show one exact Runner registration/build identity\n\
        projects                Show compact project inventory and smoke suitability\n\
        smoke-preflight         Check a project before deploy smoke validation\n\n\
@@ -153,7 +153,7 @@ pub(crate) fn ops_usage() -> &'static str {
 
 pub(crate) fn ops_status_usage() -> &'static str {
     "Usage: webcodex ops status [OPTIONS]\n\n\
-     Summarize runtime, tools, jobs, agents, and project health.\n\n\
+     Summarize runtime, tools, jobs, Runners, and project health.\n\n\
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
@@ -166,9 +166,9 @@ pub(crate) fn ops_status_usage() -> &'static str {
        -h, --help              Print help and exit\n"
 }
 
-pub(crate) fn ops_agents_usage() -> &'static str {
-    "Usage: webcodex ops agents [OPTIONS]\n\n\
-     Show compact read-only agent fleet status.\n\n\
+pub(crate) fn ops_runners_usage() -> &'static str {
+    "Usage: webcodex ops runners [OPTIONS]\n\n\
+     Show compact read-only Runner fleet status.\n\n\
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
@@ -316,8 +316,8 @@ pub(crate) fn runner_init_usage() -> &'static str {
     "Usage: webcodex runner init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
      Options:\n\
        --server-url URL           WebCodex server URL\n\
-       --token TOKEN              Agent token for generated config\n\
-       --token-file PATH          Read agent token from file\n\
+       --token TOKEN              Runner transport token for generated config\n\
+       --token-file PATH          Read Runner transport token from file\n\
        --client-id ID             Stable Runner client id\n\
        --profile NAME             Client config profile [default: client-id when deriving defaults]\n\
        --owner USER               Owner username\n\
@@ -371,7 +371,7 @@ pub(crate) fn runner_status_usage() -> &'static str {
        --proxy http://HOST:PORT  Explicit proxy override for Server checks\n\
        --no-system-proxy         Ignore proxy environment and connect directly\n\
        --user-token-file PATH     Read user API token for /api/runtime/status\n\
-       --agent-token-file PATH    Read agent token for boundary check\n\
+       --runner-token-file PATH   Read Runner transport token for boundary check\n\
        --json                     Print a machine-readable summary\n\
        -h, --help                 Print help and exit\n\n\
      User scope derives config under $XDG_CONFIG_HOME/webcodex (or\n\

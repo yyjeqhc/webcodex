@@ -490,7 +490,7 @@ job 取消语义）。`WEBCODEX_PERMISSION_MODE` 已移除；若设置，配置�
 
 ```bash
 webcodex ops status --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE" --strict
-webcodex ops agents --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+webcodex ops runners --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
 webcodex ops projects --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
 webcodex ops smoke-preflight --server-url "$SERVER_URL" \
   --token-file "$USER_TOKEN_FILE" --project agent:workstation:my-repo
@@ -505,7 +505,7 @@ webcodex ops smoke-preflight --server-url "$SERVER_URL" \
 
 1. `webcodex ops status ... --strict` 通过。
 2. `POST /api/runtime/status` 返回 `service=webcodex` 与预期公网 URL。
-3. `listAgents` 显示至少一个在线 agent。
+3. `list_runners` 显示至少一个在线 Runner。
 4. `listProjects` 显示 `agent:<client_id>:<project_id>` id。
 5. 已知项目上的只读项目工具可用。
 6. 写入/替换/校验测试只针对一次性 smoke 项目。

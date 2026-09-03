@@ -1,10 +1,10 @@
-use super::AgentCapability::{FileRead, SkillStoreManage};
+use super::RunnerCapabilityRequirement::{FileRead, SkillStoreManage};
 use super::ToolVisibility::ModelHidden;
 use super::{def, ToolDefinition, TOOL_CATEGORY_RUNTIME};
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{Read, SkillManage},
-    ADMIN, PROJECT_READ, TOOL_PROVIDER_AGENT,
+    ADMIN, PROJECT_READ, TOOL_PROVIDER_RUNNER,
 };
 
 /// Fixed Phase-3 project Skill runtime tools. They are known to the kernel but
@@ -17,7 +17,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
@@ -35,7 +35,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
@@ -53,7 +53,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Observe,
             risk: Read,
@@ -71,7 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,
@@ -89,7 +89,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,
@@ -107,7 +107,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
-        TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_RUNNER,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: SkillManage,

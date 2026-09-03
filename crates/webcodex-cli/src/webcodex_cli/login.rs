@@ -129,7 +129,7 @@ pub(crate) fn validate_client_id(value: &str) -> Result<String, String> {
 /// The suffix is what makes two machines with the same hostname distinct: it is
 /// generated once per machine, kept under `base`, and reused on every login, so
 /// an overwrite on the same machine mints the same `client_id` and the bound
-/// agent token stays usable.
+/// Runner transport token stays usable.
 ///
 /// `base` must already be a verified real directory tree (login resolves it
 /// through `resolve_connection_parent` before calling this). The file is
@@ -324,7 +324,7 @@ pub(crate) struct StatusOptions {
 pub(crate) struct EnrolledIdentity {
     pub(crate) username: String,
     pub(crate) user_token: String,
-    pub(crate) agent_token: String,
+    pub(crate) runner_token: String,
 }
 
 /// Where a finished login ended up.
@@ -396,7 +396,7 @@ fn remove_internal_dir(path: &Path) -> Result<(), String> {
 
 /// Delete an internal directory, reporting the path if anything is left.
 ///
-/// A leftover staging or backup directory still contains a usable agent token
+/// A leftover staging or backup directory still contains a usable Runner transport token
 /// and user token. `status` will not show it, which is exactly why silence here
 /// would be wrong: nothing else would ever mention it again.
 #[must_use = "leftover internal directories hold live credentials"]
@@ -562,7 +562,7 @@ pub(crate) fn stage_connection(
 
     crate::runner_config::run_runner_init(crate::runner_config::RunnerInitOptions {
         server_url: server_url.to_string(),
-        token: Some(identity.agent_token.clone()),
+        token: Some(identity.runner_token.clone()),
         token_file: None,
         client_id: device.to_string(),
         owner: identity.username.clone(),
@@ -955,7 +955,7 @@ pub(crate) async fn redeem_pairing_code(
     Ok(EnrolledIdentity {
         username: field("username")?,
         user_token: field("user_token")?,
-        agent_token: field("agent_token")?,
+        runner_token: field("agent_token")?,
     })
 }
 
@@ -1209,7 +1209,7 @@ mod tests {
         EnrolledIdentity {
             username: "alice".to_string(),
             user_token: USER_TOKEN.to_string(),
-            agent_token: AGENT_TOKEN.to_string(),
+            runner_token: AGENT_TOKEN.to_string(),
         }
     }
 
@@ -1353,7 +1353,7 @@ mod tests {
                 .count(),
             0
         );
-        // The agent token has exactly one home.
+        // The Runner transport token has exactly one home.
         assert!(!paths.dir.join("webcodex-runner-token").exists());
         let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
         assert!(runner_config.contains(AGENT_TOKEN));
@@ -3019,7 +3019,7 @@ mod tests {
     }
 
     #[test]
-    fn print_mcp_config_rejects_an_agent_token_in_the_user_token_file() {
+    fn print_mcp_config_rejects_a_runner_transport_token_in_the_user_token_file() {
         let temp = tempfile::TempDir::new().unwrap();
         let paths = ConnectionPaths::new(temp.path().join("connection"));
         std::fs::create_dir_all(&paths.dir).unwrap();
@@ -3037,7 +3037,7 @@ mod tests {
             true,
         )
         .unwrap_err();
-        assert!(error.contains("Agent transport token"), "{error}");
+        assert!(error.contains("Runner transport token"), "{error}");
         assert!(error.contains("webcodex-user-token"), "{error}");
         assert!(!error.contains(secret));
     }

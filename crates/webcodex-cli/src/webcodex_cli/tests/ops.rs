@@ -1,6 +1,6 @@
 use super::support::*;
 use crate::webcodex_cli::ops::{
-    ops_agents_report, ops_exit_code, ops_projects_report, ops_runner_report,
+    ops_exit_code, ops_projects_report, ops_runner_report, ops_runners_report,
     ops_smoke_preflight_report, ops_status_report, render_ops_runner, render_ops_status,
 };
 use crate::webcodex_cli::run_ops_command;
@@ -14,7 +14,7 @@ fn ops_help_entrypoints_print_usage() {
             &[
                 "Usage: webcodex ops <COMMAND>",
                 "status",
-                "agents",
+                "runners",
                 "projects",
                 "smoke-preflight",
                 "--server-url URL",
@@ -34,9 +34,9 @@ fn ops_help_entrypoints_print_usage() {
             ],
         ),
         (
-            &["ops", "agents", "--help"],
+            &["ops", "runners", "--help"],
             &[
-                "Usage: webcodex ops agents",
+                "Usage: webcodex ops runners",
                 "--server-url URL",
                 "--env-file PATH",
                 "--token-file PATH",
@@ -94,6 +94,17 @@ fn ops_help_entrypoints_print_usage() {
             );
         }
     }
+}
+
+#[test]
+fn legacy_ops_agents_alias_uses_canonical_runners_path() {
+    match cli_action(["ops", "agents", "--json"]) {
+        CliAction::Ops(OpsCommand::Runners(opts)) => assert!(opts.json),
+        other => panic!("legacy ops agents alias did not use canonical Runners command: {other:?}"),
+    }
+    let help = cli_exit(["ops", "agents", "--help"]).unwrap();
+    assert!(help.contains("Usage: webcodex ops runners"));
+    assert!(!help.contains("Usage: webcodex ops agents"));
 }
 
 #[test]
@@ -234,7 +245,7 @@ async fn ops_rejects_agent_token_from_env_file_without_leaking_it() {
     opts.env_file = Some(env_file);
 
     let error = run_ops_command(OpsCommand::Status(opts)).await.unwrap_err();
-    assert!(error.contains("Agent transport token"), "{error}");
+    assert!(error.contains("Runner transport token"), "{error}");
     assert!(error.contains("webcodex-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
@@ -250,7 +261,7 @@ async fn ops_rejects_agent_token_from_process_env_without_leaking_it() {
     let _env = EnvGuard::new().set("WEBCODEX_TOKEN", secret);
     let opts = ops_common_opts("http://127.0.0.1:1".to_string());
     let error = run_ops_command(OpsCommand::Status(opts)).await.unwrap_err();
-    assert!(error.contains("Agent transport token"), "{error}");
+    assert!(error.contains("Runner transport token"), "{error}");
     assert!(error.contains("webcodex-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
@@ -610,9 +621,9 @@ async fn run_ops_with_routes(
             opts.server_url = server_url;
             OpsCommand::Status(opts)
         }
-        OpsCommand::Agents(mut opts) => {
+        OpsCommand::Runners(mut opts) => {
             opts.server_url = server_url;
-            OpsCommand::Agents(opts)
+            OpsCommand::Runners(opts)
         }
         OpsCommand::Runner(mut opts) => {
             opts.common.server_url = server_url;
@@ -789,7 +800,7 @@ fn ops_status_active_jobs_warns() {
 }
 
 #[test]
-fn ops_agents_maps_online_stale_and_jobs() {
+fn ops_runners_maps_online_stale_and_jobs() {
     let mut runtime = runtime_status_fixture();
     runtime["agents"]["online_count"] = json!(1);
     runtime["agents"]["stale_count"] = json!(1);
@@ -815,7 +826,7 @@ fn ops_agents_maps_online_stale_and_jobs() {
             "last_seen_age_secs": 120
         }
     ]);
-    let report = ops_agents_report("https://ops.example.test", &Some(runtime));
+    let report = ops_runners_report("https://ops.example.test", &Some(runtime));
     assert_eq!(report.verdict.status, "warn");
     assert_eq!(report.summary["online_count"], 1);
     assert_eq!(report.summary["stale_count"], 1);

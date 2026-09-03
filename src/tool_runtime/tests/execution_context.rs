@@ -580,7 +580,7 @@ async fn session_ssh_resource_rejects_mutating_cargo_fmt_before_start() {
         probe_agent_request_for_client(&runtime, "context-ssh-cargo-fmt")
             .await
             .is_none(),
-        "mutating cargo fmt rejection must happen before an Agent shell request starts"
+        "mutating cargo fmt rejection must happen before a Runner shell request starts"
     );
     assert_eq!(std::fs::read_to_string(source).unwrap(), original);
 }

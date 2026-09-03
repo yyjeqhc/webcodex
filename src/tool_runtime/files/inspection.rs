@@ -19,7 +19,7 @@ pub(crate) fn read_file_content_result_with_options(
     // The local path previously kept the entire file body in `content` and then
     // sliced it. It now feeds the bytes through the shared streaming range
     // reader so only the selected window is retained, and the model output is
-    // built by the shared normalizer shared with the agent path.
+    // built by the shared normalizer shared with the Runner path.
     let range = EffectiveRange::new(start_line, limit);
     match file_read_range::read_range_from(content.as_bytes(), range) {
         Ok(result) => build_read_file_success(&result, with_line_numbers, None),
@@ -28,15 +28,15 @@ pub(crate) fn read_file_content_result_with_options(
 }
 
 #[cfg(test)]
-pub(crate) fn read_file_agent_stdout_result(
+pub(crate) fn read_file_runner_stdout_result(
     stdout: String,
     start_line: Option<usize>,
     limit: Option<usize>,
 ) -> ToolResult {
-    read_file_agent_stdout_result_with_options(stdout, start_line, limit, false)
+    read_file_runner_stdout_result_with_options(stdout, start_line, limit, false)
 }
 
-pub(crate) fn read_file_agent_stdout_result_with_options(
+pub(crate) fn read_file_runner_stdout_result_with_options(
     stdout: String,
     start_line: Option<usize>,
     limit: Option<usize>,
@@ -46,7 +46,7 @@ pub(crate) fn read_file_agent_stdout_result_with_options(
     // but every formal field is strictly validated and the model output is
     // reconstructed from those fields alone — no envelope extras, padding, or
     // absolute paths are passed through.
-    match parse_agent_file_read_range(&stdout, start_line, limit) {
+    match parse_runner_file_read_range(&stdout, start_line, limit) {
         Ok(result) => build_read_file_success(&result, with_line_numbers, None),
         Err(reason) => read_file_failure(reason, None),
     }
@@ -63,7 +63,7 @@ pub(crate) fn effective_read_file_range(
 /// Build the unified `read_file` success [`ToolResult`] from a shared range
 /// result, enforcing the final serialized-output hard limit after JSON
 /// escaping and (optional) line numbering. The model output is reconstructed
-/// from the canonical fields only; no agent envelope extras survive.
+/// from the canonical fields only; no Runner envelope extras survive.
 ///
 /// `path` is the project-relative input path to attach for model navigation.
 fn build_read_file_success(
@@ -117,11 +117,11 @@ fn io_error_reason(error: &std::io::Error) -> ReadFileReason {
     }
 }
 
-/// Map a non-zero agent execution response to a stable reason code. Current
+/// Map a non-zero Runner execution response to a stable reason code. Current
 /// Runners emit `read_file failed: <reason_code>`; only a narrow set of legacy
 /// path-free phrases is retained for rolling upgrades. Unrecognized text fails
 /// closed as `io_error` and is never returned to the model.
-fn map_agent_read_error(resp: &ShellRunResponse) -> ReadFileReason {
+fn map_runner_read_error(resp: &ShellRunResponse) -> ReadFileReason {
     for text in [resp.error.as_deref(), resp.stderr.as_deref()]
         .into_iter()
         .flatten()
@@ -159,12 +159,12 @@ fn map_agent_read_error(resp: &ShellRunResponse) -> ReadFileReason {
     }
 }
 
-/// Strictly validate an agent `webcodex.file_read_range.v1` stdout envelope and
+/// Strictly validate a Runner `webcodex.file_read_range.v1` stdout envelope and
 /// return a shared [`FileReadRange`] reconstructed from its formal fields alone.
 /// Returns a stable [`ReadFileReason`] for any malformed, mistyped, inconsistent,
 /// or oversized response so the caller can fail closed without leaking runner
 /// internals.
-fn parse_agent_file_read_range(
+fn parse_runner_file_read_range(
     stdout: &str,
     request_start_line: Option<usize>,
     request_limit: Option<usize>,
@@ -172,44 +172,44 @@ fn parse_agent_file_read_range(
     let effective = EffectiveRange::new(request_start_line, request_limit);
     let trimmed = stdout.trim();
     let value = serde_json::from_str::<Value>(trimmed)
-        .map_err(|_| ReadFileReason::MalformedAgentResponse)?;
+        .map_err(|_| ReadFileReason::MalformedRunnerResponse)?;
     if value.get("format").and_then(|f| f.as_str()) != Some("webcodex.file_read_range.v1") {
-        return Err(ReadFileReason::MalformedAgentResponse);
+        return Err(ReadFileReason::MalformedRunnerResponse);
     }
 
     let content = value
         .get("content")
         .and_then(|c| c.as_str())
-        .ok_or(ReadFileReason::MalformedAgentResponse)?
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?
         .to_string();
     let sha256 = value
         .get("sha256")
         .and_then(Value::as_str)
         .filter(|s| file_read_range::is_valid_sha256_hex(s))
-        .ok_or(ReadFileReason::MalformedAgentResponse)?
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?
         .to_string();
     let total_lines = value
         .get("total_lines")
         .and_then(Value::as_u64)
         .filter(|t| *t <= usize::MAX as u64)
         .map(|t| t as usize)
-        .ok_or(ReadFileReason::MalformedAgentResponse)?;
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?;
     let resp_start_line = value
         .get("start_line")
         .and_then(Value::as_u64)
         .filter(|l| *l >= 1 && *l <= usize::MAX as u64)
         .map(|l| l as usize)
-        .ok_or(ReadFileReason::MalformedAgentResponse)?;
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?;
     let resp_limit = value
         .get("limit")
         .and_then(Value::as_u64)
         .filter(|l| *l >= 1 && *l <= usize::MAX as u64)
         .map(|l| l as usize)
-        .ok_or(ReadFileReason::MalformedAgentResponse)?;
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?;
 
     // The response must match the effective request range the server sent.
     if resp_start_line != effective.start_line || resp_limit != effective.limit {
-        return Err(ReadFileReason::MalformedAgentResponse);
+        return Err(ReadFileReason::MalformedRunnerResponse);
     }
 
     // Compute the expected returned line count from the range and total, then
@@ -236,10 +236,10 @@ fn parse_agent_file_read_range(
         content_segments
     };
     if content_returned != expected_returned {
-        return Err(ReadFileReason::MalformedAgentResponse);
+        return Err(ReadFileReason::MalformedRunnerResponse);
     }
 
-    // Reject oversized agent content before it can reach the model output.
+    // Reject oversized Runner content before it can reach the model output.
     if content.len() > file_read_range::MAX_RANGE_CONTENT_BYTES {
         return Err(ReadFileReason::RangeTooLarge);
     }
@@ -269,11 +269,11 @@ fn parse_agent_file_read_range(
     })
 }
 
-/// Parse the stdout of a best-effort agent `file_read` for an instruction
+/// Parse the stdout of a best-effort Runner `file_read` for an instruction
 /// candidate. Only the canonical `webcodex.file_read_range.v1` JSON envelope
 /// is accepted. Empty content is a successfully observed absent rule body;
 /// malformed or obsolete output is conservatively unavailable.
-fn parse_instruction_agent_stdout(
+fn parse_instruction_runner_stdout(
     stdout: String,
 ) -> Result<Option<(String, usize, Option<String>)>, ()> {
     let trimmed = stdout.trim();
@@ -359,7 +359,7 @@ fn instruction_candidate_missing(error: &Option<String>, stderr: &Option<String>
 // Phase A read-only console helpers
 // =============================================================================
 
-/// Build the project-relative path for a single entry returned by an agent
+/// Build the project-relative path for a single entry returned by a Runner
 /// `file_list` op. `rel_path` is the project-relative directory the caller
 /// requested (`"."` for the project root); `name` is the bare entry name.
 pub(crate) fn relative_entry_path(rel_path: &str, name: &str) -> String {
@@ -371,7 +371,7 @@ pub(crate) fn relative_entry_path(rel_path: &str, name: &str) -> String {
     }
 }
 
-/// Parse agent `file_list` stdout (one entry per line, dirs suffixed with
+/// Parse Runner `file_list` stdout (one entry per line, dirs suffixed with
 /// `/`) into bounded project-relative entries with a file/dir kind. Returns
 /// the entries and whether the source exceeded `max_entries`.
 pub(crate) fn parse_file_list_entries(
@@ -482,7 +482,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         let with_line_numbers = with_line_numbers.unwrap_or(false);
         // Bound the request to the project before it can reach an executor.
-        // The agent branch below forwards `path` to a remote host that scopes
+        // The Runner branch below forwards `path` to a remote host that scopes
         // file ops to `allowed_roots` — which is broader than the project — so
         // the project boundary has to be enforced here, as `list_project_files`
         // and `project_overview` already do.
@@ -576,7 +576,7 @@ impl ToolRuntime {
             .await
         {
             Ok(r) => r,
-            Err(_) => return read_file_failure(ReadFileReason::AgentUnavailable, Some(&path)),
+            Err(_) => return read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path)),
         };
         let response = match deadline {
             Some(deadline) => tokio::time::timeout_at(deadline, rx).await,
@@ -584,7 +584,7 @@ impl ToolRuntime {
         };
         match response {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                let mut result = read_file_agent_stdout_result_with_options(
+                let mut result = read_file_runner_stdout_result_with_options(
                     resp.stdout.unwrap_or_default(),
                     start_line,
                     limit,
@@ -594,22 +594,22 @@ impl ToolRuntime {
                     result.output["path"] = json!(path);
                     result
                 } else {
-                    // The agent response failed validation; surface a stable
+                    // The Runner response failed validation; surface a stable
                     // structured error using the project-relative path.
                     result.output["path"] = json!(path);
                     result
                 }
             }
-            // Map agent execution failures to stable reason codes. The
+            // Map Runner execution failures to stable reason codes. The
             // raw `resp.error`/`resp.stderr` (which may carry the runner's
             // absolute path) is never forwarded to the model.
             Ok(Ok(resp)) => {
-                let reason = map_agent_read_error(&resp);
+                let reason = map_runner_read_error(&resp);
                 read_file_failure(reason, Some(&path))
             }
             Ok(Err(_)) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                read_file_failure(ReadFileReason::AgentUnavailable, Some(&path))
+                read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path))
             }
             Err(_) => {
                 self.shell_clients.cancel_request(&request_id).await;
@@ -625,8 +625,8 @@ impl ToolRuntime {
     /// Best-effort load of project-local instruction files
     /// (`project_instructions::INSTRUCTION_CANDIDATE_PATHS`) for a resolved
     /// project. Candidates are tried in fixed order; the first candidate that
-    /// reads successfully wins, bounding agent round-trips. Any read failure
-    /// (agent not connected, file missing, timeout, decode error) is swallowed
+    /// reads successfully wins, bounding Runner round-trips. Any read failure
+    /// (Runner not connected, file missing, timeout, decode error) is swallowed
     /// and the next candidate is tried. Returns an empty (`loaded=false`)
     /// snapshot when no candidate could be read.
     ///
@@ -767,7 +767,7 @@ impl ToolRuntime {
     /// Read a single instruction candidate from a resolved project. Returns
     /// `(content, total_lines)` on success or `None` on any failure.
     ///
-    /// Reads are routed to the owning agent via the `file_read` op with a short
+    /// Reads are routed to the owning Runner via the `file_read` op with a short
     /// best-effort timeout.
     async fn read_instruction_candidate(
         &self,
@@ -810,7 +810,7 @@ impl ToolRuntime {
         };
         match tokio::time::timeout(Duration::from_secs(WAIT_TIMEOUT + 2), rx).await {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                match parse_instruction_agent_stdout(resp.stdout.unwrap_or_default()) {
+                match parse_instruction_runner_stdout(resp.stdout.unwrap_or_default()) {
                     Ok(Some((content, total_lines, full_sha256))) => {
                         InstructionCandidateRead::Found(LoadedInstructionCandidate {
                             path: path.to_string(),
@@ -838,8 +838,8 @@ impl ToolRuntime {
     }
 
     /// `list_project_files`: bounded, project-relative file listing routed to
-    /// the owning registered agent via the `file_list` op. The server never
-    /// reads the agent project path directly. Returns `path` + `kind`
+    /// the owning registered Runner via the `file_list` op. The server never
+    /// reads the Runner project path directly. Returns `path` + `kind`
     /// (file/dir); size/mtime are not exposed by the current file op protocol.
     pub(crate) async fn list_project_files(
         &self,
@@ -902,15 +902,15 @@ impl ToolRuntime {
             Ok(Ok(resp)) => ToolResult::err(
                 resp.error
                     .or(resp.stderr)
-                    .unwrap_or_else(|| "agent list_project_files failed".to_string()),
+                    .unwrap_or_else(|| "Runner list_project_files failed".to_string()),
             ),
             Ok(Err(_)) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                ToolResult::err("agent list_project_files waiter was dropped")
+                ToolResult::err("Runner list_project_files waiter was dropped")
             }
             Err(_) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                ToolResult::err("timed out waiting for agent list_project_files")
+                ToolResult::err("timed out waiting for Runner list_project_files")
             }
         }
     }
@@ -925,7 +925,7 @@ impl ToolRuntime {
     /// detection, and workspace provenance already use, so all four agree on
     /// what belongs to the project.
     ///
-    /// The agent runs one deterministic command; scope, globs, rollup, and
+    /// The Runner runs one deterministic command; scope, globs, rollup, and
     /// pagination are decided server-side in [`super::file_listing`].
     pub(crate) async fn list_project_tracked_files(
         &self,
@@ -1000,7 +1000,7 @@ impl ToolRuntime {
                     self.shell_clients.cancel_request(&request_id).await;
                     return list_tracked_error(
                         "list_request_dropped",
-                        "the agent request was dropped before a listing arrived".to_string(),
+                        "the Runner request was dropped before a listing arrived".to_string(),
                     );
                 }
                 Err(_) => {
@@ -1025,7 +1025,7 @@ impl ToolRuntime {
             Some(2) => {
                 return list_tracked_error(
                     "list_unavailable",
-                    "the agent host has no usable head command to bound the listing".to_string(),
+                    "the Runner host has no usable head command to bound the listing".to_string(),
                 )
             }
             Some(0) | Some(141) | None => {}
@@ -1047,8 +1047,8 @@ impl ToolRuntime {
     }
 
     /// `project_overview`: deterministic, bounded project metadata routed to
-    /// the owning agent. The server validates inputs and parses the structured
-    /// response but never reads the agent host's project path.
+    /// the owning Runner. The server validates inputs and parses the structured
+    /// response but never reads the Runner host's project path.
     pub(crate) async fn project_overview(
         &self,
         project: String,
@@ -1068,7 +1068,7 @@ impl ToolRuntime {
         };
         let client_id = proj.client_id.clone();
         let wait_timeout = 30;
-        let agent_path = if rel_path.is_empty() {
+        let runner_path = if rel_path.is_empty() {
             ".".to_string()
         } else {
             rel_path.clone()
@@ -1079,7 +1079,7 @@ impl ToolRuntime {
                 ShellFileOpRequest {
                     op: "project_overview".to_string(),
                     client_id,
-                    path: agent_path,
+                    path: runner_path,
                     cwd: Some(proj.path.clone()),
                     content: Some(json!({"max_depth": max_depth, "limit": limit}).to_string()),
                     max_bytes: None,
@@ -1107,12 +1107,12 @@ impl ToolRuntime {
                         Ok(Value::Object(output)) => Value::Object(output),
                         Ok(_) => {
                             return ToolResult::err(
-                                "agent project_overview returned a non-object payload",
+                                "Runner project_overview returned a non-object payload",
                             )
                         }
                         Err(error) => {
                             return ToolResult::err(format!(
-                                "agent project_overview returned invalid JSON: {error}"
+                                "Runner project_overview returned invalid JSON: {error}"
                             ))
                         }
                     };
@@ -1121,7 +1121,7 @@ impl ToolRuntime {
                     || output["scan"]["limit"] != limit
                 {
                     return ToolResult::err(
-                        "agent project_overview response did not match the requested bounds",
+                        "Runner project_overview response did not match the requested bounds",
                     );
                 }
                 output["project"] = json!(project);
@@ -1131,15 +1131,15 @@ impl ToolRuntime {
                 response
                     .error
                     .or(response.stderr)
-                    .unwrap_or_else(|| "agent project_overview failed".to_string()),
+                    .unwrap_or_else(|| "Runner project_overview failed".to_string()),
             ),
             Ok(Err(_)) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                ToolResult::err("agent project_overview waiter was dropped")
+                ToolResult::err("Runner project_overview waiter was dropped")
             }
             Err(_) => {
                 self.shell_clients.cancel_request(&request_id).await;
-                ToolResult::err("timed out waiting for agent project_overview")
+                ToolResult::err("timed out waiting for Runner project_overview")
             }
         }
     }
@@ -1204,8 +1204,8 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_stdout_json_is_returned_without_reslicing() {
-        let result = read_file_agent_stdout_result(
+    fn read_file_runner_stdout_json_is_returned_without_reslicing() {
+        let result = read_file_runner_stdout_result(
             serde_json::json!({
                 "format": "webcodex.file_read_range.v1",
                 "content": "line-560\nline-561",
@@ -1238,8 +1238,8 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_stdout_json_without_canonical_envelope_is_rejected() {
-        let result = read_file_agent_stdout_result(
+    fn read_file_runner_stdout_json_without_canonical_envelope_is_rejected() {
+        let result = read_file_runner_stdout_result(
             serde_json::json!({
                 "content": "file-json-content",
                 "total_lines": 7348,
@@ -1258,9 +1258,9 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_stdout_plain_text_is_rejected() {
+    fn read_file_runner_stdout_plain_text_is_rejected() {
         let result =
-            read_file_agent_stdout_result("one\ntwo\nthree\n".to_string(), Some(2), Some(1));
+            read_file_runner_stdout_result("one\ntwo\nthree\n".to_string(), Some(2), Some(1));
 
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "malformed_agent_response");
@@ -1312,8 +1312,8 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_stdout_json_with_line_numbers_preserves_empty_lines() {
-        let result = read_file_agent_stdout_result_with_options(
+    fn read_file_runner_stdout_json_with_line_numbers_preserves_empty_lines() {
+        let result = read_file_runner_stdout_result_with_options(
             serde_json::json!({
                 "format": "webcodex.file_read_range.v1",
                 "content": "\nsecond",
@@ -1352,10 +1352,10 @@ mod tests {
         read_file_content_result_with_options(content.to_string(), start, limit, numbered).output
     }
 
-    /// Build an agent result from a synthesized v1 envelope derived from the
-    /// same full content and range, so local and agent outputs can be compared
+    /// Build a Runner result from a synthesized v1 envelope derived from the
+    /// same full content and range, so local and Runner outputs can be compared
     /// field-by-field.
-    fn agent_read(
+    fn runner_read(
         content: &str,
         start: Option<usize>,
         limit: Option<usize>,
@@ -1374,12 +1374,12 @@ mod tests {
             "padding": "x".repeat(8192),
         })
         .to_string();
-        read_file_agent_stdout_result_with_options(envelope, start, limit, numbered).output
+        read_file_runner_stdout_result_with_options(envelope, start, limit, numbered).output
     }
 
     fn assert_parity(content: &str, start: Option<usize>, limit: Option<usize>, numbered: bool) {
         let local = local_read(content, start, limit, numbered);
-        let agent = agent_read(content, start, limit, numbered);
+        let runner = runner_read(content, start, limit, numbered);
         for field in [
             "text",
             "format",
@@ -1394,17 +1394,17 @@ mod tests {
         ] {
             assert_eq!(
                 local.get(field),
-                agent.get(field),
+                runner.get(field),
                 "parity mismatch on {field} for content={content:?} start={start:?} limit={limit:?} numbered={numbered}"
             );
         }
-        // Agent envelope padding never reaches the model output.
-        assert!(agent.get("padding").is_none());
-        assert!(agent.get("content").is_none());
+        // Runner envelope padding never reaches the model output.
+        assert!(runner.get("padding").is_none());
+        assert!(runner.get("content").is_none());
     }
 
     #[test]
-    fn read_file_local_agent_parity_across_ranges() {
+    fn read_file_local_runner_parity_across_ranges() {
         assert_parity("one\ntwo\nthree\nfour\nfive", Some(2), Some(2), false);
         assert_parity("one\ntwo\nthree\nfour\nfive", Some(2), Some(2), true);
         assert_parity("one\ntwo\nthree", Some(1), Some(100), false);
@@ -1432,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_rejects_bad_sha256() {
+    fn read_file_runner_rejects_bad_sha256() {
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
             "content": "x",
@@ -1442,13 +1442,13 @@ mod tests {
             "limit": 2000,
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, None, None, false);
+        let result = read_file_runner_stdout_result_with_options(envelope, None, None, false);
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "malformed_agent_response");
     }
 
     #[test]
-    fn read_file_agent_rejects_wrong_start_line() {
+    fn read_file_runner_rejects_wrong_start_line() {
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
             "content": "x\ny",
@@ -1458,13 +1458,13 @@ mod tests {
             "limit": 2000,
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, None, None, false);
+        let result = read_file_runner_stdout_result_with_options(envelope, None, None, false);
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "malformed_agent_response");
     }
 
     #[test]
-    fn read_file_agent_rejects_inconsistent_content_lines() {
+    fn read_file_runner_rejects_inconsistent_content_lines() {
         // content has 2 segments but total_lines/start/limit imply 3 returned.
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
@@ -1475,13 +1475,13 @@ mod tests {
             "limit": 3,
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, Some(1), Some(3), false);
+        let result = read_file_runner_stdout_result_with_options(envelope, Some(1), Some(3), false);
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "malformed_agent_response");
     }
 
     #[test]
-    fn read_file_agent_rejects_wrong_field_types() {
+    fn read_file_runner_rejects_wrong_field_types() {
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
             "content": 7,
@@ -1491,14 +1491,14 @@ mod tests {
             "limit": 2000,
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, None, None, false);
+        let result = read_file_runner_stdout_result_with_options(envelope, None, None, false);
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "malformed_agent_response");
     }
 
     #[test]
-    fn read_file_agent_rejects_malformed_json() {
-        let result = read_file_agent_stdout_result_with_options(
+    fn read_file_runner_rejects_malformed_json() {
+        let result = read_file_runner_stdout_result_with_options(
             "{ not valid json ".to_string(),
             None,
             None,
@@ -1509,7 +1509,7 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_rejects_oversized_formal_content() {
+    fn read_file_runner_rejects_oversized_formal_content() {
         let big = "x".repeat(webcodex_workspace::file_read_range::MAX_RANGE_CONTENT_BYTES + 1);
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
@@ -1520,13 +1520,13 @@ mod tests {
             "limit": 2000,
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, None, None, false);
+        let result = read_file_runner_stdout_result_with_options(envelope, None, None, false);
         assert!(!result.success);
         assert_eq!(result.output["reason_code"], "range_too_large");
     }
 
     #[test]
-    fn read_file_agent_strips_huge_padding() {
+    fn read_file_runner_strips_huge_padding() {
         let envelope = serde_json::json!({
             "format": "webcodex.file_read_range.v1",
             "content": "hello",
@@ -1539,7 +1539,7 @@ mod tests {
             "cwd": "/abs/cwd/leak",
         })
         .to_string();
-        let result = read_file_agent_stdout_result_with_options(envelope, None, None, false);
+        let result = read_file_runner_stdout_result_with_options(envelope, None, None, false);
         assert!(result.success, "{:?}", result.error);
         // No envelope extras, absolute paths, or secrets leak.
         assert!(result.output.get("runner_secret").is_none());
@@ -1614,11 +1614,11 @@ mod tests {
         );
     }
 
-    fn agent_error_response(message: &str) -> ShellRunResponse {
+    fn runner_error_response(message: &str) -> ShellRunResponse {
         ShellRunResponse {
             success: false,
             request_id: "req-read".to_string(),
-            client_id: "agent".to_string(),
+            client_id: "runner".to_string(),
             cwd: None,
             command_preview: String::new(),
             exit_code: None,
@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     #[test]
-    fn read_file_agent_error_mapping_prefers_formal_reason_codes() {
+    fn read_file_runner_error_mapping_prefers_formal_reason_codes() {
         for reason in [
             ReadFileReason::InvalidPath,
             ReadFileReason::SensitivePath,
@@ -1641,24 +1641,24 @@ mod tests {
             ReadFileReason::PermissionDenied,
             ReadFileReason::InvalidUtf8,
             ReadFileReason::RangeTooLarge,
-            ReadFileReason::AgentUnavailable,
+            ReadFileReason::RunnerUnavailable,
             ReadFileReason::Timeout,
-            ReadFileReason::MalformedAgentResponse,
+            ReadFileReason::MalformedRunnerResponse,
             ReadFileReason::IoError,
         ] {
-            let response = agent_error_response(&format!("read_file failed: {}", reason.as_str()));
-            assert_eq!(map_agent_read_error(&response), reason);
+            let response = runner_error_response(&format!("read_file failed: {}", reason.as_str()));
+            assert_eq!(map_runner_read_error(&response), reason);
         }
         assert_eq!(
-            map_agent_read_error(&agent_error_response("range output too large")),
+            map_runner_read_error(&runner_error_response("range output too large")),
             ReadFileReason::RangeTooLarge
         );
         assert_eq!(
-            map_agent_read_error(&agent_error_response("file_read target is not a file")),
+            map_runner_read_error(&runner_error_response("file_read target is not a file")),
             ReadFileReason::NotFile
         );
         assert_eq!(
-            map_agent_read_error(&agent_error_response("invalid unrelated runner detail")),
+            map_runner_read_error(&runner_error_response("invalid unrelated runner detail")),
             ReadFileReason::IoError
         );
     }

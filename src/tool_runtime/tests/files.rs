@@ -2633,7 +2633,7 @@ async fn search_agent_command_timeout_returns_search_timeout() {
     });
     let req = wait_for_patch_agent_request(&runtime, "search-cmd-timeout").await;
     assert_eq!(req.timeout_secs, 1);
-    // Simulate agent-side command timeout response (lowercase message + error field).
+    // Simulate Runner-side command timeout response (lowercase message + error field).
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {

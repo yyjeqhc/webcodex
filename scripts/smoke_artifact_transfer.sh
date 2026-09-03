@@ -53,7 +53,7 @@ Preconditions:
   1. The public WebCodex URL is reachable.
   2. The token is a managed wc_pat_* token or a deployment-allowed shared key.
      Do not use wc_agent_*; that token type is only for webcodex-runner.
-  3. The smoke project is registered, agent-backed, online, and a git repo.
+  3. The smoke project is registered, Runner-backed, online, and a git repo.
   4. The smoke project is disposable and clean before the run.
 
 Checks covered by active mode:

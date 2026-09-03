@@ -1,5 +1,5 @@
 use super::project_resolution::ResolvedProject;
-use super::tool_definition::{runtime_tool_agent_capability, AgentCapability};
+use super::tool_definition::{runtime_tool_runner_capability, RunnerCapabilityRequirement};
 use super::{ProjectResolverError, RecoveryKind, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
@@ -7,13 +7,15 @@ use crate::shell_protocol::{
 };
 use serde_json::json;
 
-/// The capability an agent-backed tool variant requires from the agent
-/// client. Non-agent tools (and tools without a project) require nothing.
-pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
-    runtime_tool_agent_capability(call.tool_name())
+/// The Runner capability or owner-boundary requirement a Runner-backed tool
+/// needs before dispatch. Non-Runner tools (and tools without a Project) require nothing.
+pub(crate) fn required_runner_capability(call: &ToolCall) -> Option<RunnerCapabilityRequirement> {
+    runtime_tool_runner_capability(call.tool_name())
 }
 
-fn agent_capability_unavailable_result(message: impl Into<String>) -> ToolResult {
+fn runner_capability_unavailable_result(message: impl Into<String>) -> ToolResult {
+    // Stable pre-0.4 ToolResult/Session compatibility identity. Current Rust
+    // policy terminology is Runner-facing, but replay must retain this wire code.
     ToolResult::err_with_output(
         message,
         json!({"error_kind": "agent_capability_unavailable"}),
@@ -22,15 +24,15 @@ fn agent_capability_unavailable_result(message: impl Into<String>) -> ToolResult
 }
 
 impl ToolRuntime {
-    /// Enforce the owner boundary and capability requirements for agent-backed
+    /// Enforce the owner boundary and capability requirements for Runner-backed
     /// runtime tools before dispatching. This is the single place where the
     /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`) check that
-    /// the caller is allowed to drive an agent.
+    /// the caller is allowed to drive a Runner.
     /// `/api/shell/*` handlers keep their own `assert_shell_client_owner`
     /// checks; this method closes the gap for the runtime paths.
     ///
     /// Returns `Ok(())` for project-less tools so they are unaffected.
-    pub(crate) async fn authorize_agent_tool(
+    pub(crate) async fn authorize_runner_tool(
         &self,
         call: &ToolCall,
         ssh_resource: Option<&str>,
@@ -40,7 +42,7 @@ impl ToolRuntime {
         let Some(project) = call.project() else {
             return Ok(());
         };
-        let required = required_agent_capability(call);
+        let required = required_runner_capability(call);
         if required.is_none() && ssh_resource.is_none() {
             return Ok(());
         }
@@ -121,43 +123,45 @@ impl ToolRuntime {
                     }
                 }
                 if !supported {
-                    let message = format!(
-                        "agent client {} does not support {}",
-                        client_id,
-                        required.label()
-                    );
+                    let message =
+                        format!("Runner {} does not support {}", client_id, required.label());
                     if matches!(
                         required,
-                        AgentCapability::LspReadOnlyNavigation | AgentCapability::LspCallHierarchy
+                        RunnerCapabilityRequirement::LspReadOnlyNavigation
+                            | RunnerCapabilityRequirement::LspCallHierarchy
                     ) {
-                        return Err(agent_capability_unavailable_result(format!(
+                        return Err(runner_capability_unavailable_result(format!(
                             "{}: {}",
                             crate::lsp_bridge::error_codes::AGENT_CAPABILITY_UNAVAILABLE,
                             message
                         )));
                     }
-                    if matches!(required, AgentCapability::PersistentShell) {
-                        return Err(agent_capability_unavailable_result(format!(
+                    if matches!(required, RunnerCapabilityRequirement::PersistentShell) {
+                        return Err(runner_capability_unavailable_result(format!(
                             "agent_capability_unavailable: {}",
                             message
                         )));
                     }
                     if matches!(
                         required,
-                        AgentCapability::StructuredProcess
-                            | AgentCapability::DetachedProcess
-                            | AgentCapability::StructuredScript
+                        RunnerCapabilityRequirement::StructuredProcess
+                            | RunnerCapabilityRequirement::DetachedProcess
+                            | RunnerCapabilityRequirement::StructuredScript
                     ) {
-                        let noun = if matches!(required, AgentCapability::StructuredScript) {
-                            "script"
-                        } else if matches!(required, AgentCapability::DetachedProcess) {
-                            "detached process"
-                        } else {
-                            "process"
-                        };
+                        let noun =
+                            if matches!(required, RunnerCapabilityRequirement::StructuredScript) {
+                                "script"
+                            } else if matches!(
+                                required,
+                                RunnerCapabilityRequirement::DetachedProcess
+                            ) {
+                                "detached process"
+                            } else {
+                                "process"
+                            };
                         return Err(ToolResult::err_with_output(
                             format!(
-                                "capability_unavailable: agent client {} does not support {}; no {noun} was started and no shell fallback was attempted",
+                                "capability_unavailable: Runner {} does not support {}; no {noun} was started and no shell fallback was attempted",
                                 client_id,
                                 required.label()
                             ),
@@ -174,7 +178,7 @@ impl ToolRuntime {
                         )
                         .with_recovery(RecoveryKind::NoAction, None));
                     }
-                    return Err(agent_capability_unavailable_result(message));
+                    return Err(runner_capability_unavailable_result(message));
                 }
             }
         }
@@ -196,8 +200,8 @@ impl ToolRuntime {
                     .await
                     .map_err(ToolResult::err)?
                 {
-                    return Err(agent_capability_unavailable_result(format!(
-                        "agent_capability_unavailable: agent client {} does not support {}",
+                    return Err(runner_capability_unavailable_result(format!(
+                        "agent_capability_unavailable: Runner {} does not support {}",
                         client_id, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL
                     )));
                 }
@@ -215,8 +219,8 @@ impl ToolRuntime {
                     .await
                     .map_err(ToolResult::err)?
                 {
-                    return Err(agent_capability_unavailable_result(format!(
-                        "agent_capability_unavailable: agent client {} does not support {}",
+                    return Err(runner_capability_unavailable_result(format!(
+                        "agent_capability_unavailable: Runner {} does not support {}",
                         client_id, SHELL_CLIENT_CAPABILITY_SSH_SHELL
                     )));
                 }

@@ -164,7 +164,7 @@ runtime_status
     host_context?       <- declarative planning context
 ```
 
-`host_context` is also projected in full `list_agents` entries. Compact
+`host_context` is also projected in full `list_runners` entries. Compact
 `runtime_status` carries a deliberately small per-Runner client list with
 `client_id`, `agent_instance_id`, status/transport, host context, and exact-build
 alignment facts; it does not copy full capabilities or policy into that compact
@@ -259,7 +259,7 @@ The implemented slice is intentionally limited to:
 1. optional closed/bounded `host_context` in Runner startup configuration;
 2. local validation plus Server-side registration revalidation;
 3. current-registration storage with reconnect/replacement semantics;
-4. full `runtime_status` / `list_agents` projection plus a bounded compact
+4. full `runtime_status` / `list_runners` projection plus a bounded compact
    Runner summary;
 5. focused bounds, config, restart-required, registration, reconnect, and
    projection tests.

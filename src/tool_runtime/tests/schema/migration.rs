@@ -102,7 +102,7 @@ fn tool_definition_metadata_fallback_facade_is_unknown_only() {
         );
         assert!(ToolCall::from_tool_name(name, json!({})).is_err(), "{name}");
         assert_model_facing_surfaces_do_not_list_name(name);
-        assert_agent_capability_lookup_rejects_non_runtime_name(name);
+        assert_runner_capability_lookup_rejects_non_runtime_name(name);
     }
 }
 
@@ -325,15 +325,15 @@ fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
     }
 }
 
-fn assert_agent_capability_lookup_rejects_non_runtime_name(name: &str) {
+fn assert_runner_capability_lookup_rejects_non_runtime_name(name: &str) {
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = std::panic::catch_unwind(|| {
-        let _ = crate::tool_runtime::tool_definition::runtime_tool_agent_capability(name);
+        let _ = crate::tool_runtime::tool_definition::runtime_tool_runner_capability(name);
     });
     std::panic::set_hook(previous_hook);
     assert!(
         result.is_err(),
-        "{name} must not resolve agent capability through metadata fallback"
+        "{name} must not resolve Runner capability through metadata fallback"
     );
 }

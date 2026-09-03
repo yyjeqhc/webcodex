@@ -45,8 +45,8 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
             definition.permission_risk()
         );
         assert_eq!(
-            runtime_tool_agent_capability(definition.name),
-            definition.agent_capability
+            runtime_tool_runner_capability(definition.name),
+            definition.runner_capability
         );
     }
 }

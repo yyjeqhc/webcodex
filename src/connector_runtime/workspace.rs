@@ -197,13 +197,14 @@ impl WorkspaceManager {
         run_id: &str,
         non_writable: bool,
     ) -> Result<PreparedWorkspace, WorkspacePreparationError> {
-        let (client_id, _) = parse_agent_executor_ref(&context.executor_project).map_err(|_| {
-            WorkspacePreparationError::new(
-                "executor_reference",
-                "executor_reference_invalid",
-                "the Connector execution target is invalid",
-            )
-        })?;
+        let (client_id, _) =
+            parse_runner_executor_ref(&context.executor_project).map_err(|_| {
+                WorkspacePreparationError::new(
+                    "executor_reference",
+                    "executor_reference_invalid",
+                    "the Connector execution target is invalid",
+                )
+            })?;
         let target_root = Path::new(&context.executor_root);
         let baseline_commit =
             git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"]).ok();
@@ -618,7 +619,7 @@ impl WorkspaceManager {
         if !task.isolated {
             return None;
         }
-        let (_, project_id) = match parse_agent_executor_ref(&task.execution_executor_ref) {
+        let (_, project_id) = match parse_runner_executor_ref(&task.execution_executor_ref) {
             Ok(value) => value,
             Err(error) => return Some(error),
         };
@@ -658,7 +659,7 @@ impl WorkspaceManager {
         let preserved_projects = preserved
             .iter()
             .filter_map(|workspace| {
-                parse_agent_executor_ref(&workspace.execution_executor_ref)
+                parse_runner_executor_ref(&workspace.execution_executor_ref)
                     .ok()
                     .map(|(_, project_id)| project_id)
             })
@@ -1017,7 +1018,7 @@ impl WorkspaceManager {
             if !execution_root.is_dir() {
                 return Err("interrupted execution worktree is no longer available".to_string());
             }
-            let (_, project_id) = parse_agent_executor_ref(&task.execution_executor_ref)?;
+            let (_, project_id) = parse_runner_executor_ref(&task.execution_executor_ref)?;
             if !project_registry_dir
                 .join(format!("{project_id}.toml"))
                 .is_file()
@@ -1357,7 +1358,7 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
     if !task.isolated {
         return None;
     }
-    let (_, project_id) = parse_agent_executor_ref(&task.execution_executor_ref).ok()?;
+    let (_, project_id) = parse_runner_executor_ref(&task.execution_executor_ref).ok()?;
     let execution_root = Path::new(&task.execution_root);
     let runs_root = execution_root.parent()?;
     let registry_base = runs_root.parent()?.join("agent");
@@ -1446,7 +1447,7 @@ fn release_workspace_slot(
     if lease.run_id != expected_run_id {
         return None;
     }
-    if !safe_agent_project_id(agent_project_id) {
+    if !safe_runner_project_id(agent_project_id) {
         return Some("execution project registration id is invalid".to_string());
     }
 
@@ -1536,20 +1537,21 @@ fn remove_file_if_exists(path: &Path) -> Result<(), String> {
     }
 }
 
-fn parse_agent_executor_ref(value: &str) -> Result<(String, String), String> {
+fn parse_runner_executor_ref(value: &str) -> Result<(String, String), String> {
     let value = value
+        // `agent:` remains the stable persisted executor-reference prefix.
         .strip_prefix("agent:")
-        .ok_or_else(|| "connector executor is not agent-backed".to_string())?;
+        .ok_or_else(|| "connector executor is not Runner-backed".to_string())?;
     let (client_id, project_id) = value
         .split_once(':')
         .ok_or_else(|| "connector executor reference is malformed".to_string())?;
-    if client_id.is_empty() || !safe_agent_project_id(project_id) {
+    if client_id.is_empty() || !safe_runner_project_id(project_id) {
         return Err("connector executor reference is malformed".to_string());
     }
     Ok((client_id.to_string(), project_id.to_string()))
 }
 
-fn safe_agent_project_id(value: &str) -> bool {
+fn safe_runner_project_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value

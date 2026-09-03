@@ -178,7 +178,9 @@ pub const COMPUTER_POINTER_CONTROL: &str = webcodex_core::authority::SCOPE_COMPU
 pub const COMPUTER_CLIPBOARD_READ: &str = webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_READ;
 pub const COMPUTER_CLIPBOARD_WRITE: &str = webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_WRITE;
 
-pub const TOOL_PROVIDER_AGENT: &str = "agent";
+/// Canonical Rust name for tools executed by a Runner. The serialized
+/// provider_id remains the historical `"agent"` compatibility value.
+pub const TOOL_PROVIDER_RUNNER: &str = "agent";
 pub const TOOL_PROVIDER_CONTROL: &str = "control";
 pub const TOOL_PROVIDER_NATIVE: &str = "native";
 pub const TOOL_PROVIDER_UNKNOWN: &str = "unknown";
@@ -270,7 +272,7 @@ mod tests {
     #[test]
     fn tool_metadata_show_changes_is_project_read_observation() {
         let metadata = lookup_tool_metadata("show_changes").unwrap();
-        assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
+        assert_eq!(metadata.provider_id, TOOL_PROVIDER_RUNNER);
         assert_eq!(metadata.effect, ToolEffect::Observe);
         assert_eq!(metadata.risk, ToolRisk::Read);
         assert_eq!(metadata.approval, ToolApprovalPolicy::None);

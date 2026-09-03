@@ -1663,9 +1663,9 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    /// List all agent-registered runtime projects.
+    /// List all Runner-registered runtime Projects.
 
-    /// Probe agent-side language-server availability without starting it.
+    /// Probe Runner-side language-server availability without starting it.
     LspStatus {
         project: String,
         #[serde(default)]
@@ -1945,10 +1945,10 @@ pub enum ToolCall {
     /// Register an existing directory as a WebCodex project on a selected
     /// agent. The agent validates the path against its own policy, writes a
     /// project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
-    /// project list. The server refreshes its cached project summaries for
-    /// that agent so `listProjects` sees the new project immediately. This is
-    /// a mutating agent-side operation constrained by agent policy; the server
-    /// never writes project config files on the agent host directly.
+    /// Project list. The Server refreshes its cached Project summaries for
+    /// that Runner so `list_projects` sees the new Project immediately. This is
+    /// a mutating Runner-side operation constrained by Runner policy; the Server
+    /// never writes Project config files on the Runner host directly.
     RegisterProject {
         client_id: String,
         id: String,
@@ -1976,10 +1976,10 @@ pub enum ToolCall {
     /// WebCodex project. The agent validates the path against its own policy,
     /// creates the directory (and optional template files / git init), writes
     /// a project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
-    /// project list. The server refreshes its cached project summaries so
-    /// `listProjects` sees the new project immediately. This is a mutating
-    /// agent-side operation constrained by agent policy; the server never
-    /// creates directories or writes project config files on the agent host
+    /// Project list. The Server refreshes its cached Project summaries so
+    /// `list_projects` sees the new Project immediately. This is a mutating
+    /// Runner-side operation constrained by Runner policy; the Server never
+    /// creates directories or writes Project config files on the Runner host
     /// directly.
     CreateProject {
         client_id: String,
@@ -2000,8 +2000,8 @@ pub enum ToolCall {
         overwrite: bool,
     },
 
-    /// List connected shell/agent clients.
-    ListAgents {
+    /// List connected Runners.
+    ListRunners {
         #[serde(default)]
         client_id: Option<String>,
         #[serde(default)]
@@ -2016,7 +2016,7 @@ pub enum ToolCall {
     ///
     /// This is a read-only observability tool: it never exposes tokens,
     /// secrets, full env, or stdout/stderr. It returns service metadata,
-    /// project config status, agent client summaries, and job counts.
+    /// Project config status, Runner summaries, and Job counts.
     RuntimeStatus {
         #[serde(default)]
         compact: bool,
@@ -2240,7 +2240,7 @@ fn reject_unknown_targeted_inventory_fields(
 ) -> Result<(), String> {
     let allowed: &[&str] = match tool_name {
         "list_projects" => &["client_id", "project", "query", "limit", "summary_only"],
-        "list_agents" => &[
+        "list_runners" => &[
             "client_id",
             "client_ids",
             "include_projects",
@@ -2310,6 +2310,13 @@ impl ToolCall {
         name: &str,
         arguments: Value,
     ) -> Result<(Self, ToolCallRecorderMetadata), String> {
+        // `list_agents` was the pre-0.4 model-facing name for execution Runners.
+        // Keep one ingress-only compatibility alias without registering a second
+        // ToolDefinition or allowing new discovery surfaces to teach that name.
+        let name = match name {
+            "list_agents" => "list_runners",
+            _ => name,
+        };
         if name == "start_coding_task" {
             return Err(
                 "tool 'start_coding_task' is no longer supported; use 'work_on_project'"
@@ -2380,7 +2387,7 @@ impl ToolCall {
         }
         if matches!(
             name,
-            "list_projects" | "list_agents" | "runtime_status" | "list_jobs"
+            "list_projects" | "list_runners" | "runtime_status" | "list_jobs"
         ) {
             reject_unknown_targeted_inventory_fields(name, &arguments)?;
         }
@@ -2590,7 +2597,7 @@ impl ToolCall {
             Self::RegisterProject { .. } => "register_project",
             Self::UnregisterProject { .. } => "unregister_project",
             Self::CreateProject { .. } => "create_project",
-            Self::ListAgents { .. } => "list_agents",
+            Self::ListRunners { .. } => "list_runners",
             Self::RuntimeStatus { .. } => "runtime_status",
             Self::ReadToolTrace { .. } => "read_tool_trace",
             Self::ToolManifest { .. } => "tool_manifest",

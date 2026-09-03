@@ -19,13 +19,13 @@ fn list_projects_call(
     }
 }
 
-fn list_agents_call(
+fn list_runners_call(
     client_id: Option<&str>,
     client_ids: Option<&[&str]>,
     include_projects: Option<bool>,
     summary_only: bool,
 ) -> ToolCall {
-    ToolCall::ListAgents {
+    ToolCall::ListRunners {
         client_id: client_id.map(str::to_string),
         client_ids: client_ids.map(|ids| ids.iter().map(|id| (*id).to_string()).collect()),
         include_projects,
@@ -442,7 +442,7 @@ async fn list_projects_filters_only_after_authorization_visibility() {
 
     let hidden_agent = runtime
         .dispatch_with_auth(
-            list_agents_call(Some("client-b"), None, Some(false), true),
+            list_runners_call(Some("client-b"), None, Some(false), true),
             Some(&auth_a),
         )
         .await;
@@ -490,7 +490,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
 
     let alice_agents = runtime
         .dispatch_with_auth(
-            list_agents_call(None, None, Some(true), false),
+            list_runners_call(None, None, Some(true), false),
             Some(&alice),
         )
         .await;
@@ -531,7 +531,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
 
     let hidden_agent = runtime
         .dispatch_with_auth(
-            list_agents_call(Some("bob-runner"), None, Some(false), true),
+            list_runners_call(Some("bob-runner"), None, Some(false), true),
             Some(&alice),
         )
         .await;
@@ -566,7 +566,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
     assert!(!ambiguous.to_message().contains("bob"));
 
     let bob_agents = runtime
-        .dispatch_with_auth(list_agents_call(None, None, Some(true), false), Some(&bob))
+        .dispatch_with_auth(list_runners_call(None, None, Some(true), false), Some(&bob))
         .await;
     assert!(bob_agents.success, "{:?}", bob_agents.error);
     assert_eq!(bob_agents.output["count"], 1);
@@ -574,7 +574,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
 
     let admin_agents = runtime
         .dispatch_with_auth(
-            list_agents_call(None, None, Some(false), true),
+            list_runners_call(None, None, Some(false), true),
             Some(&bootstrap),
         )
         .await;
@@ -583,7 +583,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
 }
 
 #[tokio::test]
-async fn list_agents_supports_exact_batch_and_compact_projection() {
+async fn list_runners_supports_exact_batch_and_compact_projection() {
     let runtime = test_runtime();
     register_target_agent(
         &runtime,
@@ -611,14 +611,14 @@ async fn list_agents_supports_exact_batch_and_compact_projection() {
     .await;
 
     let legacy = runtime
-        .dispatch(list_agents_call(None, None, None, false))
+        .dispatch(list_runners_call(None, None, None, false))
         .await;
     assert!(legacy.success);
     assert_eq!(legacy.output["count"], 3);
     assert!(legacy.output["agents"][0].get("projects").is_some());
 
     let focused = runtime
-        .dispatch(list_agents_call(Some("special"), None, Some(false), true))
+        .dispatch(list_runners_call(Some("special"), None, Some(false), true))
         .await;
     assert!(focused.success, "{:?}", focused.error);
     assert_eq!(focused.output["count"], 1);
@@ -640,7 +640,7 @@ async fn list_agents_supports_exact_batch_and_compact_projection() {
     }
 
     let batch = runtime
-        .dispatch(list_agents_call(
+        .dispatch(list_runners_call(
             None,
             Some(&["special", "mini"]),
             Some(false),
@@ -662,7 +662,7 @@ async fn list_agents_supports_exact_batch_and_compact_projection() {
         .all(|agent| agent.get("projects").is_none()));
 
     let duplicate = runtime
-        .dispatch(list_agents_call(
+        .dispatch(list_runners_call(
             None,
             Some(&["special", "special"]),
             None,
@@ -676,7 +676,7 @@ async fn list_agents_supports_exact_batch_and_compact_projection() {
         .map(|index| format!("client-{index}"))
         .collect::<Vec<_>>();
     let too_many = runtime
-        .dispatch(ToolCall::ListAgents {
+        .dispatch(ToolCall::ListRunners {
             client_id: None,
             client_ids: Some(too_many_ids),
             include_projects: None,
@@ -687,7 +687,7 @@ async fn list_agents_supports_exact_batch_and_compact_projection() {
     assert_eq!(too_many.output["error_kind"], "invalid_client_ids");
 
     let unknown = runtime
-        .dispatch(list_agents_call(Some("not-registered"), None, None, false))
+        .dispatch(list_runners_call(Some("not-registered"), None, None, false))
         .await;
     assert!(unknown.success);
     assert_eq!(unknown.output["count"], 0);
@@ -830,7 +830,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
 
     let agent_spec = specs
         .iter()
-        .find(|spec| spec.name == "list_agents")
+        .find(|spec| spec.name == "list_runners")
         .unwrap();
     let agent_props = agent_spec.input_schema["properties"].as_object().unwrap();
     assert_eq!(agent_props["client_ids"]["minItems"], 1);
@@ -877,7 +877,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     ));
 
     let agents = ToolCall::from_tool_name(
-        "list_agents",
+        "list_runners",
         serde_json::json!({
             "client_ids": ["special", "mini"],
             "include_projects": false,
@@ -887,7 +887,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     .unwrap();
     assert!(matches!(
         agents,
-        ToolCall::ListAgents {
+        ToolCall::ListRunners {
             client_id: None,
             client_ids: Some(_),
             include_projects: Some(false),
@@ -939,7 +939,7 @@ fn targeted_inventory_tool_calls_reject_unknown_filter_fields() {
             "clinet_id",
         ),
         (
-            "list_agents",
+            "list_runners",
             serde_json::json!({"clinet_id": "special"}),
             "clinet_id",
         ),

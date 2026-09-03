@@ -61,8 +61,10 @@ fn admin_usage_keeps_rest_registration_commands_but_not_create_local() {
     assert!(!stdout.contains("create-local"));
     assert!(stdout.contains("webcodex tokens create"));
     assert!(stdout.contains("webcodex tokens register-hash"));
-    assert!(stdout.contains("webcodex agent-tokens create"));
-    assert!(stdout.contains("webcodex agent-tokens register-hash"));
+    assert!(stdout.contains("webcodex runner-tokens create"));
+    assert!(stdout.contains("webcodex runner-tokens register-hash"));
+    assert!(!stdout.contains("webcodex agent-tokens create"));
+    assert!(!stdout.contains("webcodex agent-tokens register-hash"));
     assert!(!stdout.contains("webcodex token register-hash"));
     assert!(!stdout.contains("webcodex agent-token register-hash"));
 }
@@ -115,9 +117,9 @@ fn tokens_create_builds_repeated_scopes() {
 }
 
 #[test]
-fn agent_tokens_create_defaults_agent_scopes() {
+fn runner_tokens_create_defaults_runner_scopes() {
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "create",
         "--server-url",
         "https://example.test",
@@ -143,9 +145,9 @@ fn agent_tokens_create_defaults_agent_scopes() {
 }
 
 #[test]
-fn agent_tokens_create_supports_explicit_scopes() {
+fn runner_tokens_create_supports_explicit_scopes() {
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "create",
         "--server-url",
         "https://example.test",
@@ -164,9 +166,9 @@ fn agent_tokens_create_supports_explicit_scopes() {
 }
 
 #[test]
-fn agent_tokens_register_hash_builds_hash_registration_request() {
+fn runner_tokens_register_hash_builds_hash_registration_request() {
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -202,11 +204,11 @@ fn agent_tokens_register_hash_builds_hash_registration_request() {
 }
 
 #[test]
-fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_explicit_token() {
+fn runner_tokens_register_hash_defaults_runner_scopes_and_prefers_explicit_token() {
     let mut env = EnvGuard::new();
     env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -235,11 +237,11 @@ fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_explicit_token()
 }
 
 #[test]
-fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential() {
+fn runner_tokens_register_hash_uses_credential_env_and_default_account_credential() {
     let mut env = EnvGuard::new();
     env.set("CUSTOM_ACCT", "wc_acct_custom");
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -259,7 +261,7 @@ fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential
 
     env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "register-hash",
         "--server-url",
         "https://example.test",
@@ -292,7 +294,7 @@ fn list_and_revoke_commands_build_expected_requests() {
     assert_eq!(list.body, json!({"username": "alice"}));
 
     let revoke = request(&[
-        "agent-tokens",
+        "runner-tokens",
         "revoke",
         "--server-url",
         "https://example.test",

@@ -1,4 +1,4 @@
-use super::AgentCapability::CodingAgentRuns;
+use super::RunnerCapabilityRequirement::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
@@ -7,7 +7,7 @@ use super::{
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read},
-    CODING_AGENT_RUN, TOOL_PROVIDER_AGENT,
+    CODING_AGENT_RUN, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     coding_agent_cancel_input_schema, coding_agent_observe_input_schema,
@@ -23,7 +23,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ModelVisible,
                     TOOL_CATEGORY_CODING_AGENT,
                     Some(CodingAgentRuns),
-                    TOOL_PROVIDER_AGENT,
+                    TOOL_PROVIDER_RUNNER,
                     super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: JobRun,
@@ -49,7 +49,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -72,7 +72,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             // Cancel is Run lifecycle control but deliberately not a second
             // WebCodex PermissionEvaluator decision after start admission.
             super::ToolSemanticContract {

@@ -121,8 +121,8 @@ For Runner config terminology, `project_registry_dir` is the directory of Projec
 
 | Command | Purpose |
 | --- | --- |
-| `webcodex ops status` | Summarize runtime, tools, jobs, agents, and projects |
-| `webcodex ops agents` | Compact agent fleet status |
+| `webcodex ops status` | Summarize runtime, tools, Jobs, Runners, and Projects |
+| `webcodex ops runners` | Compact Runner fleet status |
 | `webcodex ops runner --client-id <id>` | Exact read-only Runner registration/build status |
 | `webcodex ops projects` | Project inventory and smoke suitability |
 | `webcodex ops smoke-preflight --project <id>` | Preflight one project for a deploy smoke |
@@ -166,11 +166,11 @@ locally and register only their hashes with the Server.
 | `webcodex tokens create` | Admin: create a PAT server-side | Uses `--server-url`. |
 | `webcodex tokens generate` | Offline token material generation | Does **not** register with any Server. |
 | `webcodex tokens list` / `revoke` / `register-hash` | List or revoke PATs; register an externally computed hash | Admin side; uses `--server-url`. |
-| `webcodex agent-tokens create-local` | Locally generate a `wc_agent_*` Runner token and register its hash | Uses `--server-url` and binds to `--client-id`. |
-| `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin variants | |
+| `webcodex runner-tokens create-local` | Locally generate a `wc_agent_*` Runner token and register its hash | Uses `--server-url` and binds to `--client-id`. |
+| `webcodex runner-tokens create` / `list` / `revoke` / `register-hash` | Admin variants | |
 
 All Server-targeting credential commands use the canonical `--server-url` spelling.
-Local `tokens create-local` / `agent-tokens create-local` use `--username` plus an
+Local `tokens create-local` / `runner-tokens create-local` use `--username` plus an
 account credential; admin token management uses the same plural namespaces.
 
 ### Advanced and compatibility commands
@@ -183,7 +183,7 @@ normal entry points.
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
 | `webcodex tokens generate` | Offline token material generation | Registers nothing; pair the output with `tokens register-hash` if the hash must be registered server-side. |
 | `webcodex tokens register-hash` | Admin: register an externally computed PAT hash | Uses `--server-url`; for offline-generated material. |
-| `webcodex agent-tokens register-hash` | Admin: register an externally computed Runner-token hash | Uses `--server-url`; for offline-generated material. |
+| `webcodex runner-tokens register-hash` | Admin: register an externally computed Runner-token hash | Uses `--server-url`; for offline-generated material. |
 
 ## Terminology
 
@@ -243,7 +243,7 @@ quick answer.
 | Project Credential | (private file) | `webcodex setup` | the one project's Connector + Runner | other projects, admin |
 | Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT Actions, MCP, Runner |
 | Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, REST API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex agent-tokens create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
+| Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
 
 ### Hosted shared key (`wck_...`)
@@ -299,7 +299,7 @@ quick answer.
 ### `wc_agent_*` (Runner token)
 
 - A Runner transport token generated locally by
-  `webcodex agent-tokens create-local` and bound to a `client_id`.
+  `webcodex runner-tokens create-local` and bound to a `client_id`.
 - `webcodex login` stores it **only** inline in the generated `runner.toml`
   under `~/.config/webcodex/<server-slug>/<user>/` — no separate
   `webcodex-runner-token` file is created. This is the canonical managed

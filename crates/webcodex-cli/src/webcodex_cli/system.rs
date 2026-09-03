@@ -594,7 +594,7 @@ pub(crate) fn read_optional_token(
 pub(crate) fn validate_user_api_token(token: &str) -> Result<(), String> {
     if token.trim().starts_with("wc_agent_") {
         return Err(
-            "This is an Agent transport token and cannot be used for project/runtime APIs. Use the generated webcodex-user-token instead."
+            "This is an Runner transport token and cannot be used for project/runtime APIs. Use the generated webcodex-user-token instead."
                 .to_string(),
         );
     }
@@ -617,10 +617,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_api_token_validation_rejects_agent_tokens_without_echoing_them() {
+    fn user_api_token_validation_rejects_runner_transport_tokens_without_echoing_them() {
         let token = "wc_agent_do_not_echo_0123456789";
         let error = validate_user_api_token(token).unwrap_err();
-        assert!(error.contains("Agent transport token"));
+        assert!(error.contains("Runner transport token"));
         assert!(error.contains("webcodex-user-token"));
         assert!(!error.contains(token));
     }

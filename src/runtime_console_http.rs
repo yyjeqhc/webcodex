@@ -1408,14 +1408,14 @@ async fn runtime_status_value(
         .ok_or(RuntimeConsoleError::Internal)
 }
 
-async fn list_agents_value(
+async fn list_runners_value(
     runtime: &ToolRuntime,
     auth: &AuthContext,
     client_id: Option<String>,
 ) -> Result<Value, RuntimeConsoleError> {
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ListAgents {
+            ToolCall::ListRunners {
                 client_id,
                 client_ids: None,
                 include_projects: Some(false),
@@ -1436,7 +1436,7 @@ async fn overview_for_auth(
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
     let status = runtime_status_value(runtime, auth, None).await?;
-    let agents = list_agents_value(runtime, auth, None).await?;
+    let agents = list_runners_value(runtime, auth, None).await?;
     let summary = agents.get("summary").unwrap_or(&Value::Null);
     let build = status.get("build").unwrap_or(&Value::Null);
     let status_clients = status
@@ -1532,7 +1532,7 @@ async fn runner_for_auth(
     {
         return Err(RuntimeConsoleError::Invalid);
     }
-    let agents = list_agents_value(runtime, auth, Some(client_id.to_string())).await?;
+    let agents = list_runners_value(runtime, auth, Some(client_id.to_string())).await?;
     let agent = agents
         .get("agents")
         .and_then(Value::as_array)

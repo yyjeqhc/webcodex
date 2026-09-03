@@ -1,4 +1,4 @@
-use super::AgentCapability::{
+use super::RunnerCapabilityRequirement::{
     ComputerAccessibilityObserve, ComputerApplicationDiscovery, ComputerApplicationLaunch,
     ComputerClipboardRead, ComputerClipboardWrite, ComputerControl, ComputerDisplayObserve,
     ComputerElementState, ComputerKeyInput, ComputerObserve, ComputerPointerControl,
@@ -13,8 +13,8 @@ use crate::metadata::{
     ToolPathHint::{Artifact, None},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, Read},
     COMPUTER_CLIPBOARD_READ, COMPUTER_CLIPBOARD_WRITE, COMPUTER_CONTROL, COMPUTER_DISPLAY_READ,
-    COMPUTER_LAUNCH, COMPUTER_POINTER_CONTROL, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
-    TOOL_PROVIDER_CONTROL,
+    COMPUTER_LAUNCH, COMPUTER_POINTER_CONTROL, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
+    TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
@@ -37,7 +37,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardRead),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -63,7 +63,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardWrite),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: ComputerControlRisk,
@@ -90,7 +90,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: ComputerControlRisk,
@@ -121,7 +121,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Execute,
                     risk: ComputerControlRisk,
@@ -174,7 +174,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -197,7 +197,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -221,7 +221,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationDiscovery),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -243,7 +243,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationLaunch),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -265,7 +265,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -287,7 +287,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -331,7 +331,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerElementState),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -353,7 +353,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerWindowActivate),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -376,7 +376,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerControl),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -400,7 +400,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerScrollToElement),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -423,7 +423,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerKeyInput),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -447,7 +447,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerTextInput),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Execute,
                 risk: ComputerControlRisk,
@@ -469,7 +469,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
-            TOOL_PROVIDER_AGENT,
+            TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -492,7 +492,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
-                TOOL_PROVIDER_AGENT,
+                TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,

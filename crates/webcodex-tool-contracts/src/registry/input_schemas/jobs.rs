@@ -270,7 +270,7 @@ pub fn run_shell_input_schema() -> Value {
         (
             "shell",
             "string",
-            "Optional explicit command language: sh or bash. When omitted, local run_shell uses sh, an agent-backed run_shell uses that Agent's configured shell, and a named Session SSH resource uses the remote login shell. The response always records the actual selection.",
+            "Optional explicit command language: sh or bash. When omitted, local run_shell uses sh, a Runner-backed run_shell uses that Runner's configured shell, and a named Session SSH resource uses the remote login shell. The response always records the actual selection.",
             false,
         ),
     ]));
@@ -325,7 +325,7 @@ pub fn run_job_input_schema() -> Value {
         (
             "shell",
             "string",
-            "Optional explicit command language: sh or bash. When omitted, local run_job preserves its existing bash contract, an agent-backed run_job uses that Agent's configured shell, and a named Session SSH resource uses the remote login shell. The response always records the actual selection.",
+            "Optional explicit command language: sh or bash. When omitted, local run_job preserves its existing bash contract, a Runner-backed run_job uses that Runner's configured shell, and a named Session SSH resource uses the remote login shell. The response always records the actual selection.",
             false,
         ),
     ]));

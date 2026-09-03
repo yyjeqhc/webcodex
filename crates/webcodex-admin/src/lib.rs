@@ -25,10 +25,10 @@ pub enum AdminCliCommand {
     TokensRegisterHash(AdminOptions, TokenRegisterHashArgs),
     TokensList(AdminOptions, UsernameArgs),
     TokensRevoke(AdminOptions, RevokeTokenArgs),
-    AgentTokensCreate(AdminOptions, AgentTokenCreateArgs),
-    AgentTokensRegisterHash(AdminOptions, AgentTokenRegisterHashArgs),
-    AgentTokensList(AdminOptions, UsernameArgs),
-    AgentTokensRevoke(AdminOptions, RevokeTokenArgs),
+    RunnerTokensCreate(AdminOptions, RunnerTokenCreateArgs),
+    RunnerTokensRegisterHash(AdminOptions, RunnerTokenRegisterHashArgs),
+    RunnerTokensList(AdminOptions, UsernameArgs),
+    RunnerTokensRevoke(AdminOptions, RevokeTokenArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -79,7 +79,7 @@ pub struct RevokeTokenArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AgentTokenCreateArgs {
+pub struct RunnerTokenCreateArgs {
     pub username: String,
     pub client_id: String,
     pub name: Option<String>,
@@ -87,7 +87,7 @@ pub struct AgentTokenCreateArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AgentTokenRegisterHashArgs {
+pub struct RunnerTokenRegisterHashArgs {
     pub username: String,
     pub client_id: String,
     pub name: Option<String>,

@@ -252,9 +252,13 @@ contract.
 
 `run_process` additionally accepts a bounded `accepted_exit_codes` set for commands
 whose exit status is itself a result (for example a boolean Git predicate). Matching
-expectations change only ledger classification and validation assertion actionability;
-they never rewrite the ToolResult, exit code, effect evidence, authorization decision,
-or execution state. Pre-start rejection, permission/guard denial, transport failure,
+expectations change only ledger expectation/actionability classification. Validation
+evidence keeps three facts separate: the real execution/validator outcome, whether the
+pre-declared expectation was satisfied, and whether validation itself passed. A matched
+negative/observation failure is neutral expected-result evidence: it does not become a
+validation pass and cannot resolve an earlier real validation failure with the same
+identity. ToolResult, exit code, effect evidence, authorization decision, and execution
+state are never rewritten. Pre-start rejection, permission/guard denial, transport failure,
 malformed result, timeout/cancellation, and unknown/lost outcomes remain fail-closed.
 A Job admission is not a terminal match: structured validation Jobs inherit the
 pre-declared expectation and classify it only when terminal evidence is materialized.

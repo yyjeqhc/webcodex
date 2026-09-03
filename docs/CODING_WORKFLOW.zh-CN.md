@@ -143,7 +143,9 @@ evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 v
 已完成且结果已知的业务成功或失败都可接受。这个声明只改变 Session ledger 的 expectation
 分类，不会改写真实 ToolResult、exit code、授权或 execution state。timeout、cancelled、transport
 failure、guard/permission rejection、malformed output 与 `outcome_unknown` 都不能满足 `failure`
-或 `observe`。
+或 `observe`。命中的负向/observation 结果会作为独立的 expected-result evidence 记录；它不会
+把真实 validator/process failure 改写为 validation pass，也不能 resolve 同 identity 的更早
+真实 validation failure。
 
 对于 exit code 本身就是业务结果的 `run_process` predicate，已知合法结果集合时优先使用
 `accepted_exit_codes`。例如 `git merge-base --is-ancestor` 可声明 `[0, 1]`，两个布尔答案都

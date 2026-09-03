@@ -2734,7 +2734,17 @@ fn validation_job_terminal_inherits_public_failure_expectation() {
         true,
         &json!({
             "job_id": job_id,
-            "execution_state": "running"
+            "job_status": "running",
+            "promoted_to_job": true,
+            "execution_state": "running",
+            "command_started": true,
+            "command_completed": false,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0,
+            "stdout_truncated": false,
+            "stderr_truncated": false
         }),
         None,
         None,
@@ -2772,8 +2782,12 @@ fn validation_job_terminal_inherits_public_failure_expectation() {
     );
 
     let validation = validation_summary_for_session(&summary);
-    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["status"], "expected");
+    assert_eq!(validation["latest_status"], "expected");
+    assert_eq!(validation["latest"]["success"], false);
     assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["latest"]["expectation_satisfied"], true);
+    assert_eq!(validation["expected_results"], 1);
     assert_eq!(validation["latest"]["exit_code"], 101);
     assert_eq!(validation["unresolved_failures"]["count"], 0);
 }
@@ -2800,7 +2814,17 @@ fn validation_job_terminal_inherits_expectation_beyond_default_summary_window() 
         true,
         &json!({
             "job_id": job_id,
-            "execution_state": "running"
+            "job_status": "running",
+            "promoted_to_job": true,
+            "execution_state": "running",
+            "command_started": true,
+            "command_completed": false,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0,
+            "stdout_truncated": false,
+            "stderr_truncated": false
         }),
         None,
         None,
@@ -2848,9 +2872,76 @@ fn validation_job_terminal_inherits_expectation_beyond_default_summary_window() 
         Some("matched_expected_failure")
     );
     let validation = validation_summary_for_session(&summary);
-    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["status"], "expected");
+    assert_eq!(validation["latest_status"], "expected");
+    assert_eq!(validation["latest"]["success"], false);
     assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["latest"]["expectation_satisfied"], true);
+    assert_eq!(validation["expected_results"], 1);
     assert_eq!(validation["unresolved_failures"]["count"], 0);
+}
+
+#[test]
+fn expected_observation_failure_does_not_resolve_prior_same_identity_validation_failure() {
+    let store = SessionStore::default();
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), None);
+    let assertion_name = "same regression remains failing";
+    let failed_output = json!({
+        "exit_code": 1,
+        "failure_kind": "command_exit_nonzero",
+        "command_started": true,
+        "command_completed": true,
+        "execution_state": "completed"
+    });
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        json!({
+            "project": project,
+            "purpose": "test",
+            "assertion_name": assertion_name
+        }),
+        false,
+        failed_output.clone(),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        json!({
+            "project": project,
+            "purpose": "test",
+            "assertion_name": assertion_name,
+            "result_expectation": "observe"
+        }),
+        false,
+        failed_output,
+    );
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["failures"], 1);
+    assert_eq!(validation["expected_results"], 1);
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["latest_status"], "expected");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], true);
+    assert_eq!(validation["resolved_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["current_evidence"]["status"], "failed");
+    assert_eq!(
+        validation["current_evidence"]["unresolved_failure_count"],
+        1
+    );
+    assert_eq!(validation["latest"]["success"], false);
+    assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["latest"]["expectation_satisfied"], true);
 }
 
 #[test]

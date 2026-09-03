@@ -180,7 +180,10 @@ when the purpose is to inspect the result rather than judge pass/fail. The decla
 changes only Session-ledger expectation classification: the real ToolResult, exit code,
 authorization, and execution state are never rewritten. Timeout, cancellation,
 transport failure, guard/permission rejection, malformed output, and `outcome_unknown`
-do not satisfy `failure` or `observe`.
+do not satisfy `failure` or `observe`. A matched negative/observation result is recorded
+separately as expected-result evidence: it does not turn a real validator/process
+failure into a validation pass and cannot resolve an earlier real validation failure
+with the same identity.
 
 For predicate-style `run_process` commands, prefer `accepted_exit_codes` when the valid
 result set is known. For example, `git merge-base --is-ancestor` can use `[0, 1]` so

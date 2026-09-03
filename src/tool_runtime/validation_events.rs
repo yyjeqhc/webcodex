@@ -52,6 +52,8 @@ pub(crate) struct ValidationEvent {
     pub(crate) success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) execution_success: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) expectation_satisfied: Option<bool>,
     pub(crate) failure_kind: &'static str,
     pub(crate) failure_category: &'static str,
     pub(crate) unresolved_failure: bool,
@@ -130,6 +132,8 @@ struct ValidationSummary {
     successes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failures: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_results: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_success: Option<ValidationEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -659,6 +663,7 @@ pub(crate) fn skipped_validation_summary() -> Value {
         events_total: 0,
         successes: None,
         failures: None,
+        expected_results: None,
         latest_success: None,
         latest_failure: None,
         events: Vec::new(),
@@ -674,6 +679,7 @@ pub(crate) fn skipped_validation_summary() -> Value {
         "successes": 0,
         "failures": 0,
         "resolved_failure_count": 0,
+        "expected_results": 0,
         "unresolved_failure_count": 0,
         "stale_failure_count": 0,
         "evidence_after_latest_content_change": false,
@@ -716,6 +722,7 @@ fn current_validation_evidence_for_events(
                 "successes": 0,
                 "failures": 0,
                 "resolved_failure_count": 0,
+                "expected_results": 0,
                 "unresolved_failure_count": 0,
                 "stale_failure_count": 0,
                 "evidence_after_latest_content_change": false,
@@ -762,14 +769,14 @@ fn current_validation_evidence_for_events(
         });
         if started_after_boundary {
             current_source_event_ids.insert(record.source_event_id.clone());
-            if !record.event.success {
+            if validation_event_is_failure(&record.event) {
                 current_failure_ids.insert(record.source_event_id.clone());
             }
         } else if reset_index.is_some_and(|boundary| {
             start_index.is_some_and(|index| index >= attempt.attempt_start && index <= boundary)
         }) {
             stale_validation_count += 1;
-            if !record.event.success {
+            if validation_event_is_failure(&record.event) {
                 stale_failure_count += 1;
             }
         }
@@ -799,6 +806,10 @@ fn current_validation_evidence_for_events(
         .get("failures")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
+    let expected_results = current_validation
+        .get("expected_results")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
     let resolved_failure_count = current_validation
         .pointer("/resolved_failures/count")
         .and_then(Value::as_u64)
@@ -811,6 +822,11 @@ fn current_validation_evidence_for_events(
         ("failed", Some("current_validation_failures"))
     } else if current_events_total > 0 && successes > 0 {
         ("passed", None)
+    } else if current_events_total > 0 && expected_results > 0 {
+        (
+            "expected",
+            Some("declared_result_expectation_satisfied_without_validation_pass"),
+        )
     } else if reset_index.is_some() && stale_validation_count > 0 {
         ("stale", Some("validation_stale_after_changes"))
     } else if current_events_total == 0 {
@@ -830,7 +846,7 @@ fn current_validation_evidence_for_events(
 
     let non_current_failure_event_ids = validation_records
         .into_iter()
-        .filter(|record| !record.event.success)
+        .filter(|record| validation_event_is_failure(&record.event))
         .map(|record| record.source_event_id)
         .filter(|event_id| !current_failure_ids.contains(event_id))
         .collect();
@@ -844,6 +860,7 @@ fn current_validation_evidence_for_events(
             "successes": successes,
             "failures": failures,
             "resolved_failure_count": resolved_failure_count,
+            "expected_results": expected_results,
             "unresolved_failure_count": unresolved_failure_count,
             "stale_failure_count": stale_failure_count,
             "evidence_after_latest_content_change": reset_index.is_some() && current_events_total > 0,
@@ -927,6 +944,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
             events_total,
             successes: None,
             failures: None,
+            expected_results: None,
             latest_success: None,
             latest_failure: None,
             events: Vec::new(),
@@ -943,8 +961,12 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         .iter()
         .filter(|event| event.success)
         .count();
-    let failures = events_total.saturating_sub(successes);
-    let status = validation_status(successes, failures);
+    let failures = historical_failures.count;
+    let expected_results = validation_events
+        .iter()
+        .filter(|event| validation_event_is_expected_result(event))
+        .count();
+    let status = validation_status(successes, failures, expected_results);
     let parser = parser_summary_for_events(&validation_events);
     let cargo_test_zero_tests_run = validation_events.iter().any(cargo_test_zero_tests_success);
     let latest = validation_events.last().cloned();
@@ -957,7 +979,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     let latest_failure = validation_events
         .iter()
         .rev()
-        .find(|event| !event.success)
+        .find(|event| validation_event_is_failure(event))
         .cloned();
     let skip = events_total.saturating_sub(limit);
     let events = validation_events.into_iter().skip(skip).collect();
@@ -975,6 +997,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         events_total,
         successes: Some(successes),
         failures: Some(failures),
+        expected_results: Some(expected_results),
         latest_success,
         latest_failure,
         events,
@@ -984,21 +1007,31 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     })
 }
 
-fn validation_status(successes: usize, failures: usize) -> &'static str {
-    match (successes > 0, failures > 0) {
-        (true, true) => "mixed",
-        (true, false) => "passed",
-        (false, true) => "failed",
-        (false, false) => "unknown",
+fn validation_status(successes: usize, failures: usize, expected_results: usize) -> &'static str {
+    match (successes > 0, failures > 0, expected_results > 0) {
+        (true, true, _) => "mixed",
+        (true, false, _) => "passed",
+        (false, true, _) => "failed",
+        (false, false, true) => "expected",
+        (false, false, false) => "unknown",
     }
 }
 
 fn validation_latest_status(latest: Option<&ValidationEvent>) -> &'static str {
     match latest {
         Some(event) if event.success => "passed",
+        Some(event) if validation_event_is_expected_result(event) => "expected",
         Some(_) => "failed",
         None => "not_run",
     }
+}
+
+fn validation_event_is_expected_result(event: &ValidationEvent) -> bool {
+    !event.success && event.expectation_satisfied == Some(true)
+}
+
+fn validation_event_is_failure(event: &ValidationEvent) -> bool {
+    !event.success && !validation_event_is_expected_result(event)
 }
 
 fn classify_validation_failures(
@@ -1021,7 +1054,7 @@ fn classify_validation_failures(
     let mut resolved = Vec::new();
     let mut unresolved = Vec::new();
     for (index, event) in events.iter_mut().enumerate() {
-        if event.success {
+        if event.success || validation_event_is_expected_result(event) {
             continue;
         }
         let is_resolved = latest_success_by_identity
@@ -1079,7 +1112,12 @@ fn validation_reconciliation_key(event: &ValidationEvent) -> (Option<String>, St
 }
 
 fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -> bool {
-    !cargo_test_zero_tests_success(event) && !cargo_test_unproven_execution_success(event)
+    // A caller-declared expected/observed failure is useful expectation evidence,
+    // but it is not proof that the validator passed and therefore can never
+    // resolve an earlier real validation failure for the same identity.
+    event.execution_success != Some(false)
+        && !cargo_test_zero_tests_success(event)
+        && !cargo_test_unproven_execution_success(event)
 }
 
 // `validation_kind = test` is only an intent/category for generic execution.
@@ -1189,7 +1227,13 @@ fn job_acceptance_only(event: &SessionEvent) -> bool {
         .validation_output_summary
         .as_ref()
         .and_then(|summary| summary.get("execution_state"))
-        .and_then(Value::as_str);
+        .and_then(Value::as_str)
+        .or_else(|| {
+            event
+                .effect_evidence
+                .as_ref()
+                .and_then(|effect| effect.execution_state.as_deref())
+        });
     matches!(
         execution_state,
         Some("started") | Some("queued") | Some("running")
@@ -1293,16 +1337,16 @@ fn validation_event_from_finished(
         validation_failure_kind(finished, execution_success, diagnostics.as_ref(), adapter);
     let public_result_expectation =
         finished.result_expectation.is_some() || !finished.accepted_exit_codes.is_empty();
-    let expectation_matched = !execution_success
-        && public_result_expectation
-        && matches!(
+    let expectation_satisfied = public_result_expectation.then_some(
+        matches!(
             finished.failure_expectation_result.as_deref(),
             Some("matched_expected_failure" | "matched_expected_result")
-        );
-    // Validation success describes whether the declared validation assertion
-    // was satisfied, not whether the underlying process exited zero. The raw
-    // process outcome remains available as execution_success/exit_code.
-    let success = execution_success || expectation_matched;
+        ) || (execution_success && finished.failure_expectation_result.as_deref() == Some("none")),
+    );
+    // Validation pass/fail remains an execution fact. A pre-declared negative
+    // or observation expectation is represented separately and must never turn
+    // a real validator failure into pass evidence or a historical resolver.
+    let success = execution_success;
     let command_summary = execution_string(started, finished, "command_summary").or_else(|| {
         started
             .and_then(|event| event.input_summary.as_ref())
@@ -1359,10 +1403,11 @@ fn validation_event_from_finished(
         purpose,
         validation_kind,
         success,
-        execution_success: (success != execution_success).then_some(execution_success),
+        execution_success: public_result_expectation.then_some(execution_success),
+        expectation_satisfied,
         failure_kind,
         failure_category: failure_kind,
-        unresolved_failure: !success,
+        unresolved_failure: !success && expectation_satisfied != Some(true),
         exit_code: finished.exit_code,
         summary: format!("{} {}", finished.tool_name, outcome),
         command_summary,

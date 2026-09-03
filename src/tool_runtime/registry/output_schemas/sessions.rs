@@ -549,7 +549,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Parser version 3 provides bounded structured diagnostics from bounded validation metadata using canonical diagnostics and failed_test_details fields only. Full and summary_only closeout preserve the same validation evidence. Does not include stdout/stderr bodies and performs no root-cause inference; parser.available remains false when session ledger events lack those fields. latest_status and historical_failures retain the existing final-state and resolved-history semantics."),
+                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, expected, or unknown. `expected` means a pre-declared negative/observation result matched without proving validator pass. Parser version 3 provides bounded structured diagnostics from bounded validation metadata using canonical diagnostics and failed_test_details fields only. Full and summary_only closeout preserve the same validation evidence. Does not include stdout/stderr bodies and performs no root-cause inference; parser.available remains false when session ledger events lack those fields. latest_status and historical_failures retain the existing final-state and resolved-history semantics."),
             ),
             (
                 "review_evidence",
@@ -625,12 +625,13 @@ fn validation_evidence_schema() -> Value {
             "description": "Current workspace validation evidence for the current attempt after the latest trusted material workspace-content change. Historical ledger failures remain separately visible and are not erased by this projection.",
             "additionalProperties": false,
             "properties": {
-                "status": {"type": "string", "enum": ["passed", "failed", "stale", "not_run", "unknown"]},
+                "status": {"type": "string", "enum": ["passed", "failed", "expected", "stale", "not_run", "unknown"]},
                 "reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                "latest_status": {"type": "string", "enum": ["passed", "failed", "not_run", "unknown"]},
+                "latest_status": {"type": "string", "enum": ["passed", "failed", "expected", "not_run", "unknown"]},
                 "events_total": {"type": "integer", "minimum": 0},
                 "successes": {"type": "integer", "minimum": 0},
                 "failures": {"type": "integer", "minimum": 0},
+                "expected_results": {"type": "integer", "minimum": 0},
                 "resolved_failure_count": {"type": "integer", "minimum": 0},
                 "unresolved_failure_count": {"type": "integer", "minimum": 0},
                 "stale_failure_count": {"type": "integer", "minimum": 0},
@@ -639,7 +640,7 @@ fn validation_evidence_schema() -> Value {
             },
             "required": [
                 "status", "reason", "latest_status", "events_total", "successes", "failures",
-                "resolved_failure_count", "unresolved_failure_count", "stale_failure_count",
+                "expected_results", "resolved_failure_count", "unresolved_failure_count", "stale_failure_count",
                 "evidence_after_latest_content_change", "boundary_reason"
             ]
         })
@@ -651,10 +652,10 @@ fn validation_evidence_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "available": schema_type("boolean", "True when validation-like ledger events exist."),
-            "status": { "type": "string", "enum": ["not_run", "passed", "failed", "mixed", "unknown"] },
+            "status": { "type": "string", "enum": ["not_run", "passed", "failed", "mixed", "expected", "unknown"] },
             "reason": { "anyOf": [{"type": "string"}, {"type": "null"}] },
             "latest": { "anyOf": [event.clone(), {"type": "null"}] },
-            "latest_status": { "type": "string", "enum": ["not_run", "passed", "failed", "unknown"] },
+            "latest_status": { "type": "string", "enum": ["not_run", "passed", "failed", "expected", "unknown"] },
             "current_evidence": current_validation_evidence_schema(),
             "historical_failures": validation_historical_failures_schema(),
             "resolved_failures": validation_failure_set_schema(),
@@ -663,6 +664,7 @@ fn validation_evidence_schema() -> Value {
             "events_total": { "type": "integer", "minimum": 0 },
             "successes": { "type": "integer", "minimum": 0 },
             "failures": { "type": "integer", "minimum": 0 },
+            "expected_results": { "type": "integer", "minimum": 0 },
             "latest_success": event.clone(),
             "latest_failure": event.clone(),
             "events": {
@@ -745,7 +747,9 @@ fn validation_event_schema() -> Value {
             "assertion_name": { "type": "string", "minLength": 1, "maxLength": MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS },
             "purpose": { "type": "string", "enum": ["validation", "test", "build", "format", "release"] },
             "validation_kind": { "type": "string", "enum": ["format", "check", "test", "build", "release", "validation"] },
-            "success": { "type": "boolean" },
+            "success": { "type": "boolean", "description": "True only when the validator/execution itself passed; pre-declared expected failures never rewrite this fact." },
+            "execution_success": { "type": "boolean" },
+            "expectation_satisfied": { "type": "boolean", "description": "Present for public result expectations; true when the pre-declared expectation matched. This is separate from validation success." },
             "failure_kind": { "type": "string", "enum": ["compile_error", "test_failure", "validation_failed", "timeout", "process_exit", "format_diff", "unknown"] },
             "failure_category": { "type": "string", "enum": ["compile_error", "test_failure", "validation_failed", "timeout", "process_exit", "format_diff", "unknown"] },
             "unresolved_failure": { "type": "boolean" },

@@ -1120,7 +1120,7 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
 }
 
 #[tokio::test]
-async fn public_failure_expectation_preserves_raw_cargo_failure_but_satisfies_validation() {
+async fn public_failure_expectation_preserves_raw_cargo_failure_as_expected_validation_evidence() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
@@ -1204,10 +1204,15 @@ async fn public_failure_expectation_preserves_raw_cargo_failure_but_satisfies_va
     );
 
     let validation = validation_summary_for_session(&summary);
-    assert_eq!(validation["current_evidence"]["status"], "passed");
+    assert_eq!(validation["status"], "expected");
+    assert_eq!(validation["current_evidence"]["status"], "expected");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["failures"], 0);
+    assert_eq!(validation["expected_results"], 1);
     assert_eq!(validation["unresolved_failures"]["count"], 0);
-    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["latest"]["success"], false);
     assert_eq!(validation["latest"]["execution_success"], false);
+    assert_eq!(validation["latest"]["expectation_satisfied"], true);
     assert_eq!(validation["latest"]["exit_code"], 101);
 
     let handoff = handoff_summary_only(&runtime, &sid).await;

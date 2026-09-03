@@ -141,7 +141,7 @@ pub(crate) fn test_db() -> (tempfile::TempDir, Arc<crate::Database>) {
 pub(crate) fn runner_access(
     auth: &crate::auth::AuthContext,
 ) -> webcodex_runner_registry::RunnerAccess {
-    crate::shell_client::runner_access_from_auth(Some(auth))
+    crate::runner_http::runner_access_from_auth(Some(auth))
         .expect("authenticated root test context must project to RunnerAccess")
 }
 
@@ -181,7 +181,7 @@ static TEST_PROJECT_INVENTORY_SEQUENCE: std::sync::atomic::AtomicU64 =
 /// test Runner. Tests must use the same post-registration protocol as production
 /// rather than smuggling projects through the retired inline registration field.
 pub(crate) async fn apply_project_inventory_snapshot(
-    registry: &crate::shell_client::ShellClientRegistry,
+    registry: &crate::runner_http::RunnerRegistry,
     client_id: &str,
     agent_instance_id: &str,
     projects: Vec<crate::shell_protocol::ShellAgentProjectSummary>,

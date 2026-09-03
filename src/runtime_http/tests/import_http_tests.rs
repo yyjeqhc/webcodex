@@ -112,7 +112,7 @@ struct ImportUploadFixtureOutcome {
 }
 
 async fn next_import_agent_request(
-    registry: &crate::shell_client::ShellClientRegistry,
+    registry: &crate::runner_http::RunnerRegistry,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
     use crate::shell_protocol::ShellAgentPollRequest;
 
@@ -136,7 +136,7 @@ async fn next_import_agent_request(
 }
 
 async fn complete_import_artifact_uploads(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     upload_count: usize,
 ) -> Vec<ImportUploadFixtureOutcome> {
     use crate::shell_protocol::ShellAgentResultRequest;

@@ -5,7 +5,7 @@
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
-use crate::shell_client::AgentTransport;
+use crate::runner_http::RunnerTransport;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentProtocolGenerationNumber, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellJobOpRequest, AGENT_PROTOCOL_GENERATION_V2,
@@ -85,7 +85,7 @@ async fn register_with_project(
     build: Option<AgentBuildInfo>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(register_request(
             client_id,
             instance,
@@ -95,7 +95,7 @@ async fn register_with_project(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         instance,
         vec![registered_project("proj", "/tmp/reconnect-proj")],
@@ -164,7 +164,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
 
     // Disconnect: layers change independently; stale registration is not ready.
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("rc-agent", "inst-a")
         .await;
     let disconnected = layers(&runtime).await;
@@ -246,7 +246,7 @@ async fn stale_heartbeat_without_disconnect_is_not_ready() {
     let runtime = test_runtime();
     register_with_project(&runtime, "stale-agent", "inst-a", None, None).await;
     runtime
-        .shell_clients
+        .runner_registry
         .set_last_seen_for_test("stale-agent", chrono::Utc::now().timestamp() - 3600)
         .await;
     let stale = layers(&runtime).await;
@@ -491,7 +491,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
 
     // Start an async agent job and let the agent pick it up.
     let job = runtime
-        .shell_clients
+        .runner_registry
         .start_job(
             ShellJobOpRequest {
                 op: "start".to_string(),
@@ -514,10 +514,10 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
 
     // Transport drops mid-job: job authority is not silently completed.
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("job-agent", "inst-a")
         .await;
-    let jobs = runtime.shell_clients.list_jobs(None).await;
+    let jobs = runtime.runner_registry.list_jobs(None).await;
     let lost = jobs
         .iter()
         .find(|info| info.job_id == job.job_id)
@@ -528,7 +528,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
     // Reconnect with a new instance: the terminal state must not be
     // resurrected or duplicated.
     register_with_project(&runtime, "job-agent", "inst-b", None, None).await;
-    let jobs = runtime.shell_clients.list_jobs(None).await;
+    let jobs = runtime.runner_registry.list_jobs(None).await;
     let still_lost = jobs
         .iter()
         .find(|info| info.job_id == job.job_id)
@@ -541,20 +541,24 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
 async fn runtime_status_keeps_generation_independent_from_transport() {
     let runtime = test_runtime();
     let cases = [
-        ("polling-gen2", AgentTransport::Polling, "polling"),
-        ("websocket-gen2", AgentTransport::WebSocket, "websocket"),
-        ("quic-gen2", AgentTransport::Quic, "quic"),
+        ("polling-gen2", RunnerTransport::Polling, "polling"),
+        ("websocket-gen2", RunnerTransport::WebSocket, "websocket"),
+        ("quic-gen2", RunnerTransport::Quic, "quic"),
     ];
 
     for (client_id, transport, _) in cases.iter().copied() {
         let registration = register_request(client_id, "inst", None, None);
         match transport {
-            AgentTransport::Polling => {
-                runtime.shell_clients.register(registration).await.unwrap();
-            }
-            AgentTransport::WebSocket | AgentTransport::Quic => {
+            RunnerTransport::Polling => {
                 runtime
-                    .shell_clients
+                    .runner_registry
+                    .register(registration)
+                    .await
+                    .unwrap();
+            }
+            RunnerTransport::WebSocket | RunnerTransport::Quic => {
+                runtime
+                    .runner_registry
                     .register_streaming_session(
                         registration,
                         None,
@@ -611,7 +615,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
         server_build.git_commit.unwrap_or("server-source")
     );
     runtime
-        .shell_clients
+        .runner_registry
         .register(register_request(
             "same-version-different-source",
             "inst-1",
@@ -626,7 +630,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
         .unwrap();
     // Different build version → version_mismatch (connected ≠ compatible).
     runtime
-        .shell_clients
+        .runner_registry
         .register(register_request(
             "old-build",
             "inst-2",
@@ -644,7 +648,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     let mut unsupported = register_request("future-generation", "inst-3", None, None);
     unsupported.agent_protocol_generation = AgentProtocolGenerationNumber::new(3);
     let unsupported = runtime
-        .shell_clients
+        .runner_registry
         .register(unsupported)
         .await
         .unwrap_err();
@@ -714,7 +718,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
         network: None,
         architecture: Some("Hosts the WebCodex Server/control plane.".to_string()),
     });
-    runtime.shell_clients.register(request).await.unwrap();
+    runtime.runner_registry.register(request).await.unwrap();
 
     let status = runtime.runtime_status(None).await;
     assert!(status.success);
@@ -762,7 +766,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
         network: Some("Internal destinations normally use the direct path.".to_string()),
         ..Default::default()
     });
-    runtime.shell_clients.register(reconnect).await.unwrap();
+    runtime.runner_registry.register(reconnect).await.unwrap();
     let after_reconnect = runtime.runtime_status(None).await;
     let sf = after_reconnect.output["agents"]["clients"]
         .as_array()
@@ -784,11 +788,11 @@ async fn runner_host_context_is_revalidated_at_server_registration() {
         role: Some("Server Host".to_string()),
         ..Default::default()
     });
-    let err = runtime.shell_clients.register(request).await.unwrap_err();
+    let err = runtime.runner_registry.register(request).await.unwrap_err();
     assert!(err.contains("host_context.role"), "{err}");
     assert!(runtime
-        .shell_clients
-        .get_client_view("bad-context")
+        .runner_registry
+        .get_runner_view("bad-context")
         .await
         .is_none());
 }
@@ -843,7 +847,7 @@ async fn dispatch_coding_call_in_window_with_transport(
             "coding workflow did not finish within the 10-second test deadline"
         );
         if let Some(req) = runtime
-            .shell_clients
+            .runner_registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
@@ -1114,7 +1118,7 @@ async fn coding_workflow_read_only_upgrade_is_atomic_and_permission_checked() {
     });
     while !read_only_task.is_finished() {
         if let Some(req) = runtime
-            .shell_clients
+            .runner_registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: "oauth-client".to_string(),
                 agent_instance_id: "inst".to_string(),

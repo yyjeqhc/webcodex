@@ -784,7 +784,7 @@ impl ToolRuntime {
             command: match call {
                 ToolCall::RunProcess {
                     executable, args, ..
-                } => Some(crate::shell_client::process_preview(
+                } => Some(crate::runner_http::process_preview(
                     executable,
                     args.iter().map(String::as_str),
                 )),
@@ -796,7 +796,7 @@ impl ToolRuntime {
                     script,
                     args,
                     ..
-                } => Some(crate::shell_client::script_preview(
+                } => Some(crate::runner_http::script_preview(
                     language.as_str(),
                     script.len(),
                     args.len(),

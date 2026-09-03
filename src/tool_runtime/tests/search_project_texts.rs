@@ -71,7 +71,7 @@ async fn poll_agent_request(
     client_id: &str,
 ) -> Option<ShellAgentShellRequest> {
     runtime
-        .shell_clients
+        .runner_registry
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -864,7 +864,7 @@ async fn search_project_texts_retries_one_dropped_agent_request_and_restores_ord
         .find(|request| request_pattern(request) == "steady")
         .unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .cancel_request(&dropped.request_id)
         .await;
     complete_search_success(&runtime, client_id, steady, "src/steady.rs").await;
@@ -905,14 +905,14 @@ async fn search_project_texts_stops_after_two_dropped_agent_attempts() {
     let first = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&first), "drop-twice");
     runtime
-        .shell_clients
+        .runner_registry
         .cancel_request(&first.request_id)
         .await;
     let second = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(request_pattern(&second), "drop-twice");
     assert_ne!(second.request_id, first.request_id);
     runtime
-        .shell_clients
+        .runner_registry
         .cancel_request(&second.request_id)
         .await;
 
@@ -962,7 +962,7 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
         .find(|request| request_pattern(request) == "blocker")
         .unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .cancel_request(&retry_slot.request_id)
         .await;
 
@@ -1003,7 +1003,7 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
     let first = wait_for_patch_agent_request(&runtime, client_id).await;
     tokio::time::sleep(Duration::from_millis(1100)).await;
     runtime
-        .shell_clients
+        .runner_registry
         .cancel_request(&first.request_id)
         .await;
     let retry = wait_for_patch_agent_request(&runtime, client_id).await;
@@ -1050,7 +1050,7 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
     );
     assert_no_agent_request(&runtime, client_id).await;
     let late = runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1555,7 +1555,7 @@ async fn search_project_texts_runner_in_flight_is_concurrent_and_never_exceeds_t
         wait_for_patch_agent_request(&runtime, client_id).await,
     ];
     let third_before_completion = runtime
-        .shell_clients
+        .runner_registry
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1638,7 +1638,7 @@ async fn search_project_texts_deadline_preserves_fast_result_and_cancels_unfinis
 
     for request in unfinished {
         let late = runtime
-            .shell_clients
+            .runner_registry
             .complete(ShellAgentResultRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),

@@ -711,7 +711,7 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
     }
     let mut max_in_flight = active.len();
     let fifth_before_completion = runtime
-        .shell_clients
+        .runner_registry
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -793,7 +793,7 @@ async fn read_files_deadline_preserves_completed_results_and_cancels_unfinished_
         .filter(|request| request.path.as_deref() != Some("fast.txt"))
     {
         let late = runtime
-            .shell_clients
+            .runner_registry
             .complete(ShellAgentResultRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),

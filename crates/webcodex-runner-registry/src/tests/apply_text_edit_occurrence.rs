@@ -24,7 +24,7 @@ fn occurrence_request(client_id: &str) -> ShellFileOpRequest {
 }
 
 async fn register_occurrence_instance(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
     supported: bool,
@@ -44,7 +44,7 @@ async fn register_occurrence_instance(
 
 #[tokio::test]
 async fn enqueue_apply_text_edits_occurrence_requires_capability_and_queues_atomically() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_occurrence_instance(&registry, "occurrence-on", "inst", true)
         .await
         .unwrap();

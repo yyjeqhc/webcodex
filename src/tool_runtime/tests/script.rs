@@ -113,7 +113,7 @@ async fn update_script_job(
     error: Option<&str>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(ShellAgentJobUpdateRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -148,7 +148,7 @@ async fn complete_script_lifecycle(
     error: Option<&str>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultPayload {
             result: ShellAgentResultRequest {
                 client_id: client_id.to_string(),
@@ -346,11 +346,11 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
         });
 
     assert!(runtime
-        .shell_clients
+        .runner_registry
         .hidden_job_ids_for_test()
         .await
         .is_empty());
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
@@ -417,7 +417,7 @@ async fn run_script_explicit_sync_wait_captures_terminal_after_old_ten_second_th
     assert!(result.output.get("command_completed").is_none());
     assert!(result.output.get("job_id").is_none());
     assert!(result.output.get("promoted_to_job").is_none());
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     assert!(
         probe_patch_agent_request(&runtime, "script-extended-sync-wait")
             .await
@@ -446,7 +446,7 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
     });
     let request = wait_for_patch_agent_request(&runtime, "script-prestart-job").await;
     let queued = runtime
-        .shell_clients
+        .runner_registry
         .get_hidden_job_for_auth(
             Some(&crate::test_support::runner_access(&auth)),
             request.job_id.as_deref().unwrap(),
@@ -479,7 +479,7 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
     assert_eq!(result.output["promoted_to_job"], false);
     assert_eq!(result.output["terminal"], true);
     assert_eq!(result.output["failure_kind"], "interpreter_unavailable");
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
@@ -558,7 +558,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     let job_id = handoff.output["job_id"].as_str().unwrap();
     assert_eq!(request.job_id.as_deref(), Some(job_id));
 
-    let job = runtime.shell_clients.get_job(job_id).await.unwrap();
+    let job = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(job.kind, "run_script");
     assert_eq!(job.session_id.as_deref(), Some(session.session_id.as_str()));
     let metadata = job
@@ -663,7 +663,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
         None,
     )
     .await;
-    let terminal = runtime.shell_clients.get_job(job_id).await.unwrap();
+    let terminal = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(terminal.status, "completed");
     assert_eq!(
         terminal.command_execution_state,
@@ -760,7 +760,7 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
     });
     wait_for_patch_agent_request(&runtime, "script-lifecycle").await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("script-lifecycle", "inst")
         .await;
     let uncertain = uncertain_task.await.unwrap();

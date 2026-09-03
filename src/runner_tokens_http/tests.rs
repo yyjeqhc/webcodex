@@ -13,13 +13,13 @@ fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router 
         .push(
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create))
                 .push(
                     Router::with_path("agent-tokens/register_hash")
-                        .post(agent_tokens_register_hash),
+                        .post(runner_tokens_register_hash),
                 )
-                .push(Router::with_path("agent-tokens/list").post(agent_tokens_list))
-                .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
+                .push(Router::with_path("agent-tokens/list").post(runner_tokens_list))
+                .push(Router::with_path("agent-tokens/revoke").post(runner_tokens_revoke)),
         )
 }
 
@@ -62,8 +62,8 @@ fn register_hash_body(token: &str, username: &str, client_id: &str) -> Value {
 fn build_transport_router(
     config: Arc<crate::Config>,
     db: Arc<crate::Database>,
-) -> (Router, Arc<crate::shell_client::ShellClientRegistry>) {
-    let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
+) -> (Router, Arc<crate::runner_http::RunnerRegistry>) {
+    let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     let router = Router::new()
         .hoop(affix_state::inject(config))
         .hoop(affix_state::inject(db))
@@ -73,11 +73,11 @@ fn build_transport_router(
                 .hoop(crate::AuthMiddleware)
                 .push(
                     Router::with_path("agent-tokens/register_hash")
-                        .post(agent_tokens_register_hash),
+                        .post(runner_tokens_register_hash),
                 )
                 .push(
                     Router::with_path("shell/agent/register")
-                        .post(crate::shell_client::shell_agent_register),
+                        .post(crate::runner_http::runner_register),
                 )
                 .push(Router::with_path("runtime/status").post(crate::runtime_http::runtime_status))
                 .push(Router::with_path("tools/list").post(crate::runtime_http::tools_list))
@@ -111,7 +111,7 @@ async fn mint_user_token(service: &salvo::Service, username: &str, scopes: Vec<S
 // =========================================================================
 
 #[tokio::test]
-async fn http_agent_tokens_create_requires_auth() {
+async fn http_runner_tokens_create_requires_auth() {
     let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
@@ -124,7 +124,7 @@ async fn http_agent_tokens_create_requires_auth() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_bootstrap_creates_for_anyone() {
+async fn http_runner_tokens_create_bootstrap_creates_for_anyone() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -153,7 +153,7 @@ async fn http_agent_tokens_create_bootstrap_creates_for_anyone() {
     assert_eq!(body["kind"], "agent");
     assert_eq!(body["username"], "alice");
     assert_eq!(body["allowed_client_id"], "alice-laptop");
-    // Default scopes are all agent transport scopes.
+    // Default scopes are all Runner transport scopes.
     let scopes = body["scopes"].as_array().unwrap();
     let scope_strs: Vec<&str> = scopes.iter().map(|v| v.as_str().unwrap()).collect();
     assert_eq!(
@@ -186,7 +186,7 @@ async fn http_agent_tokens_create_bootstrap_creates_for_anyone() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_user_creates_for_self() {
+async fn http_runner_tokens_create_user_creates_for_self() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -198,7 +198,7 @@ async fn http_agent_tokens_create_user_creates_for_self() {
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create)),
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create)),
         );
     let service = Service::new(router);
     let alice_token = mint_user_token(
@@ -219,7 +219,7 @@ async fn http_agent_tokens_create_user_creates_for_self() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_user_cannot_create_for_other() {
+async fn http_runner_tokens_create_user_cannot_create_for_other() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -231,7 +231,7 @@ async fn http_agent_tokens_create_user_cannot_create_for_other() {
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create)),
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create)),
         );
     let service = Service::new(router);
     let alice_token = mint_user_token(
@@ -249,7 +249,7 @@ async fn http_agent_tokens_create_user_cannot_create_for_other() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_requires_client_id() {
+async fn http_runner_tokens_create_requires_client_id() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -263,7 +263,7 @@ async fn http_agent_tokens_create_requires_client_id() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_validates_client_id() {
+async fn http_runner_tokens_create_validates_client_id() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -284,7 +284,7 @@ async fn http_agent_tokens_create_validates_client_id() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_rejects_non_agent_scopes() {
+async fn http_runner_tokens_create_rejects_non_agent_scopes() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -302,7 +302,7 @@ async fn http_agent_tokens_create_rejects_non_agent_scopes() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_create_rejects_admin_scope_on_agent_token() {
+async fn http_runner_tokens_create_rejects_admin_scope_on_agent_token() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -324,7 +324,7 @@ async fn http_agent_tokens_create_rejects_admin_scope_on_agent_token() {
 // =========================================================================
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_bootstrap_registers_for_any_user() {
+async fn http_runner_tokens_register_hash_bootstrap_registers_for_any_user() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -364,7 +364,7 @@ async fn http_agent_tokens_register_hash_bootstrap_registers_for_any_user() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_account_credential_self_only() {
+async fn http_runner_tokens_register_hash_account_credential_self_only() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let alice = seed_user(&db, "alice", "user");
@@ -390,7 +390,7 @@ async fn http_agent_tokens_register_hash_account_credential_self_only() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_accepts_user_token_for_self() {
+async fn http_runner_tokens_register_hash_accepts_user_token_for_self() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -403,7 +403,7 @@ async fn http_agent_tokens_register_hash_accepts_user_token_for_self() {
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
                 .push(
                     Router::with_path("agent-tokens/register_hash")
-                        .post(agent_tokens_register_hash),
+                        .post(runner_tokens_register_hash),
                 ),
         );
     let service = Service::new(router);
@@ -423,7 +423,7 @@ async fn http_agent_tokens_register_hash_accepts_user_token_for_self() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_validates_hash_prefix_scope_and_duplicate() {
+async fn http_runner_tokens_register_hash_validates_hash_prefix_scope_and_duplicate() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -481,7 +481,7 @@ async fn http_agent_tokens_register_hash_validates_hash_prefix_scope_and_duplica
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_rejects_account_credential_hash_conflict() {
+async fn http_runner_tokens_register_hash_rejects_account_credential_hash_conflict() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let alice = seed_user(&db, "alice", "user");
@@ -502,7 +502,7 @@ async fn http_agent_tokens_register_hash_rejects_account_credential_hash_conflic
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_rejects_disabled_user() {
+async fn http_runner_tokens_register_hash_rejects_disabled_user() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let alice = seed_user(&db, "alice", "user");
@@ -519,7 +519,7 @@ async fn http_agent_tokens_register_hash_rejects_disabled_user() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_binding() {
+async fn http_runner_tokens_register_hash_enforces_transport_and_client_id_binding() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -592,7 +592,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
 }
 
 #[tokio::test]
-async fn http_agent_tokens_register_hash_list_and_revoke_do_not_return_secrets() {
+async fn http_runner_tokens_register_hash_list_and_revoke_do_not_return_secrets() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -635,7 +635,7 @@ async fn http_agent_tokens_register_hash_list_and_revoke_do_not_return_secrets()
 // =========================================================================
 
 #[tokio::test]
-async fn http_agent_tokens_list_never_returns_hash_or_plaintext() {
+async fn http_runner_tokens_list_never_returns_hash_or_plaintext() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -682,7 +682,7 @@ async fn http_agent_tokens_list_never_returns_hash_or_plaintext() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_list_does_not_include_user_tokens() {
+async fn http_runner_tokens_list_does_not_include_user_tokens() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -693,8 +693,8 @@ async fn http_agent_tokens_list_does_not_include_user_tokens() {
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
-                .push(Router::with_path("agent-tokens/list").post(agent_tokens_list)),
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create))
+                .push(Router::with_path("agent-tokens/list").post(runner_tokens_list)),
         );
     let service = Service::new(router);
     // Create a user token and an agent token for alice.
@@ -720,7 +720,7 @@ async fn http_agent_tokens_list_does_not_include_user_tokens() {
 // =========================================================================
 
 #[tokio::test]
-async fn http_agent_tokens_revoke_works() {
+async fn http_runner_tokens_revoke_works() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -751,7 +751,7 @@ async fn http_agent_tokens_revoke_works() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_revoke_user_cannot_revoke_others() {
+async fn http_runner_tokens_revoke_user_cannot_revoke_others() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -763,8 +763,8 @@ async fn http_agent_tokens_revoke_user_cannot_revoke_others() {
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
-                .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create))
+                .push(Router::with_path("agent-tokens/revoke").post(runner_tokens_revoke)),
         );
     let service = Service::new(router);
     // Create an agent token for bob.
@@ -795,7 +795,7 @@ async fn http_agent_tokens_revoke_user_cannot_revoke_others() {
 }
 
 #[tokio::test]
-async fn http_agent_tokens_revoke_rejects_user_token_id() {
+async fn http_runner_tokens_revoke_rejects_user_token_id() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -806,7 +806,7 @@ async fn http_agent_tokens_revoke_rejects_user_token_id() {
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
-                .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
+                .push(Router::with_path("agent-tokens/revoke").post(runner_tokens_revoke)),
         );
     let service = Service::new(router);
     // Create a user token for alice, capture its id via tokens/list.
@@ -878,13 +878,13 @@ async fn http_agent_token_cannot_call_management_endpoints() {
         .push(
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
-                .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
+                .push(Router::with_path("agent-tokens/create").post(runner_tokens_create))
                 .push(
                     Router::with_path("agent-tokens/register_hash")
-                        .post(agent_tokens_register_hash),
+                        .post(runner_tokens_register_hash),
                 )
-                .push(Router::with_path("agent-tokens/list").post(agent_tokens_list))
-                .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
+                .push(Router::with_path("agent-tokens/list").post(runner_tokens_list))
+                .push(Router::with_path("agent-tokens/revoke").post(runner_tokens_revoke)),
         );
     let service = Service::new(router);
     // Bootstrap creates an agent token for alice.

@@ -1,6 +1,6 @@
 use super::auth::auth_context;
 use super::runtime::test_runtime;
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     AgentPolicySummary, ShellAgentJobUpdateRequest, ShellAgentPollRequest,
     ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentShellRequest,
@@ -22,7 +22,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
 ) -> String {
     let project_path = root.to_string_lossy().to_string();
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -52,7 +52,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         vec![named_registered_project(
@@ -76,7 +76,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
 ) -> String {
     let project_path = root.to_string_lossy().to_string();
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -109,7 +109,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         vec![named_registered_project(
@@ -595,7 +595,7 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
 pub(in crate::tool_runtime::tests) fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
     let _ = client_id;
     ToolRuntime::new(
-        Arc::new(ShellClientRegistry::default()),
+        Arc::new(RunnerRegistry::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }
@@ -607,7 +607,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
     caps: ShellClientCapabilities,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -628,7 +628,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         vec![registered_project("agent-proj", "/tmp/agent-proj")],
@@ -651,7 +651,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
     caps: ShellClientCapabilities,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -672,7 +672,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_instance(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         agent_instance_id,
         vec![registered_project("agent-proj", "/tmp/agent-proj")],
@@ -689,7 +689,7 @@ pub(in crate::tool_runtime::tests) fn runtime_with_local_project(
 ) -> ToolRuntime {
     let _ = (root, project_id);
     ToolRuntime::new(
-        Arc::new(ShellClientRegistry::default()),
+        Arc::new(RunnerRegistry::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }
@@ -753,7 +753,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
 ) {
     let agent_instance_id = format!("inst-{client_id}");
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -774,7 +774,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &agent_instance_id,
         projects,
@@ -791,7 +791,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
 ) {
     let agent_instance_id = format!("inst-{client_id}");
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -815,7 +815,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &agent_instance_id,
         projects,
@@ -837,7 +837,7 @@ pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
 ) -> Option<ShellAgentShellRequest> {
     for _ in 0..20 {
         let req = runtime
-            .shell_clients
+            .runner_registry
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
@@ -860,7 +860,7 @@ pub(in crate::tool_runtime::tests) async fn wait_for_agent_request_for_instance(
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(request) = runtime
-            .shell_clients
+            .runner_registry
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: agent_instance_id.to_string(),
@@ -919,7 +919,7 @@ pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
     let request = wait_for_agent_request_for_instance(runtime, client_id, "inst").await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(ShellAgentJobUpdateRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -943,7 +943,7 @@ pub(in crate::tool_runtime::tests) async fn seed_session_projection_job(
         .unwrap();
     if status == "stop_requested" {
         let stopped = runtime
-            .shell_clients
+            .runner_registry
             .stop_job(&job_id, "projection-test".to_string())
             .await
             .unwrap();
@@ -965,9 +965,9 @@ pub(in crate::tool_runtime::tests) async fn finish_session_projection_job(
         status,
         "completed" | "failed" | "stopped" | "timeout" | "cancelled"
     ));
-    let current = runtime.shell_clients.get_job(job_id).await.unwrap();
+    let current = runtime.runner_registry.get_job(job_id).await.unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(ShellAgentJobUpdateRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1053,7 +1053,7 @@ pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
 ) -> Option<ShellAgentShellRequest> {
     for _ in 0..20 {
         let req = runtime
-            .shell_clients
+            .runner_registry
             .poll(ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
@@ -1127,7 +1127,7 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_ins
     stderr: &str,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: client_id.to_string(),
             agent_instance_id: agent_instance_id.to_string(),
@@ -1174,7 +1174,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
     projects: Vec<ShellAgentProjectSummary>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -1195,7 +1195,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         projects,
@@ -1213,7 +1213,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
     projects: Vec<ShellAgentProjectSummary>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -1236,7 +1236,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         projects,

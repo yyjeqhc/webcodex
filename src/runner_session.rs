@@ -1,7 +1,7 @@
 //! Shared post-register agent session loop.
 //!
-//! Both long-lived agent transports — WebSocket (`agent_ws`) and custom QUIC
-//! (`agent_quic`) — run the *same* session once a connection is registered:
+//! Both long-lived Runner transports — WebSocket (`runner_ws`) and custom QUIC
+//! (`runner_quic`) — run the *same* session once a connection is registered:
 //! a request pump that drains the shared registry queue and pushes `Request`
 //! envelopes, a reader loop that dispatches `Result`/`PersistentShellResult`/
 //! `JobUpdate`/`Ping`/`Pong`/`RuntimeMetadata`/`Goodbye` envelopes into the
@@ -17,9 +17,9 @@
 //! `*_for_connection` discipline.
 
 use crate::auth::{AuthContext, SCOPE_AGENT_REGISTER};
-use crate::shell_client::{
-    effective_register_owner, enforce_register_owner, require_agent_transport_scope,
-    ShellClientRegistry,
+use crate::runner_http::{
+    effective_register_owner, enforce_register_owner, require_runner_transport_scope,
+    RunnerRegistry,
 };
 use crate::shell_protocol::{AgentEnvelope, ShellAgentPollRequest, ShellClientRegisterRequest};
 use std::sync::Arc;
@@ -52,13 +52,13 @@ pub(crate) enum PumpExit {
     RegistryFailed,
 }
 
-/// Error from [`register_session_prelude`]: the agent transport boundary
+/// Error from [`register_session_prelude`]: the Runner transport boundary
 /// rejected the register. Both variants surface to the wire as the
 /// `register_forbidden` error code; they are distinguished only so the caller
 /// can log which gate failed.
 #[derive(Debug)]
 pub(crate) enum RegisterPreludeError {
-    /// `require_agent_transport_scope` rejected the caller (wrong scope / not a
+    /// `require_runner_transport_scope` rejected the caller (wrong scope / not a
     /// bootstrap or agent token).
     ForbiddenScope(String),
     /// `enforce_register_owner` rejected the client_id/owner binding.
@@ -77,7 +77,7 @@ impl RegisterPreludeError {
     }
 }
 
-/// Enforce the agent transport boundary shared by the WebSocket and QUIC
+/// Enforce the Runner transport boundary shared by the WebSocket and QUIC
 /// register handlers, and resolve the effective owner onto `register_payload`.
 ///
 /// This is the transport-neutral half of registration: it mirrors the polling
@@ -93,7 +93,7 @@ pub(crate) fn register_session_prelude(
     auth: Option<&AuthContext>,
     register_payload: &mut ShellClientRegisterRequest,
 ) -> Result<(), RegisterPreludeError> {
-    if let Err(e) = require_agent_transport_scope(auth, SCOPE_AGENT_REGISTER) {
+    if let Err(e) = require_runner_transport_scope(auth, SCOPE_AGENT_REGISTER) {
         return Err(RegisterPreludeError::ForbiddenScope(e));
     }
     if let Err(e) = enforce_register_owner(
@@ -124,14 +124,14 @@ pub(crate) enum RecvOutcome {
 /// Transport-neutral inbound reader. Implementations wrap a WebSocket
 /// `StreamExt` stream or a QUIC `RecvStream` and translate wire reads into
 /// [`RecvOutcome`]s, logging transport-specific errors themselves.
-pub(crate) trait AgentReader {
+pub(crate) trait RunnerReader {
     async fn recv(&mut self) -> RecvOutcome;
 }
 
-/// Shared session context handed to [`run_agent_session`] after a transport
+/// Shared session context handed to [`run_runner_session`] after a transport
 /// has authenticated, registered, and acknowledged the agent.
 pub(crate) struct SessionContext<'a> {
-    pub(crate) registry: &'a Arc<ShellClientRegistry>,
+    pub(crate) registry: &'a Arc<RunnerRegistry>,
     pub(crate) client_id: &'a str,
     pub(crate) agent_instance_id: &'a str,
     pub(crate) connection_id: &'a str,
@@ -152,14 +152,14 @@ pub(crate) struct SessionContext<'a> {
 /// the reader, the writer, and the exact replacement-cancellation lease. A
 /// silent pump exit therefore cannot leave a pending reader/writer registered
 /// as a zombie session.
-pub(crate) async fn run_agent_session(
+pub(crate) async fn run_runner_session(
     ctx: SessionContext<'_>,
     out_tx: mpsc::Sender<AgentEnvelope>,
-    reader: impl AgentReader,
+    reader: impl RunnerReader,
     writer_task: JoinHandle<WriterExit>,
 ) {
     let pump_task = spawn_request_pump(&ctx, out_tx.clone());
-    run_agent_session_with_pump(ctx, out_tx, reader, writer_task, pump_task).await;
+    run_runner_session_with_pump(ctx, out_tx, reader, writer_task, pump_task).await;
 }
 
 fn classify_pump_poll_error(error: &str) -> PumpExit {
@@ -212,10 +212,10 @@ fn spawn_request_pump(
     })
 }
 
-async fn run_agent_session_with_pump(
+async fn run_runner_session_with_pump(
     ctx: SessionContext<'_>,
     out_tx: mpsc::Sender<AgentEnvelope>,
-    mut reader: impl AgentReader,
+    mut reader: impl RunnerReader,
     writer_task: JoinHandle<WriterExit>,
     pump_task: JoinHandle<PumpExit>,
 ) {
@@ -374,7 +374,7 @@ async fn run_agent_session_with_pump(
 /// Dispatch one inbound envelope into the connection-scoped registry lease.
 async fn dispatch_inbound(
     env: AgentEnvelope,
-    registry: &Arc<ShellClientRegistry>,
+    registry: &Arc<RunnerRegistry>,
     client_id: &str,
     agent_instance_id: &str,
     connection_id: &str,
@@ -457,7 +457,7 @@ async fn dispatch_inbound(
             // this touch a connected-but-idle agent decays to "stale" even
             // though its socket is healthy.
             if let Err(e) = registry
-                .touch_client_for_connection(client_id, agent_instance_id, connection_id)
+                .touch_runner_for_connection(client_id, agent_instance_id, connection_id)
                 .await
             {
                 tracing::warn!(
@@ -490,7 +490,7 @@ async fn dispatch_inbound(
             // traffic so the client does not decay to stale, and must never be
             // treated as an unexpected envelope.
             if let Err(e) = registry
-                .touch_client_for_connection(client_id, agent_instance_id, connection_id)
+                .touch_runner_for_connection(client_id, agent_instance_id, connection_id)
                 .await
             {
                 tracing::debug!(
@@ -565,5 +565,5 @@ async fn dispatch_inbound(
 }
 
 #[cfg(test)]
-#[path = "agent_session_tests.rs"]
+#[path = "runner_session_tests.rs"]
 mod tests;

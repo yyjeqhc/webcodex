@@ -10,7 +10,7 @@ use crate::auth::{
     SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
 };
 use crate::models::OAuthAuthorizationCodeRecord;
-use crate::shell_client::{RunnerFeature, RunnerFeatureSet};
+use crate::runner_http::{RunnerFeature, RunnerFeatureSet};
 
 use super::{
     apply_oauth_no_store_headers, authorize_bridge_html, decoded_authorize_param, form_field,
@@ -333,7 +333,7 @@ fn bridge_permission_capable(permission_id: &str, features: &RunnerFeatureSet) -
 
 async fn bridge_permission_views(
     validated: &BridgeAuthorizeValidated,
-    registry: Option<&crate::ShellClientRegistry>,
+    registry: Option<&crate::RunnerRegistry>,
     selected_permissions: &[String],
 ) -> Vec<BridgePermissionView> {
     if !validated.computer_permissions_enabled {
@@ -592,7 +592,7 @@ pub(super) async fn render_bridge_authorize_form(
     validated: &BridgeAuthorizeValidated,
     query: &str,
     error: Option<&str>,
-    registry: Option<&crate::ShellClientRegistry>,
+    registry: Option<&crate::RunnerRegistry>,
     selected_permissions: &[String],
 ) {
     let standard_scopes = validated.standard_grant_scopes();
@@ -730,10 +730,7 @@ pub(crate) async fn oauth_shared_key_client_provision(
         res.render(Json(serde_json::json!({"error": "DB not available"})));
         return;
     };
-    let Some(registry) = depot
-        .obtain::<std::sync::Arc<crate::ShellClientRegistry>>()
-        .ok()
-    else {
+    let Some(registry) = depot.obtain::<std::sync::Arc<crate::RunnerRegistry>>().ok() else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(
             serde_json::json!({"error": "Runner registry unavailable"}),
@@ -1065,7 +1062,7 @@ pub(crate) async fn oauth_authorize_bridge(
     };
 
     let registry = depot
-        .obtain::<std::sync::Arc<crate::ShellClientRegistry>>()
+        .obtain::<std::sync::Arc<crate::RunnerRegistry>>()
         .ok()
         .cloned();
     let submitted = form_field(&pairs, "shared_key").unwrap_or("");

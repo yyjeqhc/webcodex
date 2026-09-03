@@ -48,7 +48,7 @@ async fn register_target_agent(
     build: Option<AgentBuildInfo>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build,
@@ -75,7 +75,7 @@ async fn register_target_agent(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &format!("inst-{client_id}"),
         projects,
@@ -90,7 +90,7 @@ async fn register_target_agent_for_auth(
     auth: &crate::auth::AuthContext,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -116,7 +116,7 @@ async fn register_target_agent_for_auth(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &format!("inst-{client_id}"),
         vec![registered_project(
@@ -144,7 +144,7 @@ async fn register_managed_target_agent(
     project_path: &str,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -167,7 +167,7 @@ async fn register_managed_target_agent(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &format!("inst-{client_id}"),
         vec![registered_project(project_id, project_path)],
@@ -211,7 +211,7 @@ async fn list_projects_large_single_runner_inventory_preserves_linear_staging_co
     for project_count in [256usize, 1024] {
         let runtime = test_runtime();
         register_target_agent(&runtime, "special", Vec::new(), None).await;
-        let mut clients = runtime.shell_clients.list_clients_for_auth(None).await;
+        let mut clients = runtime.runner_registry.list_runners_for_auth(None).await;
         assert_eq!(clients.len(), 1);
         clients[0].projects = large_fixture_projects(project_count);
 
@@ -721,7 +721,7 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
     )
     .await;
 
-    let visible_clients = runtime.shell_clients.list_clients_for_auth(None).await;
+    let visible_clients = runtime.runner_registry.list_runners_for_auth(None).await;
     let synthetic = super::super::runtime_info::version_compatibility_for_test(
         &visible_clients,
         env!("CARGO_PKG_VERSION"),
@@ -803,7 +803,7 @@ async fn runtime_status_focus_preserves_selected_stale_runner_truth() {
     )
     .await;
     runtime
-        .shell_clients
+        .runner_registry
         .set_last_seen_for_test("special", chrono::Utc::now().timestamp() - 120)
         .await;
 

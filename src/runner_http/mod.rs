@@ -22,21 +22,20 @@ mod handlers;
 mod telemetry;
 
 pub(crate) use auth::{
-    detached_initiator_identity_from_auth, effective_register_owner, enforce_agent_transport,
-    enforce_register_owner, requested_by_from_auth, require_agent_transport_scope,
+    detached_initiator_identity_from_auth, effective_register_owner, enforce_register_owner,
+    enforce_runner_transport, requested_by_from_auth, require_runner_transport_scope,
     runner_access_from_auth,
 };
 pub use handlers::{
-    shell_agent_job_update, shell_agent_persistent_shell_result, shell_agent_poll,
-    shell_agent_register, shell_agent_result,
+    runner_job_update, runner_persistent_shell_result, runner_poll, runner_register, runner_result,
 };
 pub(crate) use telemetry::registry_with_tool_request_trace;
 pub(crate) use webcodex_runner_registry::{
-    command_preview, process_preview, recovery_timeout_sweep, script_preview, AgentTransport,
-    EnqueueLspError, RunnerFeature, RunnerFeatureSet, RunnerRegistry as ShellClientRegistry,
-    ShellClientSemanticView, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
-    CLIENT_ONLINE_WINDOW_SECS, COMMAND_PREVIEW_MAX_CHARS, DETACHED_IDEMPOTENCY_CONFLICT,
-    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, RECOVERY_SWEEP_INTERVAL_SECS,
+    command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
+    RunnerFeature, RunnerFeatureSet, RunnerRegistry, RunnerSemanticView, RunnerTransport,
+    ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution, COMMAND_PREVIEW_MAX_CHARS,
+    DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
+    RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
 };
 #[cfg(test)]
 pub(crate) use webcodex_runner_registry::{TRANSPORT_POLLING, TRANSPORT_WEBSOCKET};
@@ -46,16 +45,16 @@ fn sha256_hex(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
-fn get_registry(depot: &Depot) -> Option<Arc<ShellClientRegistry>> {
-    depot.obtain::<Arc<ShellClientRegistry>>().ok().cloned()
+fn get_registry(depot: &Depot) -> Option<Arc<RunnerRegistry>> {
+    depot.obtain::<Arc<RunnerRegistry>>().ok().cloned()
 }
 
-async fn assert_registry_client_owner(
-    registry: &ShellClientRegistry,
+async fn assert_registry_runner_owner(
+    registry: &RunnerRegistry,
     auth: Option<&crate::auth::AuthContext>,
     client_id: &str,
 ) -> Result<(), (StatusCode, String)> {
-    if registry.get_client_view(client_id).await.is_none() {
+    if registry.get_runner_view(client_id).await.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("unknown shell client: {}", client_id),
@@ -63,7 +62,7 @@ async fn assert_registry_client_owner(
     }
     let access = runner_access_from_auth(auth);
     registry
-        .assert_client_access(access.as_ref(), client_id)
+        .assert_runner_access(access.as_ref(), client_id)
         .await
         .map_err(|e| {
             let status = if e.contains("unknown shell client") {
@@ -303,7 +302,7 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stdout: None,
                 stderr: None,
                 duration_ms: None,
-                error: Some("Shell client registry not configured".to_string()),
+                error: Some("Runner registry not configured".to_string()),
                 request_dispatched: None,
                 command_execution_state: None,
             },
@@ -340,7 +339,7 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
     let cwd = body.cwd.clone();
     let preview = command_preview(&body.command);
     if let Err((status, e)) =
-        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+        assert_registry_runner_owner(&registry, auth.as_ref(), &client_id).await
     {
         render_shell_run(
             res,
@@ -493,7 +492,7 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
             String::new(),
             String::new(),
             None,
-            "Shell client registry not configured".to_string(),
+            "Runner registry not configured".to_string(),
         );
         render_shell_file(res, &audit, StatusCode::INTERNAL_SERVER_ERROR, response);
         return;
@@ -519,7 +518,7 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
     let request_content = body.content.clone();
     let wait_timeout_secs = body.wait_timeout_secs;
     if let Err((status, e)) =
-        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+        assert_registry_runner_owner(&registry, auth.as_ref(), &client_id).await
     {
         let response = shell_file_error_response(op, client_id, path, cwd, e);
         render_shell_file(res, &audit, status, response);
@@ -669,7 +668,7 @@ fn shell_jobs_list_error_response(client_id: String, error: String) -> ShellClie
 }
 
 async fn authorize_job_access(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     auth: Option<&crate::auth::AuthContext>,
     job_id: &str,
     requested_client_id: Option<&str>,
@@ -689,7 +688,7 @@ async fn authorize_job_access(
             ));
         }
     }
-    assert_registry_client_owner(registry, auth, &job.client_id).await?;
+    assert_registry_runner_owner(registry, auth, &job.client_id).await?;
     Ok(job)
 }
 
@@ -704,7 +703,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             StatusCode::INTERNAL_SERVER_ERROR,
             shell_job_error_response(
                 "unknown".to_string(),
-                "Shell client registry not configured".to_string(),
+                "Runner registry not configured".to_string(),
             ),
         );
         return;
@@ -734,7 +733,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 return;
             };
             if let Err((status, e)) =
-                assert_registry_client_owner(&registry, auth.as_ref(), client_id).await
+                assert_registry_runner_owner(&registry, auth.as_ref(), client_id).await
             {
                 render_shell_job(res, &audit, status, shell_job_error_response(op, e));
                 return;
@@ -778,7 +777,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             match registry.get_job(job_id).await {
                 Ok(job) => {
                     if let Err((status, e)) =
-                        assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+                        assert_registry_runner_owner(&registry, auth.as_ref(), &job.client_id).await
                     {
                         render_shell_job(res, &audit, status, shell_job_error_response(op, e));
                         return;
@@ -818,7 +817,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     continue;
                 }
                 if registry
-                    .assert_client_access(access.as_ref(), &job.client_id)
+                    .assert_runner_access(access.as_ref(), &job.client_id)
                     .await
                     .is_ok()
                 {
@@ -866,7 +865,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             };
             if let Err((status, e)) =
-                assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+                assert_registry_runner_owner(&registry, auth.as_ref(), &job.client_id).await
             {
                 render_shell_job(res, &audit, status, shell_job_error_response(op, e));
                 return;
@@ -927,7 +926,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             };
             if let Err((status, e)) =
-                assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+                assert_registry_runner_owner(&registry, auth.as_ref(), &job.client_id).await
             {
                 render_shell_job(res, &audit, status, shell_job_error_response(op, e));
                 return;
@@ -984,7 +983,7 @@ pub async fn shell_job_status(req: &mut Request, depot: &mut Depot, res: &mut Re
             res,
             &audit,
             StatusCode::INTERNAL_SERVER_ERROR,
-            shell_job_status_error_response("Shell client registry not configured".to_string()),
+            shell_job_status_error_response("Runner registry not configured".to_string()),
         );
         return;
     };
@@ -1029,7 +1028,7 @@ pub async fn shell_job_log(req: &mut Request, depot: &mut Depot, res: &mut Respo
             res,
             &audit,
             StatusCode::INTERNAL_SERVER_ERROR,
-            shell_job_log_error_response("Shell client registry not configured".to_string()),
+            shell_job_log_error_response("Runner registry not configured".to_string()),
         );
         return;
     };
@@ -1105,7 +1104,7 @@ pub async fn shell_job_stop(req: &mut Request, depot: &mut Depot, res: &mut Resp
             res,
             &audit,
             StatusCode::INTERNAL_SERVER_ERROR,
-            shell_job_stop_error_response("Shell client registry not configured".to_string()),
+            shell_job_stop_error_response("Runner registry not configured".to_string()),
         );
         return;
     };
@@ -1166,7 +1165,7 @@ pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Res
             StatusCode::INTERNAL_SERVER_ERROR,
             shell_jobs_list_error_response(
                 String::new(),
-                "Shell client registry not configured".to_string(),
+                "Runner registry not configured".to_string(),
             ),
         );
         return;
@@ -1185,7 +1184,7 @@ pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Res
     };
     let client_id = body.client_id.clone();
     if let Err((status, e)) =
-        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+        assert_registry_runner_owner(&registry, auth.as_ref(), &client_id).await
     {
         render_shell_jobs_list(
             res,
@@ -1196,7 +1195,7 @@ pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Res
         return;
     }
     match registry
-        .list_jobs_for_client(
+        .list_jobs_for_runner(
             &client_id,
             body.status.as_deref(),
             Some(body.limit.unwrap_or(20).clamp(1, 100)),

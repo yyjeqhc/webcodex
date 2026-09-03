@@ -3,14 +3,11 @@ use super::*;
 async fn mcp_export_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
-) -> (
-    Arc<ToolRuntime>,
-    Arc<crate::shell_client::ShellClientRegistry>,
-) {
+) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
     use crate::shell_protocol::{
         ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
     };
-    let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
+    let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
@@ -57,14 +54,14 @@ async fn mcp_export_runtime(
     )
     .await;
     let runtime = Arc::new(
-        ToolRuntime::new_for_tests_with_shell_clients(registry.clone())
+        ToolRuntime::new_for_tests_with_runner_registry(registry.clone())
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );
     (runtime, registry)
 }
 
 async fn poll_mcp_export_request(
-    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+    registry: &Arc<crate::runner_http::RunnerRegistry>,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
     use crate::shell_protocol::ShellAgentPollRequest;
     loop {
@@ -83,7 +80,7 @@ async fn poll_mcp_export_request(
 }
 
 async fn complete_mcp_export_request(
-    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+    registry: &Arc<crate::runner_http::RunnerRegistry>,
     request: crate::shell_protocol::ShellAgentShellRequest,
     stdout: Value,
 ) {
@@ -120,7 +117,7 @@ fn mcp_export_optimized_chunk_range(
 }
 
 async fn complete_mcp_export_optimized_chunk(
-    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+    registry: &Arc<crate::runner_http::RunnerRegistry>,
     request: crate::shell_protocol::ShellAgentShellRequest,
     path: &str,
     bytes: &[u8],
@@ -145,7 +142,7 @@ async fn complete_mcp_export_optimized_chunk(
 }
 
 async fn complete_mcp_export_metadata_with_max(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     path: &str,
     bytes: usize,
     sha256: &str,
@@ -195,7 +192,7 @@ async fn complete_mcp_export_metadata_with_max(
 }
 
 async fn complete_mcp_export_metadata(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     path: &str,
     bytes: usize,
     sha256: &str,
@@ -223,7 +220,7 @@ enum McpExportChunkFault {
 }
 
 async fn complete_mcp_export_resource_read(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     path: &str,
     bytes: Vec<u8>,
     mime_type: &str,
@@ -323,7 +320,7 @@ async fn complete_mcp_export_resource_read(
 
 async fn issue_mcp_artifact_export_with_metadata_max(
     runtime: Arc<ToolRuntime>,
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     auth: crate::auth::AuthContext,
     path: &str,
     bytes: &[u8],
@@ -373,7 +370,7 @@ async fn issue_mcp_artifact_export_with_metadata_max(
 
 async fn issue_mcp_artifact_export(
     runtime: Arc<ToolRuntime>,
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     auth: crate::auth::AuthContext,
     path: &str,
     bytes: &[u8],
@@ -1002,7 +999,7 @@ async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_o
     assert_eq!(format!("{:x}", Sha256::digest(&decoded)), sha256);
     assert_eq!(
         registry
-            .get_client_view("exporter")
+            .get_runner_view("exporter")
             .await
             .unwrap()
             .pending_requests,
@@ -1230,7 +1227,7 @@ async fn mcp_artifact_export_optimized_batch_drains_before_offset_ordered_error(
     }
     assert_eq!(
         registry
-            .get_client_view("exporter")
+            .get_runner_view("exporter")
             .await
             .unwrap()
             .pending_requests,

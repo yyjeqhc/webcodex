@@ -249,14 +249,11 @@ fn mcp_import_oauth_auth(client_id: &str) -> crate::auth::AuthContext {
 async fn mcp_import_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
-) -> (
-    Arc<ToolRuntime>,
-    Arc<crate::shell_client::ShellClientRegistry>,
-) {
+) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
     use crate::shell_protocol::{
         ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
     };
-    let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
+    let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
@@ -306,14 +303,14 @@ async fn mcp_import_runtime(
     )
     .await;
     let runtime = Arc::new(
-        ToolRuntime::new_for_tests_with_shell_clients(registry.clone())
+        ToolRuntime::new_for_tests_with_runner_registry(registry.clone())
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );
     (runtime, registry)
 }
 
 async fn complete_mcp_import_save(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
     expected_bytes: Vec<u8>,
 ) {
     use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
@@ -321,7 +318,7 @@ async fn complete_mcp_import_save(
     use sha2::{Digest, Sha256};
 
     async fn next_request(
-        registry: &crate::shell_client::ShellClientRegistry,
+        registry: &crate::runner_http::RunnerRegistry,
     ) -> crate::shell_protocol::ShellAgentShellRequest {
         loop {
             if let Some(request) = registry
@@ -465,13 +462,13 @@ async fn complete_mcp_import_save(
 }
 
 async fn complete_mcp_import_until_abort(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
 ) -> usize {
     use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
     use base64::Engine as _;
 
     async fn next_request(
-        registry: &crate::shell_client::ShellClientRegistry,
+        registry: &crate::runner_http::RunnerRegistry,
     ) -> crate::shell_protocol::ShellAgentShellRequest {
         loop {
             if let Some(request) = registry

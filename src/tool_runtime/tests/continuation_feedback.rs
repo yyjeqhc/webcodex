@@ -1752,7 +1752,7 @@ async fn diagnostic_coding_workflow(
     });
     while !task.is_finished() {
         if let Some(req) = runtime
-            .shell_clients
+            .runner_registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),

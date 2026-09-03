@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn registry_enqueues_polls_and_completes_shell_request() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -70,7 +70,7 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
 
 #[tokio::test]
 async fn rejected_cross_client_result_does_not_consume_pending_request() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     for (client_id, instance) in [("owner", "inst-owner"), ("other", "inst-other")] {
         registry
             .register(current_runner_registration(ShellClientRegisterRequest {
@@ -152,7 +152,7 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
 
 #[tokio::test]
 async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,

@@ -2,9 +2,7 @@ use super::jobs::{
     command_preview, is_final_job_status, is_runner_active_job_status, mark_job_lost,
     notify_job_update, observe_job_terminal, replace_log_from_snapshot, COMMAND_PREVIEW_MAX_CHARS,
 };
-use super::state::{
-    ShellClientRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility,
-};
+use super::state::{RunnerRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility};
 use super::validation::validate_id;
 use super::{job_recovery_grace_secs, RunnerRegistry};
 use crate::RunnerAccessGroup;
@@ -436,7 +434,7 @@ fn detached_instance_transfer_allowed(job: &ShellJobRecord, snapshot: &ShellJobS
 }
 
 pub(super) fn preflight_inventory_locked(
-    inner: &ShellClientRegistryInner,
+    inner: &RunnerRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
     inventory: &ShellJobInventory,
@@ -457,7 +455,7 @@ pub(super) fn preflight_inventory_locked(
         };
         if existing.client_id != client_id {
             return Err(format!(
-                "job inventory job_id {} belongs to a different client",
+                "job inventory job_id {} belongs to a different runner",
                 snapshot.job_id
             ));
         }
@@ -517,7 +515,7 @@ pub(super) fn preflight_inventory_locked(
 }
 
 fn remove_job_request_mapping(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     client_id: &str,
     request_id: Option<&str>,
 ) {
@@ -527,13 +525,13 @@ fn remove_job_request_mapping(
     inner.pending_by_id.remove(request_id);
     inner.persistent_waiters.remove(request_id);
     inner.request_to_job.remove(request_id);
-    if let Some(queue) = inner.queues_by_client.get_mut(client_id) {
+    if let Some(queue) = inner.queues_by_runner.get_mut(client_id) {
         queue.retain(|queued| queued != request_id);
     }
 }
 
 fn remove_job_control_requests(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     client_id: &str,
     job_ids: &HashSet<String>,
 ) {
@@ -646,7 +644,7 @@ fn apply_snapshot(
     notify_job_update(job);
 }
 
-fn remove_cleanup_terminal_jobs_locked(inner: &mut ShellClientRegistryInner) {
+fn remove_cleanup_terminal_jobs_locked(inner: &mut RunnerRegistryInner) {
     let removable = inner
         .jobs_by_id
         .iter()
@@ -661,18 +659,18 @@ fn remove_cleanup_terminal_jobs_locked(inner: &mut ShellClientRegistryInner) {
 }
 
 fn prune_projected_structured_terminal_suppressions_locked(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     now: i64,
 ) {
-    for client in inner.clients.values_mut() {
-        client.prune_projected_structured_terminal_suppressions(now);
+    for runner in inner.runners.values_mut() {
+        runner.prune_projected_structured_terminal_suppressions(now);
     }
 }
 
 impl RunnerRegistry {
     fn prune_expired_terminal_jobs_locked(
         &self,
-        inner: &mut ShellClientRegistryInner,
+        inner: &mut RunnerRegistryInner,
         now: i64,
     ) -> usize {
         enum TerminalSweepAction {
@@ -727,14 +725,14 @@ impl RunnerRegistry {
             .iter()
             .map(|(job_id, _, _)| job_id.clone())
             .collect::<HashSet<_>>();
-        let distinct_clients = expired
+        let distinct_runners = expired
             .iter()
             .map(|(_, client_id, _)| client_id.clone())
             .collect::<HashSet<_>>();
         for (_, client_id, request_id) in &expired {
             remove_job_request_mapping(inner, client_id, request_id.as_deref());
         }
-        for client_id in distinct_clients {
+        for client_id in distinct_runners {
             remove_job_control_requests(inner, &client_id, &expired_job_ids);
         }
         inner
@@ -762,15 +760,15 @@ pub(super) const RECOVERY_SWEEP_PASS_CAP: usize = 64;
 /// Transition `recovering` jobs whose recovery deadline has elapsed to
 /// terminal `lost` with `runner_recovery_deadline_exceeded`, and clean up
 /// their pending request / request-to-job mappings. Shared by the
-/// inventory-reconciliation path (scoped to one client) and the periodic
-/// recovery-timeout sweep (all clients). Returns the number of jobs lost.
+/// inventory-reconciliation path (scoped to one runner) and the periodic
+/// recovery-timeout sweep (all runners). Returns the number of jobs lost.
 ///
 /// Callers must already hold `inner`. Performs only in-memory work; no disk,
 /// network, or await. `mark_job_lost` is idempotent (terminal guard) and sets
 /// `ended_at` only once, so a race between this and the on-demand
 /// `refresh_job_status_locked` path is harmless — the second call is a no-op.
 pub(super) fn expire_recovering_jobs_locked(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     client_filter: Option<&str>,
     now: i64,
     pass_cap: usize,
@@ -808,7 +806,7 @@ pub(super) fn expire_recovering_jobs_locked(
         .iter()
         .map(|(job_id, _, _)| job_id.clone())
         .collect::<HashSet<_>>();
-    let distinct_clients = expired
+    let distinct_runners = expired
         .iter()
         .map(|(_, client_id, _)| client_id.clone())
         .collect::<HashSet<_>>();
@@ -832,7 +830,7 @@ pub(super) fn expire_recovering_jobs_locked(
         remove_job_request_mapping(inner, client_id, request_id.as_deref());
         let _ = job_id;
     }
-    for client_id in distinct_clients {
+    for client_id in distinct_runners {
         remove_job_control_requests(inner, &client_id, &expired_job_ids);
     }
     remove_cleanup_terminal_jobs_locked(inner);
@@ -840,7 +838,7 @@ pub(super) fn expire_recovering_jobs_locked(
 }
 
 /// Periodic recovery-deadline sweep. NOT request-triggered: scans every
-/// `recovering` job across all clients and transitions any whose grace window
+/// `recovering` job across all runners and transitions any whose grace window
 /// has elapsed to `lost`. This closes the gap where a reconciliation-capable
 /// runner disconnects permanently and nobody queries the job, which would
 /// otherwise leave it in `recovering` forever. Pure in-memory: holds the
@@ -850,7 +848,7 @@ pub async fn recovery_timeout_sweep(registry: &RunnerRegistry) {
     registry.process_hidden_cleanup_intents().await;
     let now = crate::registry::now_ts();
     let mut inner = registry.inner.lock().await;
-    registry.prune_expired_shared_key_clients_locked(&mut inner, now);
+    registry.prune_expired_shared_key_runners_locked(&mut inner, now);
     prune_projected_structured_terminal_suppressions_locked(&mut inner, now);
     expire_recovering_jobs_locked(&mut inner, None, now, RECOVERY_SWEEP_PASS_CAP);
     registry.prune_expired_terminal_jobs_locked(&mut inner, now);
@@ -867,7 +865,7 @@ pub(super) struct ReconciliationSummary {
 }
 
 pub(super) fn reconcile_inventory_locked(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
     auth_group: Option<RunnerAccessGroup>,
@@ -927,8 +925,8 @@ pub(super) fn reconcile_inventory_locked(
 
     for snapshot in &inventory.jobs {
         let suppress_unknown_terminal = is_final_job_status(&snapshot.status)
-            && inner.clients.get(client_id).is_some_and(|client| {
-                client.suppresses_projected_structured_terminal(
+            && inner.runners.get(client_id).is_some_and(|runner| {
+                runner.suppresses_projected_structured_terminal(
                     client_id,
                     agent_instance_id,
                     &snapshot.job_id,
@@ -991,7 +989,7 @@ pub(super) fn reconcile_inventory_locked(
 }
 
 pub(super) fn terminate_instance_jobs_locked(
-    inner: &mut ShellClientRegistryInner,
+    inner: &mut RunnerRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
     replacement_inventory: Option<&ShellJobInventory>,

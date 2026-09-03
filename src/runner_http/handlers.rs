@@ -1,6 +1,6 @@
 use super::{
-    effective_register_owner, enforce_agent_transport, enforce_register_owner, get_registry,
-    require_agent_transport_scope, runner_access_from_auth,
+    effective_register_owner, enforce_register_owner, enforce_runner_transport, get_registry,
+    require_runner_transport_scope, runner_access_from_auth,
 };
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
@@ -11,13 +11,13 @@ use crate::shell_protocol::{
 use salvo::prelude::*;
 
 #[handler]
-pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(ShellClientRegisterResponse {
             success: false,
             client: None,
-            error: Some("Shell client registry not configured".to_string()),
+            error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
@@ -34,9 +34,9 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
         }
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    // Phase 3: agent transport endpoints require bootstrap or an agent token
+    // Phase 3: Runner transport endpoints require bootstrap or an agent token
     // with the agent:register scope. User tokens are rejected.
-    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
+    if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
     {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellClientRegisterResponse {
@@ -78,13 +78,13 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
 }
 
 #[handler]
-pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(ShellAgentPollResponse {
             success: false,
             request: None,
-            error: Some("Shell client registry not configured".to_string()),
+            error: Some("Runner registry not configured".to_string()),
             project_inventory: None,
         }));
         return;
@@ -103,7 +103,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
         }
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_POLL) {
+    if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_POLL) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentPollResponse {
             success: false,
@@ -113,7 +113,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
         }));
         return;
     }
-    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.request.client_id) {
+    if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.request.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentPollResponse {
             success: false,
@@ -125,7 +125,7 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
     }
     let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(access.as_ref(), &body.request.client_id)
+        .assert_runner_access(access.as_ref(), &body.request.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -177,12 +177,12 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
 }
 
 #[handler]
-pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(ShellAgentResultResponse {
             success: false,
-            error: Some("Shell client registry not configured".to_string()),
+            error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
@@ -198,7 +198,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT) {
+    if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentResultResponse {
             success: false,
@@ -206,7 +206,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         }));
         return;
     }
-    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.result.client_id) {
+    if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.result.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentResultResponse {
             success: false,
@@ -216,7 +216,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
     }
     let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(access.as_ref(), &body.result.client_id)
+        .assert_runner_access(access.as_ref(), &body.result.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -242,7 +242,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
 }
 
 #[handler]
-pub async fn shell_agent_persistent_shell_result(
+pub async fn runner_persistent_shell_result(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
@@ -251,7 +251,7 @@ pub async fn shell_agent_persistent_shell_result(
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(ShellAgentPersistentShellResultResponse {
             success: false,
-            error: Some("Shell client registry not configured".to_string()),
+            error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
@@ -268,7 +268,7 @@ pub async fn shell_agent_persistent_shell_result(
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     if let Err(error) =
-        require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT)
+        require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT)
     {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentPersistentShellResultResponse {
@@ -277,7 +277,7 @@ pub async fn shell_agent_persistent_shell_result(
         }));
         return;
     }
-    if let Err(error) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+    if let Err(error) = enforce_runner_transport(auth.as_ref(), &body.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentPersistentShellResultResponse {
             success: false,
@@ -287,7 +287,7 @@ pub async fn shell_agent_persistent_shell_result(
     }
     let access = runner_access_from_auth(auth.as_ref());
     if let Err(error) = registry
-        .assert_client_access(access.as_ref(), &body.client_id)
+        .assert_runner_access(access.as_ref(), &body.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -313,13 +313,13 @@ pub async fn shell_agent_persistent_shell_result(
 }
 
 #[handler]
-pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn runner_job_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(Json(ShellAgentJobUpdateResponse {
             success: false,
             job: None,
-            error: Some("Shell client registry not configured".to_string()),
+            error: Some("Runner registry not configured".to_string()),
         }));
         return;
     };
@@ -337,7 +337,7 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     if let Err(e) =
-        require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_JOB_UPDATE)
+        require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_JOB_UPDATE)
     {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentJobUpdateResponse {
@@ -347,7 +347,7 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
         }));
         return;
     }
-    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+    if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentJobUpdateResponse {
             success: false,
@@ -358,7 +358,7 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
     }
     let access = runner_access_from_auth(auth.as_ref());
     if let Err(e) = registry
-        .assert_client_access(access.as_ref(), &body.client_id)
+        .assert_runner_access(access.as_ref(), &body.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);

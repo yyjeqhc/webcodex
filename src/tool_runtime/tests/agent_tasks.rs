@@ -3,7 +3,7 @@ use crate::auth::scopes::{
     COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES, SCOPE_CODING_AGENT_RUN,
     SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_PROJECT_WRITE,
 };
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     ShellAgentResultPayload, ShellAgentResultRequest, ShellClientCapabilities,
     ShellClientRegisterRequest,
@@ -54,7 +54,7 @@ async fn register_coding_agent_task_runner(
     inventory: CodingAgentRunInventory,
 ) -> String {
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: Some(1_700_000_000),
             build: None,
@@ -84,7 +84,7 @@ async fn register_coding_agent_task_runner(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         instance_id,
         vec![registered_project(project_id, &root.to_string_lossy())],
@@ -95,7 +95,7 @@ async fn register_coding_agent_task_runner(
 
 fn runtime_with_agent_task_db(db: Arc<crate::db::Database>) -> ToolRuntime {
     ToolRuntime::new(
-        Arc::new(ShellClientRegistry::default()),
+        Arc::new(RunnerRegistry::default()),
         Arc::new(RuntimeInfo::default()),
     )
     .with_communication_database(db)
@@ -676,7 +676,7 @@ async fn coding_run_executes_then_reconciles_from_reopened_db_and_fresh_runtime(
         terminal: None,
     };
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultPayload {
             result: ShellAgentResultRequest {
                 client_id: client_id.to_string(),
@@ -745,7 +745,7 @@ async fn coding_run_executes_then_reconciles_from_reopened_db_and_fresh_runtime(
     .await;
     assert_eq!(fresh_project, project);
     let (_, inventory_run) = fresh_runtime
-        .shell_clients
+        .runner_registry
         .coding_agent_run_for_auth(
             Some(&crate::test_support::runner_access(&auth)),
             &completed.run_id,

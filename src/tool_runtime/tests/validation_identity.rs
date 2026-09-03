@@ -122,7 +122,7 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
     assert_eq!(request.kind, "start_job");
     let job_id = request.job_id.clone().expect("promoted shell Job id");
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
             client_id: "validation-shell-job".to_string(),
             agent_instance_id: "inst-validation-shell-job".to_string(),
@@ -150,7 +150,7 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
     assert_eq!(handoff.output["job_id"], job_id);
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
             client_id: "validation-shell-job".to_string(),
             agent_instance_id: "inst-validation-shell-job".to_string(),

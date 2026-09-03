@@ -2589,7 +2589,7 @@ async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
     // The timed-out overview request was cancelled server-side.
     if let Some(request_id) = overview_request {
         let expired = runtime
-            .shell_clients
+            .runner_registry
             .complete(crate::shell_protocol::ShellAgentResultRequest {
                 client_id: "wop-timeout".to_string(),
                 agent_instance_id: "inst".to_string(),

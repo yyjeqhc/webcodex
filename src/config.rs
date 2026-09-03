@@ -12,7 +12,7 @@ pub struct Config {
     pub oauth2: OAuth2Config,
 }
 
-/// Server-side QUIC agent transport configuration. Sourced from
+/// Server-side QUIC Runner transport configuration. Sourced from
 /// `WEBCODEX_QUIC_*` env vars, mirroring the project's env-var config pattern.
 /// Kept as a standalone struct (not embedded in [`Config`]) so existing
 /// `Config { ... }` test literals and constructors are untouched. The listener

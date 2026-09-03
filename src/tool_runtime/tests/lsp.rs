@@ -344,7 +344,7 @@ async fn register_lsp_agent_capabilities(
 ) -> String {
     let project_path = root.to_string_lossy().to_string();
     runtime
-        .shell_clients
+        .runner_registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -374,7 +374,7 @@ async fn register_lsp_agent_capabilities(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         "inst",
         vec![registered_project(project_id, &project_path)],
@@ -906,7 +906,7 @@ async fn disconnected_agent_blocks_document_diagnostics_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     let project = register_lsp_agent(&runtime, "offline-lsp", "demo", tmp.path(), true).await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("offline-lsp", "inst")
         .await;
     let result = runtime

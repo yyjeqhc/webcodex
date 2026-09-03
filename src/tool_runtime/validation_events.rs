@@ -1593,7 +1593,7 @@ fn execution_identity(
 }
 
 fn first_line_summary(command: &str) -> String {
-    crate::shell_client::command_preview(command)
+    crate::runner_http::command_preview(command)
 }
 
 type OutputEvidence = (

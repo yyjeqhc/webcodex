@@ -415,20 +415,20 @@ async fn visible_provider_candidates(
     auth: Option<&AuthContext>,
 ) -> BTreeMap<String, Vec<ResolvedProvider>> {
     let mut providers: BTreeMap<String, Vec<ResolvedProvider>> = BTreeMap::new();
-    let access = crate::shell_client::runner_access_from_auth(auth);
+    let access = crate::runner_http::runner_access_from_auth(auth);
     for client in runtime
-        .shell_clients
-        .list_clients_for_auth(access.as_ref())
+        .runner_registry
+        .list_runners_for_auth(access.as_ref())
         .await
     {
         if !client.connected
             || runtime
-                .shell_clients
-                .assert_client_access(access.as_ref(), &client.client_id)
+                .runner_registry
+                .assert_runner_access(access.as_ref(), &client.client_id)
                 .await
                 .is_err()
         {
-            // `list_clients_for_auth` applies lightweight auth-group visibility.
+            // `list_runners_for_auth` applies lightweight auth-group visibility.
             // Managed-user clients also require the existing exact owner check;
             // do it here before projecting even sanitized provider metadata.
             continue;
@@ -481,9 +481,9 @@ async fn execute_exact(
     request: McpGatewayRequest,
     auth: Option<&AuthContext>,
 ) -> Result<McpGatewayResponse, GatewayError> {
-    let access = crate::shell_client::runner_access_from_auth(auth);
+    let access = crate::runner_http::runner_access_from_auth(auth);
     let (request_id, receiver) = runtime
-        .shell_clients
+        .runner_registry
         .enqueue_mcp_gateway(
             &provider.client_id,
             &provider.agent_instance_id,
@@ -515,7 +515,7 @@ async fn execute_exact(
         Ok(Ok(response)) => Ok(response),
         Ok(Err(_)) | Err(_) => {
             let dispatched = runtime
-                .shell_clients
+                .runner_registry
                 .cancel_request_dispatch_state(&request_id)
                 .await;
             let state = if dispatched == Some(false) {

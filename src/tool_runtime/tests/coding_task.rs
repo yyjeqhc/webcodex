@@ -1065,7 +1065,7 @@ async fn coding_workflow_runner_offline_is_still_blocking() {
         register_agent_project_at_path(&runtime, "coding-start-offline", "demo", tmp.path()).await;
     // Transport disconnect leaves the agent offline while project id may still resolve.
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("coding-start-offline", "inst")
         .await;
 

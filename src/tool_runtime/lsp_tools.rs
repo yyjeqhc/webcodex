@@ -10,7 +10,7 @@ use crate::lsp_bridge::{
     LspStatusResult, WorkspaceSymbolsResult, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
     MAX_CALL_HIERARCHY_ROOTS,
 };
-use crate::shell_client::{EnqueueLspError, RunnerFeature};
+use crate::runner_http::{EnqueueLspError, RunnerFeature};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -197,8 +197,8 @@ impl ToolRuntime {
         let proj = &resolved.config;
         let client_id = proj.client_id.clone();
         let Some(client) = self
-            .shell_clients
-            .get_client_semantic_view(&client_id)
+            .runner_registry
+            .get_runner_semantic_view(&client_id)
             .await
         else {
             return ToolResult::err(format!(
@@ -243,7 +243,7 @@ impl ToolRuntime {
         };
         let wait_timeout = 30u64;
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_lsp(client_id, payload, "tool_runtime".to_string(), wait_timeout)
             .await
         {
@@ -260,7 +260,7 @@ impl ToolRuntime {
         match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
             Ok(Ok(resp)) => {
                 if let Some(error) = resp.error {
-                    return map_agent_transport_error(error);
+                    return map_runner_transport_error(error);
                 }
                 let stdout = resp.stdout.unwrap_or_default();
                 match parse_agent_lsp_result_envelope(&stdout) {
@@ -324,11 +324,11 @@ impl ToolRuntime {
                 }
             }
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err("Runner LSP waiter was dropped")
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err(format!(
                     "{}: timed out waiting for Runner LSP result",
                     error_codes::LSP_REQUEST_TIMEOUT
@@ -565,7 +565,7 @@ pub(crate) fn runner_local_project_id(resolved_id: &str) -> Option<&str> {
     }
 }
 
-fn map_agent_transport_error(error: String) -> ToolResult {
+fn map_runner_transport_error(error: String) -> ToolResult {
     let lower = error.to_ascii_lowercase();
     if lower.contains("unknown shell client") || lower.contains("not connected") {
         return ToolResult::err(format!("Runner unavailable: {error}"));

@@ -19,7 +19,7 @@ use std::time::Duration;
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::{agent_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::{RunnerFeature, ShellClientSemanticView};
+use crate::runner_http::{RunnerFeature, RunnerSemanticView};
 use crate::shell_protocol::{
     ShellAgentProjectSummary, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
 };
@@ -103,7 +103,7 @@ fn validate_list_projects_options(
 }
 
 fn project_candidates(
-    clients: &[ShellClientSemanticView],
+    clients: &[RunnerSemanticView],
     options: &ListProjectsOptions,
     query: Option<&str>,
 ) -> Vec<ProjectCandidate> {
@@ -155,10 +155,10 @@ impl ToolRuntime {
             Ok(validated) => validated,
             Err(result) => return result,
         };
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let clients = self
-            .shell_clients
-            .list_client_semantic_views_for_auth(access.as_ref())
+            .runner_registry
+            .list_runner_semantic_views_for_auth(access.as_ref())
             .await;
         self.list_projects_from_semantic_clients(auth, &options, query.as_deref(), limit, &clients)
             .await
@@ -178,7 +178,7 @@ impl ToolRuntime {
         let semantic_clients = clients
             .iter()
             .cloned()
-            .map(ShellClientSemanticView::from_public_view_for_test)
+            .map(RunnerSemanticView::from_public_view_for_test)
             .collect::<Vec<_>>();
         self.list_projects_from_semantic_clients(
             auth,
@@ -196,9 +196,9 @@ impl ToolRuntime {
         options: &ListProjectsOptions,
         query: Option<&str>,
         limit: Option<usize>,
-        clients: &[ShellClientSemanticView],
+        clients: &[RunnerSemanticView],
     ) -> ToolResult {
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let mut candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
         if let Some(limit) = limit {
@@ -248,7 +248,7 @@ impl ToolRuntime {
                 )
             };
             let active_jobs = self
-                .shell_clients
+                .runner_registry
                 .count_active_jobs_for_project(access.as_ref(), &runtime_id)
                 .await;
             let value = if options.summary_only {
@@ -429,7 +429,7 @@ impl ToolRuntime {
         path: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         if let Err(error) = validate_project_op_path(&path) {
             return ToolResult::err_with_output(
                 error,
@@ -442,13 +442,13 @@ impl ToolRuntime {
             );
         }
         if let Some(client) = self
-            .shell_clients
-            .get_client_semantic_view_for_auth(&client_id, access.as_ref())
+            .runner_registry
+            .get_runner_semantic_view_for_auth(&client_id, access.as_ref())
             .await
         {
             if let Err(error) = self
-                .shell_clients
-                .assert_client_access(access.as_ref(), &client_id)
+                .runner_registry
+                .assert_runner_access(access.as_ref(), &client_id)
                 .await
             {
                 return ToolResult::err(error);
@@ -540,11 +540,11 @@ impl ToolRuntime {
         payload: Value,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         // -- owner boundary + client existence --------------------------------
         let Some(client_view) = self
-            .shell_clients
-            .get_client_view_for_auth(&client_id, access.as_ref())
+            .runner_registry
+            .get_runner_view_for_auth(&client_id, access.as_ref())
             .await
         else {
             return ToolResult::err(format!(
@@ -554,8 +554,8 @@ impl ToolRuntime {
         };
         let expected_agent_instance_id = client_view.agent_instance_id.clone();
         if let Err(e) = self
-            .shell_clients
-            .assert_client_access(access.as_ref(), &client_id)
+            .runner_registry
+            .assert_runner_access(access.as_ref(), &client_id)
             .await
         {
             return ToolResult::err(e);
@@ -569,7 +569,7 @@ impl ToolRuntime {
             }
         };
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_project_op(
                 client_id.clone(),
                 kind,
@@ -590,7 +590,7 @@ impl ToolRuntime {
             match tokio::time::timeout(Duration::from_secs(PROJECT_OP_WAIT_SECS), rx).await {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) | Err(_) => {
-                    self.shell_clients.cancel_request(&request_id).await;
+                    self.runner_registry.cancel_request(&request_id).await;
                     return ToolResult::err_with_output(
                         "operation_indeterminate",
                         json!({"error_code":"operation_indeterminate"}),
@@ -640,8 +640,8 @@ impl ToolRuntime {
             );
         };
         if let Err(error) = self
-            .shell_clients
-            .upsert_client_project_for_instance(&client_id, &expected_agent_instance_id, project)
+            .runner_registry
+            .upsert_runner_project_for_instance(&client_id, &expected_agent_instance_id, project)
             .await
         {
             return project_projection_reconcile_required(
@@ -749,7 +749,7 @@ fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummar
 }
 
 fn smoke_project_capabilities(
-    client: &ShellClientSemanticView,
+    client: &RunnerSemanticView,
     project: &crate::shell_protocol::ShellAgentProjectSummary,
 ) -> Value {
     let git_available = project_git_available(project);

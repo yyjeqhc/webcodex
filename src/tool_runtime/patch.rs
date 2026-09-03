@@ -529,7 +529,7 @@ impl ToolRuntime {
         diff: String,
     ) -> Result<ShellRunResponse, UnifiedDiffCommandFailure> {
         let (request_id, receiver) = self
-            .shell_clients
+            .runner_registry
             .enqueue_run(
                 ShellRunRequest {
                     client_id,
@@ -553,7 +553,7 @@ impl ToolRuntime {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
                 let dispatch = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 Err(UnifiedDiffCommandFailure {
@@ -565,7 +565,7 @@ impl ToolRuntime {
             }
             Err(_) => {
                 let dispatch = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 Err(UnifiedDiffCommandFailure {

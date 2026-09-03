@@ -58,10 +58,10 @@ pub(crate) struct RevokeAgentTokenRequest {
 /// create one only for themselves. An agent token may **not** call this
 /// endpoint (agent tokens cannot mint more tokens). `allowed_client_id` is
 /// required and validated. Agent token scopes must be a subset of the agent
-/// transport scopes; when omitted, all agent transport scopes are granted.
+/// transport scopes; when omitted, all Runner transport scopes are granted.
 /// Returns the plaintext token **exactly once**.
 #[handler]
-pub(crate) async fn agent_tokens_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub(crate) async fn runner_tokens_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let body: CreateAgentTokenRequest = match req.parse_json().await {
         Ok(b) => b,
         Err(e) => {
@@ -123,7 +123,7 @@ pub(crate) async fn agent_tokens_create(req: &mut Request, depot: &mut Depot, re
         }
     };
 
-    // Default to all agent transport scopes when omitted.
+    // Default to all Runner transport scopes when omitted.
     let scopes = match body.scopes {
         Some(raw) => match validate_agent_scopes(&raw) {
             Ok(s) => s,
@@ -229,7 +229,7 @@ pub(crate) async fn agent_tokens_create(req: &mut Request, depot: &mut Depot, re
 /// to `allowed_client_id = client_id`. It never accepts or returns the
 /// plaintext `wc_agent_*` token.
 #[handler]
-pub(crate) async fn agent_tokens_register_hash(
+pub(crate) async fn runner_tokens_register_hash(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
@@ -424,7 +424,7 @@ pub(crate) async fn agent_tokens_register_hash(
 /// own. Returns metadata only — never `key_hash` or the plaintext token.
 /// Only `kind='agent'` rows are returned.
 #[handler]
-pub(crate) async fn agent_tokens_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub(crate) async fn runner_tokens_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let body: ListAgentTokensRequest = match req.parse_json().await {
         Ok(b) => b,
         Err(e) => {
@@ -507,7 +507,7 @@ pub(crate) async fn agent_tokens_list(req: &mut Request, depot: &mut Depot, res:
 /// their own. Verifies the token belongs to the user and `kind == "agent"`.
 /// Idempotent. Never returns the plaintext token.
 #[handler]
-pub(crate) async fn agent_tokens_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub(crate) async fn runner_tokens_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let body: RevokeAgentTokenRequest = match req.parse_json().await {
         Ok(b) => b,
         Err(e) => {

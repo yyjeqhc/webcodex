@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn computer_text_input_enqueue_requires_exact_owner_and_independent_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     let bob = auth_context(Some("bob"), false);
     let text = "隐私输入🙂";
@@ -13,7 +13,7 @@ async fn computer_text_input_enqueue_requires_exact_owner_and_independent_capabi
     })
     .to_string();
 
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-input",
         "alice",
@@ -36,7 +36,7 @@ async fn computer_text_input_enqueue_requires_exact_owner_and_independent_capabi
         .unwrap_err();
     assert!(error.contains("does not support computer_text_input"));
 
-    register_computer_test_client(&registry, "computer-input", "alice", true, true, true, true)
+    register_computer_test_runner(&registry, "computer-input", "alice", true, true, true, true)
         .await;
     let error = registry
         .enqueue_computer(
@@ -81,9 +81,9 @@ async fn computer_text_input_enqueue_requires_exact_owner_and_independent_capabi
 
 #[tokio::test]
 async fn computer_text_input_enqueue_preserves_max_utf8_text_after_json_escaping() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-input-escaped",
         "alice",

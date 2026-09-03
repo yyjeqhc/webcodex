@@ -910,7 +910,7 @@ mod tests {
         for path in [
             "src/auth/tokens.rs",
             "src/auth/project_credential.rs",
-            "src/agent_tokens_http.rs",
+            "src/runner_tokens_http.rs",
             "docs/token-design.md",
             "tests/credential_parser.ts",
         ] {

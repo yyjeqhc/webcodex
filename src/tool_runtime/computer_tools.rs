@@ -4,7 +4,7 @@ use super::tool_call::ComputerSnapshotRegion;
 use super::{RecoveryKind, RecoveryTool, ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
-use crate::shell_client::RunnerFeature;
+use crate::runner_http::RunnerFeature;
 use crate::shell_protocol::{ShellCommandExecutionState, ShellFileOpRequest};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -822,15 +822,15 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let requested_by = crate::shell_client::requested_by_from_auth(auth);
+        let requested_by = crate::runner_http::requested_by_from_auth(auth);
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_computer_snapshot_artifact(
                 request,
                 &target_agent_project_id,
                 &target_cwd,
                 requested_by,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await
         {
@@ -853,7 +853,7 @@ impl ToolRuntime {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
                 let state = dispatch_uncertainty_lifecycle(
-                    self.shell_clients
+                    self.runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await,
                 );
@@ -869,7 +869,7 @@ impl ToolRuntime {
             }
             Err(_) => {
                 let state = dispatch_uncertainty_lifecycle(
-                    self.shell_clients
+                    self.runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await,
                 );
@@ -995,9 +995,9 @@ impl ToolRuntime {
 
     async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {
         let clients = self
-            .shell_clients
-            .list_client_semantic_views_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+            .runner_registry
+            .list_runner_semantic_views_for_auth(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await;
         let mut total_count = 0usize;
@@ -1151,10 +1151,10 @@ impl ToolRuntime {
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
         let client = match self
-            .shell_clients
-            .get_client_semantic_view_checked_for_auth(
+            .runner_registry
+            .get_runner_semantic_view_checked_for_auth(
                 client_id,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await
         {
@@ -1268,15 +1268,15 @@ impl ToolRuntime {
                 return computer_error("invalid_request", "could not encode computer request")
             }
         };
-        let requested_by = crate::shell_client::requested_by_from_auth(auth);
+        let requested_by = crate::runner_http::requested_by_from_auth(auth);
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_computer(
                 client_id.to_string(),
                 kind,
                 payload,
                 requested_by,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 COMPUTER_WAIT_SECS,
             )
             .await
@@ -1318,7 +1318,7 @@ impl ToolRuntime {
             Ok(Ok(response)) => response,
             Ok(Err(_)) if is_effect => {
                 let request_dispatched = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 if is_application_launch {
@@ -1352,7 +1352,7 @@ impl ToolRuntime {
             }
             Err(_) if is_effect => {
                 let request_dispatched = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 if is_application_launch {

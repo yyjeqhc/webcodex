@@ -294,7 +294,7 @@ async fn coding_task_semantic_navigation_disconnected_agent_is_nonblocking() {
     let project =
         register_semantic_agent(&runtime, "offline-agent", "demo", temp.path(), true).await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("offline-agent", "inst")
         .await;
     let result = runtime
@@ -368,7 +368,7 @@ async fn coding_task_semantic_navigation_timeout_uses_one_budget_and_cancels_wai
     assert_eq!(result.output["startup_verdict"]["status"], "warn");
 
     let expired = runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "timeout-agent".to_string(),
             agent_instance_id: "inst".to_string(),

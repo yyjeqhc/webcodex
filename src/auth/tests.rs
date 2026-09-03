@@ -58,38 +58,38 @@ fn user_token_auth_context_does_not_get_agent_kind() {
 }
 
 #[test]
-fn is_agent_transport_path_allows_only_the_six_exact_paths() {
-    // The six agent transport endpoints an agent token may call.
-    assert!(is_agent_transport_path("/api/shell/agent/register"));
-    assert!(is_agent_transport_path("/api/shell/agent/poll"));
-    assert!(is_agent_transport_path("/api/shell/agent/result"));
-    assert!(is_agent_transport_path(
+fn is_runner_transport_path_allows_only_the_six_exact_paths() {
+    // The six Runner transport endpoints an agent token may call.
+    assert!(is_runner_transport_path("/api/shell/agent/register"));
+    assert!(is_runner_transport_path("/api/shell/agent/poll"));
+    assert!(is_runner_transport_path("/api/shell/agent/result"));
+    assert!(is_runner_transport_path(
         "/api/shell/agent/persistent_shell_result"
     ));
-    assert!(is_agent_transport_path("/api/shell/agent/job_update"));
-    assert!(is_agent_transport_path("/api/agents/ws"));
+    assert!(is_runner_transport_path("/api/shell/agent/job_update"));
+    assert!(is_runner_transport_path("/api/agents/ws"));
 
     // Everything else is rejected — including paths that look similar.
-    assert!(!is_agent_transport_path("/api/agent-tokens/create"));
-    assert!(!is_agent_transport_path("/api/agent-tokens/register_hash"));
-    assert!(!is_agent_transport_path("/api/agent-tokens/list"));
-    assert!(!is_agent_transport_path("/api/agent-tokens/revoke"));
-    assert!(!is_agent_transport_path("/api/pairing/create"));
-    assert!(!is_agent_transport_path("/api/pairing/enroll"));
-    assert!(!is_agent_transport_path("/api/runtime/status"));
-    assert!(!is_agent_transport_path("/api/tools/list"));
-    assert!(!is_agent_transport_path("/api/tools/call"));
-    assert!(!is_agent_transport_path("/api/projects/list"));
-    assert!(!is_agent_transport_path("/api/jobs/list"));
-    assert!(!is_agent_transport_path("/mcp"));
-    assert!(!is_agent_transport_path("/api/audit/sessions"));
-    assert!(!is_agent_transport_path("/api/users/list"));
-    assert!(!is_agent_transport_path("/api/tokens/list"));
+    assert!(!is_runner_transport_path("/api/agent-tokens/create"));
+    assert!(!is_runner_transport_path("/api/agent-tokens/register_hash"));
+    assert!(!is_runner_transport_path("/api/agent-tokens/list"));
+    assert!(!is_runner_transport_path("/api/agent-tokens/revoke"));
+    assert!(!is_runner_transport_path("/api/pairing/create"));
+    assert!(!is_runner_transport_path("/api/pairing/enroll"));
+    assert!(!is_runner_transport_path("/api/runtime/status"));
+    assert!(!is_runner_transport_path("/api/tools/list"));
+    assert!(!is_runner_transport_path("/api/tools/call"));
+    assert!(!is_runner_transport_path("/api/projects/list"));
+    assert!(!is_runner_transport_path("/api/jobs/list"));
+    assert!(!is_runner_transport_path("/mcp"));
+    assert!(!is_runner_transport_path("/api/audit/sessions"));
+    assert!(!is_runner_transport_path("/api/users/list"));
+    assert!(!is_runner_transport_path("/api/tokens/list"));
     // Prefix and trailing-slash aliases must not pass (exact match required).
-    assert!(!is_agent_transport_path("/api/shell/agent/register/extra"));
-    assert!(!is_agent_transport_path("/api/agents/ws/extra"));
-    assert!(!is_agent_transport_path("/api/agents/ws/"));
-    assert!(!is_agent_transport_path(""));
+    assert!(!is_runner_transport_path("/api/shell/agent/register/extra"));
+    assert!(!is_runner_transport_path("/api/agents/ws/extra"));
+    assert!(!is_runner_transport_path("/api/agents/ws/"));
+    assert!(!is_runner_transport_path(""));
 }
 
 // -----------------------------------------------------------------------
@@ -1138,7 +1138,7 @@ async fn oauth2_verifier_accepts_current_project_share_and_preserves_project_ide
     );
     assert!(enforce_project_connector_surface(true, &ctx, "/mcp").is_ok());
     for path in crate::route_metadata::iter_routes()
-        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::RunnerTransport)
         .map(|spec| spec.path)
     {
         assert!(enforce_token_surface(&ctx, path).is_err());
@@ -1202,7 +1202,7 @@ fn enforce_token_surface_matrix() {
     account.kind = AuthKind::AccountCredential;
     let mut oauth2 = user_ctx("alice");
     oauth2.kind = AuthKind::OAuth2Token;
-    let agent_transport = [
+    let runner_transport = [
         "/api/shell/agent/register",
         "/api/shell/agent/poll",
         "/api/shell/agent/result",
@@ -1223,7 +1223,7 @@ fn enforce_token_surface_matrix() {
     let mut open_rejected = lightweight_account_rejected.clone();
     open_rejected.extend(
         crate::route_metadata::iter_routes()
-            .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+            .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::RunnerTransport)
             .map(|spec| spec.path),
     );
 
@@ -1250,13 +1250,13 @@ fn enforce_token_surface_matrix() {
                 "/api/tools/list",
                 "/api/projects/list",
             ],
-            agent_transport.to_vec(),
+            runner_transport.to_vec(),
             "",
         ),
         (
             "agent token",
             agent_ctx("alice", "laptop", vec![SCOPE_AGENT_REGISTER.to_string()]),
-            agent_transport.to_vec(),
+            runner_transport.to_vec(),
             vec![
                 "/api/runtime/status",
                 "/api/tools/list",
@@ -1271,7 +1271,7 @@ fn enforce_token_surface_matrix() {
             shared_key_context("k"),
             runtime_paths
                 .iter()
-                .chain(agent_transport.iter())
+                .chain(runner_transport.iter())
                 .copied()
                 .collect(),
             lightweight_account_rejected,
@@ -1313,7 +1313,7 @@ fn enforce_token_surface_matrix() {
                 "/api/jobs/list",
                 "/mcp",
             ],
-            agent_transport.to_vec(),
+            runner_transport.to_vec(),
             "",
         ),
     ];
@@ -1374,7 +1374,7 @@ fn lightweight_contexts_have_no_admin_scope() {
     let open = open_anonymous_context();
     assert!(!open.scopes.iter().any(|s| s == SCOPE_ADMIN));
     // A direct shared key retains interactive runtime/project access, Computer
-    // Use, and the four narrow Agent transport scopes needed by its Runner.
+    // Use, and the four narrow Runner transport scopes needed by its Runner.
     assert!(sk.scopes.contains(&SCOPE_RUNTIME_READ.to_string()));
     assert!(sk.scopes.contains(&SCOPE_PROJECT_WRITE.to_string()));
     assert!(sk.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
@@ -1705,7 +1705,7 @@ async fn authenticate_bearer_rejects_account_credential() {
     let result = authenticate_bearer(&config, Some(&db), Some(&credential)).await;
     assert!(
         result.is_none(),
-        "account credentials must be rejected on agent transport"
+        "account credentials must be rejected on Runner transport"
     );
 }
 
@@ -1721,7 +1721,7 @@ async fn authenticate_bearer_rejects_oauth2_access_token() {
     let result = authenticate_bearer(&config, Some(&db), Some(&plaintext)).await;
     assert!(
         result.is_none(),
-        "OAuth2 access tokens must be rejected on agent transport (QUIC)"
+        "OAuth2 access tokens must be rejected on Runner transport (QUIC)"
     );
     // last_used_at must NOT be updated — the token was pre-rejected
     // before OAuth2Verifier ran.
@@ -1937,7 +1937,7 @@ async fn auth_middleware_rejects_bridge_oauth2_on_agent_path_without_updating_la
     assert_eq!(
         resp.status_code,
         Some(StatusCode::FORBIDDEN),
-        "OAuth2 token on agent transport path should be 403"
+        "OAuth2 token on Runner transport path should be 403"
     );
     // last_used_at must NOT be updated — the token was pre-rejected
     // before OAuth2Verifier ran.
@@ -1951,7 +1951,7 @@ async fn auth_middleware_rejects_bridge_oauth2_on_agent_path_without_updating_la
         .unwrap();
     assert!(
         last_used.is_none(),
-        "last_used_at must not be updated on forbidden agent transport path"
+        "last_used_at must not be updated on forbidden Runner transport path"
     );
 }
 
@@ -1994,7 +1994,7 @@ async fn oauth2_scope_gate_matrix() {
         assert_eq!(status, StatusCode::OK, "{scopes} on {path}: {body:?}");
     }
     // …every other surface stays closed with insufficient_scope, including
-    // the OAuth authorize page, the agent transport, and unknown routes
+    // the OAuth authorize page, the Runner transport, and unknown routes
     // (fail closed).
     let insufficient: [(&str, &str, Option<&str>); 6] = [
         (
@@ -2254,7 +2254,7 @@ async fn auth_middleware_lightweight_empty_and_open_paths() {
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "shared-key disabled must reject Agent transport: {body:?}"
+        "shared-key disabled must reject Runner transport: {body:?}"
     );
 
     env.enable_direct_shared_key();
@@ -2263,14 +2263,14 @@ async fn auth_middleware_lightweight_empty_and_open_paths() {
     let (status, body) = gate_send(&service, "/api/runtime/status", Some("my-key")).await;
     assert_eq!(status, StatusCode::OK, "body: {:?}", body);
     for path in crate::route_metadata::iter_routes()
-        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::AgentTransport)
+        .filter(|spec| spec.surface == crate::route_metadata::RouteSurface::RunnerTransport)
         .map(|spec| spec.path)
     {
         let (status, body) = gate_send(&service, path, Some("my-key")).await;
         assert_eq!(
             status,
             StatusCode::OK,
-            "direct shared key should reach Agent transport {path}: {body:?}"
+            "direct shared key should reach Runner transport {path}: {body:?}"
         );
     }
 
@@ -2367,7 +2367,7 @@ async fn auth_middleware_forbidden_uses_insufficient_scope_challenge() {
     let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
 
     let service = salvo::Service::new(gate_router(config, db));
-    // OAuth2 token on agent transport path → 403, not 401
+    // OAuth2 token on Runner transport path → 403, not 401
     let resp = salvo::test::TestClient::post("http://localhost/api/shell/agent/register")
         .add_header("authorization", format!("Bearer {}", plaintext), true)
         .send(&service)

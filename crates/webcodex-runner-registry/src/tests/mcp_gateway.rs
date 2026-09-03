@@ -16,7 +16,7 @@ fn bridge_provider(provider_instance_id: &str) -> McpGatewayProvider {
     }
 }
 
-async fn register_bridge_runner(registry: &ShellClientRegistry) {
+async fn register_bridge_runner(registry: &RunnerRegistry) {
     registry
         .register(ShellClientRegisterRequest {
             client_id: "bridge-runner".to_string(),
@@ -80,7 +80,7 @@ fn bridge_registration(
 
 #[tokio::test]
 async fn bridge_registration_inventory_is_bounded_and_exact() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(bridge_registration(
             "valid-bridge-runner",
@@ -90,7 +90,7 @@ async fn bridge_registration_inventory_is_bounded_and_exact() {
         .await
         .unwrap();
     let view = registry
-        .get_client_view("valid-bridge-runner")
+        .get_runner_view("valid-bridge-runner")
         .await
         .unwrap();
     assert_eq!(
@@ -177,7 +177,7 @@ async fn bridge_registration_inventory_is_bounded_and_exact() {
 
 #[tokio::test]
 async fn bridge_enqueue_rechecks_owner_and_exact_runner_instance() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
 
     let bob = auth_context(Some("bob"), false);
@@ -225,7 +225,7 @@ async fn bridge_enqueue_rechecks_owner_and_exact_runner_instance() {
 
 #[tokio::test]
 async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
     let (_request_id, receiver) = registry
@@ -246,7 +246,7 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
     {
         let mut inner = registry.inner.lock().await;
         inner
-            .clients
+            .runners
             .get_mut("bridge-runner")
             .unwrap()
             .agent_instance_id = "replacement-instance".to_string();
@@ -269,7 +269,7 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
 
 #[tokio::test]
 async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
     let (_request_id, receiver) = registry
@@ -286,7 +286,7 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
     {
         let mut inner = registry.inner.lock().await;
         inner
-            .clients
+            .runners
             .get_mut("bridge-runner")
             .unwrap()
             .policy
@@ -312,7 +312,7 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
 
 #[tokio::test]
 async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
     let (request_id, receiver) = registry
@@ -360,14 +360,14 @@ async fn dispatched_bridge_disconnect_is_outcome_unknown_and_not_replayed() {
     assert!(inner.pending_by_id.is_empty());
     assert!(inner.mcp_gateway_waiters.is_empty());
     assert!(inner
-        .queues_by_client
+        .queues_by_runner
         .get("bridge-runner")
         .is_none_or(|queue| queue.is_empty()));
 }
 
 #[tokio::test]
 async fn typed_bridge_result_is_correlated_once() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
     let (request_id, receiver) = registry

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_client::{AgentTransport, TRANSPORT_WEBSOCKET};
+use crate::runner_http::{RunnerTransport, TRANSPORT_WEBSOCKET};
 use crate::shell_protocol::{ShellClientCapabilities, ShellJobOpRequest};
 use tokio::time::Instant;
 
@@ -7,7 +7,7 @@ const SESSION_TEST_TIMEOUT: Duration = Duration::from_millis(250);
 
 struct PendingReader;
 
-impl AgentReader for PendingReader {
+impl RunnerReader for PendingReader {
     async fn recv(&mut self) -> RecvOutcome {
         std::future::pending::<RecvOutcome>().await
     }
@@ -57,7 +57,7 @@ fn start_job_request(client_id: &str) -> ShellJobOpRequest {
 }
 
 async fn register_streaming(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
     connection_id: &str,
@@ -68,7 +68,7 @@ async fn register_streaming(
             streaming_registration(client_id, instance),
             None,
             connection_id,
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             notify.clone(),
         )
         .await
@@ -87,7 +87,7 @@ fn alive_writer() -> (mpsc::Sender<AgentEnvelope>, JoinHandle<WriterExit>) {
 
 #[tokio::test]
 async fn writer_failure_terminates_session_and_reconciles_active_job() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let (notify, cancel) = register_streaming(&registry, "writer-fail", "inst-a", "conn-a").await;
     let job = registry
         .start_job(start_job_request("writer-fail"), "test".to_string())
@@ -98,7 +98,7 @@ async fn writer_failure_terminates_session_and_reconciles_active_job() {
 
     tokio::time::timeout_at(
         deadline(),
-        run_agent_session(
+        run_runner_session(
             SessionContext {
                 registry: &registry,
                 client_id: "writer-fail",
@@ -116,21 +116,21 @@ async fn writer_failure_terminates_session_and_reconciles_active_job() {
     .await
     .expect("writer failure must terminate a pending reader session");
 
-    let view = registry.get_client_view("writer-fail").await.unwrap();
+    let view = registry.get_runner_view("writer-fail").await.unwrap();
     assert!(!view.connected);
     assert_eq!(registry.get_job(&job.job_id).await.unwrap().status, "lost");
 }
 
 #[tokio::test]
 async fn writer_task_panic_terminates_session() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let (notify, cancel) = register_streaming(&registry, "writer-panic", "inst-a", "conn-a").await;
     let (out_tx, _out_rx) = mpsc::channel(OUTGOING_CHANNEL_CAPACITY);
     let writer_task = tokio::spawn(async { panic!("synthetic writer panic") });
 
     tokio::time::timeout_at(
         deadline(),
-        run_agent_session(
+        run_runner_session(
             SessionContext {
                 registry: &registry,
                 client_id: "writer-panic",
@@ -150,7 +150,7 @@ async fn writer_task_panic_terminates_session() {
 
     assert!(
         !registry
-            .get_client_view("writer-panic")
+            .get_runner_view("writer-panic")
             .await
             .unwrap()
             .connected
@@ -163,14 +163,14 @@ async fn pump_exit_terminates_pending_reader_and_reconciles_exact_connection() {
         ("pump-lease-lost", PumpExit::LeaseLost),
         ("pump-registry-failed", PumpExit::RegistryFailed),
     ] {
-        let registry = Arc::new(ShellClientRegistry::default());
+        let registry = Arc::new(RunnerRegistry::default());
         let (notify, cancel) = register_streaming(&registry, client_id, "inst-a", "conn-a").await;
         let (out_tx, writer_task) = alive_writer();
         let pump_task = tokio::spawn(async move { exit });
 
         tokio::time::timeout_at(
             deadline(),
-            run_agent_session_with_pump(
+            run_runner_session_with_pump(
                 SessionContext {
                     registry: &registry,
                     client_id,
@@ -189,7 +189,7 @@ async fn pump_exit_terminates_pending_reader_and_reconciles_exact_connection() {
         .await
         .expect("pump exit must terminate a pending-reader session");
 
-        let view = registry.get_client_view(client_id).await.unwrap();
+        let view = registry.get_runner_view(client_id).await.unwrap();
         assert!(
             !view.connected,
             "{client_id} exact lease must be reconciled"
@@ -199,14 +199,14 @@ async fn pump_exit_terminates_pending_reader_and_reconciles_exact_connection() {
 
 #[tokio::test]
 async fn pump_task_panic_terminates_session() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let (notify, cancel) = register_streaming(&registry, "pump-panic", "inst-a", "conn-a").await;
     let (out_tx, writer_task) = alive_writer();
     let pump_task = tokio::spawn(async { panic!("synthetic pump panic") });
 
     tokio::time::timeout_at(
         deadline(),
-        run_agent_session_with_pump(
+        run_runner_session_with_pump(
             SessionContext {
                 registry: &registry,
                 client_id: "pump-panic",
@@ -227,7 +227,7 @@ async fn pump_task_panic_terminates_session() {
 
     assert!(
         !registry
-            .get_client_view("pump-panic")
+            .get_runner_view("pump-panic")
             .await
             .unwrap()
             .connected
@@ -236,7 +236,7 @@ async fn pump_task_panic_terminates_session() {
 
 #[tokio::test]
 async fn same_instance_replacement_actively_terminates_old_session_without_losing_job() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let (notify_a, cancel_a) =
         register_streaming(&registry, "replace-active", "inst-a", "conn-a").await;
     let active_job = registry
@@ -246,7 +246,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
     let (out_tx, writer_task) = alive_writer();
     let session_registry = Arc::clone(&registry);
     let session_task = tokio::spawn(async move {
-        run_agent_session(
+        run_runner_session(
             SessionContext {
                 registry: &session_registry,
                 client_id: "replace-active",
@@ -269,7 +269,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
             streaming_registration("replace-active", "inst-a"),
             None,
             "conn-b",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             notify_b,
         )
         .await
@@ -282,7 +282,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
         .expect("old session task must not panic");
 
     let replacement = registry
-        .get_client_view_for_connection("replace-active", "inst-a", "conn-b")
+        .get_runner_view_for_connection("replace-active", "inst-a", "conn-b")
         .await
         .expect("connection B must remain authoritative");
     assert!(replacement.connected);
@@ -300,7 +300,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
         .await;
     assert!(
         registry
-            .get_client_view_for_connection("replace-active", "inst-a", "conn-b")
+            .get_runner_view_for_connection("replace-active", "inst-a", "conn-b")
             .await
             .expect("stale A reconciliation must not remove B")
             .connected
@@ -309,7 +309,7 @@ async fn same_instance_replacement_actively_terminates_old_session_without_losin
 
 #[tokio::test]
 async fn stale_writer_failure_cannot_reconcile_replacement_connection() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let (notify_a, cancel_a) =
         register_streaming(&registry, "writer-stale", "inst-a", "conn-a").await;
     register_streaming(&registry, "writer-stale", "inst-a", "conn-b").await;
@@ -318,7 +318,7 @@ async fn stale_writer_failure_cannot_reconcile_replacement_connection() {
 
     tokio::time::timeout_at(
         deadline(),
-        run_agent_session(
+        run_runner_session(
             SessionContext {
                 registry: &registry,
                 client_id: "writer-stale",
@@ -337,7 +337,7 @@ async fn stale_writer_failure_cannot_reconcile_replacement_connection() {
     .expect("stale writer/cancel completion must not touch replacement");
 
     let replacement = registry
-        .get_client_view_for_connection("writer-stale", "inst-a", "conn-b")
+        .get_runner_view_for_connection("writer-stale", "inst-a", "conn-b")
         .await
         .expect("replacement connection must remain authoritative");
     assert!(replacement.connected);

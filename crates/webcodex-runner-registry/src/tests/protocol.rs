@@ -31,20 +31,20 @@ async fn registration_rejects_non_v2_generation_before_creating_a_record() {
         ("generation-one", AgentProtocolGenerationNumber::new(1)),
         ("future", AgentProtocolGenerationNumber::new(3)),
     ] {
-        let registry = ShellClientRegistry::default();
+        let registry = RunnerRegistry::default();
         let client_id = format!("non-v2-{suffix}");
         let error = registry
             .register(generation_registration(&client_id, "inst-a", generation))
             .await
             .unwrap_err();
         assert_eq!(error, "agent_protocol_generation is unsupported");
-        assert!(registry.get_client_view(&client_id).await.is_none());
+        assert!(registry.get_runner_view(&client_id).await.is_none());
     }
 }
 
 #[tokio::test]
 async fn registration_rejects_v2_baseline_contradiction_before_creating_a_record() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let mut registration =
         generation_registration("v2-contradiction", "inst-a", AGENT_PROTOCOL_GENERATION_V2);
     registration.capabilities.structured_process_argv = false;
@@ -53,12 +53,12 @@ async fn registration_rejects_v2_baseline_contradiction_before_creating_a_record
         error,
         "runner generation baseline capability mismatch: structured_process_argv"
     );
-    assert!(registry.get_client_view("v2-contradiction").await.is_none());
+    assert!(registry.get_runner_view("v2-contradiction").await.is_none());
 }
 
 #[tokio::test]
 async fn same_instance_generation_two_reconnects_remain_valid() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     for _ in 0..2 {
         registry
             .register(generation_registration(
@@ -69,7 +69,7 @@ async fn same_instance_generation_two_reconnects_remain_valid() {
             .await
             .unwrap();
     }
-    let view = registry.get_client_view("v2-stable").await.unwrap();
+    let view = registry.get_runner_view("v2-stable").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-a");
     assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);
     assert_eq!(view.transport, TRANSPORT_POLLING);
@@ -83,7 +83,7 @@ async fn same_instance_generation_two_reconnects_remain_valid() {
 
 #[tokio::test]
 async fn replacement_cannot_bypass_generation_two_admission() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(generation_registration(
             "replacement-v2",
@@ -93,7 +93,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
         .await
         .unwrap();
     registry
-        .set_last_seen_for_test("replacement-v2", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+        .set_last_seen_for_test("replacement-v2", now_ts() - RUNNER_ONLINE_WINDOW_SECS - 1)
         .await;
 
     let error = registry
@@ -107,7 +107,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
     assert_eq!(error, "agent_protocol_generation is unsupported");
     assert_eq!(
         registry
-            .get_client_view("replacement-v2")
+            .get_runner_view("replacement-v2")
             .await
             .unwrap()
             .agent_instance_id,
@@ -124,7 +124,7 @@ async fn replacement_cannot_bypass_generation_two_admission() {
         .unwrap();
     assert_eq!(
         registry
-            .get_client_view("replacement-v2")
+            .get_runner_view("replacement-v2")
             .await
             .unwrap()
             .agent_instance_id,
@@ -175,8 +175,8 @@ fn registration_wire_requires_generation_capabilities_and_explicit_shell() {
 }
 
 #[tokio::test]
-async fn client_supports_reflects_registered_capabilities() {
-    let registry = ShellClientRegistry::default();
+async fn runner_supports_reflects_registered_capabilities() {
+    let registry = RunnerRegistry::default();
     let caps = crate::test_support::current_runner_capabilities(ShellClientCapabilities {
         shell: true,
         file_read: true,
@@ -208,61 +208,61 @@ async fn client_supports_reflects_registered_capabilities() {
         .await
         .unwrap();
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_SHELL)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_SHELL)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_FILE_READ)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_FILE_READ)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL)
         .await
         .unwrap());
     assert!(registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES)
         .await
         .unwrap());
-    let view = registry.get_client_view("oe").await.unwrap();
+    let view = registry.get_runner_view("oe").await.unwrap();
     assert!(view.capabilities.structured_go_test_json);
     assert!(view.capabilities.structured_go_test_tool);
     assert!(view.capabilities.structured_go_test_packages);
     assert!(!registry
-        .client_supports("oe", SHELL_CLIENT_CAPABILITY_GIT)
+        .runner_supports("oe", SHELL_CLIENT_CAPABILITY_GIT)
         .await
         .unwrap());
     // Unknown capability name is false, not an error.
-    assert!(!registry.client_supports("oe", "teleport").await.unwrap());
+    assert!(!registry.runner_supports("oe", "teleport").await.unwrap());
     // Unknown client is a structured error.
     let err = registry
-        .client_supports("ghost", SHELL_CLIENT_CAPABILITY_SHELL)
+        .runner_supports("ghost", SHELL_CLIENT_CAPABILITY_SHELL)
         .await
         .unwrap_err();
     assert_eq!(
         err,
-        ShellClientLookupError::UnknownClient {
+        RunnerLookupError::UnknownRunner {
             client_id: "ghost".to_string()
         }
     );
-    let err = registry.get_client_feature_set("ghost").await.unwrap_err();
+    let err = registry.get_runner_feature_set("ghost").await.unwrap_err();
     assert_eq!(err, "unknown shell client: ghost");
 }
 
 #[tokio::test]
 async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let run_id = "wc_agent_run_duplicate_123";
     for client_id in ["a", "b"] {
         let provider_instance_id = format!("provider_{client_id}");
@@ -321,7 +321,7 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
         .await
         .is_none());
     let (client, run) = registry
-        .coding_agent_run_for_client_for_auth(None, "b", run_id)
+        .coding_agent_run_for_runner_for_auth(None, "b", run_id)
         .await
         .expect("exact bound client lookup");
     assert_eq!(client.client_id, "b");
@@ -330,7 +330,7 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
 
 #[tokio::test]
 async fn coding_agent_registration_rejects_semantically_contradictory_snapshot() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let register =
         |run: webcodex_core::coding_agent::CodingAgentRunSnapshot| ShellClientRegisterRequest {
             process_started_at: None,
@@ -414,8 +414,8 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
 }
 
 #[tokio::test]
-async fn client_supports_recognizes_all_protocol_capability_names() {
-    let registry = ShellClientRegistry::default();
+async fn runner_supports_recognizes_all_protocol_capability_names() {
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -500,7 +500,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
 
     for capability in SHELL_CLIENT_CAPABILITY_NAMES {
         assert!(
-            registry.client_supports("all", capability).await.unwrap(),
+            registry.runner_supports("all", capability).await.unwrap(),
             "shell client matcher must recognize protocol capability {capability}"
         );
     }

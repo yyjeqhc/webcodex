@@ -2356,7 +2356,7 @@ mod tests {
         let agent_instance_id = format!("inst-{client_id}");
         let access = auth.map(crate::test_support::runner_access);
         runtime
-            .shell_clients
+            .runner_registry
             .register_with_auth(
                 ShellClientRegisterRequest {
                     process_started_at: None,
@@ -2382,7 +2382,7 @@ mod tests {
             .await
             .unwrap();
         crate::test_support::apply_project_inventory_snapshot(
-            &runtime.shell_clients,
+            &runtime.runner_registry,
             client_id,
             &agent_instance_id,
             vec![project(project_id, private_path)],
@@ -2392,7 +2392,7 @@ mod tests {
 
     fn test_runtime() -> Arc<ToolRuntime> {
         Arc::new(ToolRuntime::new(
-            Arc::new(crate::ShellClientRegistry::default()),
+            Arc::new(crate::RunnerRegistry::default()),
             Arc::new(RuntimeInfo::default()),
         ))
     }
@@ -2477,7 +2477,7 @@ mod tests {
         let (tmp, db) = crate::test_support::test_db();
         let runtime = Arc::new(
             ToolRuntime::new(
-                Arc::new(crate::ShellClientRegistry::default()),
+                Arc::new(crate::RunnerRegistry::default()),
                 Arc::new(RuntimeInfo::default()),
             )
             .with_communication_database(db.clone()),
@@ -4171,7 +4171,7 @@ mod tests {
         std::fs::create_dir_all(&ledger_dir).unwrap();
         let ledger = ledger_dir.join("sessions.json");
         let mut runtime = ToolRuntime::new(
-            Arc::new(crate::ShellClientRegistry::default()),
+            Arc::new(crate::RunnerRegistry::default()),
             Arc::new(RuntimeInfo::default()),
         );
         runtime.sessions =

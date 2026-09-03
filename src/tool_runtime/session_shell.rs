@@ -919,7 +919,7 @@ impl ToolRuntime {
         wait_secs: u64,
     ) -> Result<PersistentShellResult, String> {
         let (request_id, receiver) = self
-            .shell_clients
+            .runner_registry
             .enqueue_persistent_shell(
                 client_id.to_string(),
                 request,
@@ -930,11 +930,11 @@ impl ToolRuntime {
         match tokio::time::timeout(Duration::from_secs(wait_secs), receiver).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 Err("persistent_shell_result_lost: Runner result waiter was dropped".to_string())
             }
             Err(_) => {
-                let dispatched = self.shell_clients.cancel_request(&request_id).await;
+                let dispatched = self.runner_registry.cancel_request(&request_id).await;
                 Err(if dispatched {
                     "persistent_shell_runner_unavailable: result timed out after dispatch; shell state is lost"
                         .to_string()

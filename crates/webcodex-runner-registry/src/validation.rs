@@ -9,7 +9,7 @@ use webcodex_core::shell_protocol::{
 };
 
 const MAX_CLIENT_ID_LEN: usize = 80;
-const MAX_CLIENT_FIELD_LEN: usize = 200;
+const MAX_RUNNER_FIELD_LEN: usize = 200;
 /// Max length for `agent_instance_id`. A UUID v4 is 36 chars; allow headroom
 /// for future formats but bound it so a malicious peer cannot stash huge
 /// strings in the registry.
@@ -233,10 +233,10 @@ pub(super) fn validate_agent_instance_id(value: &str) -> Result<(), String> {
 
 pub(super) fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {
     if let Some(value) = value {
-        if value.chars().count() > MAX_CLIENT_FIELD_LEN {
+        if value.chars().count() > MAX_RUNNER_FIELD_LEN {
             return Err(format!(
                 "{} is too long; maximum is {} characters",
-                field, MAX_CLIENT_FIELD_LEN
+                field, MAX_RUNNER_FIELD_LEN
             ));
         }
         if value.contains('\0') {

@@ -1,5 +1,5 @@
 use super::{ConnectorContext, ConnectorRuntime};
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     ShellClientCapabilities, ShellClientRegisterRequest, AGENT_PROTOCOL_GENERATION_V2,
 };
@@ -18,11 +18,11 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
     let project = temp.path().join("project");
     let state = temp.path().join("state");
     super::tests::init_repo(&project);
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     register_client(&registry, "hosted", "instance-a", &super::tests::auth("u1")).await;
     register_client(&registry, "laptop", "instance-b", &super::tests::auth("u2")).await;
     let tools =
-        Arc::new(crate::tool_runtime::ToolRuntime::new_for_tests_with_shell_clients(registry));
+        Arc::new(crate::tool_runtime::ToolRuntime::new_for_tests_with_runner_registry(registry));
     let runtime = Arc::new(
         ConnectorRuntime::new(
             tools,
@@ -55,7 +55,7 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
 }
 
 async fn register_client(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance_id: &str,
     auth: &crate::auth::AuthContext,

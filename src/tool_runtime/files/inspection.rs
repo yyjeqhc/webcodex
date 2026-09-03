@@ -548,7 +548,7 @@ impl ToolRuntime {
         let wait_timeout = 30;
         let (eff_start, _eff_limit, eff_end) = effective_read_file_range(start_line, limit);
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "read".to_string(),
@@ -608,11 +608,11 @@ impl ToolRuntime {
                 read_file_failure(reason, Some(&path))
             }
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path))
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 read_file_failure(ReadFileReason::Timeout, Some(&path))
             }
         }
@@ -730,7 +730,7 @@ impl ToolRuntime {
         const WAIT_TIMEOUT: u64 = 6;
         let client_id = config.client_id.as_str();
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "list".to_string(),
@@ -758,7 +758,7 @@ impl ToolRuntime {
                 instruction_agents_alias_resolution(resp.stdout.as_deref().unwrap_or_default()),
             ),
             _ => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 None
             }
         }
@@ -782,7 +782,7 @@ impl ToolRuntime {
 
         let client_id = config.client_id.as_str();
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "read".to_string(),
@@ -831,7 +831,7 @@ impl ToolRuntime {
                 }
             }
             _ => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 InstructionCandidateRead::Unavailable
             }
         }
@@ -862,7 +862,7 @@ impl ToolRuntime {
         let client_id = proj.client_id.clone();
         let wait_timeout = 30;
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "list".to_string(),
@@ -905,11 +905,11 @@ impl ToolRuntime {
                     .unwrap_or_else(|| "Runner list_project_files failed".to_string()),
             ),
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err("Runner list_project_files waiter was dropped")
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err("timed out waiting for Runner list_project_files")
             }
         }
@@ -971,7 +971,7 @@ impl ToolRuntime {
         let client_id = proj.client_id.clone();
         let (raw, exit_code, stderr) = {
             let (request_id, rx) = match self
-                .shell_clients
+                .runner_registry
                 .enqueue_run(
                     ShellRunRequest {
                         client_id,
@@ -997,14 +997,14 @@ impl ToolRuntime {
                     response.stderr.unwrap_or_default(),
                 ),
                 Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&request_id).await;
+                    self.runner_registry.cancel_request(&request_id).await;
                     return list_tracked_error(
                         "list_request_dropped",
                         "the Runner request was dropped before a listing arrived".to_string(),
                     );
                 }
                 Err(_) => {
-                    self.shell_clients.cancel_request(&request_id).await;
+                    self.runner_registry.cancel_request(&request_id).await;
                     return list_tracked_error(
                         "list_timeout",
                         "timed out waiting for the project file listing".to_string(),
@@ -1074,7 +1074,7 @@ impl ToolRuntime {
             rel_path.clone()
         };
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "project_overview".to_string(),
@@ -1134,11 +1134,11 @@ impl ToolRuntime {
                     .unwrap_or_else(|| "Runner project_overview failed".to_string()),
             ),
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err("Runner project_overview waiter was dropped")
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 ToolResult::err("timed out waiting for Runner project_overview")
             }
         }

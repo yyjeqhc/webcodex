@@ -28,7 +28,7 @@ impl ToolRuntime {
     /// runtime tools before dispatching. This is the single place where the
     /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`) check that
     /// the caller is allowed to drive a Runner.
-    /// `/api/shell/*` handlers keep their own `assert_shell_client_owner`
+    /// `/api/shell/*` handlers keep their own `assert_runner_owner`
     /// checks; this method closes the gap for the runtime paths.
     ///
     /// Returns `Ok(())` for project-less tools so they are unaffected.
@@ -90,10 +90,10 @@ impl ToolRuntime {
             .with_recovery(RecoveryKind::FixInput, None));
         }
         let client_id = proj.client_id.clone();
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         if self
-            .shell_clients
-            .get_client_view_for_auth(&client_id, access.as_ref())
+            .runner_registry
+            .get_runner_view_for_auth(&client_id, access.as_ref())
             .await
             .is_none()
         {
@@ -102,8 +102,8 @@ impl ToolRuntime {
                 client_id
             )));
         }
-        self.shell_clients
-            .assert_client_access(access.as_ref(), &client_id)
+        self.runner_registry
+            .assert_runner_access(access.as_ref(), &client_id)
             .await
             .map_err(ToolResult::err)?;
         if let Some(required) = required {
@@ -113,8 +113,8 @@ impl ToolRuntime {
                 let mut supported = false;
                 for capability in required.registry_capabilities() {
                     if self
-                        .shell_clients
-                        .client_supports_for_auth(&client_id, capability, access.as_ref())
+                        .runner_registry
+                        .runner_supports_for_auth(&client_id, capability, access.as_ref())
                         .await
                         .map_err(ToolResult::err)?
                     {
@@ -191,8 +191,8 @@ impl ToolRuntime {
                 // exec/status/close route by the resource saved in the shell
                 // record rather than inheriting Session context here.
                 if !self
-                    .shell_clients
-                    .client_supports_for_auth(
+                    .runner_registry
+                    .runner_supports_for_auth(
                         &client_id,
                         SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
                         access.as_ref(),
@@ -210,8 +210,8 @@ impl ToolRuntime {
                 // requires the historical `ssh_shell` capability. Structured
                 // process/script resource calls have already failed closed above.
                 if !self
-                    .shell_clients
-                    .client_supports_for_auth(
+                    .runner_registry
+                    .runner_supports_for_auth(
                         &client_id,
                         SHELL_CLIENT_CAPABILITY_SSH_SHELL,
                         access.as_ref(),

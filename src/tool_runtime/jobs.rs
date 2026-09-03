@@ -7,7 +7,7 @@ use super::helpers::{
 use super::tool_result::{RecoveryKind, RecoveryTool, ToolResult};
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
+use crate::runner_http::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
 use crate::shell_protocol::{
     ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationStep,
 };
@@ -907,7 +907,7 @@ impl ToolRuntime {
             None => command.clone(),
         };
         match self
-                .shell_clients
+                .runner_registry
                 .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
@@ -932,7 +932,7 @@ impl ToolRuntime {
                         shell: Some(actual_shell.to_string()),
                         validation_steps,
                         validation: None,
-                        visibility: crate::shell_client::ShellJobVisibility::Public,
+                        visibility: crate::runner_http::ShellJobVisibility::Public,
                         validation_identity: None,
                         validation_tool: None,
                         assertion_name: None,
@@ -940,7 +940,7 @@ impl ToolRuntime {
                         stdin: None,
                         detached_idempotency_key: None,
                     },
-                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     None,
                 )
                 .await
@@ -987,9 +987,9 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         match self
-            .shell_clients
+            .runner_registry
             .get_job_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 &job_id,
             )
             .await
@@ -1037,9 +1037,9 @@ impl ToolRuntime {
                 let kind = validation_metadata.map(|metadata| metadata.kind.as_str());
                 if tool.is_some() {
                     let logs = self
-                        .shell_clients
+                        .runner_registry
                         .job_log_for_auth(
-                            crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                            crate::runner_http::runner_access_from_auth(auth).as_ref(),
                             &job_id,
                             None,
                             None,
@@ -1135,9 +1135,9 @@ impl ToolRuntime {
             tail_lines
         };
         match self
-            .shell_clients
+            .runner_registry
             .job_log_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 &job_id,
                 offset,
                 None,
@@ -1303,8 +1303,8 @@ impl ToolRuntime {
         // after every filter so exact project/session targets cannot be hidden
         // behind unrelated recent Jobs.
         let agent_jobs = self
-            .shell_clients
-            .list_all_jobs_for_auth(crate::shell_client::runner_access_from_auth(auth).as_ref())
+            .runner_registry
+            .list_all_jobs_for_auth(crate::runner_http::runner_access_from_auth(auth).as_ref())
             .await;
         let mut summaries: Vec<Value> = agent_jobs
             .iter()
@@ -1363,8 +1363,8 @@ impl ToolRuntime {
             return grouped;
         }
         for job in self
-            .shell_clients
-            .list_all_jobs_for_auth(crate::shell_client::runner_access_from_auth(auth).as_ref())
+            .runner_registry
+            .list_all_jobs_for_auth(crate::runner_http::runner_access_from_auth(auth).as_ref())
             .await
             .iter()
         {
@@ -1461,9 +1461,9 @@ impl ToolRuntime {
         };
         let request_project = resolved.resolved_id;
         let job = match self
-            .shell_clients
+            .runner_registry
             .get_job_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 &job_id,
             )
             .await
@@ -1525,9 +1525,9 @@ impl ToolRuntime {
             ));
         }
         let stopped = match self
-            .shell_clients
+            .runner_registry
             .stop_job_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 &job_id,
                 "tool_runtime".to_string(),
             )
@@ -1536,9 +1536,9 @@ impl ToolRuntime {
             Ok(job) => job,
             Err(error) if error.contains("runner_unavailable_recovering") => {
                 let recovering = self
-                    .shell_clients
+                    .runner_registry
                     .get_job_for_auth(
-                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                        crate::runner_http::runner_access_from_auth(auth).as_ref(),
                         &job_id,
                     )
                     .await
@@ -1570,9 +1570,9 @@ impl ToolRuntime {
         let max = limit.clamp(1, 20);
         let mut active = Vec::new();
         for job in self
-            .shell_clients
+            .runner_registry
             .list_jobs_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 Some(100),
             )
             .await
@@ -1675,7 +1675,7 @@ impl ToolRuntime {
             return ToolResult::err("invalid job id");
         }
         match self
-            .shell_clients
+            .runner_registry
             .stop_job(&job_id, "runtime_http".to_string())
             .await
         {

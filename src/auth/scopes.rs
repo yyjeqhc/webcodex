@@ -27,7 +27,7 @@ pub use webcodex_core::authority::{
     SCOPE_SESSION_COLLABORATE,
 };
 
-/// True when `scope` is one of the agent transport scopes.
+/// True when `scope` is one of the Runner transport scopes.
 pub(crate) fn is_agent_scope(scope: &str) -> bool {
     AGENT_SCOPES.contains(&scope)
 }
@@ -36,7 +36,7 @@ pub(crate) fn is_agent_scope(scope: &str) -> bool {
 // Scope validation
 // ---------------------------------------------------------------------------
 
-/// Validate and normalize a list of agent transport scopes. Returns an error
+/// Validate and normalize a list of Runner transport scopes. Returns an error
 /// if any scope is not an `agent:*` scope. Rejects duplicates and unknown
 /// scopes.
 pub(crate) fn validate_agent_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
@@ -161,7 +161,7 @@ pub(crate) fn enforce_route_scope(
                 ))
             }
         }
-        // Agent transport identity and exact agent:* scopes are enforced by the
+        // Runner transport identity and exact agent:* scopes are enforced by the
         // dedicated surface gate and transport handlers. Do not reinterpret
         // those credentials as ordinary runtime principals here.
         OAuthRouteScopePolicy::AgentSurface => Ok(()),

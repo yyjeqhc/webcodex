@@ -105,7 +105,7 @@ impl ToolRuntime {
             .map_err(|e| format!("failed to serialize file-op payload: {}", e))?;
         let wait_timeout = 60_u64;
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: op.to_string(),
@@ -130,11 +130,11 @@ impl ToolRuntime {
         let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err(format!("Runner {} request was dropped", tool_name));
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err(format!("timed out waiting for Runner {}", tool_name));
             }
         };

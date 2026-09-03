@@ -1,6 +1,6 @@
 use crate::auth::AuthContext;
 use crate::db::AdminProjectAudit;
-use crate::shell_client::{RunnerFeature, ShellClientRegistry};
+use crate::runner_http::{RunnerFeature, RunnerRegistry};
 use crate::shell_protocol::ShellAgentProjectSummary;
 use crate::tool_runtime::{ToolResult, ToolRuntime};
 use crate::Database;
@@ -75,7 +75,7 @@ pub(crate) struct ServiceResponse {
 }
 
 struct ProjectUnregisterFence {
-    registry: Arc<ShellClientRegistry>,
+    registry: Arc<RunnerRegistry>,
     project: String,
 }
 
@@ -250,7 +250,7 @@ impl AdminProjectLifecycleService {
     ) -> Result<ServiceResponse, ServiceResponse> {
         validate_revision(expected_revision)?;
         let (client_id, project_id) = parse_runtime_project(target)?;
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         // Authenticated ordinary-runtime callers keep the explicit Runner owner/access
         // fence used by the HTTP unregister path. `auth=None` is the trusted in-process
         // / open-runtime path: visibility is intentionally unfiltered there, matching
@@ -258,14 +258,14 @@ impl AdminProjectLifecycleService {
         // reject otherwise reachable unowned Runners.
         if require_owner_access && auth.is_some() {
             runtime
-                .shell_clients
-                .assert_client_access(access.as_ref(), &client_id)
+                .runner_registry
+                .assert_runner_access(access.as_ref(), &client_id)
                 .await
                 .map_err(|_| api_error(503, "agent_unavailable"))?;
         }
         let client = runtime
-            .shell_clients
-            .get_client_semantic_view_for_auth(&client_id, access.as_ref())
+            .runner_registry
+            .get_runner_semantic_view_for_auth(&client_id, access.as_ref())
             .await
             .ok_or_else(|| api_error(503, "agent_unavailable"))?;
         if !client.view.connected || client.view.status != "online" {
@@ -280,7 +280,7 @@ impl AdminProjectLifecycleService {
         }
         let (active_jobs, _unregister_fence) = if action == "unregister" {
             let active = runtime
-                .shell_clients
+                .runner_registry
                 .begin_project_unregister(access.as_ref(), target)
                 .await
                 .map_err(|_| api_error(500, "operation_failed"))?;
@@ -293,14 +293,14 @@ impl AdminProjectLifecycleService {
             (
                 active,
                 Some(ProjectUnregisterFence {
-                    registry: runtime.shell_clients.clone(),
+                    registry: runtime.runner_registry.clone(),
                     project: target.to_string(),
                 }),
             )
         } else {
             (
                 runtime
-                    .shell_clients
+                    .runner_registry
                     .count_active_jobs_for_project(access.as_ref(), target)
                     .await,
                 None,
@@ -313,14 +313,14 @@ impl AdminProjectLifecycleService {
         .map_err(|_| api_error(500, "operation_failed"))?;
         let kind = format!("project_lifecycle_{action}");
         let (request_id, receiver) = runtime
-            .shell_clients
+            .runner_registry
             .enqueue_project_op(client_id.clone(), &kind, payload, requester.to_string())
             .await
             .map_err(|_| api_error(503, "agent_unavailable"))?;
         let response = match tokio::time::timeout(Duration::from_secs(WAIT_SECS), receiver).await {
             Ok(Ok(value)) => value,
             Ok(Err(_)) | Err(_) => {
-                runtime.shell_clients.cancel_request(&request_id).await;
+                runtime.runner_registry.cancel_request(&request_id).await;
                 return Err(api_error(503, "operation_indeterminate"));
             }
         };
@@ -346,8 +346,8 @@ impl AdminProjectLifecycleService {
         let revision = output.get("revision").cloned().unwrap_or(Value::Null);
         if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
             if runtime
-                .shell_clients
-                .remove_client_project_for_instance(
+                .runner_registry
+                .remove_runner_project_for_instance(
                     &client_id,
                     &client.view.agent_instance_id,
                     &project_id,
@@ -374,8 +374,8 @@ impl AdminProjectLifecycleService {
                 ));
             };
             if runtime
-                .shell_clients
-                .upsert_client_project_for_instance(
+                .runner_registry
+                .upsert_runner_project_for_instance(
                     &client_id,
                     &client.view.agent_instance_id,
                     summary,
@@ -611,10 +611,10 @@ async fn require_online_client(
     auth: &AuthContext,
     client_id: &str,
 ) -> Result<(), ServiceResponse> {
-    let access = crate::shell_client::runner_access_from_auth(Some(auth));
+    let access = crate::runner_http::runner_access_from_auth(Some(auth));
     let client = runtime
-        .shell_clients
-        .get_client_view_for_auth(client_id, access.as_ref())
+        .runner_registry
+        .get_runner_view_for_auth(client_id, access.as_ref())
         .await
         .ok_or_else(|| api_error(503, "agent_unavailable"))?;
     if !client.connected || client.status != "online" {
@@ -843,7 +843,7 @@ fn map_agent_error(error: &str) -> ServiceResponse {
 mod tests {
     use super::*;
     use crate::auth::AuthKind;
-    use crate::shell_client::ShellJobStartMetadata;
+    use crate::runner_http::ShellJobStartMetadata;
     use crate::shell_protocol::{
         ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest,
     };
@@ -882,7 +882,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_unregister_rejects_cross_owner_before_active_job_fence() {
-        let registry = Arc::new(ShellClientRegistry::default());
+        let registry = Arc::new(RunnerRegistry::default());
         let revision = format!("sha256:{}", "a".repeat(64));
         let target = "agent:owned-runner:demo";
         registry
@@ -943,7 +943,7 @@ mod tests {
             "the regression requires the cross-owner principal to be unable to see the owner's active Job"
         );
 
-        let runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+        let runtime = Arc::new(ToolRuntime::new_for_tests_with_runner_registry(
             registry.clone(),
         ));
         let (_tmp, db) = crate::test_support::test_db();

@@ -300,21 +300,21 @@ impl ToolRuntime {
             wait_timeout_secs: wait_timeout,
         };
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_artifact_export_metadata(
                 request,
                 "mcp_artifact_export".to_string(),
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err("agent export_project_artifact request was dropped".to_string());
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err("timed out waiting for agent export_project_artifact".to_string());
             }
         };
@@ -404,21 +404,21 @@ impl ToolRuntime {
             wait_timeout_secs: wait_timeout,
         };
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_artifact_export_chunk(
                 request,
                 "mcp_artifact_export".to_string(),
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await?;
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err("agent artifact export chunk request was dropped".to_string());
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err("timed out waiting for agent artifact export chunk".to_string());
             }
         };

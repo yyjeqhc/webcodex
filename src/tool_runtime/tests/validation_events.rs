@@ -2129,7 +2129,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     let request = wait_for_agent_request_for_client(&runtime, "validation-job").await;
     assert_eq!(request.kind, "start_job");
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
             client_id: "validation-job".to_string(),
             agent_instance_id: "inst-validation-job".to_string(),
@@ -2248,7 +2248,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["promoted_to_job"], true);
     let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
-    let admitted = runtime.shell_clients.get_job(&job_id).await.unwrap();
+    let admitted = runtime.runner_registry.get_job(&job_id).await.unwrap();
     let metadata = admitted.structured_execution.as_ref().unwrap();
     assert_eq!(metadata.execution_source, "run_process");
     assert_eq!(metadata.validation_tool.as_deref(), Some("cargo_test"));
@@ -2262,7 +2262,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     assert!(target.starts_with("assertion:"));
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
             client_id: "validation-process-job".to_string(),
             agent_instance_id: "inst-validation-process-job".to_string(),

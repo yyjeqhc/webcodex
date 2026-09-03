@@ -225,8 +225,8 @@ async fn wait_for_pending_requests(runtime: &ToolRuntime, client_id: &str, expec
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let view = runtime
-            .shell_clients
-            .get_client_view(client_id)
+            .runner_registry
+            .get_runner_view(client_id)
             .await
             .unwrap_or_else(|| panic!("client {client_id} must be registered"));
         let pending = view.pending_requests;
@@ -270,7 +270,7 @@ async fn delete_project_files_replacement_before_poll_reports_not_started() {
     wait_for_pending_requests(&runtime, "cleanup-delete-replace-early", 1).await;
     // Replace the Runner process before the request was ever polled.
     runtime
-        .shell_clients
+        .runner_registry
         .set_last_seen_for_test(
             "cleanup-delete-replace-early",
             chrono::Utc::now().timestamp() - 120,
@@ -338,7 +338,7 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
     assert_eq!(req.kind, "file_delete_project_files");
     // Replace the Runner before it returns its result.
     runtime
-        .shell_clients
+        .runner_registry
         .set_last_seen_for_test(
             "cleanup-delete-replace-late",
             chrono::Utc::now().timestamp() - 120,
@@ -371,7 +371,7 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
     // The replacement Runner cannot complete or inherit the dispatched
     // request, and no legacy fallback is emitted.
     let err = runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "cleanup-delete-replace-late".to_string(),
             agent_instance_id: "inst-b".to_string(),
@@ -431,8 +431,8 @@ async fn delete_project_files_timeout_before_dispatch_reports_not_started() {
     );
     // The timed-out request was removed: no queue/waiter leak.
     let view = runtime
-        .shell_clients
-        .get_client_view("cleanup-delete-timeout-early")
+        .runner_registry
+        .get_runner_view("cleanup-delete-timeout-early")
         .await
         .unwrap();
     assert_eq!(view.pending_requests, 0);
@@ -487,8 +487,8 @@ async fn delete_project_files_timeout_after_dispatch_reports_outcome_unknown() {
     );
     // The timed-out request was removed: no queue/waiter leak.
     let view = runtime
-        .shell_clients
-        .get_client_view("cleanup-delete-timeout-late")
+        .runner_registry
+        .get_runner_view("cleanup-delete-timeout-late")
         .await
         .unwrap();
     assert_eq!(view.pending_requests, 0);
@@ -532,7 +532,7 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
     // channel close. The registry returns the preserved dispatch truth.
     let req = wait_for_agent_request_for_instance(&runtime, "cleanup-delete-waiter", "inst").await;
     let dispatch = runtime
-        .shell_clients
+        .runner_registry
         .cancel_request_dispatch_state(&req.request_id)
         .await;
     assert_eq!(
@@ -554,8 +554,8 @@ async fn delete_project_files_waiter_dropped_without_undispatch_proof_reports_ou
         "error was: {error}"
     );
     let view = runtime
-        .shell_clients
-        .get_client_view("cleanup-delete-waiter")
+        .runner_registry
+        .get_runner_view("cleanup-delete-waiter")
         .await
         .unwrap();
     assert_eq!(view.pending_requests, 0);
@@ -2664,7 +2664,7 @@ async fn search_agent_command_timeout_returns_search_timeout() {
     assert_eq!(req.timeout_secs, 1);
     // Simulate Runner-side command timeout response (lowercase message + error field).
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "search-cmd-timeout".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2712,7 +2712,7 @@ async fn search_agent_execution_failure_is_structured_and_does_not_leak_diagnost
     let private_diagnostic =
         "provider private prose at /private/runner/workspace with token=NEVER_RETURN";
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "search-agent-failure".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2769,7 +2769,7 @@ async fn search_agent_timeout_without_trusted_marker_cannot_return_partial_succe
     });
     let req = wait_for_patch_agent_request(&runtime, "search-timeout-no-marker").await;
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "search-timeout-no-marker".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2823,7 +2823,7 @@ async fn search_agent_timeout_with_complete_records_returns_partial_success() {
     });
     let req = wait_for_patch_agent_request(&runtime, "search-ptimeout").await;
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "search-ptimeout".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2900,7 +2900,7 @@ async fn search_agent_outer_timeout_returns_search_timeout_and_cancels() {
     );
     // Request should have been cancelled (no longer pending for completion).
     let complete = runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "search-outer-timeout".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2945,7 +2945,10 @@ async fn search_agent_request_dropped_returns_structured_error() {
     });
     let req = wait_for_patch_agent_request(&runtime, "search-dropped").await;
     // Drop the oneshot waiter without completing — agent disconnect / channel drop.
-    runtime.shell_clients.cancel_request(&req.request_id).await;
+    runtime
+        .runner_registry
+        .cancel_request(&req.request_id)
+        .await;
     let result = task.await.unwrap();
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);

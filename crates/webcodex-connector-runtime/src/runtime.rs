@@ -1861,7 +1861,7 @@ impl ConnectorRuntime {
                 let supports_structured_validation = match client_id {
                     Some(client_id) => self
                         .runner_registry
-                        .client_supports_for_auth(
+                        .runner_supports_for_auth(
                             client_id,
                             SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
                             access.as_ref(),
@@ -1889,7 +1889,7 @@ impl ConnectorRuntime {
                     let supported = match client_id {
                         Some(client_id) => self
                             .runner_registry
-                            .client_supports_for_auth(
+                            .runner_supports_for_auth(
                                 client_id,
                                 SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
                                 access.as_ref(),

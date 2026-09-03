@@ -1,7 +1,7 @@
-use super::state::{ShellClientRegistryInner, ShellJobLogState, ShellJobRecord};
+use super::state::{RunnerRegistryInner, ShellJobLogState, ShellJobRecord};
 use super::{
-    now_ts, RunnerFeature, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES,
-    MAX_QUEUED_REQUESTS_PER_CLIENT,
+    now_ts, RunnerFeature, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_RUNNER,
+    RUNNER_ONLINE_WINDOW_SECS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -14,25 +14,25 @@ pub const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PendingRequestEnqueueError {
-    UnknownClient { client_id: String },
-    ClientOffline { client_id: String },
+    UnknownRunner { client_id: String },
+    RunnerOffline { client_id: String },
     QueueFull { client_id: String, limit: usize },
 }
 
 impl fmt::Display for PendingRequestEnqueueError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownClient { client_id } => {
+            Self::UnknownRunner { client_id } => {
                 write!(formatter, "unknown shell client: {client_id}")
             }
-            Self::ClientOffline { client_id } => write!(
+            Self::RunnerOffline { client_id } => write!(
                 formatter,
-                "shell client {client_id} is offline (no keepalive within \
-                 {CLIENT_ONLINE_WINDOW_SECS}s); reconnect the agent before retrying"
+                "runner {client_id} is offline (no keepalive within \
+                 {RUNNER_ONLINE_WINDOW_SECS}s); reconnect the Runner before retrying"
             ),
             Self::QueueFull { client_id, limit } => write!(
                 formatter,
-                "too many pending requests for shell client {client_id} (limit {limit})"
+                "too many pending requests for runner {client_id} (limit {limit})"
             ),
         }
     }
@@ -609,16 +609,16 @@ pub(super) fn mark_job_lost(job: &mut ShellJobRecord, now: i64, reason_code: &st
     notify_job_update(job);
 }
 
-fn client_is_connected_locked(inner: &ShellClientRegistryInner, client_id: &str) -> bool {
+fn runner_is_connected_locked(inner: &RunnerRegistryInner, client_id: &str) -> bool {
     inner
-        .clients
+        .runners
         .get(client_id)
-        .map(|client| now_ts().saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS)
+        .map(|runner| now_ts().saturating_sub(runner.last_seen) <= RUNNER_ONLINE_WINDOW_SECS)
         .unwrap_or(false)
 }
 
 pub(super) fn offline_last_seen(now: i64) -> i64 {
-    now.saturating_sub(CLIENT_ONLINE_WINDOW_SECS.saturating_add(1))
+    now.saturating_sub(RUNNER_ONLINE_WINDOW_SECS.saturating_add(1))
 }
 
 /// Verify that `client_id` exists and that `agent_instance_id` matches the
@@ -627,37 +627,37 @@ pub(super) fn offline_last_seen(now: i64) -> i64 {
 /// stale replacement) is rejected so it can no longer poll or submit results.
 /// Callers must already hold `inner`.
 pub(super) fn assert_active_instance_locked(
-    inner: &ShellClientRegistryInner,
+    inner: &RunnerRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
 ) -> Result<(), String> {
-    let Some(client) = inner.clients.get(client_id) else {
+    let Some(runner) = inner.runners.get(client_id) else {
         return Err(format!("unknown shell client: {}", client_id));
     };
-    if client.agent_instance_id != agent_instance_id {
+    if runner.agent_instance_id != agent_instance_id {
         return Err(format!(
-            "agent client {} is no longer the active instance (stale or replaced)",
+            "runner {} is no longer the active instance (stale or replaced)",
             client_id
         ));
     }
     Ok(())
 }
 
-/// Reject enqueue when a client's pending queue has reached
-/// `MAX_QUEUED_REQUESTS_PER_CLIENT`. Callers must already hold `inner`.
+/// Reject enqueue when a runner's pending queue has reached
+/// `MAX_QUEUED_REQUESTS_PER_RUNNER`. Callers must already hold `inner`.
 pub(super) fn ensure_queue_capacity_locked(
-    inner: &ShellClientRegistryInner,
+    inner: &RunnerRegistryInner,
     client_id: &str,
 ) -> Result<(), PendingRequestEnqueueError> {
     let len = inner
-        .queues_by_client
+        .queues_by_runner
         .get(client_id)
         .map(VecDeque::len)
         .unwrap_or(0);
-    if len >= MAX_QUEUED_REQUESTS_PER_CLIENT {
+    if len >= MAX_QUEUED_REQUESTS_PER_RUNNER {
         return Err(PendingRequestEnqueueError::QueueFull {
             client_id: client_id.to_string(),
-            limit: MAX_QUEUED_REQUESTS_PER_CLIENT,
+            limit: MAX_QUEUED_REQUESTS_PER_RUNNER,
         });
     }
     Ok(())
@@ -666,29 +666,29 @@ pub(super) fn ensure_queue_capacity_locked(
 /// Ensure a request target exists and is currently online before enqueueing
 /// work for the agent pump. Callers must already hold `inner`.
 ///
-/// Online is defined by `CLIENT_ONLINE_WINDOW_SECS` against `last_seen`. Without
+/// Online is defined by `RUNNER_ONLINE_WINDOW_SECS` against `last_seen`. Without
 /// this gate, a registered-but-disconnected agent still accepts enqueues that
 /// can only fail after the caller's wait timeout (or pile up until
-/// `MAX_QUEUED_REQUESTS_PER_CLIENT` and then permanently reject new work for
-/// that client until process restart) — a major amplifier of MCP "no reply".
+/// `MAX_QUEUED_REQUESTS_PER_RUNNER` and then permanently reject new work for
+/// that runner until process restart) — a major amplifier of MCP "no reply".
 pub(super) fn ensure_dispatch_supported_locked(
-    inner: &ShellClientRegistryInner,
+    inner: &RunnerRegistryInner,
     client_id: &str,
 ) -> Result<(), PendingRequestEnqueueError> {
-    if !inner.clients.contains_key(client_id) {
-        return Err(PendingRequestEnqueueError::UnknownClient {
+    if !inner.runners.contains_key(client_id) {
+        return Err(PendingRequestEnqueueError::UnknownRunner {
             client_id: client_id.to_string(),
         });
     }
-    if !client_is_connected_locked(inner, client_id) {
-        return Err(PendingRequestEnqueueError::ClientOffline {
+    if !runner_is_connected_locked(inner, client_id) {
+        return Err(PendingRequestEnqueueError::RunnerOffline {
             client_id: client_id.to_string(),
         });
     }
     Ok(())
 }
 
-pub(super) fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str) {
+pub(super) fn refresh_job_status_locked(inner: &mut RunnerRegistryInner, job_id: &str) {
     let Some(job) = inner.jobs_by_id.get(job_id) else {
         return;
     };
@@ -712,11 +712,11 @@ pub(super) fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, jo
         return;
     }
     let client_id = job.client_id.clone();
-    if client_is_connected_locked(inner, &client_id) {
+    if runner_is_connected_locked(inner, &client_id) {
         return;
     }
-    let recoverable = inner.clients.get(&client_id).is_some_and(|client| {
-        client
+    let recoverable = inner.runners.get(&client_id).is_some_and(|runner| {
+        runner
             .runner_features
             .supports(RunnerFeature::JobStateReconciliation)
     });
@@ -728,7 +728,7 @@ pub(super) fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, jo
                 job,
                 now_ts(),
                 "runner_disconnected_without_reconciliation",
-                "shell client went stale while job was running",
+                "runner went stale while job was running",
             );
         }
     }

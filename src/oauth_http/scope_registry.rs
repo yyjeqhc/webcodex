@@ -2,7 +2,7 @@ use crate::auth::scopes;
 
 use super::OAuthAuthorizeError;
 
-/// Non-agent scopes that OAuth2 clients may request. Agent transport scopes
+/// Non-agent scopes that OAuth2 clients may request. Runner transport scopes
 /// (`agent:*`) are excluded because OAuth2 access tokens are rejected on agent
 /// transport surfaces. `admin` is excluded because it is a bootstrap/superuser
 /// scope not intended for OAuth2 delegation.

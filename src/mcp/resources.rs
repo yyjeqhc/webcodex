@@ -887,7 +887,10 @@ where
     match outcome {
         Ok(result) => result,
         Err(_) => {
-            runtime.shell_clients.cancel_abandoned_sync_requests().await;
+            runtime
+                .runner_registry
+                .cancel_abandoned_sync_requests()
+                .await;
             Err(McpArtifactExportReadError::Timeout)
         }
     }
@@ -1549,7 +1552,10 @@ pub(super) fn start_artifact_export_stream(
                     .await;
             }
             Err(_) => {
-                runtime.shell_clients.cancel_abandoned_sync_requests().await;
+                runtime
+                    .runner_registry
+                    .cancel_abandoned_sync_requests()
+                    .await;
                 let _ = error_sender
                     .send(Err(std::io::Error::other(
                         "artifact export stream exceeded bounded transfer timeout",

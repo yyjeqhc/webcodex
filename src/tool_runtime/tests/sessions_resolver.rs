@@ -94,7 +94,7 @@ async fn read_file_accepts_unique_short_id() {
     let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "workstation".to_string(),
             agent_instance_id: "inst-workstation".to_string(),
@@ -132,7 +132,7 @@ async fn git_status_accepts_unique_short_id() {
     let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "workstation".to_string(),
             agent_instance_id: "inst-workstation".to_string(),
@@ -196,7 +196,7 @@ async fn full_id_remains_compatible_for_project_tools() {
     });
     let req = wait_for_agent_request_for_client(&runtime, "workstation").await;
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "workstation".to_string(),
             agent_instance_id: "inst-workstation".to_string(),

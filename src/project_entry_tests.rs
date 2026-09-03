@@ -1,6 +1,6 @@
 use super::*;
 use crate::connector_runtime::{ConnectorContext, ConnectorRuntime, ConnectorRuntimeSlot};
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentProjectSummary,
     ShellAgentResultRequest, ShellAgentShellRequest, ShellClientCapabilities,
@@ -171,7 +171,7 @@ struct AuthenticatedProjectFixture {
     _temp: tempfile::TempDir,
     service: Service,
     db: Arc<crate::Database>,
-    registry: Arc<ShellClientRegistry>,
+    registry: Arc<RunnerRegistry>,
     connector: Arc<ConnectorRuntime>,
     agent_auth: crate::auth::AuthContext,
     credential: String,
@@ -257,7 +257,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
     )
     .unwrap();
     let agent_auth = project_agent_verifier.authenticate(&agent_token).unwrap();
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     registry
         .register_with_auth(
             ShellClientRegisterRequest {
@@ -310,7 +310,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
     )
     .await;
     let db = Arc::new(crate::Database::open(&state.join("data/webcodex.db")).unwrap());
-    let tools = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+    let tools = Arc::new(ToolRuntime::new_for_tests_with_runner_registry(
         registry.clone(),
     ));
     let runtime_project_id = config.runtime_project_id();
@@ -364,19 +364,15 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 .push(crate::host_console_http::routes())
                 .push(
                     Router::with_path("shell/agent/register")
-                        .post(crate::shell_client::shell_agent_register),
+                        .post(crate::runner_http::runner_register),
                 )
+                .push(Router::with_path("shell/agent/poll").post(crate::runner_http::runner_poll))
                 .push(
-                    Router::with_path("shell/agent/poll")
-                        .post(crate::shell_client::shell_agent_poll),
-                )
-                .push(
-                    Router::with_path("shell/agent/result")
-                        .post(crate::shell_client::shell_agent_result),
+                    Router::with_path("shell/agent/result").post(crate::runner_http::runner_result),
                 )
                 .push(
                     Router::with_path("shell/agent/job_update")
-                        .post(crate::shell_client::shell_agent_job_update),
+                        .post(crate::runner_http::runner_job_update),
                 ),
         );
     AuthenticatedProjectFixture {
@@ -419,7 +415,7 @@ async fn post_connector(
     (status, body)
 }
 
-fn agent_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value); 4] {
+fn runner_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value); 4] {
     [
         (
             "/api/shell/agent/register",
@@ -461,9 +457,9 @@ fn agent_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value);
 const PROJECT_AGENT_INSTANCE: &str = "project-agent-instance";
 
 #[tokio::test]
-async fn project_credential_is_rejected_from_every_agent_transport_route() {
+async fn project_credential_is_rejected_from_every_runner_transport_route() {
     let fixture = authenticated_project_fixture().await;
-    for (path, body) in agent_transport_cases(&fixture.client_id) {
+    for (path, body) in runner_transport_cases(&fixture.client_id) {
         let (status, response) = post_connector(&fixture, path, &fixture.credential, body).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {response}");
         assert!(
@@ -484,13 +480,13 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
         &fixture,
         "/api/shell/agent/register",
         &fixture.agent_token,
-        agent_transport_cases(&fixture.client_id)[0].1.clone(),
+        runner_transport_cases(&fixture.client_id)[0].1.clone(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["success"], true);
 
-    for (path, body) in agent_transport_cases("wrong-project-client") {
+    for (path, body) in runner_transport_cases("wrong-project-client") {
         let (status, response) = post_connector(&fixture, path, &fixture.agent_token, body).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {response}");
     }
@@ -513,7 +509,7 @@ async fn project_agent_token_enforces_client_id_and_bootstrap_still_registers() 
 }
 
 async fn next_project_agent_request(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
 ) -> ShellAgentShellRequest {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -537,7 +533,7 @@ async fn next_project_agent_request(
 }
 
 async fn complete_project_agent_request(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     request: ShellAgentShellRequest,
     exit_code: i32,
@@ -578,7 +574,7 @@ fn run_agent_shell_request(request: &ShellAgentShellRequest) -> (i32, String, St
 }
 
 async fn complete_project_job(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     request: ShellAgentShellRequest,
     validation: bool,
@@ -1509,7 +1505,7 @@ async fn arbitrary_shared_key_cannot_access_project_connector() {
     };
     let pending = fixture
         .registry
-        .get_client_view_for_auth(
+        .get_runner_view_for_auth(
             &fixture.client_id,
             Some(&crate::test_support::runner_access(&fixture.agent_auth)),
         )
@@ -1629,7 +1625,7 @@ async fn connector_credential_cannot_cross_agent_auth_group() {
     };
     let agent = fixture
         .registry
-        .get_client_view_for_auth(
+        .get_runner_view_for_auth(
             &fixture.client_id,
             Some(&crate::test_support::runner_access(&fixture.agent_auth)),
         )

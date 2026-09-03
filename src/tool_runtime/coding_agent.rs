@@ -1,6 +1,6 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
-use crate::shell_client::RunnerFeature;
+use crate::runner_http::RunnerFeature;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -391,10 +391,10 @@ impl ToolRuntime {
         }
         let client_id = resolved.config.client_id.as_str();
         let client = match self
-            .shell_clients
-            .get_client_semantic_view_for_auth(
+            .runner_registry
+            .get_runner_semantic_view_for_auth(
                 client_id,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await
         {
@@ -517,14 +517,14 @@ impl ToolRuntime {
             timeout_secs: prepared.timeout_secs,
         });
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_coding_agent(
                 &prepared.client.client_id,
                 &prepared.client.agent_instance_id,
                 &prepared.provider_id,
                 &prepared.provider_instance_id,
                 operation,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 prepared.authority_fingerprint.clone(),
             )
             .await
@@ -740,14 +740,14 @@ impl ToolRuntime {
             wait_secs,
         });
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_coding_agent(
                 &binding.client_id,
                 &binding.agent_instance_id,
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 authority.clone(),
             )
             .await
@@ -784,7 +784,7 @@ impl ToolRuntime {
                 Ok(Ok(response)) => response,
                 _ => {
                     let _ = self
-                        .shell_clients
+                        .runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await;
                     return coding_agent_error(
@@ -811,10 +811,10 @@ impl ToolRuntime {
                     observation.history_lost = true;
                 }
                 let client = match self
-                    .shell_clients
-                    .get_client_view_for_auth(
+                    .runner_registry
+                    .get_runner_view_for_auth(
                         &binding.client_id,
-                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                        crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     )
                     .await
                 {
@@ -912,14 +912,14 @@ impl ToolRuntime {
             run_id: run_id.clone(),
         });
         let (request_id, receiver) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_coding_agent(
                 &binding.client_id,
                 &binding.agent_instance_id,
                 &binding.provider_id,
                 &binding.provider_instance_id,
                 operation,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 authority.clone(),
             )
             .await
@@ -942,7 +942,7 @@ impl ToolRuntime {
                 Ok(Ok(response)) => response,
                 _ => {
                     let _ = self
-                        .shell_clients
+                        .runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await;
                     return coding_agent_error(
@@ -966,10 +966,10 @@ impl ToolRuntime {
                     );
                 }
                 if let Some(client) = self
-                    .shell_clients
-                    .get_client_view_for_auth(
+                    .runner_registry
+                    .get_runner_view_for_auth(
                         &binding.client_id,
-                        crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                        crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     )
                     .await
                 {
@@ -1015,7 +1015,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> CodingAgentTypedStartOutcome {
         let dispatched = self
-            .shell_clients
+            .runner_registry
             .cancel_request_dispatch_state(request_id)
             .await;
         match self.reconcile_run(run_id, authority, auth).await {
@@ -1095,9 +1095,9 @@ impl ToolRuntime {
             // refresh it. Another visible Runner advertising the same run_id is
             // not evidence about this Run and must not force a false retarget/lost.
             if let Some((client, run)) = self
-                .shell_clients
-                .coding_agent_run_for_client_for_auth(
-                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                .runner_registry
+                .coding_agent_run_for_runner_for_auth(
+                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     &binding.client_id,
                     run_id,
                 )
@@ -1134,10 +1134,10 @@ impl ToolRuntime {
             // replacement does not advertise the durable Run, the old prompt may have
             // executed and P1 must close it `lost` rather than retrying blindly.
             if let Some(current) = self
-                .shell_clients
-                .get_client_view_for_auth(
+                .runner_registry
+                .get_runner_view_for_auth(
                     &binding.client_id,
-                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 )
                 .await
             {
@@ -1167,9 +1167,9 @@ impl ToolRuntime {
         // from a unique visible Runner inventory match; the registry fails closed
         // on duplicate run ids instead of choosing by iteration order.
         let Some((client, run)) = self
-            .shell_clients
+            .runner_registry
             .coding_agent_run_for_auth(
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 run_id,
             )
             .await
@@ -1190,10 +1190,10 @@ impl ToolRuntime {
         client_id: &str,
         auth: Option<&AuthContext>,
     ) -> Option<String> {
-        self.shell_clients
-            .get_client_view_for_auth(
+        self.runner_registry
+            .get_runner_view_for_auth(
                 client_id,
-                crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await
             .map(|client| client.agent_instance_id)

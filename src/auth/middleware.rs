@@ -161,12 +161,12 @@ pub(crate) fn render_scope_forbidden(
 /// The paths are compared exactly (no prefix match) so a path like
 /// `/api/agent-tokens/create` is correctly rejected for agent tokens even
 /// though it starts with `/api/agent`.
-/// True when `path` is one of the exact agent transport endpoints an agent
+/// True when `path` is one of the exact Runner transport endpoints an agent
 /// token may call. Used by [`AuthMiddleware`] to gate agent tokens centrally.
-pub(crate) fn is_agent_transport_path(path: &str) -> bool {
+pub(crate) fn is_runner_transport_path(path: &str) -> bool {
     crate::route_metadata::path_has_surface(
         path,
-        crate::route_metadata::RouteSurface::AgentTransport,
+        crate::route_metadata::RouteSurface::RunnerTransport,
     )
 }
 
@@ -179,7 +179,7 @@ pub(crate) fn is_account_control_path(path: &str) -> bool {
 
 /// Enforce that the token kind is permitted on the requested HTTP path.
 ///
-/// Agent tokens are only allowed on agent transport endpoints. Direct
+/// Agent tokens are only allowed on Runner transport endpoints. Direct
 /// shared-key principals may also use those endpoints when shared-key auth
 /// produced their context. Account credentials are only allowed on account
 /// control endpoints. Other token kinds retain their normal surfaces.
@@ -203,10 +203,10 @@ pub(crate) fn enforce_token_surface(
             "shared-key principals are not allowed on account control endpoints",
         ));
     }
-    if ctx.is_agent_token() && !is_agent_transport_path(path) {
+    if ctx.is_agent_token() && !is_runner_transport_path(path) {
         return Err((
             StatusCode::FORBIDDEN,
-            "agent tokens are only allowed on agent transport endpoints",
+            "agent tokens are only allowed on Runner transport endpoints",
         ));
     }
     if ctx.is_account_credential() && !is_account_control_path(path) {
@@ -215,23 +215,23 @@ pub(crate) fn enforce_token_surface(
             "account credentials may only access account control endpoints",
         ));
     }
-    // OAuth2 access tokens are not permitted on agent transport endpoints,
+    // OAuth2 access tokens are not permitted on Runner transport endpoints,
     // including the shared-key OAuth bridge. Only a direct bearer shared key
     // may pair a lightweight Runner.
-    if ctx.is_oauth_token() && is_agent_transport_path(path) {
+    if ctx.is_oauth_token() && is_runner_transport_path(path) {
         return Err((
             StatusCode::FORBIDDEN,
-            "OAuth2 tokens are not allowed on agent transport endpoints",
+            "OAuth2 tokens are not allowed on Runner transport endpoints",
         ));
     }
-    if is_agent_transport_path(path)
+    if is_runner_transport_path(path)
         && !ctx.is_bootstrap()
         && !ctx.is_agent_token()
         && !ctx.is_shared_key()
     {
         return Err((
             StatusCode::FORBIDDEN,
-            "agent transport endpoints require bootstrap, a bound Agent Token, or a direct shared key",
+            "Runner transport endpoints require bootstrap, a bound Agent Token, or a direct shared key",
         ));
     }
     Ok(())
@@ -417,15 +417,15 @@ impl Handler for AuthMiddleware {
             }
         }
 
-        // Pre-reject OAuth2 access tokens on agent transport paths before
+        // Pre-reject OAuth2 access tokens on Runner transport paths before
         // running the verifier chain. OAuth2Verifier updates last_used_at on
         // success, so we must not let it run on a surface that will
         // ultimately reject the token.
-        if is_agent_transport_path(req.uri().path()) && is_oauth2_access_token(&token) {
+        if is_runner_transport_path(req.uri().path()) && is_oauth2_access_token(&token) {
             render_oauth_insufficient_scope(
                 res,
                 None,
-                "OAuth2 access tokens cannot call agent transport routes",
+                "OAuth2 access tokens cannot call Runner transport routes",
             );
             ctrl.skip_rest();
             return;

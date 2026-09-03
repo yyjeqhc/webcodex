@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn generic_file_enqueue_rejects_internal_artifact_export_chunk() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let error = registry
         .enqueue_file_op(
             ShellFileOpRequest {

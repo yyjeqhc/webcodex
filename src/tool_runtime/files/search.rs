@@ -1662,7 +1662,7 @@ impl ToolRuntime {
             "timeout_secs": command_timeout,
         });
         let (req_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_run(
                 ShellRunRequest {
                     client_id,
@@ -1750,13 +1750,13 @@ impl ToolRuntime {
                 )
             }
             Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&req_id).await;
+                self.runner_registry.cancel_request(&req_id).await;
                 // Channel closed without a result: agent disconnect / waiter
                 // drop — not a search timeout.
                 search_request_dropped_tool_result(&options)
             }
             Err(_) => {
-                self.shell_clients.cancel_request(&req_id).await;
+                self.runner_registry.cancel_request(&req_id).await;
                 // Preserve whether the per-search transport bound or the
                 // batch's shared absolute deadline ended the wait.
                 search_timeout_tool_result(

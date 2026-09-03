@@ -692,7 +692,7 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
     });
     let request = wait_for_agent_request_for_client(&runtime, "context-ssh-transport").await;
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultPayload {
             result: ShellAgentResultRequest {
                 client_id: "context-ssh-transport".to_string(),
@@ -838,7 +838,7 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
         Some(root.join("missing").to_string_lossy().as_ref())
     );
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "context-missing".to_string(),
             agent_instance_id: "inst".to_string(),

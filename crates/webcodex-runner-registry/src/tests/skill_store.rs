@@ -38,7 +38,7 @@ fn alice() -> RunnerAccess {
 
 #[tokio::test]
 async fn skill_store_enqueue_requires_exact_instance_and_independent_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(skill_store_registration("instance-a", false, false))
         .await
@@ -97,7 +97,7 @@ async fn skill_store_enqueue_requires_exact_instance_and_independent_capability(
 
 #[tokio::test]
 async fn skill_store_dequeue_rejects_replacement_runner_before_dispatch() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(skill_store_registration("instance-a", true, true))
         .await
@@ -124,7 +124,7 @@ async fn skill_store_dequeue_rejects_replacement_runner_before_dispatch() {
     {
         let mut inner = registry.inner.lock().await;
         inner
-            .clients
+            .runners
             .get_mut("skill-store-runner")
             .unwrap()
             .agent_instance_id = "instance-b".to_string();
@@ -152,7 +152,7 @@ async fn skill_store_dequeue_rejects_replacement_runner_before_dispatch() {
     let inner = registry.inner.lock().await;
     assert!(inner.pending_by_id.is_empty());
     assert!(inner
-        .queues_by_client
+        .queues_by_runner
         .get("skill-store-runner")
         .is_none_or(|queue| queue.is_empty()));
 }

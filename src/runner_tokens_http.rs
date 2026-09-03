@@ -2,7 +2,7 @@
 //!
 //! These are REST-only admin/self-management surfaces for agent tokens —
 //! tokens bound to an owner username and an `allowed_client_id`, usable only
-//! on agent transport endpoints (`/api/shell/agent/*`, `/api/agents/ws`). They
+//! on Runner transport endpoints (`/api/shell/agent/*`, `/api/agents/ws`). They
 //! are intentionally **not** exposed in `/openapi.json` (GPT Actions) because
 //! token creation is sensitive and should be driven by an admin CLI/HTTP
 //! client, not a GPT. Their canonical `RouteSpec` entries are `Hidden`, and
@@ -38,7 +38,7 @@ mod routes;
 #[cfg(test)]
 use responses::agent_token_summary;
 pub(crate) use routes::{
-    agent_tokens_create, agent_tokens_list, agent_tokens_register_hash, agent_tokens_revoke,
+    runner_tokens_create, runner_tokens_list, runner_tokens_register_hash, runner_tokens_revoke,
 };
 
 // ---------------------------------------------------------------------------

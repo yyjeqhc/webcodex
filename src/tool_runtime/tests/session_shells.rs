@@ -111,7 +111,7 @@ async fn complete_with_cwds(
 ) {
     let operation = request.persistent_shell.as_ref().unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .complete_persistent_shell(ShellAgentPersistentShellResultRequest {
             client_id: CLIENT.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -567,7 +567,7 @@ async fn runner_disconnect_converges_server_status_to_lost() {
     let shell_id = opened.output["shell_id"].as_str().unwrap().to_string();
 
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect(CLIENT, "inst")
         .await;
     let auth = auth_context(None, true);

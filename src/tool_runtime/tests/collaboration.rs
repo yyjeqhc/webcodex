@@ -1429,10 +1429,9 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
 async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
-    let shell_clients = Arc::new(
-        crate::shell_client::ShellClientRegistry::with_shared_key_limits_for_test(4, 8, 1),
-    );
-    let runtime = ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+    let runner_registry =
+        Arc::new(crate::runner_http::RunnerRegistry::with_shared_key_limits_for_test(4, 8, 1));
+    let runtime = ToolRuntime::new_for_tests_with_runner_registry(runner_registry.clone())
         .with_session_ledger(&ledger);
     let alice = shared_key_auth_context("recycled-authority-a");
     let alice_oauth = oauth_bridge_auth_context(
@@ -1519,14 +1518,14 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     assert!(oauth_read.success, "{:?}", oauth_read.error);
 
     let expired_at = chrono::Utc::now().timestamp() - 100;
-    shell_clients
+    runner_registry
         .set_last_seen_for_test("recycled-client", expired_at)
         .await;
-    let _ = shell_clients
-        .list_clients_for_auth(Some(&crate::test_support::runner_access(&alice)))
+    let _ = runner_registry
+        .list_runners_for_auth(Some(&crate::test_support::runner_access(&alice)))
         .await;
-    assert!(shell_clients
-        .get_client_view("recycled-client")
+    assert!(runner_registry
+        .get_runner_view("recycled-client")
         .await
         .is_none());
 
@@ -1618,14 +1617,14 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         0
     );
 
-    shell_clients
+    runner_registry
         .set_last_seen_for_test("recycled-client", expired_at)
         .await;
-    let _ = shell_clients
-        .list_clients_for_auth(Some(&crate::test_support::runner_access(&bob)))
+    let _ = runner_registry
+        .list_runners_for_auth(Some(&crate::test_support::runner_access(&bob)))
         .await;
-    assert!(shell_clients
-        .get_client_view("recycled-client")
+    assert!(runner_registry
+        .get_runner_view("recycled-client")
         .await
         .is_none());
     register_agent_projects_for_auth(

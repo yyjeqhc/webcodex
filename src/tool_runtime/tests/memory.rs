@@ -1302,7 +1302,7 @@ async fn memory_scope_lifecycle_is_offline_safe_unregister_explicit_and_purge_on
         .is_some());
 
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect(client_id, &format!("inst-{client_id}"))
         .await;
     let offline = runtime.memory_scope_list(Some(&admin), None, None).await;
@@ -1541,7 +1541,7 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
     assert_eq!(denied.output["error_kind"], "memory_scope_status_unknown");
 
     runtime
-        .shell_clients
+        .runner_registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
                 process_started_at: None,

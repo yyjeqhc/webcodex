@@ -1,7 +1,7 @@
-use crate::state::{ShellClientRecord, ShellClientRegistryInner, ShellJobRecord};
+use crate::state::{RunnerRecord, RunnerRegistryInner, ShellJobRecord};
 use crate::{RunnerAccess, RunnerAccessGroup};
 
-pub(crate) fn assert_shell_client_owner(
+pub(crate) fn assert_runner_owner(
     access: Option<&RunnerAccess>,
     client_id: &str,
     owner: Option<&str>,
@@ -11,7 +11,7 @@ pub(crate) fn assert_shell_client_owner(
     }
     let owner = owner
         .filter(|owner| !owner.trim().is_empty())
-        .ok_or_else(|| format!("agent client {} has no owner", client_id))?;
+        .ok_or_else(|| format!("runner {} has no owner", client_id))?;
     let username = access
         .and_then(|access| access.username.as_deref())
         .filter(|username| !username.trim().is_empty());
@@ -20,7 +20,7 @@ pub(crate) fn assert_shell_client_owner(
     }
     let username = username.unwrap_or("anonymous");
     Err(format!(
-        "agent client {} is owned by {}; current api key belongs to {}",
+        "runner {} is owned by {}; current api key belongs to {}",
         client_id, owner, username
     ))
 }
@@ -37,21 +37,21 @@ fn lightweight_group_matches(
 
 pub(crate) fn runner_visible_to_access(
     access: Option<&RunnerAccess>,
-    client: &ShellClientRecord,
+    runner: &RunnerRecord,
 ) -> bool {
     match access {
         None => true,
         Some(access) if access.global_visibility => true,
-        Some(access) if !lightweight_group_matches(Some(access), client.auth_group.as_ref()) => {
+        Some(access) if !lightweight_group_matches(Some(access), runner.auth_group.as_ref()) => {
             false
         }
-        Some(_) if client.auth_group.is_some() => true,
+        Some(_) if runner.auth_group.is_some() => true,
         Some(access) => {
             let username = access
                 .username
                 .as_deref()
                 .filter(|username| !username.trim().is_empty());
-            let owner = client
+            let owner = runner
                 .owner
                 .as_deref()
                 .filter(|owner| !owner.trim().is_empty());
@@ -62,20 +62,20 @@ pub(crate) fn runner_visible_to_access(
 
 pub(crate) fn assert_runner_access(
     access: Option<&RunnerAccess>,
-    client: &ShellClientRecord,
+    runner: &RunnerRecord,
 ) -> Result<(), String> {
-    if !runner_visible_to_access(access, client) {
-        return Err(format!("unknown shell client: {}", client.client_id));
+    if !runner_visible_to_access(access, runner) {
+        return Err(format!("unknown shell client: {}", runner.client_id));
     }
-    if client.auth_group.is_some() {
+    if runner.auth_group.is_some() {
         return Ok(());
     }
-    assert_shell_client_owner(access, &client.client_id, client.owner.as_deref())
+    assert_runner_owner(access, &runner.client_id, runner.owner.as_deref())
 }
 
 pub(crate) fn job_visible_to_access(
     access: Option<&RunnerAccess>,
-    inner: &ShellClientRegistryInner,
+    inner: &RunnerRegistryInner,
     job: &ShellJobRecord,
 ) -> bool {
     let Some(access) = access else {
@@ -88,8 +88,8 @@ pub(crate) fn job_visible_to_access(
         return lightweight_group_matches(Some(access), Some(group));
     }
     inner
-        .clients
+        .runners
         .get(&job.client_id)
-        .map(|client| assert_runner_access(Some(access), client).is_ok())
+        .map(|runner| assert_runner_access(Some(access), runner).is_ok())
         .unwrap_or(false)
 }

@@ -122,7 +122,7 @@ async fn await_structured_edit_response(
         Ok(Err(_)) => {
             let state = dispatch_uncertainty_lifecycle(
                 runtime
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(request_id)
                     .await,
             );
@@ -135,7 +135,7 @@ async fn await_structured_edit_response(
         Err(_) => {
             let state = dispatch_uncertainty_lifecycle(
                 runtime
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(request_id)
                     .await,
             );
@@ -1471,7 +1471,7 @@ impl ToolRuntime {
             Err(_) => return ToolResult::err("failed to encode delete_project_files request"),
         };
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_structured_file_delete(
                 ShellFileOpRequest {
                     op: "delete_project_files".to_string(),
@@ -1539,7 +1539,7 @@ impl ToolRuntime {
                 // cannot prove undispatch, so only explicit `Some(false)` is
                 // not_started.
                 let dispatch = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 let state = dispatch_uncertainty_lifecycle(dispatch);
@@ -1560,7 +1560,7 @@ impl ToolRuntime {
                 // it. A timed-out mutation that may have dispatched must never
                 // be presented as definitely not started.
                 let dispatch = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 let state = dispatch_uncertainty_lifecycle(dispatch);
@@ -1676,7 +1676,7 @@ impl ToolRuntime {
         });
         let wait_timeout = 60_u64;
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "write_project_file".to_string(),
@@ -1846,7 +1846,7 @@ impl ToolRuntime {
             wait_timeout_secs: wait_timeout,
         };
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_apply_patch(
                 request,
                 expected_strict_matching,
@@ -2084,7 +2084,7 @@ impl ToolRuntime {
             wait_timeout_secs: wait_timeout,
         };
         let enqueue_result = if requires_line_scope_capability {
-            self.shell_clients
+            self.runner_registry
                 .enqueue_apply_text_edits_with_line_scope(
                     request,
                     "tool_runtime".to_string(),
@@ -2092,11 +2092,11 @@ impl ToolRuntime {
                 )
                 .await
         } else if requires_occurrence_capability {
-            self.shell_clients
+            self.runner_registry
                 .enqueue_apply_text_edits_with_occurrence(request, "tool_runtime".to_string())
                 .await
         } else {
-            self.shell_clients
+            self.runner_registry
                 .enqueue_file_op(request, "tool_runtime".to_string())
                 .await
         };

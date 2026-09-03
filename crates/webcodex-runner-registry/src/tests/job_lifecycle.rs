@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn terminal_observed_poll_complete_and_log() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -119,7 +119,7 @@ async fn terminal_observed_poll_complete_and_log() {
 
 #[tokio::test]
 async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -198,7 +198,7 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
 
 #[tokio::test]
 async fn terminal_observed_queued_stop_records_server_time() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -261,7 +261,7 @@ async fn terminal_observed_queued_stop_records_server_time() {
 
 #[tokio::test]
 async fn registry_shell_job_stop_running_delivers_stop_to_client() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -330,7 +330,7 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
 
 #[tokio::test]
 async fn registry_marks_running_job_lost_when_client_stale() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -380,8 +380,8 @@ async fn registry_marks_running_job_lost_when_client_stale() {
         .unwrap();
     {
         let mut inner = registry.inner.lock().await;
-        let client = inner.clients.get_mut("oe").unwrap();
-        client.last_seen = now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1;
+        let client = inner.runners.get_mut("oe").unwrap();
+        client.last_seen = now_ts() - RUNNER_ONLINE_WINDOW_SECS - 1;
     }
     let lost = registry.get_job(&job.job_id).await.unwrap();
     assert_eq!(lost.status, "lost");

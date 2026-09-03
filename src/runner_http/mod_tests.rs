@@ -135,8 +135,8 @@ fn async_job_capabilities() -> ShellClientCapabilities {
     capabilities
 }
 
-#[path = "mod_tests/agent_transport_auth.rs"]
-mod agent_transport_auth;
+#[path = "mod_tests/runner_transport_auth.rs"]
+mod runner_transport_auth;
 
 #[path = "mod_tests/auth_owner.rs"]
 mod auth_owner;

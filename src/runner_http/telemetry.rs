@@ -1,4 +1,4 @@
-use super::ShellClientRegistry;
+use super::RunnerRegistry;
 use std::sync::Arc;
 use webcodex_core::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentShellRequest,
@@ -56,6 +56,6 @@ impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
     }
 }
 
-pub(crate) fn registry_with_tool_request_trace() -> ShellClientRegistry {
-    ShellClientRegistry::with_telemetry(Arc::new(ToolRequestTraceRunnerRegistryTelemetry))
+pub(crate) fn registry_with_tool_request_trace() -> RunnerRegistry {
+    RunnerRegistry::with_telemetry(Arc::new(ToolRequestTraceRunnerRegistryTelemetry))
 }

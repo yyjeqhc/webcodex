@@ -16,7 +16,7 @@ use super::structured_execution::{
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::{
+use crate::runner_http::{
     command_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
 };
 use crate::shell_protocol::{
@@ -233,7 +233,7 @@ impl ToolRuntime {
         let proj = self.resolve_project(project).await?;
         // Shared root of the sync agent-wait contract: wait_timeout_secs and
         // command timeout must both stay within 1..=120 before enqueue so
-        // shell_client validation never rejects with implementation-detail
+        // Runner HTTP validation never rejects with implementation-detail
         // errors about runShell.
         if !(MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&timeout_secs) {
             return Err(format!(
@@ -245,7 +245,7 @@ impl ToolRuntime {
         let effective_cwd = Some(resolve_runner_cwd(&proj, cwd.as_deref())?);
         let wait_timeout = timeout;
         let (request_id, rx) = if internal_posix_script {
-            self.shell_clients
+            self.runner_registry
                 .enqueue_internal_posix_script(
                     client_id,
                     effective_cwd,
@@ -256,7 +256,7 @@ impl ToolRuntime {
                 )
                 .await?
         } else {
-            self.shell_clients
+            self.runner_registry
                 .enqueue_run(
                     ShellRunRequest {
                         client_id,
@@ -286,7 +286,7 @@ impl ToolRuntime {
             }
             Ok(Err(_)) => {
                 let request_dispatched = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 let execution_state = dispatch_uncertainty_lifecycle(request_dispatched);
@@ -309,7 +309,7 @@ impl ToolRuntime {
             }
             Err(_) => {
                 let request_dispatched = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 let execution_state = dispatch_uncertainty_lifecycle(request_dispatched);
@@ -545,8 +545,8 @@ impl ToolRuntime {
             };
         let async_handoff_available =
             if timeout > DEFAULT_RUN_SHELL_TIMEOUT_SECS && ssh_resource.is_none() {
-                self.shell_clients
-                    .get_client_feature_set(&client_id)
+                self.runner_registry
+                    .get_runner_feature_set(&client_id)
                     .await
                     .is_ok_and(|features| {
                         features.supports(RunnerFeature::Shell)
@@ -558,7 +558,7 @@ impl ToolRuntime {
             };
         if async_handoff_available {
             let job = self
-                .shell_clients
+                .runner_registry
                 .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
@@ -583,7 +583,7 @@ impl ToolRuntime {
                         visibility: ShellJobVisibility::HiddenUntilHandoff,
                         ..Default::default()
                     },
-                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     None,
                 )
                 .await;
@@ -619,7 +619,7 @@ impl ToolRuntime {
                 .structured_execution_sync_wait
                 .min(Duration::from_secs(STRUCTURED_EXECUTION_SYNC_WAIT_SECS));
             let handoff = await_hidden_structured_job(
-                self.shell_clients.clone(),
+                self.runner_registry.clone(),
                 job.job_id.clone(),
                 wait,
                 auth.cloned(),
@@ -637,7 +637,7 @@ impl ToolRuntime {
                             stderr,
                             timeout,
                         );
-                        self.shell_clients
+                        self.runner_registry
                             .remove_projected_hidden_terminal_job_record(&job.job_id)
                             .await;
                         result
@@ -706,7 +706,7 @@ impl ToolRuntime {
 
         let wait_timeout = timeout;
         let (request_id, rx) = match self
-            .shell_clients
+            .runner_registry
             .enqueue_run_with_ssh(
                 ShellRunRequest {
                     client_id,
@@ -810,7 +810,7 @@ impl ToolRuntime {
             }
             Ok(Err(_)) => {
                 let dispatch_state = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 if dispatch_state == Some(false) {
@@ -830,7 +830,7 @@ impl ToolRuntime {
             }
             Err(_) => {
                 let dispatch_state = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 if dispatch_state == Some(false) {

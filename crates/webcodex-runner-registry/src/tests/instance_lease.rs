@@ -2,29 +2,29 @@ use super::*;
 
 #[tokio::test]
 async fn lease_first_register_accepts_instance() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let view = register_with_instance(&registry, "oe", "inst-a").await;
     assert_eq!(view.agent_instance_id, "inst-a");
     assert!(view.connected);
     // The view/list path exposes the instance id.
-    let clients = registry.list_clients().await;
-    assert_eq!(clients[0].agent_instance_id, "inst-a");
+    let runners = registry.list_runners().await;
+    assert_eq!(runners[0].agent_instance_id, "inst-a");
 }
 
 #[tokio::test]
 async fn lease_same_instance_reregister_accepts() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Same client_id + same instance id is a reconnect/refresh: accepted.
     let _ = register_with_instance(&registry, "oe", "inst-a").await;
-    let view = registry.get_client_view("oe").await.unwrap();
+    let view = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-a");
     assert!(view.connected);
 }
 
 #[tokio::test]
 async fn lease_different_online_instance_rejected() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // A second process with the same client_id but a different instance
     // must be rejected while the first is online.
@@ -48,16 +48,18 @@ async fn lease_different_online_instance_rejected() {
         }))
         .await
         .unwrap_err();
-    assert!(err.contains("already online"), "error was: {err}");
-    assert!(err.contains("different instance"), "error was: {err}");
+    assert_eq!(
+        err, "agent client oe is already online with a different instance",
+        "rolling Runner recovery matches this historical error exactly"
+    );
     // The active instance is unchanged.
-    let view = registry.get_client_view("oe").await.unwrap();
+    let view = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-a");
 }
 
 #[tokio::test]
 async fn lease_stale_replaced_by_different_instance_accepts() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Age the first instance past the online window so it reads as stale.
     registry
@@ -65,14 +67,14 @@ async fn lease_stale_replaced_by_different_instance_accepts() {
         .await;
     // A different instance may now take over the lease.
     let _ = register_with_instance(&registry, "oe", "inst-b").await;
-    let view = registry.get_client_view("oe").await.unwrap();
+    let view = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-b");
     assert!(view.connected);
 }
 
 #[tokio::test]
 async fn lease_stale_instance_poll_rejected() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Replace with a newer instance after aging out.
     registry
@@ -105,7 +107,7 @@ async fn lease_stale_instance_poll_rejected() {
 
 #[tokio::test]
 async fn lease_stale_instance_result_rejected() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Enqueue a synchronous request and let instance A poll it (dispatched).
     let (request_id, mut rx) = registry
@@ -197,7 +199,7 @@ async fn lease_stale_instance_job_update_rejected() {
     // instance's late update is rejected, the new instance cannot inherit
     // or update the old instance's job, and the terminal state never
     // revives.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     let job = registry
         .start_job(
@@ -336,7 +338,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     // B's freshly-created job lost/recovering, and not change A's old job
     // which was already terminated to `lost` (`runner_instance_replaced`)
     // at replacement time. Only B's own disconnect reconciles B's job.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Install a notifier for instance A.
     let notify_a = Arc::new(Notify::new());
@@ -413,7 +415,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     // active, and A's old job keeps its first `ended_at`/reason.
     registry.reconcile_disconnect("oe", "inst-a").await;
 
-    let view = registry.get_client_view("oe").await.unwrap();
+    let view = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(view.agent_instance_id, "inst-b");
     assert!(view.connected, "stale disconnect must not drop B's lease");
 
@@ -480,7 +482,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
 
 #[tokio::test]
 async fn lease_register_notifier_rejects_stale_instance() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Replace A with B.
     registry
@@ -506,7 +508,7 @@ async fn lease_register_notifier_rejects_stale_instance() {
 
 #[tokio::test]
 async fn lease_register_rejects_empty_instance_id() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let err = registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -534,7 +536,7 @@ async fn lease_register_rejects_empty_instance_id() {
 
 #[tokio::test]
 async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let capabilities = || ShellClientCapabilities {
         jobs: true,
         async_jobs: true,

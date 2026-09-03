@@ -5,7 +5,7 @@ use super::reconciliation::{
 };
 use super::state::{PendingShellRequest, ShellJobVisibility};
 use super::{
-    clamp_grace, job_recovery_grace_secs, now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS,
+    clamp_grace, job_recovery_grace_secs, now_ts, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS,
     JOB_RECOVERY_GRACE_SECS, MAX_OUTPUT_BYTES,
 };
 use crate::shell_protocol::{
@@ -88,7 +88,7 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
     })
 }
 
-async fn register(registry: &ShellClientRegistry, instance: &str, inventory: ShellJobInventory) {
+async fn register(registry: &RunnerRegistry, instance: &str, inventory: ShellJobInventory) {
     registry
         .register(register_request(instance, inventory))
         .await
@@ -112,7 +112,7 @@ fn start_request(command: &str) -> ShellJobOpRequest {
 }
 
 async fn start_and_take_over(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     instance: &str,
 ) -> (
     crate::shell_protocol::ShellJobInfo,
@@ -224,7 +224,7 @@ fn update(
 
 #[tokio::test]
 async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_steps() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let steps = vec![
         ShellJobValidationStep {
@@ -327,7 +327,7 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
 
 #[tokio::test]
 async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_restart() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let step = ShellJobValidationStep {
         name: "test".to_string(),
@@ -401,7 +401,7 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
         .unwrap(),
     )
     .unwrap();
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(&registry_b, INSTANCE_A, inventory).await;
     let restored = registry_b.get_job(&job.job_id).await.unwrap();
     let restored_validation = restored.validation.expect("restored validation metadata");
@@ -416,7 +416,7 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
 
 #[tokio::test]
 async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry, INSTANCE_A).await;
     let mut snapshot = snapshot_from_request(&job, &request, "running", 2, stream("", 1, false));
@@ -449,12 +449,12 @@ async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
 
 #[tokio::test]
 async fn job_reconciliation_server_restart_restores_running_job_and_completion() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry_a, INSTANCE_A).await;
     let snapshot = snapshot_from_request(&job, &request, "running", 2, stream("one\n", 1, false));
 
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(
         &registry_b,
         INSTANCE_A,
@@ -504,7 +504,7 @@ async fn job_reconciliation_server_restart_restores_running_job_and_completion()
 #[tokio::test]
 async fn structured_process_reconciliation_restores_active_and_terminal_evidence_without_redispatch(
 ) {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let job = registry_a
         .start_job_with_metadata(
@@ -545,7 +545,7 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
 
     let running_snapshot =
         snapshot_from_request(&job, &request, "running", 2, stream("started\n", 1, false));
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(
         &registry_b,
         INSTANCE_A,
@@ -640,7 +640,7 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
         "terminal snapshot reconciliation must not enqueue a replacement process"
     );
 
-    let registry_c = ShellClientRegistry::default();
+    let registry_c = RunnerRegistry::default();
     register(
         &registry_c,
         INSTANCE_A,
@@ -710,7 +710,7 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
 
 #[tokio::test]
 async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_without_redispatch() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let script_body = "printf 'retained script output\\n'\n".to_string();
     let script_arg = "private structured script arg".to_string();
@@ -763,7 +763,7 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
     terminal_snapshot.stderr = stream("retained script stderr\n", 4, true);
     terminal_snapshot.command_execution_state = Some(ShellCommandExecutionState::Completed);
 
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(
         &registry_b,
         INSTANCE_A,
@@ -841,7 +841,7 @@ async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_wit
 
 #[tokio::test]
 async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_history() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let job = registry
         .start_job_with_metadata(
@@ -959,12 +959,12 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
         let inner = registry.inner.lock().await;
         assert!(inner.pending_by_id.is_empty());
         assert!(inner
-            .queues_by_client
+            .queues_by_runner
             .get(CLIENT_ID)
             .is_none_or(|queue| queue.is_empty()));
     }
 
-    let fresh_registry = ShellClientRegistry::default();
+    let fresh_registry = RunnerRegistry::default();
     register(
         &fresh_registry,
         INSTANCE_A,
@@ -1032,7 +1032,7 @@ async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_
 
 #[tokio::test]
 async fn projected_hidden_raw_shell_terminal_does_not_resurrect_on_same_instance_reconnect() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let job = registry
         .start_job_with_metadata(
@@ -1114,7 +1114,7 @@ async fn projected_hidden_raw_shell_terminal_does_not_resurrect_on_same_instance
     );
     assert!(registry.list_jobs(Some(10)).await.is_empty());
 
-    let fresh_registry = ShellClientRegistry::default();
+    let fresh_registry = RunnerRegistry::default();
     register(
         &fresh_registry,
         INSTANCE_A,
@@ -1131,7 +1131,7 @@ async fn projected_hidden_raw_shell_terminal_does_not_resurrect_on_same_instance
 
 #[tokio::test]
 async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let job = registry
         .start_job_with_metadata(
@@ -1172,7 +1172,7 @@ async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
     registry
         .set_last_seen_for_test(
             CLIENT_ID,
-            now_ts().saturating_sub(CLIENT_ONLINE_WINDOW_SECS + 1),
+            now_ts().saturating_sub(RUNNER_ONLINE_WINDOW_SECS + 1),
         )
         .await;
     register(&registry, INSTANCE_B, empty_inventory()).await;
@@ -1187,7 +1187,7 @@ async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
     assert!(!inner.jobs_by_id.contains_key(&job.job_id));
     assert!(!inner.request_to_job.contains_key(&request.request_id));
     assert!(inner
-        .clients
+        .runners
         .get(CLIENT_ID)
         .unwrap()
         .projected_structured_terminal_suppressions
@@ -1196,12 +1196,12 @@ async fn projected_hidden_terminal_removes_after_runner_instance_replacement() {
 
 #[tokio::test]
 async fn projected_structured_terminal_suppressions_are_bounded_and_expire() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let now = now_ts();
     {
         let mut inner = registry.inner.lock().await;
-        let client = inner.clients.get_mut(CLIENT_ID).unwrap();
+        let client = inner.runners.get_mut(CLIENT_ID).unwrap();
         for index in 0..=JOB_INVENTORY_MAX_TERMINAL_JOBS {
             client.remember_projected_structured_terminal(
                 format!("projected-job-{index}"),
@@ -1242,14 +1242,14 @@ async fn projected_structured_terminal_suppressions_are_bounded_and_expire() {
     recovery_timeout_sweep(&registry).await;
 
     let inner = registry.inner.lock().await;
-    assert!(inner.clients[CLIENT_ID]
+    assert!(inner.runners[CLIENT_ID]
         .projected_structured_terminal_suppressions
         .is_empty());
 }
 
 #[tokio::test]
 async fn terminal_observed_inventory_replay_is_idempotent() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry_a, INSTANCE_A).await;
     let mut snapshot = snapshot_from_request(
@@ -1271,7 +1271,7 @@ async fn terminal_observed_inventory_replay_is_idempotent() {
         jobs: vec![snapshot],
     };
 
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(&registry_b, INSTANCE_A, inventory.clone()).await;
     let first = registry_b.get_job(&job.job_id).await.unwrap();
     assert_eq!(first.status, "completed");
@@ -1355,7 +1355,7 @@ async fn terminal_observed_inventory_replay_is_idempotent() {
 
 #[tokio::test]
 async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry_a, INSTANCE_A).await;
     let mut snapshot = snapshot_from_request(
@@ -1372,7 +1372,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
         jobs: vec![snapshot],
     };
 
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     let before_register = now_ts();
     register(&registry_b, INSTANCE_A, inventory).await;
     let after_register = now_ts();
@@ -1406,7 +1406,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 request: request.clone(),
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
-                expected_client_owner: None,
+                expected_runner_owner: None,
                 expected_project_id: None,
                 expected_project_cwd: None,
                 expected_mcp_gateway_agent_instance_id: None,
@@ -1425,7 +1425,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 request: control_request,
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
-                expected_client_owner: None,
+                expected_runner_owner: None,
                 expected_project_id: None,
                 expected_project_cwd: None,
                 expected_mcp_gateway_agent_instance_id: None,
@@ -1436,7 +1436,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
             },
         );
         let queue = inner
-            .queues_by_client
+            .queues_by_runner
             .entry(CLIENT_ID.to_string())
             .or_default();
         queue.push_back(original_request_id.clone());
@@ -1465,14 +1465,14 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
     assert!(!inner.pending_by_id.contains_key(&original_request_id));
     assert!(!inner.pending_by_id.contains_key(&control_request_id));
     assert!(!inner.persistent_waiters.contains_key(&original_request_id));
-    assert!(inner.queues_by_client.get(CLIENT_ID).is_none_or(|queue| {
+    assert!(inner.queues_by_runner.get(CLIENT_ID).is_none_or(|queue| {
         !queue.contains(&original_request_id) && !queue.contains(&control_request_id)
     }));
 }
 
 #[tokio::test]
 async fn terminal_observed_completed_job_is_retained_then_pruned() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -1539,7 +1539,7 @@ async fn terminal_observed_completed_job_is_retained_then_pruned() {
 
 #[tokio::test]
 async fn terminal_observed_hidden_until_handoff_is_not_pruned_by_public_retention_sweep() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     {
@@ -1571,7 +1571,7 @@ async fn terminal_observed_hidden_until_handoff_is_not_pruned_by_public_retentio
 
 #[tokio::test]
 async fn terminal_observed_missing_internal_time_is_backfilled_before_prune() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -1626,7 +1626,7 @@ async fn terminal_observed_missing_internal_time_is_backfilled_before_prune() {
 
 #[tokio::test]
 async fn terminal_observed_sequenced_terminal_classes_are_recorded_once() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
 
     for status in [
@@ -1692,7 +1692,7 @@ async fn terminal_observed_sequenced_terminal_classes_are_recorded_once() {
 
 #[tokio::test]
 async fn job_reconciliation_same_instance_replaces_tail_without_duplicates() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -1823,13 +1823,13 @@ async fn job_reconciliation_same_instance_replaces_tail_without_duplicates() {
 
 #[tokio::test]
 async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register_streaming_session(
             register_request(INSTANCE_A, empty_inventory()),
             None,
             "connection-a",
-            super::AgentTransport::WebSocket,
+            super::RunnerTransport::WebSocket,
             std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await
@@ -1853,7 +1853,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
             ),
             None,
             "connection-b",
-            super::AgentTransport::WebSocket,
+            super::RunnerTransport::WebSocket,
             std::sync::Arc::new(tokio::sync::Notify::new()),
         )
         .await
@@ -1867,7 +1867,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
         "running"
     );
     assert!(registry
-        .get_client_view_for_connection(CLIENT_ID, INSTANCE_A, "connection-b")
+        .get_runner_view_for_connection(CLIENT_ID, INSTANCE_A, "connection-b")
         .await
         .is_some());
 
@@ -1882,7 +1882,7 @@ async fn job_reconciliation_same_instance_stale_connection_disconnect_is_noop() 
 
 #[tokio::test]
 async fn job_reconciliation_instance_replacement_fences_old_runner() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -1910,7 +1910,7 @@ async fn job_reconciliation_instance_replacement_fences_old_runner() {
         .contains("instance was replaced"));
     assert_eq!(
         registry
-            .get_client_view(CLIENT_ID)
+            .get_runner_view(CLIENT_ID)
             .await
             .unwrap()
             .pending_requests,
@@ -1920,7 +1920,7 @@ async fn job_reconciliation_instance_replacement_fences_old_runner() {
 
 #[tokio::test]
 async fn job_reconciliation_instance_replacement_does_not_redispatch_server_queue() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let queued = registry
         .start_job(start_request("echo must-not-run"), "tester".to_string())
@@ -1950,7 +1950,7 @@ async fn job_reconciliation_instance_replacement_does_not_redispatch_server_queu
 
 #[tokio::test]
 async fn job_reconciliation_complete_inventory_missing_marks_job_lost() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -1970,14 +1970,14 @@ async fn job_reconciliation_complete_inventory_missing_marks_job_lost() {
     assert!(inner.pending_by_id.is_empty());
     assert!(inner.request_to_job.is_empty());
     assert!(inner
-        .queues_by_client
+        .queues_by_runner
         .get(CLIENT_ID)
         .is_none_or(|queue| queue.is_empty()));
 }
 
 #[tokio::test]
 async fn job_reconciliation_recovery_deadline_and_unavailable_stop_are_explicit() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -2034,7 +2034,7 @@ async fn job_reconciliation_recovery_deadline_and_unavailable_stop_are_explicit(
 
 #[tokio::test]
 async fn job_reconciliation_stop_restored_job_targets_original_id() {
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry_a, INSTANCE_A).await;
     let snapshot = snapshot_from_request(
@@ -2044,7 +2044,7 @@ async fn job_reconciliation_stop_restored_job_targets_original_id() {
         4,
         ShellJobStreamSnapshot::default(),
     );
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     register(
         &registry_b,
         INSTANCE_A,
@@ -2116,7 +2116,7 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
 
 #[tokio::test]
 async fn fresh_server_reconstructs_agent_queued_job_with_same_identity() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let mut queued = standalone_snapshot("queued-across-server-restart", "agent_queued");
     queued.started_at = None;
     queued.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
@@ -2150,7 +2150,7 @@ async fn fresh_server_reconstructs_agent_queued_job_with_same_identity() {
 
 #[tokio::test]
 async fn reconciliation_summary_counts_inventory_effects_without_payload_data() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
 
     let first_inventory = ShellJobInventory {
@@ -2208,7 +2208,7 @@ async fn reconciliation_summary_counts_inventory_effects_without_payload_data() 
 
 #[tokio::test]
 async fn paged_project_registration_does_not_make_active_job_inventory_a_liveness_fence() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let mut snapshot = standalone_snapshot("paged-active-job", "running");
     snapshot.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
     let request = register_request(
@@ -2391,7 +2391,7 @@ fn job_reconciliation_inventory_validation_is_bounded_and_atomic() {
 
 #[tokio::test]
 async fn job_reconciliation_malformed_inventory_does_not_mutate_registry() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let duplicate = standalone_snapshot("duplicate-job", "running");
     let mut request = register_request(
         INSTANCE_A,
@@ -2402,7 +2402,7 @@ async fn job_reconciliation_malformed_inventory_does_not_mutate_registry() {
     );
     request.display_name = Some("must not be installed".to_string());
     assert!(registry.register(request).await.is_err());
-    assert!(registry.get_client_view(CLIENT_ID).await.is_none());
+    assert!(registry.get_runner_view(CLIENT_ID).await.is_none());
     assert!(registry.list_jobs(Some(10)).await.is_empty());
 
     register(&registry, INSTANCE_A, empty_inventory()).await;
@@ -2447,7 +2447,7 @@ async fn job_reconciliation_malformed_inventory_does_not_mutate_registry() {
 
 #[tokio::test]
 async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
-    let mismatch_registry = ShellClientRegistry::default();
+    let mismatch_registry = RunnerRegistry::default();
     let mut missing_inventory = register_request(INSTANCE_A, empty_inventory());
     missing_inventory.job_inventory = None;
     assert!(mismatch_registry
@@ -2463,7 +2463,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .await
         .unwrap_err()
         .contains("requires job_state_reconciliation"));
-    let downgrade_registry = ShellClientRegistry::default();
+    let downgrade_registry = RunnerRegistry::default();
     register(&downgrade_registry, INSTANCE_A, empty_inventory()).await;
     let mut downgraded = register_request(INSTANCE_A, empty_inventory());
     downgraded.capabilities =
@@ -2475,7 +2475,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
         .unwrap_err()
         .contains("cannot downgrade"));
 
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let mut request = register_request(INSTANCE_A, empty_inventory());
     request.capabilities =
         crate::test_support::current_runner_capabilities(ShellClientCapabilities {
@@ -2520,7 +2520,7 @@ async fn job_reconciliation_absent_capability_keeps_immediate_lost_semantics() {
 /// Drive the job for `instance` into `recovering` by disconnecting its
 /// transport, returning its job_id. Caller must have already started and
 /// polled the job so the runner "owns" it.
-async fn drive_into_recovering(registry: &ShellClientRegistry, job_id: &str, instance: &str) {
+async fn drive_into_recovering(registry: &RunnerRegistry, job_id: &str, instance: &str) {
     registry
         .update_job(update(instance, job_id, 1, "running", None, false))
         .await
@@ -2531,7 +2531,7 @@ async fn drive_into_recovering(registry: &ShellClientRegistry, job_id: &str, ins
 
 /// Set a job's `recovering_since` to `now - offset_secs`, simulating the
 /// passage of the recovery deadline without sleeping the full grace window.
-async fn age_recovering_since(registry: &ShellClientRegistry, job_id: &str, offset_secs: i64) {
+async fn age_recovering_since(registry: &RunnerRegistry, job_id: &str, offset_secs: i64) {
     let mut inner = registry.inner.lock().await;
     let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
     job.recovering_since = Some(now_ts() - offset_secs);
@@ -2548,7 +2548,7 @@ async fn clamp_grace_bounds_the_resolved_recovery_window() {
 
 #[tokio::test]
 async fn recovery_sweep_transitions_expired_recovering_job_to_lost() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2567,7 +2567,7 @@ async fn recovery_sweep_transitions_expired_recovering_job_to_lost() {
 
 #[tokio::test]
 async fn cleanup_pending_recovering_job_stays_tracked_until_lost_then_is_removed() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2607,7 +2607,7 @@ async fn cleanup_pending_recovering_job_stays_tracked_until_lost_then_is_removed
 
 #[tokio::test]
 async fn recovery_sweep_noop_before_deadline() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2625,7 +2625,7 @@ async fn recovery_sweep_noop_before_deadline() {
 
 #[tokio::test]
 async fn terminal_observed_recovery_sweep_is_idempotent() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2679,7 +2679,7 @@ async fn terminal_observed_recovery_sweep_is_idempotent() {
 
 #[tokio::test]
 async fn recovery_sweep_skips_terminal_and_already_lost_jobs() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     registry
@@ -2729,7 +2729,7 @@ async fn recovery_sweep_skips_terminal_and_already_lost_jobs() {
 
 #[tokio::test]
 async fn recovery_sweep_clears_pending_control_requests() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2740,14 +2740,14 @@ async fn recovery_sweep_clears_pending_control_requests() {
     assert!(inner.pending_by_id.is_empty(), "pending_by_id cleared");
     assert!(inner.request_to_job.is_empty(), "request_to_job cleared");
     assert!(inner
-        .queues_by_client
+        .queues_by_runner
         .get(CLIENT_ID)
         .is_none_or(|queue| queue.is_empty()));
 }
 
 #[tokio::test]
 async fn recovery_sweep_pass_cap_bounds_a_single_pass() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     // Start more expired recovering jobs than the per-pass cap.
     let count = RECOVERY_SWEEP_PASS_CAP + 6;
@@ -2815,7 +2815,7 @@ async fn recovery_sweep_pass_cap_bounds_a_single_pass() {
 
 #[tokio::test]
 async fn stale_keepalive_does_not_extend_recovery_deadline() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2835,7 +2835,7 @@ async fn stale_keepalive_does_not_extend_recovery_deadline() {
 
 #[tokio::test]
 async fn runner_reconnect_before_deadline_cancels_timeout() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2866,7 +2866,7 @@ async fn runner_reconnect_before_deadline_cancels_timeout() {
 
 #[tokio::test]
 async fn terminal_observed_late_update_after_timeout_is_idempotent() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
     drive_into_recovering(&registry, &job.job_id, INSTANCE_A).await;
@@ -2930,7 +2930,7 @@ async fn terminal_observed_late_update_after_timeout_is_idempotent() {
 async fn registry_rebuild_re_anchors_deadline_after_restart() {
     // Simulate a server restart: a fresh registry starts empty until the runner
     // reconnects and submits inventory, which re-anchors recovering_since.
-    let registry_a = ShellClientRegistry::default();
+    let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
     let (job, request) = start_and_take_over(&registry_a, INSTANCE_A).await;
     registry_a
@@ -2948,7 +2948,7 @@ async fn registry_rebuild_re_anchors_deadline_after_restart() {
 
     // "Restart": fresh registry; the recovering job is gone until the runner
     // reconnects and submits a running inventory snapshot.
-    let registry_b = ShellClientRegistry::default();
+    let registry_b = RunnerRegistry::default();
     let snapshot = snapshot_from_request(&job, &request, "running", 3, stream("one\n", 1, false));
     register(
         &registry_b,
@@ -2987,7 +2987,7 @@ async fn registry_rebuild_re_anchors_deadline_after_restart() {
 
 #[tokio::test]
 async fn sweep_only_transitions_expired_jobs_and_leaves_recent_recovering() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;
     // Two jobs: one aged past the deadline, one that just entered recovery.
     let (expired, _) = start_and_take_over(&registry, INSTANCE_A).await;

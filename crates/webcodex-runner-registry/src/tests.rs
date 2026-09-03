@@ -1,5 +1,5 @@
 use crate::capabilities::RunnerFeatureInference;
-use crate::projects::ShellClientLookupError;
+use crate::projects::RunnerLookupError;
 use crate::protocol::AcceptedRunnerProtocol;
 use crate::registry::{MAX_SHARED_KEY_RUNNERS_PER_GROUP, SHARED_KEY_OFFLINE_TTL_SECS};
 use crate::validation::{validate_file_request, validate_run_request, MAX_RUN_STDIN_BYTES};
@@ -7,8 +7,6 @@ use crate::*;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use webcodex_core::shell_protocol::*;
-
-type ShellClientRegistry = RunnerRegistry;
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> RunnerAccess {
     RunnerAccess {
@@ -128,8 +126,8 @@ fn file_request(op: &str) -> ShellFileOpRequest {
     }
 }
 
-async fn register_computer_test_client(
-    registry: &ShellClientRegistry,
+async fn register_computer_test_runner(
+    registry: &RunnerRegistry,
     client_id: &str,
     owner: &str,
     observe_capable: bool,
@@ -168,7 +166,7 @@ async fn register_computer_test_client(
         .unwrap();
 }
 
-async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str) {
+async fn register_quic_v1_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -190,13 +188,13 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
         .await
         .unwrap();
     registry
-        .set_transport(client_id, AgentTransport::Quic)
+        .set_transport(client_id, RunnerTransport::Quic)
         .await
         .unwrap();
 }
 
 async fn register_instance_with_capabilities(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
     capabilities: ShellClientCapabilities,
@@ -222,10 +220,10 @@ async fn register_instance_with_capabilities(
         .await
 }
 
-async fn assert_structured_delete_client_idle(registry: &ShellClientRegistry, client_id: &str) {
+async fn assert_structured_delete_runner_idle(registry: &RunnerRegistry, client_id: &str) {
     let inner = registry.inner.lock().await;
     assert!(inner
-        .queues_by_client
+        .queues_by_runner
         .get(client_id)
         .is_none_or(|queue| queue.is_empty()));
     assert!(inner
@@ -235,7 +233,7 @@ async fn assert_structured_delete_client_idle(registry: &ShellClientRegistry, cl
 }
 
 async fn register_with_instance(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
 ) -> ShellClientView {
@@ -263,13 +261,13 @@ async fn register_with_instance(
 
 #[test]
 fn runner_owner_access_projection_enforces_owner_boundary() {
-    use crate::access_control::assert_shell_client_owner;
+    use crate::access_control::assert_runner_owner;
 
     let bootstrap = auth_context(None, true);
-    assert!(assert_shell_client_owner(Some(&bootstrap), "client-1", None).is_ok());
+    assert!(assert_runner_owner(Some(&bootstrap), "client-1", None).is_ok());
 
     let alice = auth_context(Some("alice"), false);
-    assert!(assert_shell_client_owner(Some(&alice), "client-1", Some("alice")).is_ok());
+    assert!(assert_runner_owner(Some(&alice), "client-1", Some("alice")).is_ok());
 
     let non_bootstrap_admin = RunnerAccess {
         global_visibility: true,
@@ -278,18 +276,18 @@ fn runner_owner_access_projection_enforces_owner_boundary() {
         group: None,
     };
     let admin_mismatch =
-        assert_shell_client_owner(Some(&non_bootstrap_admin), "client-1", Some("bob")).unwrap_err();
+        assert_runner_owner(Some(&non_bootstrap_admin), "client-1", Some("bob")).unwrap_err();
     assert!(admin_mismatch.contains("owned by bob"));
     assert!(admin_mismatch.contains("belongs to alice"));
 
-    let mismatch = assert_shell_client_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
+    let mismatch = assert_runner_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
     assert!(mismatch.contains("owned by bob"));
     assert!(mismatch.contains("belongs to alice"));
 
-    let missing = assert_shell_client_owner(Some(&alice), "client-1", None).unwrap_err();
-    assert_eq!(missing, "agent client client-1 has no owner");
+    let missing = assert_runner_owner(Some(&alice), "client-1", None).unwrap_err();
+    assert_eq!(missing, "runner client-1 has no owner");
 
-    let anonymous = assert_shell_client_owner(None, "client-1", Some("anonymous")).unwrap_err();
+    let anonymous = assert_runner_owner(None, "client-1", Some("anonymous")).unwrap_err();
     assert!(anonymous.contains("belongs to anonymous"));
 }
 
@@ -305,8 +303,6 @@ mod apply_text_edit_occurrence;
 mod artifact_export;
 #[path = "tests/capabilities.rs"]
 mod capabilities;
-#[path = "tests/client_liveness.rs"]
-mod client_liveness;
 #[path = "tests/computer_accessibility.rs"]
 mod computer_accessibility;
 #[path = "tests/computer_control.rs"]
@@ -355,6 +351,8 @@ mod raw_shell;
 mod registration_projection;
 #[path = "tests/run_enqueue.rs"]
 mod run_enqueue;
+#[path = "tests/runner_liveness.rs"]
+mod runner_liveness;
 #[path = "tests/shared_key_limits.rs"]
 mod shared_key_limits;
 #[path = "tests/shared_key_ttl.rs"]

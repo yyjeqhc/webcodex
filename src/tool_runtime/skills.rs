@@ -1,7 +1,7 @@
 use super::project_resolution::ResolvedProject;
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::RunnerFeature;
+use crate::runner_http::RunnerFeature;
 use crate::shell_protocol::{ShellFileOpRequest, ShellRunResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -157,10 +157,10 @@ impl ToolRuntime {
         optional_if_unsupported: bool,
     ) -> Result<Option<ShellRunResponse>, String> {
         let client_id = project.config.client_id.clone();
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let view = self
-            .shell_clients
-            .get_client_semantic_view_checked_for_auth(&client_id, access.as_ref())
+            .runner_registry
+            .get_runner_semantic_view_checked_for_auth(&client_id, access.as_ref())
             .await
             .map_err(|_| "skill_store_runner_unavailable".to_string())?;
         let management = operation.requires_management_capability();
@@ -181,7 +181,7 @@ impl ToolRuntime {
         }
         let mutation = operation.is_mutation();
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_skill_store(
                 &client_id,
                 &view.view.agent_instance_id,
@@ -209,7 +209,7 @@ impl ToolRuntime {
             }),
             Err(_) => {
                 let dispatched = self
-                    .shell_clients
+                    .runner_registry
                     .cancel_request_dispatch_state(&request_id)
                     .await;
                 if mutation && dispatched != Some(false) {
@@ -1180,7 +1180,7 @@ impl ToolRuntime {
         let payload = json!({"limit": MAX_SKILL_DISCOVERY_PACKAGES + 1}).to_string();
         let wait_timeout = 20_u64;
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_skill_file_op(
                 ShellFileOpRequest {
                     op: "skill_list_packages".to_string(),
@@ -1208,7 +1208,7 @@ impl ToolRuntime {
             .map_err(|_| "skills_catalog_unavailable")?
             .map_err(|_| "skills_catalog_unavailable")?;
         if response.exit_code != Some(0) || response.error.is_some() {
-            self.shell_clients.cancel_request(&request_id).await;
+            self.runner_registry.cancel_request(&request_id).await;
             return Err("skills_catalog_unavailable");
         }
         let parsed: AgentSkillPackageList =
@@ -1250,7 +1250,7 @@ impl ToolRuntime {
         let wait_timeout = 20_u64;
         let end_line = start_line.saturating_add(limit).saturating_sub(1);
         let (request_id, rx) = self
-            .shell_clients
+            .runner_registry
             .enqueue_skill_file_op(
                 ShellFileOpRequest {
                     op: "skill_read_file".to_string(),
@@ -1276,7 +1276,7 @@ impl ToolRuntime {
         let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
             Ok(Ok(response)) => response,
             _ => {
-                self.shell_clients.cancel_request(&request_id).await;
+                self.runner_registry.cancel_request(&request_id).await;
                 return Err(SkillIoError::Unavailable);
             }
         };

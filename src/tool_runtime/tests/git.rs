@@ -457,7 +457,7 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
     assert_eq!(request.kind, "run_process");
 
     runtime
-        .shell_clients
+        .runner_registry
         .set_last_seen_for_test("restore-uncertain", chrono::Utc::now().timestamp() - 120)
         .await;
     register_agent_with_instance(
@@ -1964,7 +1964,7 @@ async fn git_diff_hunks_stable_multi_page_traversal_has_no_duplicate_or_missing_
 }
 
 #[tokio::test]
-async fn git_diff_hunks_large_raw_diff_is_bounded_before_agent_transport_capture() {
+async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_capture() {
     let repo = tempfile::tempdir().unwrap();
     init_git_repo(repo.path());
     let original = (0..2500)
@@ -3990,7 +3990,7 @@ async fn show_changes_accepts_unique_short_id() {
     assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
     let stdout = framed_clean_show_changes_test_stdout("head", false);
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "workstation".to_string(),
             agent_instance_id: "inst-workstation".to_string(),

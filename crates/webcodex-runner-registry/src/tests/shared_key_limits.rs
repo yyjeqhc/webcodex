@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn shared_key_runner_limit_is_per_group_and_reconnects_do_not_consume_capacity() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let shared_a = shared_key_access("shared-limit-a");
     let shared_b = shared_key_access("shared-limit-b");
 
@@ -50,12 +50,12 @@ async fn shared_key_runner_limit_is_per_group_and_reconnects_do_not_consume_capa
         )
     );
     assert!(registry
-        .get_client_view("shared-a-over-limit")
+        .get_runner_view("shared-a-over-limit")
         .await
         .is_none());
     assert_eq!(
         registry
-            .get_client_view_for_auth("shared-a-0", Some(&shared_a))
+            .get_runner_view_for_auth("shared-a-0", Some(&shared_a))
             .await
             .unwrap()
             .hostname
@@ -95,7 +95,7 @@ async fn shared_key_runner_limit_is_per_group_and_reconnects_do_not_consume_capa
 
 #[tokio::test]
 async fn shared_key_global_runner_limit_excludes_reconnects_and_managed_runners() {
-    let registry = ShellClientRegistry::with_shared_key_limits_for_test(
+    let registry = RunnerRegistry::with_shared_key_limits_for_test(
         MAX_SHARED_KEY_RUNNERS_PER_GROUP,
         3,
         SHARED_KEY_OFFLINE_TTL_SECS,

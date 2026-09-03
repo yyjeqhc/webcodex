@@ -440,7 +440,7 @@ async fn workspace_hygiene_check_does_not_mark_tracked_auth_source_names_critica
     for path in [
         "src/auth/tokens.rs",
         "src/auth/project_credential.rs",
-        "src/agent_tokens_http.rs",
+        "src/runner_tokens_http.rs",
     ] {
         let full = tmp.path().join(path);
         fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -474,7 +474,7 @@ async fn workspace_hygiene_check_does_not_mark_tracked_auth_source_names_critica
     for path in [
         "src/auth/tokens.rs",
         "src/auth/project_credential.rs",
-        "src/agent_tokens_http.rs",
+        "src/runner_tokens_http.rs",
     ] {
         assert!(
             findings.iter().all(|finding| finding["path"] != path),

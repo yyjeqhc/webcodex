@@ -77,7 +77,7 @@ fn enforce_register_owner_cases() {
             Ok(()),
         ),
         // Phase 3: user tokens (Phase 2 personal API tokens) are no longer
-        // allowed on agent transport endpoints. Only bootstrap or agent
+        // allowed on Runner transport endpoints. Only bootstrap or agent
         // tokens may register.
         (
             "user token is rejected",

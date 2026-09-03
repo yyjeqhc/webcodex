@@ -16,11 +16,7 @@ mod admin_http;
 mod admin_project_lifecycle;
 #[cfg(test)]
 mod agent_continuation_tests;
-mod agent_quic;
-mod agent_session;
-mod agent_tokens_http;
 mod agent_wake;
-mod agent_ws;
 mod audit_http;
 mod auth;
 mod client_window;
@@ -40,12 +36,16 @@ mod pairing_http;
 mod project_entry;
 mod projects;
 mod route_metadata;
+mod runner_http;
+mod runner_quic;
+mod runner_session;
+mod runner_tokens_http;
+mod runner_ws;
 mod runtime_console_http;
 mod runtime_http;
 mod server_instance;
 mod server_listener;
 mod server_shutdown;
-mod shell_client;
 mod startup;
 mod task_cli;
 #[cfg(test)]
@@ -76,10 +76,10 @@ pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
 pub use models::{ActionEventRecord, ActionSessionRecord};
 pub(crate) use openapi::openapi_json;
-pub(crate) use shell_client::{
-    shell_agent_job_update, shell_agent_persistent_shell_result, shell_agent_poll,
-    shell_agent_register, shell_agent_result, shell_file_op, shell_job, shell_job_log,
-    shell_job_status, shell_job_stop, shell_jobs_list, shell_run, ShellClientRegistry,
+pub(crate) use runner_http::{
+    runner_job_update, runner_persistent_shell_result, runner_poll, runner_register, runner_result,
+    shell_file_op, shell_job, shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list,
+    shell_run, RunnerRegistry,
 };
 pub use startup::{is_project_command, run_project_command, CliCommandOutput};
 
@@ -241,7 +241,7 @@ only for local/trusted-network demos."
     // login form to the consent decision. PAT/bootstrap plaintext is never
     // stored here — only the resolved user identity.
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
-    let shell_registry = Arc::new(shell_client::registry_with_tool_request_trace());
+    let runner_registry = Arc::new(runner_http::registry_with_tool_request_trace());
     // Root HTTP admission consults this process-local state before any
     // side-effecting handler can run. It closes the small race between the
     // authoritative drain transition and Salvo consuming its stop command.
@@ -259,7 +259,7 @@ only for local/trusted-network demos."
     ));
     let runtime_state_dir = config.runtime_state_dir();
     let mut tool_runtime_builder =
-        tool_runtime::ToolRuntime::new(shell_registry.clone(), runtime_info.clone())
+        tool_runtime::ToolRuntime::new(runner_registry.clone(), runtime_info.clone())
             .with_runtime_exposure(runtime_exposure)
             .with_memory_database(db.clone())
             .with_communication_database(db.clone())
@@ -294,7 +294,7 @@ only for local/trusted-network demos."
         );
     }
 
-    // Custom QUIC agent transport. Default disabled;
+    // Custom QUIC Runner transport. Default disabled;
     // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
     // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
     // the GPT Actions / Nginx path are completely unaffected. This is NOT
@@ -314,11 +314,11 @@ only for local/trusted-network demos."
         } else {
             let quic_config = config.clone();
             let quic_db = db.clone();
-            let quic_registry = shell_registry.clone();
+            let quic_registry = runner_registry.clone();
             let quic_cfg_task = quic_cfg.clone();
             let quic_status = runtime_info.quic.clone();
             tokio::spawn(async move {
-                if let Err(e) = agent_quic::run_quic_agent_listener(
+                if let Err(e) = runner_quic::run_runner_quic_listener(
                     quic_config,
                     Some(quic_db),
                     quic_registry,
@@ -334,7 +334,7 @@ only for local/trusted-network demos."
                 }
             });
             tracing::info!(
-                "Agent QUIC configured on UDP {} ALPN {}",
+                "Runner QUIC configured on UDP {} ALPN {}",
                 quic_cfg.listen,
                 quic_cfg.alpn
             );
@@ -508,19 +508,19 @@ only for local/trusted-network demos."
         // endpoints so a leaked agent token cannot mint more tokens.
         .push(
             Router::with_path(route_metadata::api_path(RouteId::AgentTokensCreate))
-                .post(agent_tokens_http::agent_tokens_create),
+                .post(runner_tokens_http::runner_tokens_create),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::AgentTokensRegisterHash))
-                .post(agent_tokens_http::agent_tokens_register_hash),
+                .post(runner_tokens_http::runner_tokens_register_hash),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::AgentTokensList))
-                .post(agent_tokens_http::agent_tokens_list),
+                .post(runner_tokens_http::runner_tokens_list),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::AgentTokensRevoke))
-                .post(agent_tokens_http::agent_tokens_revoke),
+                .post(runner_tokens_http::runner_tokens_revoke),
         )
         .push(Router::with_path(route_metadata::api_path(RouteId::ShellRun)).post(shell_run))
         .push(Router::with_path(route_metadata::api_path(RouteId::ShellFile)).post(shell_file_op))
@@ -541,32 +541,29 @@ only for local/trusted-network demos."
                 .post(shell_jobs_list),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellAgentRegister))
-                .post(shell_agent_register),
+            Router::with_path(route_metadata::api_path(RouteId::RunnerRegister))
+                .post(runner_register),
         )
+        .push(Router::with_path(route_metadata::api_path(RouteId::RunnerPoll)).post(runner_poll))
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellAgentPoll))
-                .post(shell_agent_poll),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellAgentResult))
-                .post(shell_agent_result),
+            Router::with_path(route_metadata::api_path(RouteId::RunnerResult)).post(runner_result),
         )
         .push(
             Router::with_path(route_metadata::api_path(
-                RouteId::ShellAgentPersistentShellResult,
+                RouteId::RunnerPersistentShellResult,
             ))
-            .post(shell_agent_persistent_shell_result),
+            .post(runner_persistent_shell_result),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellAgentJobUpdate))
-                .post(shell_agent_job_update),
+            Router::with_path(route_metadata::api_path(RouteId::RunnerJobUpdate))
+                .post(runner_job_update),
         )
-        // WebSocket agent transport (preferred long-lived connection).
+        // WebSocket Runner transport (preferred long-lived connection).
         // Polling endpoints above remain as fallback. Bearer auth is
         // enforced by the shared AuthMiddleware hoop.
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::AgentsWs)).get(agent_ws::agent_ws),
+            Router::with_path(route_metadata::api_path(RouteId::RunnerWs))
+                .get(runner_ws::runner_ws),
         );
 
     let api_router = Router::with_path("api")
@@ -651,7 +648,7 @@ only for local/trusted-network demos."
         // waits are <= ~122s and MCP dispatch is hard-bounded at 150s — so it
         // only fires on a genuinely unbounded hang, converting a permanently
         // silent request into an explicit 503. Long-lived work is unaffected:
-        // agent polling replies immediately and WebSocket connections live in
+        // Runner polling replies immediately and WebSocket connections live in
         // a task spawned after the (fast) upgrade handshake completes.
         .hoop(salvo::timeout::Timeout::new(
             std::time::Duration::from_secs(REQUEST_HARD_TIMEOUT_SECS),
@@ -659,7 +656,7 @@ only for local/trusted-network demos."
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
         .hoop(affix_state::inject(authorize_session_store.clone()))
-        .hoop(affix_state::inject(shell_registry.clone()))
+        .hoop(affix_state::inject(runner_registry.clone()))
         .hoop(affix_state::inject(tool_runtime.clone()))
         .hoop(affix_state::inject(connector_runtime.clone()))
         .hoop(affix_state::inject(console_asset_source))
@@ -767,8 +764,8 @@ only for local/trusted-network demos."
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("MCP App console: {}/console", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
-    tracing::info!("Agent WebSocket: {}/api/agents/ws", base);
-    tracing::info!("Agent polling (fallback): {}/api/shell/agent/poll", base);
+    tracing::info!("Runner WebSocket: {}/api/agents/ws", base);
+    tracing::info!("Runner polling (fallback): {}/api/shell/agent/poll", base);
     tracing::info!("Audit API (read-only): {}/api/audit/sessions", base);
     // Periodic recovery-timeout sweep for disconnected reconciliation-capable
     // runners. A job whose runner disconnected enters `recovering`; if that
@@ -779,10 +776,10 @@ only for local/trusted-network demos."
     // dies with the process. A server restart resets the in-memory registry;
     // the deadline is re-anchored only when a runner reconnects and submits its
     // inventory. See docs/RUNNER.md (reconnect and recovery).
-    let sweep_registry = shell_registry.clone();
+    let sweep_registry = runner_registry.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-            shell_client::RECOVERY_SWEEP_INTERVAL_SECS,
+            runner_http::RECOVERY_SWEEP_INTERVAL_SECS,
         ));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the first (immediate) tick so a sweep does not race startup
@@ -790,7 +787,7 @@ only for local/trusted-network demos."
         interval.tick().await;
         loop {
             interval.tick().await;
-            shell_client::recovery_timeout_sweep(&sweep_registry).await;
+            runner_http::recovery_timeout_sweep(&sweep_registry).await;
         }
     });
     server_shutdown::serve_until_termination(

@@ -14,7 +14,7 @@ pub(crate) struct ProjectCredentialVerifier {
 
 /// Exact verifier for the private Agent Token generated for one project entry.
 /// Unlike the Connector credential, this context is an Agent Token bound to
-/// one client id and is therefore valid only on Agent transport routes.
+/// one client id and is therefore valid only on Runner transport routes.
 #[derive(Clone)]
 pub(crate) struct ProjectAgentTokenVerifier {
     grant_id: String,

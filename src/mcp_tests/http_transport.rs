@@ -86,9 +86,9 @@ async fn stateless_2026_tool_call(
     .await
 }
 
-async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::ShellClientRegistry> {
-    let shell_clients = Arc::new(crate::shell_client::ShellClientRegistry::default());
-    shell_clients
+async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::RunnerRegistry> {
+    let runner_registry = Arc::new(crate::runner_http::RunnerRegistry::default());
+    runner_registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -111,7 +111,7 @@ async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::Shell
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &shell_clients,
+        &runner_registry,
         "mcp-observation-agent",
         "inst-mcp-observation",
         vec![
@@ -152,11 +152,11 @@ async fn stateless_observation_shell_clients() -> Arc<crate::shell_client::Shell
         ],
     )
     .await;
-    shell_clients
+    runner_registry
 }
 
 fn spawn_stateless_observation_agent_executor(
-    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    registry: Arc<crate::runner_http::RunnerRegistry>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -1595,14 +1595,14 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     let (_tmp, db) = test_db();
     let ledger_dir = tempfile::tempdir().unwrap();
     let ledger = ledger_dir.path().join("sessions.json");
-    let shell_clients = stateless_observation_shell_clients().await;
-    let agent_executor = spawn_stateless_observation_agent_executor(shell_clients.clone());
+    let runner_registry = stateless_observation_runner_registry().await;
+    let agent_executor = spawn_stateless_observation_agent_executor(runner_registry.clone());
     let shared_project =
         crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "shared");
     let foreign_project =
         crate::tool_runtime::agent_project_runtime_id("mcp-observation-agent", "foreign");
     let runtime = Arc::new(
-        ToolRuntime::new_for_tests_with_shell_clients(shell_clients.clone())
+        ToolRuntime::new_for_tests_with_runner_registry(runner_registry.clone())
             .with_session_ledger(&ledger)
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );
@@ -1931,7 +1931,7 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     drop(service);
     drop(runtime);
     let restored_runtime = Arc::new(
-        ToolRuntime::new_for_tests_with_shell_clients(shell_clients)
+        ToolRuntime::new_for_tests_with_runner_registry(runner_registry)
             .with_session_ledger(&ledger)
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );

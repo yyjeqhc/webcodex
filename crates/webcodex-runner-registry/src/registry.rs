@@ -1,11 +1,11 @@
-use crate::state::ShellClientRegistryInner;
+use crate::state::RunnerRegistryInner;
 use crate::{NoopRunnerRegistryTelemetry, RunnerAccess, RunnerRegistryTelemetry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tokio::sync::Mutex;
 
 pub(crate) const MAX_OUTPUT_BYTES: usize = 256 * 1024;
-pub const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
+pub const RUNNER_ONLINE_WINDOW_SECS: i64 = 60;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_PER_GROUP: usize = 16;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_GLOBAL: usize = 1024;
 pub(crate) const SHARED_KEY_OFFLINE_TTL_SECS: i64 = 24 * 60 * 60;
@@ -15,21 +15,21 @@ pub const JOB_RECOVERY_GRACE_SECS: i64 = 120;
 pub const JOB_RECOVERY_GRACE_MIN_SECS: i64 = 5;
 pub const JOB_RECOVERY_GRACE_MAX_SECS: i64 = 3600;
 pub const RECOVERY_SWEEP_INTERVAL_SECS: u64 = 30;
-pub(crate) const MAX_RETIRED_INSTANCES_PER_CLIENT: usize = 16;
-pub(crate) const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
+pub(crate) const MAX_RETIRED_INSTANCES_PER_RUNNER: usize = 16;
+pub(crate) const MAX_QUEUED_REQUESTS_PER_RUNNER: usize = 256;
 
 pub const TRANSPORT_POLLING: &str = "polling";
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 pub const TRANSPORT_QUIC: &str = "quic";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentTransport {
+pub enum RunnerTransport {
     Polling,
     WebSocket,
     Quic,
 }
 
-impl AgentTransport {
+impl RunnerTransport {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Polling => TRANSPORT_POLLING,
@@ -58,7 +58,7 @@ impl Default for SharedKeyRegistrationLimits {
 
 #[derive(Debug, Clone)]
 pub struct RunnerRegistry {
-    pub(crate) inner: Arc<Mutex<ShellClientRegistryInner>>,
+    pub(crate) inner: Arc<Mutex<RunnerRegistryInner>>,
     pub(crate) observation_epoch: Arc<str>,
     pub(crate) shared_key_limits: SharedKeyRegistrationLimits,
     pub(crate) telemetry: Arc<dyn RunnerRegistryTelemetry>,
@@ -74,7 +74,7 @@ impl Default for RunnerRegistry {
 impl RunnerRegistry {
     pub fn with_telemetry(telemetry: Arc<dyn RunnerRegistryTelemetry>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(ShellClientRegistryInner::default())),
+            inner: Arc::new(Mutex::new(RunnerRegistryInner::default())),
             observation_epoch: Arc::from(uuid::Uuid::new_v4().to_string()),
             shared_key_limits: SharedKeyRegistrationLimits::default(),
             telemetry,

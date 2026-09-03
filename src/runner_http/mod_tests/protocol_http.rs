@@ -5,12 +5,12 @@ async fn polling_http_register_requires_generation() {
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
 
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let service = Service::new(
         Router::new()
             .hoop(affix_state::inject(registry.clone()))
             .hoop(affix_state::inject(auth_context(None, true)))
-            .push(Router::with_path("api/shell/agent/register").post(shell_agent_register)),
+            .push(Router::with_path("api/shell/agent/register").post(runner_register)),
     );
     let mut response = TestClient::post("http://localhost/api/shell/agent/register")
         .json(&json!({
@@ -32,7 +32,7 @@ async fn polling_http_register_requires_generation() {
             .is_some_and(|error| error.contains("agent_protocol_generation")),
         "{body:?}"
     );
-    assert!(registry.list_clients().await.is_empty());
+    assert!(registry.list_runners().await.is_empty());
 }
 
 #[tokio::test]
@@ -40,12 +40,12 @@ async fn polling_http_register_accepts_generation_two() {
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
 
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let service = Service::new(
         Router::new()
             .hoop(affix_state::inject(registry.clone()))
             .hoop(affix_state::inject(auth_context(None, true)))
-            .push(Router::with_path("api/shell/agent/register").post(shell_agent_register)),
+            .push(Router::with_path("api/shell/agent/register").post(runner_register)),
     );
     let mut response = TestClient::post("http://localhost/api/shell/agent/register")
         .json(&json!({
@@ -63,7 +63,7 @@ async fn polling_http_register_accepts_generation_two() {
     let body: serde_json::Value = response.take_json().await.unwrap();
     assert_eq!(body["success"], true);
     let view = registry
-        .get_client_view("polling-generation-two")
+        .get_runner_view("polling-generation-two")
         .await
         .unwrap();
     assert_eq!(view.agent_protocol_generation, AGENT_PROTOCOL_GENERATION_V2);

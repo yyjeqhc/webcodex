@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn abandoned_sync_cleanup_removes_only_closed_waiters() {
-    let registry = ShellClientRegistry::default();
-    register_quic_v1_client(&registry, "oe").await;
+    let registry = RunnerRegistry::default();
+    register_quic_v1_runner(&registry, "oe").await;
     let (abandoned_id, abandoned_rx) = registry
         .enqueue_file_op(file_request("read"), "tester".to_string())
         .await
@@ -17,7 +17,7 @@ async fn abandoned_sync_cleanup_removes_only_closed_waiters() {
     assert_eq!(registry.cancel_abandoned_sync_requests().await, 1);
     assert_eq!(
         registry
-            .get_client_view("oe")
+            .get_runner_view("oe")
             .await
             .unwrap()
             .pending_requests,

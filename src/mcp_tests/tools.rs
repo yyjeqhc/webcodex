@@ -1,7 +1,7 @@
 use super::*;
 
 async fn wait_for_mcp_agent_request(
-    registry: &crate::shell_client::ShellClientRegistry,
+    registry: &crate::runner_http::RunnerRegistry,
     client_id: &str,
     agent_instance_id: &str,
     label: &str,
@@ -1267,7 +1267,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
     let agent_instance_id = "inst-mcp-vision";
     let project_name = "remote-images";
     runtime
-        .shell_clients
+        .runner_registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
@@ -1293,7 +1293,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         agent_instance_id,
         vec![ShellAgentProjectSummary {
@@ -1354,7 +1354,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
     });
 
     let request = wait_for_mcp_agent_request(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         agent_instance_id,
         "MCP image call",
@@ -1390,7 +1390,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
     .to_string();
     assert!(stdout.len() > 256 * 1024);
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: client_id.to_string(),
             agent_instance_id: agent_instance_id.to_string(),
@@ -2046,7 +2046,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
 
     let runtime = test_runtime();
     runtime
-        .shell_clients
+        .runner_registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -2074,7 +2074,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         "mcp-client",
         "inst",
         vec![ShellAgentProjectSummary {
@@ -2140,7 +2140,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
     );
     let complete = async {
         let req = wait_for_mcp_agent_request(
-            &runtime.shell_clients,
+            &runtime.runner_registry,
             "mcp-client",
             "inst",
             "show_changes",
@@ -2148,7 +2148,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
         .await;
         let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout("test head", false);
         runtime
-            .shell_clients
+            .runner_registry
             .complete(ShellAgentResultRequest {
                 client_id: "mcp-client".to_string(),
                 agent_instance_id: "inst".to_string(),

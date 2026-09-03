@@ -286,7 +286,7 @@ async fn call_kernel_with_fake_operator_store(
                     other => panic!("unexpected operator Skill request in read fixture: {other:?}"),
                 };
                 runtime
-                    .shell_clients
+                    .runner_registry
                     .complete(ShellAgentResultRequest {
                         client_id: client_id.to_string(),
                         agent_instance_id: "inst".to_string(),

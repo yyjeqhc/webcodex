@@ -90,8 +90,8 @@ pub(crate) fn requested_by_from_auth(auth: Option<&crate::auth::AuthContext>) ->
 ///   accepted;
 /// - when an agent token authenticates and `owner` is `Some("bob")`, it is
 ///   rejected (agents may not claim another owner);
-/// - a user token (Phase 2 personal API token) is rejected from agent transport
-///   registration. Only bootstrap or agent tokens may use agent transport
+/// - a user token (Phase 2 personal API token) is rejected from Runner transport
+///   registration. Only bootstrap or agent tokens may use Runner transport
 ///   endpoints.
 pub(crate) fn enforce_register_owner(
     auth: Option<&crate::auth::AuthContext>,
@@ -140,8 +140,8 @@ pub(crate) fn enforce_register_owner(
         return Ok(());
     }
     // Phase 2 user tokens and every other identity kind are rejected from
-    // agent transport endpoints.
-    Err("user tokens are not allowed on agent transport endpoints".to_string())
+    // Runner transport endpoints.
+    Err("user tokens are not allowed on Runner transport endpoints".to_string())
 }
 
 /// Resolve the effective owner for an agent register request. When the caller
@@ -166,7 +166,7 @@ pub(crate) fn effective_register_owner(
     owner.filter(|o| !o.trim().is_empty()).map(str::to_string)
 }
 
-/// Enforce the agent transport boundary for poll/result/job_update endpoints.
+/// Enforce the Runner transport boundary for poll/result/job_update endpoints.
 /// These endpoints accept bootstrap, direct shared keys, or agent tokens. An
 /// agent token must be bound to the request's `client_id`; shared keys are
 /// subsequently bound by the registry's `RunnerAccessGroup` check.
@@ -175,7 +175,7 @@ pub(crate) fn effective_register_owner(
 /// endpoint. Poll/result/job_update do not carry an owner field; the registry
 /// already knows the owner from registration, so we only need to verify the
 /// client_id matches the token's `allowed_client_id`.
-pub(crate) fn enforce_agent_transport(
+pub(crate) fn enforce_runner_transport(
     auth: Option<&crate::auth::AuthContext>,
     client_id: &str,
 ) -> Result<(), String> {
@@ -197,14 +197,14 @@ pub(crate) fn enforce_agent_transport(
             )),
         }
     } else {
-        Err("user tokens are not allowed on agent transport endpoints".to_string())
+        Err("user tokens are not allowed on Runner transport endpoints".to_string())
     }
 }
 
-/// Require the caller to hold `scope`. Used by agent transport endpoints to
+/// Require the caller to hold `scope`. Used by Runner transport endpoints to
 /// check `agent:register` / `agent:poll` / `agent:result` / `agent:job_update`.
 /// Bootstrap is always treated as holding every scope.
-pub(crate) fn require_agent_transport_scope(
+pub(crate) fn require_runner_transport_scope(
     auth: Option<&crate::auth::AuthContext>,
     scope: &str,
 ) -> Result<(), String> {

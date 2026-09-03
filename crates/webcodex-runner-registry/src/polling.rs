@@ -60,28 +60,28 @@ impl RunnerRegistry {
         validate_agent_instance_id(&body.agent_instance_id)?;
         let mut inner = self.inner.lock().await;
         {
-            let Some(client) = inner.clients.get_mut(&body.client_id) else {
+            let Some(runner) = inner.runners.get_mut(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
-            if client.agent_instance_id != body.agent_instance_id {
+            if runner.agent_instance_id != body.agent_instance_id {
                 return Err(format!(
-                    "agent client {} is no longer the active instance (stale or replaced)",
+                    "runner {} is no longer the active instance (stale or replaced)",
                     body.client_id
                 ));
             }
             if let Some(expected) = expected_connection_id {
-                if client.connection_id.as_deref() != Some(expected) {
+                if runner.connection_id.as_deref() != Some(expected) {
                     return Err(format!(
-                        "agent client {} transport connection is no longer active",
+                        "runner {} transport connection is no longer active",
                         body.client_id
                     ));
                 }
             }
-            client.last_seen = now_ts();
+            runner.last_seen = now_ts();
         }
         loop {
             let request_id = {
-                let Some(queue) = inner.queues_by_client.get_mut(&body.client_id) else {
+                let Some(queue) = inner.queues_by_runner.get_mut(&body.client_id) else {
                     return Ok(None);
                 };
                 queue.pop_front()
@@ -112,21 +112,21 @@ impl RunnerRegistry {
                                     .to_string(),
                             ));
                             }
-                            let Some(client) = inner.clients.get(&body.client_id) else {
+                            let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some((
                                     "stale_runner",
                                     "stale_mcp_gateway: target Runner disappeared before dispatch"
                                         .to_string(),
                                 ));
                             };
-                            if client.agent_instance_id != expected_runner {
+                            if runner.agent_instance_id != expected_runner {
                                 return Some((
                                     "stale_runner",
                                     "stale_mcp_gateway: target Runner changed before dispatch"
                                         .to_string(),
                                 ));
                             }
-                            let provider_is_current = client
+                            let provider_is_current = runner
                                 .policy
                                 .as_ref()
                                 .and_then(|policy| policy.mcp_gateway_providers.as_ref())
@@ -190,13 +190,13 @@ impl RunnerRegistry {
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (pending.request.kind.as_str(), pending.skill_store_fence.as_ref()) {
                         ("skill_store", Some(fence)) => {
-                            let Some(client) = inner.clients.get(&body.client_id) else {
+                            let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some(
                                     "stale_runner: Skill store target Runner disappeared before dispatch"
                                         .to_string(),
                                 );
                             };
-                            if client.agent_instance_id != fence.agent_instance_id {
+                            if runner.agent_instance_id != fence.agent_instance_id {
                                 return Some(
                                     "stale_runner: Skill store target Runner changed before dispatch"
                                         .to_string(),
@@ -207,7 +207,7 @@ impl RunnerRegistry {
                             } else {
                                 RunnerFeature::SkillStoreRead
                             };
-                            (!client.runner_features.supports(required)).then(|| {
+                            (!runner.runner_features.supports(required)).then(|| {
                                 format!(
                                     "skill_store_capability_unavailable: exact Runner no longer advertises {} before dispatch",
                                     required.as_wire_name()
@@ -259,19 +259,19 @@ impl RunnerRegistry {
                             "CodingAgentRun exact dispatch fence is missing".to_string(),
                         ));
                     };
-                    let Some(client) = inner.clients.get(&body.client_id) else {
+                    let Some(runner) = inner.runners.get(&body.client_id) else {
                         return Some((
                             "stale_runner",
                             "CodingAgentRun target Runner disappeared before dispatch".to_string(),
                         ));
                     };
-                    if client.agent_instance_id != fence.agent_instance_id {
+                    if runner.agent_instance_id != fence.agent_instance_id {
                         return Some((
                             "stale_runner",
                             "CodingAgentRun target Runner changed before dispatch".to_string(),
                         ));
                     }
-                    if !client.coding_agent_providers.iter().any(|provider| {
+                    if !runner.coding_agent_providers.iter().any(|provider| {
                         provider.provider_id == fence.provider_id
                             && provider.provider_instance_id == fence.provider_instance_id
                     }) {
@@ -304,20 +304,20 @@ impl RunnerRegistry {
                     pending.expected_project_id.as_deref(),
                     pending.expected_project_cwd.as_deref(),
                 ) {
-                    (Some(project_id), Some(project_cwd)) => match inner.clients.get(&body.client_id) {
-                        Some(client) if client.owner != pending.expected_client_owner => Some(
+                    (Some(project_id), Some(project_cwd)) => match inner.runners.get(&body.client_id) {
+                        Some(runner) if runner.owner != pending.expected_runner_owner => Some(
                             "stale_authority: target Runner owner changed before dispatch".to_string(),
                         ),
-                        Some(client)
-                            if !client.runner_features.supports(RunnerFeature::FileWrite) =>
+                        Some(runner)
+                            if !runner.runner_features.supports(RunnerFeature::FileWrite) =>
                         {
                             Some(
                             "stale_authority: target Runner no longer advertises file_write before dispatch"
                                 .to_string(),
                             )
                         }
-                        Some(client)
-                            if client.projects.iter().any(|project| {
+                        Some(runner)
+                            if runner.projects.iter().any(|project| {
                                 !project.disabled
                                     && project.id == project_id
                                     && project.path == project_cwd
@@ -430,12 +430,12 @@ impl RunnerRegistry {
         // appear online.
         if expected_connection_id.is_none()
             || inner
-                .clients
+                .runners
                 .get(&body.client_id)
-                .is_some_and(|client| client.connection_id.as_deref() == expected_connection_id)
+                .is_some_and(|runner| runner.connection_id.as_deref() == expected_connection_id)
         {
-            if let Some(client) = inner.clients.get_mut(&body.client_id) {
-                client.last_seen = now_ts();
+            if let Some(runner) = inner.runners.get_mut(&body.client_id) {
+                runner.last_seen = now_ts();
             }
         }
         let Some(pending) = inner.pending_by_id.get(&body.request_id) else {
@@ -641,12 +641,12 @@ impl RunnerRegistry {
         assert_active_instance_locked(&inner, &body.client_id, &body.agent_instance_id)?;
         if expected_connection_id.is_none()
             || inner
-                .clients
+                .runners
                 .get(&body.client_id)
-                .is_some_and(|client| client.connection_id.as_deref() == expected_connection_id)
+                .is_some_and(|runner| runner.connection_id.as_deref() == expected_connection_id)
         {
-            if let Some(client) = inner.clients.get_mut(&body.client_id) {
-                client.last_seen = now_ts();
+            if let Some(runner) = inner.runners.get_mut(&body.client_id) {
+                runner.last_seen = now_ts();
             }
         }
         let Some(pending) = inner.pending_by_id.get(&body.request_id) else {

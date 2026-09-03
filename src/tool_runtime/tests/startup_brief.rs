@@ -1,6 +1,6 @@
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
-use crate::shell_client::ShellJobStartMetadata;
+use crate::runner_http::ShellJobStartMetadata;
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellClientCapabilities, ShellJobOpRequest,
 };
@@ -57,7 +57,7 @@ async fn start(
             "coding workflow did not finish within the 10-second test deadline"
         );
         if let Some(req) = runtime
-            .shell_clients
+            .runner_registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
@@ -949,7 +949,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     let project_a = crate::tool_runtime::agent_project_runtime_id("startup-jobs", "a");
     let project_b = crate::tool_runtime::agent_project_runtime_id("startup-jobs", "b");
     let job = runtime
-        .shell_clients
+        .runner_registry
         .start_job_with_metadata(
             ShellJobOpRequest {
                 op: "start".to_string(),
@@ -976,7 +976,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     let start_request = wait_for_agent_request_for_instance(&runtime, "startup-jobs", "inst").await;
     assert_eq!(start_request.kind, "start_job");
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(ShellAgentJobUpdateRequest {
             client_id: "startup-jobs".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1071,7 +1071,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     assert_eq!(other_project.output["startup_verdict"]["blocking"], false);
 
     let stopped = runtime
-        .shell_clients
+        .runner_registry
         .stop_job(&job.job_id, "startup-test".to_string())
         .await
         .unwrap();
@@ -1114,7 +1114,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     );
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(ShellAgentJobUpdateRequest {
             client_id: "startup-jobs".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1138,7 +1138,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
         .unwrap();
     assert_eq!(
         runtime
-            .shell_clients
+            .runner_registry
             .get_job(&job.job_id)
             .await
             .unwrap()
@@ -1176,7 +1176,7 @@ async fn startup_runner_health_uses_the_exact_project_client() {
     )
     .await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("startup-target", "inst")
         .await;
 
@@ -1244,7 +1244,7 @@ async fn startup_runner_health_uses_the_exact_project_client() {
     )
     .await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect("startup-peer", "inst")
         .await;
     let available = start(

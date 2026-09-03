@@ -518,7 +518,7 @@ async fn cargo_test_agent_timeout_is_not_validation_failed() {
     let req = wait_for_patch_agent_request(&runtime, "cargo-timeout").await;
     assert_eq!(req.command, "cargo test 'slow'");
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "cargo-timeout".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -709,8 +709,8 @@ async fn register_project_crosses_historical_64_threshold_and_is_immediately_res
         "authoritative projection should commit: {result:?}"
     );
     let projects = runtime
-        .shell_clients
-        .list_client_projects(client_id)
+        .runner_registry
+        .list_runner_projects(client_id)
         .await
         .unwrap();
     assert_eq!(projects.len(), 65);
@@ -810,8 +810,8 @@ async fn register_project_projection_failure_returns_reconcile_required_without_
     );
     assert!(
         runtime
-            .shell_clients
-            .list_client_projects(client_id)
+            .runner_registry
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .is_empty(),
@@ -937,8 +937,8 @@ async fn dispatch_unregister_project_removes_server_inventory_after_terminal_run
     assert_eq!(result.output["outcome"], "unregistered");
     assert_eq!(result.output["changed"], true);
     let client = runtime
-        .shell_clients
-        .get_client_view(client_id)
+        .runner_registry
+        .get_runner_view(client_id)
         .await
         .expect("Runner should remain registered");
     assert!(

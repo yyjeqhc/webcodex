@@ -1,4 +1,4 @@
-use super::{AgentTransport, RunnerFeature, RunnerFeatureSet};
+use super::{RunnerFeature, RunnerFeatureSet, RunnerTransport};
 use crate::protocol::AcceptedRunnerProtocol;
 use crate::RunnerAccessGroup;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -43,9 +43,9 @@ pub(super) struct ProjectInventoryState {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ShellClientRecord {
+pub(super) struct RunnerRecord {
     pub(super) client_id: String,
-    /// Active agent process identity (UUID). Replacing this value is the lease
+    /// Active Runner process identity (UUID). Replacing this value is the lease
     /// hand-off: once changed, the previous instance can no longer poll or
     /// submit results/job_updates.
     pub(super) agent_instance_id: String,
@@ -68,15 +68,15 @@ pub(super) struct ShellClientRecord {
     pub(super) accepted_protocol: AcceptedRunnerProtocol,
     /// Authoritative transport from the concrete ingress path. External
     /// projections serialize this typed state as `polling`, `websocket`, or `quic`.
-    pub(super) transport: AgentTransport,
-    /// Sanitized agent policy summary reported at registration. `None` for
-    /// older agents that did not report a policy. Exposed in
+    pub(super) transport: RunnerTransport,
+    /// Sanitized Runner policy summary reported at registration. `None` for
+    /// older Runners that did not report a policy. Exposed in
     /// `runtime_status` / `list_runners`; never carries token/env/init_script.
     pub(super) policy: Option<AgentPolicySummary>,
     /// Lightweight quick-start isolation group captured at registration. This
     /// is intentionally not exposed in `ShellClientView`.
     pub(super) auth_group: Option<RunnerAccessGroup>,
-    /// When the current agent instance first registered under this client_id.
+    /// When the current Runner instance first registered under this client_id.
     /// Preserved across same-instance re-registrations (transport reconnects).
     pub(super) registered_at: i64,
     /// When the current transport connection was established (latest register
@@ -116,12 +116,12 @@ pub(super) struct ShellClientRecord {
 /// feature decisions use the canonical set cloned from the same registry lock.
 /// This type is never serialized or exposed through the wire protocol.
 #[derive(Debug, Clone)]
-pub struct ShellClientSemanticView {
+pub struct RunnerSemanticView {
     pub view: ShellClientView,
     pub(super) runner_features: RunnerFeatureSet,
 }
 
-impl ShellClientSemanticView {
+impl RunnerSemanticView {
     pub fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
     }
@@ -145,7 +145,7 @@ pub(super) struct ProjectedStructuredTerminalSuppression {
     pub(super) expires_at: i64,
 }
 
-impl ShellClientRecord {
+impl RunnerRecord {
     pub(super) fn prune_projected_structured_terminal_suppressions(&mut self, now: i64) {
         self.projected_structured_terminal_suppressions
             .retain(|suppression| suppression.expires_at > now);
@@ -212,7 +212,7 @@ pub(super) struct PendingShellRequest {
     /// Optional Control-side project-placement fence for synchronous requests
     /// whose filesystem authority must still match the active registration at
     /// the instant the request is handed to the Runner.
-    pub(super) expected_client_owner: Option<String>,
+    pub(super) expected_runner_owner: Option<String>,
     pub(super) expected_project_id: Option<String>,
     pub(super) expected_project_cwd: Option<String>,
     /// Exact Runner process lease captured for an MCP gateway request. This is
@@ -270,7 +270,7 @@ pub(super) struct ShellJobRecord {
     /// Non-secret authorization partition captured when the Job is created.
     /// Shared-key runners store only the existing key hash group, never the
     /// plaintext key. Keeping this on the Job preserves authorization after
-    /// the originating client registration is removed.
+    /// the originating runner registration is removed.
     pub(super) auth_group: Option<RunnerAccessGroup>,
     /// Internal lease owner. Never exposed through public job tools.
     pub(super) agent_instance_id: String,
@@ -353,8 +353,8 @@ impl Default for ShellJobLogState {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct ShellClientRegistryInner {
-    pub(super) clients: HashMap<String, ShellClientRecord>,
+pub(super) struct RunnerRegistryInner {
+    pub(super) runners: HashMap<String, RunnerRecord>,
     pub(super) pending_by_id: HashMap<String, PendingShellRequest>,
     /// Waiters for explicit persistent-shell lifecycle results. Kept separate
     /// from synchronous `ShellRunResponse` waiters so PersistentShell never
@@ -368,11 +368,11 @@ pub(super) struct ShellClientRegistryInner {
     /// operations. They are independent from shell/Job/MCP result channels.
     pub(super) coding_agent_waiters: HashMap<String, oneshot::Sender<CodingAgentResponse>>,
     pub(super) coding_agent_fences: HashMap<String, CodingAgentDispatchFence>,
-    pub(super) queues_by_client: HashMap<String, VecDeque<String>>,
+    pub(super) queues_by_runner: HashMap<String, VecDeque<String>>,
     pub(super) jobs_by_id: HashMap<String, ShellJobRecord>,
     pub(super) request_to_job: HashMap<String, String>,
     /// Bounded stale-instance tombstones prevent a replaced runner process
-    /// from reclaiming the same client lease after the replacement later
+    /// from reclaiming the same runner lease after the replacement later
     /// becomes stale.
     pub(super) retired_instances: HashMap<String, VecDeque<String>>,
     /// Runtime project ids temporarily fenced while unregister validates and
@@ -380,7 +380,7 @@ pub(super) struct ShellClientRegistryInner {
     /// holding the same registry mutex, closing the check/start TOCTOU window.
     pub(super) unregistering_projects: HashMap<String, usize>,
     /// Optional push notifiers for agents connected over a long-lived
-    /// transport (WebSocket/QUIC). When a request is enqueued for a client that
+    /// transport (WebSocket/QUIC). When a request is enqueued for a runner that
     /// has a registered notifier, the server pumps the request immediately
     /// instead of waiting for the agent to poll. Polling agents never
     /// register a notifier and are unaffected.

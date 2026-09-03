@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn reconcile_disconnect_marks_running_jobs_lost() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -43,7 +43,7 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
         .await
         .unwrap();
     // Job is "queued" with its request sitting in the client's queue.
-    let before = registry.get_client_view("oe").await.unwrap();
+    let before = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(before.pending_requests, 1);
     // Transport disconnects (e.g. WebSocket dropped).
     registry.reconcile_disconnect("oe", "inst").await;
@@ -51,7 +51,7 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
     assert_eq!(lost.status, "lost");
     assert!(lost.error.unwrap().contains("disconnected"));
     // Pending request was dropped: no dangling waiter / queue entry.
-    let after = registry.get_client_view("oe").await.unwrap();
+    let after = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(after.pending_requests, 0);
 }
 #[tokio::test]
@@ -60,7 +60,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
     // request (run_shell/read_file/... with job_id: None) whose agent drops
     // mid-flight must be resolved immediately, not parked until the caller's
     // wait timeout.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -97,10 +97,10 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
         )
         .await
         .unwrap();
-    let before = registry.get_client_view("oe").await.unwrap();
+    let before = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(before.pending_requests, 1);
 
-    // Agent transport drops before returning a result.
+    // Runner transport drops before returning a result.
     registry.reconcile_disconnect("oe", "inst").await;
 
     // Waiter resolves promptly with a disconnect error rather than parking
@@ -123,13 +123,13 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
     assert_eq!(response.request_dispatched, Some(false));
     assert_eq!(response.command_execution_state, None);
     // No dangling waiter or queue entry remains.
-    let after = registry.get_client_view("oe").await.unwrap();
+    let after = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(after.pending_requests, 0);
 }
 #[tokio::test]
 async fn dispatched_file_request_disconnect_remains_request_neutral() {
-    let registry = ShellClientRegistry::default();
-    register_quic_v1_client(&registry, "oe").await;
+    let registry = RunnerRegistry::default();
+    register_quic_v1_runner(&registry, "oe").await;
     let (_request_id, rx) = registry
         .enqueue_file_op(file_request("read"), "tester".to_string())
         .await
@@ -159,17 +159,17 @@ async fn dispatched_file_request_disconnect_remains_request_neutral() {
 }
 #[tokio::test]
 async fn reconcile_disconnect_releases_active_lease_immediately() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
 
     registry.reconcile_disconnect("oe", "inst-a").await;
 
-    let offline = registry.get_client_view("oe").await.unwrap();
+    let offline = registry.get_runner_view("oe").await.unwrap();
     assert!(
         !offline.connected,
         "active disconnect must immediately leave online window"
     );
-    assert!(now_ts().saturating_sub(offline.last_seen) > CLIENT_ONLINE_WINDOW_SECS);
+    assert!(now_ts().saturating_sub(offline.last_seen) > RUNNER_ONLINE_WINDOW_SECS);
 
     let new_view = register_with_instance(&registry, "oe", "inst-b").await;
     assert_eq!(new_view.agent_instance_id, "inst-b");

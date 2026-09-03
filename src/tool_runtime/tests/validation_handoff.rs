@@ -9,7 +9,7 @@
 mod cargo_test_assertions;
 
 use super::support::*;
-use crate::shell_client::{ShellJobStartMetadata, ShellJobVisibility};
+use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
     ShellClientCapabilities, ShellCommandExecutionState, ShellJobOpRequest,
@@ -77,7 +77,7 @@ async fn complete_sync_shell_lifecycle(
     error: Option<&str>,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultPayload {
             result: ShellAgentResultRequest {
                 client_id: client_id.to_string(),
@@ -167,7 +167,7 @@ async fn seed_retained_terminal_validation_job(
         env: Vec::new(),
     };
     let job = runtime
-        .shell_clients
+        .runner_registry
         .start_job_with_metadata(
             ShellJobOpRequest {
                 op: "start".to_string(),
@@ -210,7 +210,7 @@ async fn seed_retained_terminal_validation_job(
     assert_eq!(request.kind, "start_validation_job");
     assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -225,7 +225,7 @@ async fn seed_retained_terminal_validation_job(
         .await
         .unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -312,7 +312,7 @@ async fn go_test_rejects_empty_or_oversized_package_lists_before_dispatch() {
         assert!(!result.success);
         assert_eq!(result.output["command_started"], false);
     }
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
@@ -390,7 +390,7 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
         "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -486,7 +486,7 @@ async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
         "{\"Action\":\"fail\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -618,7 +618,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
         "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -690,7 +690,7 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -760,7 +760,7 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -855,10 +855,10 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     // Mark it running (the agent polls and starts executing).
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     assert_eq!(
         runtime
-            .shell_clients
+            .runner_registry
             .count_active_jobs_for_project(None, &project)
             .await,
         0,
@@ -866,7 +866,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     );
     // Mark it running (the agent polls and starts executing).
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -997,7 +997,7 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     // The runner "executes" the job once: append to the counter.
     std::fs::write(&counter, "1\n").unwrap();
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1023,7 +1023,7 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     );
     // Advance to terminal; still exactly one start.
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1091,7 +1091,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1112,7 +1112,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
 
     // Advance the job to terminal success.
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1266,7 +1266,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
     // J0 leaves retention and Jnew enters. This produces S2 =
     // J1..J62 + Jold + Jnew while A still holds its older S1.
     let j0 = old_inventory.first().unwrap().clone();
-    assert!(runtime.shell_clients.remove_job_record(&j0.job_id).await);
+    assert!(runtime.runner_registry.remove_job_record(&j0.job_id).await);
     let jnew =
         seed_retained_terminal_validation_job(&runtime, client_id, &project, &session_id, 10_000)
             .await;
@@ -1410,7 +1410,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
     });
     let (failed_request, failed_job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &failed_request.request_id,
@@ -1463,7 +1463,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
     });
     let (success_request, success_job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &success_request.request_id,
@@ -1483,7 +1483,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
     assert_eq!(handoff.output["job_id"], success_job_id);
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &success_request.request_id,
@@ -1617,7 +1617,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1643,7 +1643,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
     );
     stdout.push_str("test result: ok. 3 passed; 0 failed; 0 ignored\n");
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1669,7 +1669,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
         .to_string();
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1777,7 +1777,7 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1796,7 +1796,7 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
     assert_eq!(handoff.output["promoted_to_job"], true);
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1850,7 +1850,7 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1870,7 +1870,7 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
 
     // The runner enforces the total budget and reports a timeout terminal.
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -1943,7 +1943,7 @@ async fn explicit_short_timeout_never_creates_a_job() {
     assert_eq!(result.output["command_completed"], false);
     assert_cargo_result_matches_schema("cargo_check", &result);
     // No job was created.
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 /// A queued hidden validation can be cancelled atomically before the Runner
@@ -2099,7 +2099,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
             "{label}: no agent request may be enqueued"
         );
         assert!(
-            runtime.shell_clients.list_jobs(Some(10)).await.is_empty(),
+            runtime.runner_registry.list_jobs(Some(10)).await.is_empty(),
             "{label}: no job may be created"
         );
     }
@@ -2140,7 +2140,7 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
     let registration_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let job_id = loop {
         if let Some(job_id) = runtime
-            .shell_clients
+            .runner_registry
             .hidden_job_ids_for_test()
             .await
             .into_iter()
@@ -2158,7 +2158,7 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
     let cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if runtime
-            .shell_clients
+            .runner_registry
             .hidden_job_ids_for_test()
             .await
             .is_empty()
@@ -2173,14 +2173,14 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
         tokio::task::yield_now().await;
     }
     assert!(runtime
-        .shell_clients
+        .runner_registry
         .get_hidden_job_for_auth(None, &job_id)
         .await
         .is_err());
     assert!(probe_patch_agent_request(&runtime, client_id)
         .await
         .is_none());
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 /// A running hidden validation is not deleted when cancellation merely requests
@@ -2220,7 +2220,7 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -2238,10 +2238,10 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
     task.abort();
     let _ = task.await;
     let intent_registered = runtime
-        .shell_clients
+        .runner_registry
         .has_hidden_cleanup_intent_for_test(&job_id);
     let immediately_processed = runtime
-        .shell_clients
+        .runner_registry
         .get_hidden_job_for_auth(None, &job_id)
         .await
         .is_ok_and(|job| job.status == "stop_requested");
@@ -2250,13 +2250,13 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
         "Drop must synchronously register cleanup intent before relying on async processing"
     );
     if intent_registered {
-        crate::shell_client::recovery_timeout_sweep(&runtime.shell_clients).await;
+        crate::runner_http::recovery_timeout_sweep(&runtime.runner_registry).await;
     }
     let stop = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(stop.kind, "stop_job");
     assert_eq!(stop.job_id.as_deref(), Some(job_id.as_str()));
     let hidden = runtime
-        .shell_clients
+        .runner_registry
         .get_hidden_job_for_auth(None, &job_id)
         .await
         .expect("cleanup-pending job must remain internally queryable");
@@ -2267,10 +2267,10 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
             .await
             .success
     );
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -2285,7 +2285,7 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
         .await
         .expect("late terminal update must be accepted");
     assert!(runtime
-        .shell_clients
+        .runner_registry
         .get_hidden_job_for_auth(None, &job_id)
         .await
         .is_err());
@@ -2339,7 +2339,7 @@ async fn stop_job_stops_a_handoff_job() {
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -2404,7 +2404,7 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     // terminal projection in-window.
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     runtime
-        .shell_clients
+        .runner_registry
         .update_job(cargo_test_update(
             client_id,
             &request.request_id,
@@ -2463,7 +2463,7 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_ne!(request.kind, "start_validation_job");
     runtime
-        .shell_clients
+        .runner_registry
         .complete(crate::shell_protocol::ShellAgentResultRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2481,7 +2481,7 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
     assert_ne!(result.output["promoted_to_job"], true);
     assert_eq!(result.output["command_completed"], true);
     // No job was created.
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
@@ -2529,7 +2529,7 @@ async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
     assert!(error.contains("Do not automatically retry"), "{error}");
     assert!(error.contains("inspect the actual Job, process, service, or target state"));
     assert_cargo_result_matches_schema("cargo_fmt", &result);
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 /// Cargo outputs use mutually exclusive strict branches for public Job

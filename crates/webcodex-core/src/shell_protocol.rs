@@ -2897,7 +2897,7 @@ impl QuicRegisterFrame {
 //
 // Length-prefixing (rather than newline-delimited JSON) avoids boundary
 // problems when a payload contains embedded newlines. The codec lives in this
-// shared module so the server (`agent_quic.rs`) and the `webcodex-runner`
+// shared module so the server (`runner_quic.rs`) and the `webcodex-runner`
 // binary (which inlines this file) use byte-identical framing.
 //
 // This is a custom QUIC *stream* transport, NOT HTTP/3. It is transport-

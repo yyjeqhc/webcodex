@@ -400,10 +400,10 @@ mod tests {
         db: Arc<crate::Database>,
         source: Arc<ConsoleAssetSource>,
     ) -> Router {
-        let shell_registry = Arc::new(crate::ShellClientRegistry::default());
+        let runner_registry = Arc::new(crate::RunnerRegistry::default());
         let runtime_info = Arc::new(crate::tool_runtime::RuntimeInfo::default());
         let tool_runtime = Arc::new(crate::tool_runtime::ToolRuntime::new(
-            shell_registry,
+            runner_registry,
             runtime_info,
         ));
         Router::new()

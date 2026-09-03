@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn registry_rejects_enqueue_when_queue_full() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -26,7 +26,7 @@ async fn registry_rejects_enqueue_when_queue_full() {
         .await
         .unwrap();
     // Fill the queue to the limit without any consumer draining it.
-    for _ in 0..MAX_QUEUED_REQUESTS_PER_CLIENT {
+    for _ in 0..MAX_QUEUED_REQUESTS_PER_RUNNER {
         registry
             .enqueue_run(
                 ShellRunRequest {
@@ -61,15 +61,15 @@ async fn registry_rejects_enqueue_when_queue_full() {
     assert!(err.contains("too many pending requests"));
     assert!(err.contains("full"));
     // The queue is exactly at the cap; memory is bounded.
-    let view = registry.get_client_view("full").await.unwrap();
-    assert_eq!(view.pending_requests, MAX_QUEUED_REQUESTS_PER_CLIENT);
+    let view = registry.get_runner_view("full").await.unwrap();
+    assert_eq!(view.pending_requests, MAX_QUEUED_REQUESTS_PER_RUNNER);
 }
 
 #[tokio::test]
 async fn registry_rejects_enqueue_when_client_offline() {
     // Registered-but-stale agents must fail fast at enqueue rather than
     // accepting work that can only time out (or fill the 256-deep queue).
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -93,7 +93,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
         .await
         .unwrap();
     registry
-        .set_last_seen_for_test("stale", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+        .set_last_seen_for_test("stale", now_ts() - RUNNER_ONLINE_WINDOW_SECS - 1)
         .await;
 
     let err = registry
@@ -114,7 +114,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
         err.contains("offline"),
         "enqueue against a stale agent must fail fast as offline: {err}"
     );
-    let view = registry.get_client_view("stale").await.unwrap();
+    let view = registry.get_runner_view("stale").await.unwrap();
     assert_eq!(view.pending_requests, 0);
     assert!(!view.connected);
 }

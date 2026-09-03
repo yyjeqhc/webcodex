@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_state() {
     let ttl_secs = 10;
-    let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
+    let registry = RunnerRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
     let connected_auth = shared_key_access("ttl-connected");
     let fresh_auth = shared_key_access("ttl-fresh");
     let expired_auth = shared_key_access("ttl-expired");
@@ -13,7 +13,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             runner_registration("ttl-connected", "ttl-connected-instance", Vec::new()),
             Some(&connected_auth),
             "ttl-connected-connection",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -27,7 +27,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             runner_registration("ttl-fresh", "ttl-fresh-instance", Vec::new()),
             Some(&fresh_auth),
             "ttl-fresh-connection",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -87,8 +87,8 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     registry.record_hidden_cleanup_intent(job.job_id.clone(), None);
     let job_revision = {
         let mut inner = registry.inner.lock().await;
-        let expired_at = now_ts() - CLIENT_ONLINE_WINDOW_SECS - ttl_secs - 1;
-        let client = inner.clients.get_mut("ttl-expired").unwrap();
+        let expired_at = now_ts() - RUNNER_ONLINE_WINDOW_SECS - ttl_secs - 1;
+        let client = inner.runners.get_mut("ttl-expired").unwrap();
         client.last_seen = expired_at;
         client.disconnected_at = Some(expired_at);
         inner.retired_instances.insert(
@@ -125,7 +125,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let visible_expired = registry.list_clients_for_auth(Some(&expired_auth)).await;
+    let visible_expired = registry.list_runners_for_auth(Some(&expired_auth)).await;
     assert!(visible_expired.is_empty());
     assert!(
         job_revision.load(std::sync::atomic::Ordering::Relaxed) > revision_before,
@@ -177,7 +177,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
                 .load(std::sync::atomic::Ordering::Relaxed),
         )
     };
-    registry.prune_expired_shared_key_clients().await;
+    registry.prune_expired_shared_key_runners().await;
     {
         let inner = registry.inner.lock().await;
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
@@ -211,11 +211,11 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
         .unwrap_err()
         .contains("unknown shell job"));
     assert!(!registry.has_hidden_cleanup_intent_for_test(&job.job_id));
-    assert!(registry.list_client_projects("ttl-expired").await.is_err());
+    assert!(registry.list_runner_projects("ttl-expired").await.is_err());
     {
         let inner = registry.inner.lock().await;
-        assert!(!inner.clients.contains_key("ttl-expired"));
-        assert!(!inner.queues_by_client.contains_key("ttl-expired"));
+        assert!(!inner.runners.contains_key("ttl-expired"));
+        assert!(!inner.queues_by_runner.contains_key("ttl-expired"));
         assert!(!inner.notifiers.contains_key("ttl-expired"));
         assert!(!inner.retired_instances.contains_key("ttl-expired"));
         assert!(inner
@@ -235,11 +235,11 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     }
 
     assert!(registry
-        .get_client_view_for_auth("ttl-connected", Some(&connected_auth))
+        .get_runner_view_for_auth("ttl-connected", Some(&connected_auth))
         .await
         .is_some());
     assert!(registry
-        .get_client_view_for_auth("ttl-fresh", Some(&fresh_auth))
+        .get_runner_view_for_auth("ttl-fresh", Some(&fresh_auth))
         .await
         .is_some());
 
@@ -253,12 +253,12 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
         .unwrap();
     {
         let mut inner = registry.inner.lock().await;
-        let managed_record = inner.clients.get_mut("ttl-managed").unwrap();
+        let managed_record = inner.runners.get_mut("ttl-managed").unwrap();
         managed_record.last_seen = now_ts() - ttl_secs - 100;
         managed_record.disconnected_at = Some(now_ts() - ttl_secs - 100);
     }
     assert!(registry
-        .get_client_view_for_auth("ttl-managed", Some(&managed))
+        .get_runner_view_for_auth("ttl-managed", Some(&managed))
         .await
         .is_some());
 
@@ -285,7 +285,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .all(|pending| { pending.job_id.as_deref() != Some(job.job_id.as_str()) }));
         assert!(inner.persistent_waiters.is_empty());
         assert!(inner
-            .queues_by_client
+            .queues_by_runner
             .values()
             .all(|queue| queue.iter().all(|request_id| {
                 inner

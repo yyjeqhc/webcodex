@@ -4,7 +4,7 @@ use crate::agent_wake::{
 };
 use crate::db::{AgentWakeEnvelope, AgentWakeState};
 use crate::tool_runtime::ToolRuntime;
-use crate::{Database, ShellClientRegistry};
+use crate::{Database, RunnerRegistry};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -80,7 +80,7 @@ fn wait_until(label: &str, mut ready: impl FnMut() -> bool) {
 }
 
 fn runtime_with_db(db: Arc<Database>) -> ToolRuntime {
-    ToolRuntime::new_for_tests_with_shell_clients(Arc::new(ShellClientRegistry::default()))
+    ToolRuntime::new_for_tests_with_runner_registry(Arc::new(RunnerRegistry::default()))
         .with_communication_database(db)
 }
 

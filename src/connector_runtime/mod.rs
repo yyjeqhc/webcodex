@@ -18,7 +18,7 @@ pub(crate) mod tests;
 use crate::auth::{AuthContext, ProjectAgentTokenVerifier, ProjectCredentialVerifier};
 use crate::client_window::ClientWindow;
 use crate::project_entry::RemoteProbe;
-use crate::shell_client::RunnerFeature;
+use crate::runner_http::RunnerFeature;
 use crate::tool_runtime::ToolRuntime;
 use crate::Database;
 use serde_json::{json, Value};
@@ -144,7 +144,7 @@ impl ConnectorRuntime {
             return Err("project credential does not match connector grant identity".to_string());
         }
         let inner = webcodex_connector_runtime::ConnectorRuntime::new(
-            tools.shell_clients.clone(),
+            tools.runner_registry.clone(),
             db.clone(),
             context.clone(),
         )?;
@@ -282,11 +282,11 @@ impl ConnectorRuntime {
         else {
             return Some(self.observed_readiness(RemoteProbe::ProjectMissing));
         };
-        let access = crate::shell_client::runner_access_from_auth(Some(auth));
+        let access = crate::runner_http::runner_access_from_auth(Some(auth));
         let Some(runner) = self
             .tools
-            .shell_clients
-            .get_client_semantic_view_for_auth(client_id, access.as_ref())
+            .runner_registry
+            .get_runner_semantic_view_for_auth(client_id, access.as_ref())
             .await
         else {
             return Some(self.observed_readiness(RemoteProbe::RunnerOffline));
@@ -539,11 +539,11 @@ impl ConnectorRuntime {
         Vec<String>,
     ) {
         use crate::tool_runtime::activity::ActivityVisibility;
-        let access = crate::shell_client::runner_access_from_auth(Some(auth));
+        let access = crate::runner_http::runner_access_from_auth(Some(auth));
         let clients = self
             .tools
-            .shell_clients
-            .list_clients_for_auth(access.as_ref())
+            .runner_registry
+            .list_runners_for_auth(access.as_ref())
             .await
             .into_iter()
             .map(|client| client.client_id)

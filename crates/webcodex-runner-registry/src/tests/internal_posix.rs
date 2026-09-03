@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn enqueue_internal_posix_script_is_typed_and_capability_fenced() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_instance_with_capabilities(
         &registry,
         "internal-posix-on",
@@ -51,7 +51,7 @@ async fn enqueue_internal_posix_script_is_typed_and_capability_fenced() {
 
 #[tokio::test]
 async fn enqueue_internal_posix_script_preserves_generated_command_wire_bound() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_instance_with_capabilities(
         &registry,
         "internal-posix-bound",
@@ -76,5 +76,5 @@ async fn enqueue_internal_posix_script_preserves_generated_command_wire_bound() 
         .await
         .unwrap_err();
     assert!(error.contains("Runner wire envelope"), "{error}");
-    assert_structured_delete_client_idle(&registry, "internal-posix-bound").await;
+    assert_structured_delete_runner_idle(&registry, "internal-posix-bound").await;
 }

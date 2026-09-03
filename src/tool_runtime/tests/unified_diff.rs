@@ -269,7 +269,7 @@ async fn apply_unified_diff_dropped_waiter_after_apply_dispatch_is_outcome_unkno
     assert_eq!(apply.command, "git apply -");
     assert_eq!(
         runtime
-            .shell_clients
+            .runner_registry
             .cancel_request_dispatch_state(&apply.request_id)
             .await,
         Some(true),

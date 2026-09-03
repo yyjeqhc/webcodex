@@ -1,4 +1,4 @@
-use super::state::{ProjectInventoryStaging, ProjectInventoryState, ShellClientRecord};
+use super::state::{ProjectInventoryStaging, ProjectInventoryState, RunnerRecord};
 use super::validation::{sha256_hex, validate_agent_instance_id, validate_project_summary_batch};
 use super::{now_ts, RunnerRegistry};
 use std::collections::{HashSet, VecDeque};
@@ -58,18 +58,18 @@ fn retire_generation(state: &mut ProjectInventoryState, generation: String) {
     }
 }
 
-fn clear_staging(client: &mut ShellClientRecord, error_code: Option<&str>, now: i64) {
-    if let Some(staging) = client.project_inventory.staging.take() {
-        retire_generation(&mut client.project_inventory, staging.generation);
+fn clear_staging(runner: &mut RunnerRecord, error_code: Option<&str>, now: i64) {
+    if let Some(staging) = runner.project_inventory.staging.take() {
+        retire_generation(&mut runner.project_inventory, staging.generation);
     }
     if let Some(error_code) = error_code {
-        client.project_inventory.status = status(
+        runner.project_inventory.status = status(
             "degraded",
-            client.project_inventory.status.generation.clone(),
-            client.project_inventory.status.total_reported,
-            client.projects.len(),
+            runner.project_inventory.status.generation.clone(),
+            runner.project_inventory.status.total_reported,
+            runner.projects.len(),
             Some(error_code.to_string()),
-            client.project_inventory.status.last_sync_at.or(Some(now)),
+            runner.project_inventory.status.last_sync_at.or(Some(now)),
         );
     }
 }
@@ -93,26 +93,26 @@ pub(super) fn preserve_authoritative_pending(
     state
 }
 
-pub(super) fn reconcile_dynamic_projection(client: &mut ShellClientRecord, now: i64) {
-    clear_staging(client, None, now);
-    if let Some(previous) = client.project_inventory.status.generation.clone() {
-        retire_generation(&mut client.project_inventory, previous);
+pub(super) fn reconcile_dynamic_projection(runner: &mut RunnerRecord, now: i64) {
+    clear_staging(runner, None, now);
+    if let Some(previous) = runner.project_inventory.status.generation.clone() {
+        retire_generation(&mut runner.project_inventory, previous);
     }
     // Dynamic mutation is authoritative but is not itself a full snapshot
     // generation. Retiring the prior paged generation prevents a delayed page
     // from undoing a just-committed register/unregister projection.
-    client.project_inventory.status = status(
+    runner.project_inventory.status = status(
         "complete",
         None,
-        Some(client.projects.len()),
-        client.projects.len(),
+        Some(runner.projects.len()),
+        runner.projects.len(),
         None,
         Some(now),
     );
 }
 
-pub(super) fn expire_staging(client: &mut ShellClientRecord, now: i64) {
-    let expired = client
+pub(super) fn expire_staging(runner: &mut RunnerRecord, now: i64) {
+    let expired = runner
         .project_inventory
         .staging
         .as_ref()
@@ -120,7 +120,7 @@ pub(super) fn expire_staging(client: &mut ShellClientRecord, now: i64) {
             now.saturating_sub(staging.started_at) > PROJECT_INVENTORY_STAGING_TTL_SECS
         });
     if expired {
-        clear_staging(client, Some("project_inventory_sync_timeout"), now);
+        clear_staging(runner, Some("project_inventory_sync_timeout"), now);
     }
 }
 
@@ -162,12 +162,12 @@ fn validate_page(page: &ShellProjectInventoryPage) -> Result<(usize, String), &'
     Ok((bytes.len(), digest))
 }
 
-fn note_nonfatal_error(client: &mut ShellClientRecord, code: &str) {
-    client.project_inventory.status.last_error_code = Some(code.to_string());
+fn note_nonfatal_error(runner: &mut RunnerRecord, code: &str) {
+    runner.project_inventory.status.last_error_code = Some(code.to_string());
 }
 
-fn fail_current_staging(client: &mut ShellClientRecord, code: &str, now: i64) {
-    clear_staging(client, Some(code), now);
+fn fail_current_staging(runner: &mut RunnerRecord, code: &str, now: i64) {
+    clear_staging(runner, Some(code), now);
 }
 
 impl RunnerRegistry {
@@ -211,42 +211,42 @@ impl RunnerRegistry {
         // all bounded staging records under the same registry lock before the
         // concurrent-work check; no background timer or unbounded task list is
         // required.
-        for existing in inner.clients.values_mut() {
+        for existing in inner.runners.values_mut() {
             expire_staging(existing, now);
         }
         let concurrent_staging = inner
-            .clients
+            .runners
             .values()
-            .filter(|client| client.project_inventory.staging.is_some())
+            .filter(|runner| runner.project_inventory.staging.is_some())
             .count();
-        let Some(client) = inner.clients.get_mut(client_id) else {
+        let Some(runner) = inner.runners.get_mut(client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
         };
-        if client.agent_instance_id != agent_instance_id {
+        if runner.agent_instance_id != agent_instance_id {
             return Err(format!(
-                "agent client {client_id} is no longer the active instance (stale or replaced)"
+                "runner {client_id} is no longer the active instance (stale or replaced)"
             ));
         }
         if expected_connection_id
-            .is_some_and(|expected| client.connection_id.as_deref() != Some(expected))
+            .is_some_and(|expected| runner.connection_id.as_deref() != Some(expected))
         {
             return Err(format!(
-                "agent client {client_id} transport connection is no longer active"
+                "runner {client_id} transport connection is no longer active"
             ));
         }
         // Inventory failure is deliberately subordinate to Runner liveness.
-        client.last_seen = now;
-        expire_staging(client, now);
+        runner.last_seen = now;
+        expire_staging(runner, now);
         let (page_bytes, page_digest) = match validate_page(&page) {
             Ok(validated) => validated,
             Err(code) => {
-                fail_current_staging(client, code, now);
-                return Ok(client.project_inventory.status.clone());
+                fail_current_staging(runner, code, now);
+                return Ok(runner.project_inventory.status.clone());
             }
         };
 
         let staging_matches_page =
-            client
+            runner
                 .project_inventory
                 .staging
                 .as_ref()
@@ -254,80 +254,80 @@ impl RunnerRegistry {
                     staging.generation == page.generation
                         && staging.snapshot_sequence == page.snapshot_sequence
                 });
-        let completed_generation_matches_page = client.project_inventory.staging.is_none()
-            && client.project_inventory.status.sync_state == "complete"
-            && client.project_inventory.status.generation.as_deref() == Some(&page.generation);
-        let exact_last_page_replay = client.project_inventory.last_page_generation.as_deref()
+        let completed_generation_matches_page = runner.project_inventory.staging.is_none()
+            && runner.project_inventory.status.sync_state == "complete"
+            && runner.project_inventory.status.generation.as_deref() == Some(&page.generation);
+        let exact_last_page_replay = runner.project_inventory.last_page_generation.as_deref()
             == Some(&page.generation)
-            && client.project_inventory.last_page_index == Some(page.page_index)
-            && client.project_inventory.last_page_digest.as_deref() == Some(&page_digest);
+            && runner.project_inventory.last_page_index == Some(page.page_index)
+            && runner.project_inventory.last_page_digest.as_deref() == Some(&page_digest);
         // Exact replay is idempotent only while the page still belongs to the
         // active staging generation or the current completed authoritative
         // generation. Dynamic mutation, timeout, or a newer snapshot can retire
         // the same generation after its last page was recorded; in that case the
         // replay must continue through the stale-generation fences below.
         if exact_last_page_replay && (staging_matches_page || completed_generation_matches_page) {
-            return Ok(client.project_inventory.status.clone());
+            return Ok(runner.project_inventory.status.clone());
         }
-        if page.snapshot_sequence < client.project_inventory.highest_snapshot_sequence
-            || (page.snapshot_sequence == client.project_inventory.highest_snapshot_sequence
+        if page.snapshot_sequence < runner.project_inventory.highest_snapshot_sequence
+            || (page.snapshot_sequence == runner.project_inventory.highest_snapshot_sequence
                 && !staging_matches_page)
         {
-            note_nonfatal_error(client, "project_inventory_stale_generation");
-            return Ok(client.project_inventory.status.clone());
+            note_nonfatal_error(runner, "project_inventory_stale_generation");
+            return Ok(runner.project_inventory.status.clone());
         }
-        if client
+        if runner
             .project_inventory
             .retired_generations
             .iter()
             .any(|generation| generation == &page.generation)
-            || (client.project_inventory.staging.is_none()
-                && client.project_inventory.status.sync_state == "complete"
-                && client.project_inventory.status.generation.as_deref() == Some(&page.generation))
+            || (runner.project_inventory.staging.is_none()
+                && runner.project_inventory.status.sync_state == "complete"
+                && runner.project_inventory.status.generation.as_deref() == Some(&page.generation))
         {
-            note_nonfatal_error(client, "project_inventory_stale_generation");
-            return Ok(client.project_inventory.status.clone());
+            note_nonfatal_error(runner, "project_inventory_stale_generation");
+            return Ok(runner.project_inventory.status.clone());
         }
 
         if !staging_matches_page {
             if page.page_index != 0 {
-                note_nonfatal_error(client, "project_inventory_missing_or_stale_generation");
-                return Ok(client.project_inventory.status.clone());
+                note_nonfatal_error(runner, "project_inventory_missing_or_stale_generation");
+                return Ok(runner.project_inventory.status.clone());
             }
-            if client.project_inventory.staging.is_none()
+            if runner.project_inventory.staging.is_none()
                 && concurrent_staging >= PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS
             {
-                client.project_inventory.status = status(
+                runner.project_inventory.status = status(
                     "degraded",
-                    client.project_inventory.status.generation.clone(),
-                    client.project_inventory.status.total_reported,
-                    client.projects.len(),
+                    runner.project_inventory.status.generation.clone(),
+                    runner.project_inventory.status.total_reported,
+                    runner.projects.len(),
                     Some("project_inventory_staging_capacity".to_string()),
-                    client.project_inventory.status.last_sync_at,
+                    runner.project_inventory.status.last_sync_at,
                 );
-                return Ok(client.project_inventory.status.clone());
+                return Ok(runner.project_inventory.status.clone());
             }
-            if page.snapshot_sequence <= client.project_inventory.highest_snapshot_sequence {
-                note_nonfatal_error(client, "project_inventory_stale_generation");
-                return Ok(client.project_inventory.status.clone());
+            if page.snapshot_sequence <= runner.project_inventory.highest_snapshot_sequence {
+                note_nonfatal_error(runner, "project_inventory_stale_generation");
+                return Ok(runner.project_inventory.status.clone());
             }
-            client.project_inventory.highest_snapshot_sequence = page.snapshot_sequence;
+            runner.project_inventory.highest_snapshot_sequence = page.snapshot_sequence;
             // As soon as a fresh page-0 generation is accepted, permanently
             // retire the generation that produced the still-authoritative
             // snapshot. Its projects stay published until this new generation
             // completes, but delayed old pages can no longer restart a sync and
             // resurrect removed entries.
-            if client.project_inventory.status.sync_state == "complete" {
-                if let Some(previous) = client.project_inventory.status.generation.clone() {
+            if runner.project_inventory.status.sync_state == "complete" {
+                if let Some(previous) = runner.project_inventory.status.generation.clone() {
                     if previous != page.generation {
-                        retire_generation(&mut client.project_inventory, previous);
+                        retire_generation(&mut runner.project_inventory, previous);
                     }
                 }
             }
-            if let Some(staging) = client.project_inventory.staging.take() {
-                retire_generation(&mut client.project_inventory, staging.generation);
+            if let Some(staging) = runner.project_inventory.staging.take() {
+                retire_generation(&mut runner.project_inventory, staging.generation);
             }
-            client.project_inventory.staging = Some(ProjectInventoryStaging {
+            runner.project_inventory.staging = Some(ProjectInventoryStaging {
                 generation: page.generation.clone(),
                 snapshot_sequence: page.snapshot_sequence,
                 total_reported: page.total_reported,
@@ -339,43 +339,43 @@ impl RunnerRegistry {
             });
         }
 
-        let Some(staging) = client.project_inventory.staging.as_mut() else {
+        let Some(staging) = runner.project_inventory.staging.as_mut() else {
             unreachable!("staging initialized above");
         };
         if staging.generation != page.generation
             || staging.snapshot_sequence != page.snapshot_sequence
         {
-            note_nonfatal_error(client, "project_inventory_stale_generation");
-            return Ok(client.project_inventory.status.clone());
+            note_nonfatal_error(runner, "project_inventory_stale_generation");
+            return Ok(runner.project_inventory.status.clone());
         }
         if staging.next_page_index != page.page_index {
-            fail_current_staging(client, "project_inventory_page_out_of_order", now);
-            return Ok(client.project_inventory.status.clone());
+            fail_current_staging(runner, "project_inventory_page_out_of_order", now);
+            return Ok(runner.project_inventory.status.clone());
         }
         if staging.total_reported != page.total_reported {
-            fail_current_staging(client, "project_inventory_total_changed", now);
-            return Ok(client.project_inventory.status.clone());
+            fail_current_staging(runner, "project_inventory_total_changed", now);
+            return Ok(runner.project_inventory.status.clone());
         }
         if page
             .projects
             .iter()
             .any(|project| staging.seen_ids.contains(&project.id))
         {
-            fail_current_staging(client, "project_inventory_duplicate_project_id", now);
-            return Ok(client.project_inventory.status.clone());
+            fail_current_staging(runner, "project_inventory_duplicate_project_id", now);
+            return Ok(runner.project_inventory.status.clone());
         }
         let next_total = staging.projects.len().saturating_add(page.projects.len());
         if next_total > staging.total_reported
             || (page.complete && next_total != staging.total_reported)
             || (!page.complete && next_total >= staging.total_reported)
         {
-            fail_current_staging(client, "project_inventory_completion_mismatch", now);
-            return Ok(client.project_inventory.status.clone());
+            fail_current_staging(runner, "project_inventory_completion_mismatch", now);
+            return Ok(runner.project_inventory.status.clone());
         }
         let next_bytes = staging.serialized_bytes.saturating_add(page_bytes);
         if next_bytes > PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES {
-            fail_current_staging(client, "project_inventory_snapshot_too_large", now);
-            return Ok(client.project_inventory.status.clone());
+            fail_current_staging(runner, "project_inventory_snapshot_too_large", now);
+            return Ok(runner.project_inventory.status.clone());
         }
 
         for project in &page.projects {
@@ -384,12 +384,12 @@ impl RunnerRegistry {
         staging.projects.extend(page.projects.iter().cloned());
         staging.serialized_bytes = next_bytes;
         staging.next_page_index = staging.next_page_index.saturating_add(1);
-        client.project_inventory.last_page_generation = Some(page.generation.clone());
-        client.project_inventory.last_page_index = Some(page.page_index);
-        client.project_inventory.last_page_digest = Some(page_digest);
+        runner.project_inventory.last_page_generation = Some(page.generation.clone());
+        runner.project_inventory.last_page_index = Some(page.page_index);
+        runner.project_inventory.last_page_digest = Some(page_digest);
 
         if page.complete {
-            let mut completed = client
+            let mut completed = runner
                 .project_inventory
                 .staging
                 .take()
@@ -397,25 +397,25 @@ impl RunnerRegistry {
             completed
                 .projects
                 .sort_by(|left, right| left.id.cmp(&right.id));
-            client.projects = completed.projects;
-            client.project_inventory.status = status(
+            runner.projects = completed.projects;
+            runner.project_inventory.status = status(
                 "complete",
                 Some(page.generation),
-                Some(client.projects.len()),
-                client.projects.len(),
+                Some(runner.projects.len()),
+                runner.projects.len(),
                 None,
                 Some(now),
             );
         } else {
-            client.project_inventory.status = status(
+            runner.project_inventory.status = status(
                 "in_progress",
                 Some(page.generation),
                 Some(page.total_reported),
                 staging.projects.len(),
                 None,
-                client.project_inventory.status.last_sync_at,
+                runner.project_inventory.status.last_sync_at,
             );
         }
-        Ok(client.project_inventory.status.clone())
+        Ok(runner.project_inventory.status.clone())
     }
 }

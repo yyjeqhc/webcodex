@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
-    let registry = ShellClientRegistry::default();
-    register_computer_test_client(
+    let registry = RunnerRegistry::default();
+    register_computer_test_runner(
         &registry,
         "computer-owned",
         "alice",
@@ -27,7 +27,7 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
         .unwrap_err();
     assert!(error.contains("does not support computer_observe"));
 
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-owned",
         "alice",
@@ -79,9 +79,9 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
 
 #[tokio::test]
 async fn computer_snapshot_region_requires_additive_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-region-old",
         "alice",
@@ -196,7 +196,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
 
 #[tokio::test]
 async fn computer_snapshot_display_preserves_large_native_image_response_stdout() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {

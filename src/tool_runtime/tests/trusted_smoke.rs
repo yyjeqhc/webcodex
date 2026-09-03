@@ -38,7 +38,7 @@ async fn dispatch_with_local_agent(
         );
         poll_calls.fetch_add(1, Ordering::SeqCst);
         let request = runtime
-            .shell_clients
+            .runner_registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: CLIENT.to_string(),
                 agent_instance_id: "inst".to_string(),

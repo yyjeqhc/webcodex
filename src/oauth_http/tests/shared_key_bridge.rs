@@ -241,7 +241,7 @@ fn normalize_bridge_oauth_scopes_accepts_offline_access_as_protocol_scope() {
     assert_eq!(normalized, "runtime:read offline_access");
 }
 
-async fn register_shared_key_runner(registry: &crate::ShellClientRegistry, shared_key: &str) {
+async fn register_shared_key_runner(registry: &crate::RunnerRegistry, shared_key: &str) {
     register_shared_key_runner_with_capabilities(
         registry,
         shared_key,
@@ -253,7 +253,7 @@ async fn register_shared_key_runner(registry: &crate::ShellClientRegistry, share
 }
 
 async fn register_shared_key_runner_with_capabilities(
-    registry: &crate::ShellClientRegistry,
+    registry: &crate::RunnerRegistry,
     shared_key: &str,
     client_id: &str,
     instance_id: &str,
@@ -303,7 +303,7 @@ async fn shared_key_client_provision_is_group_bound_and_preserves_narrow_scope_o
     env.enable_direct_shared_key();
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     let shared_key = "ordinary-connect-shared-key";
     register_shared_key_runner(&registry, shared_key).await;
     let service = Service::new(build_router_with_session_and_registry(
@@ -477,7 +477,7 @@ async fn shared_key_client_provision_rejects_invalid_computer_enabled_previous_c
     env.enable_direct_shared_key();
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     let shared_key = "invalid-computer-ceiling-shared-key";
     register_shared_key_runner(&registry, shared_key).await;
     let service = Service::new(build_router_with_session_and_registry(
@@ -521,7 +521,7 @@ async fn shared_key_client_provision_fails_closed_on_client_lookup_error() {
     env.enable_direct_shared_key();
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     let shared_key = "ordinary-connect-shared-key";
     register_shared_key_runner(&registry, shared_key).await;
     db.conn_for_tests()
@@ -805,7 +805,7 @@ async fn bridge_authorize_picker_is_only_for_explicit_computer_enabled_owned_cli
         "https://partial-optional.example/callback",
         "runtime:read project:read computer:launch",
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -899,7 +899,7 @@ async fn bridge_authorize_picker_respects_explicit_requested_scope_and_launch_de
         "https://scope.example/callback",
         &bridge_oauth_computer_enabled_scopes().join(" "),
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -998,7 +998,7 @@ async fn bridge_authorize_omitted_scope_grants_baseline_but_not_optional_permiss
         "https://omitted.example/callback",
         &bridge_oauth_computer_enabled_scopes().join(" "),
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -1070,7 +1070,7 @@ async fn bridge_authorize_permission_ids_are_closed_and_server_side_bundles_are_
         "https://bundle.example/callback",
         &bridge_oauth_computer_enabled_scopes().join(" "),
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -1192,7 +1192,7 @@ async fn bridge_picker_requires_capabilities_on_one_same_runner_and_rechecks_pos
         "https://same-runner.example/callback",
         &bridge_oauth_computer_enabled_scopes().join(" "),
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -1531,7 +1531,7 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
         "runtime:read",
     );
     let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner(&registry, shared_key).await;
     let service = Service::new(build_router_with_session_and_registry(
         config.clone(),
@@ -1663,7 +1663,7 @@ async fn selected_launch_scope_survives_code_access_and_refresh_rotation_without
         "https://launch.example/callback",
         &bridge_oauth_computer_enabled_scopes().join(" "),
     );
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner_with_capabilities(
         &registry,
         shared_key,
@@ -1791,7 +1791,7 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
     let user = seed_user(&db, "grant-holder");
     let (access_record, _) = seed_access_token(&db, &client, &user, "runtime:read");
     let (refresh_record, _) = seed_refresh_token(&db, &client, &user, "runtime:read");
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner(&registry, shared_key).await;
     let service = Service::new(build_router_with_session_and_registry(
         config,
@@ -1983,7 +1983,7 @@ async fn bridge_issued_access_token_is_rejected_on_agent_path_without_updating_l
         "runtime:read",
     );
     let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
-    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let registry = Arc::new(crate::RunnerRegistry::default());
     register_shared_key_runner(&registry, shared_key).await;
     let service = Service::new(build_router_with_session_and_registry(
         config,

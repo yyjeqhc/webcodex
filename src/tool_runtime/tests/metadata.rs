@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
     ShellProjectInventoryPage, AGENT_PROTOCOL_GENERATION_V2,
@@ -133,7 +133,7 @@ async fn register_computer_target_for_auth(
     computer_accessibility_observe: bool,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -174,7 +174,7 @@ async fn register_application_target_for_auth(
     computer_application_launch: bool,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -212,7 +212,7 @@ async fn register_display_target_for_auth(
     auth: &crate::auth::AuthContext,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -249,7 +249,7 @@ async fn register_pointer_target_for_auth(
     auth: &crate::auth::AuthContext,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -287,7 +287,7 @@ async fn register_clipboard_target_for_auth(
     write: bool,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -325,7 +325,7 @@ async fn register_agent_projects_for_auth(
     project_id: &str,
 ) {
     runtime
-        .shell_clients
+        .runner_registry
         .register_with_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
@@ -403,7 +403,7 @@ async fn register_agent_projects_for_auth(
         .await
         .unwrap();
     crate::test_support::apply_project_inventory_snapshot(
-        &runtime.shell_clients,
+        &runtime.runner_registry,
         client_id,
         &format!("inst-{client_id}"),
         vec![registered_project(
@@ -864,11 +864,11 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
     assert_eq!(initial.config.path, path_a);
 
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect(client_id, &old_instance)
         .await;
     let replacement = runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -950,7 +950,7 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
     );
 
     let completed = runtime
-        .shell_clients
+        .runner_registry
         .apply_project_inventory_page(
             client_id,
             new_instance,
@@ -1034,11 +1034,11 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
     )
     .await;
     runtime
-        .shell_clients
+        .runner_registry
         .reconcile_disconnect(client_id, &old_instance)
         .await;
     runtime
-        .shell_clients
+        .runner_registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
@@ -1087,7 +1087,7 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
         );
         if phase == "pending" {
             let status = runtime
-                .shell_clients
+                .runner_registry
                 .apply_project_inventory_page(
                     client_id,
                     new_instance,
@@ -1228,7 +1228,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
     use crate::shell_protocol::{
         AgentPolicySummary, ShellProfileSummaryEntry, ShellProfilesSummary,
     };
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let secret_env_value = "DO_NOT_LEAK_THIS_ENV_VALUE";
     let secret_script = "DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY";
     let summary = ShellProfilesSummary {
@@ -1337,7 +1337,7 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
     let req = wait_for_agent_request_for_instance(&runtime, "oe", "inst").await;
     assert_eq!(req.cwd.as_deref(), Some("/tmp/agent-proj"));
     runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: "oe".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2597,7 +2597,7 @@ fn runtime_info_from_env_reads_effective_server_config() {
 
 #[tokio::test]
 async fn runtime_status_agent_summary_includes_protocol_version() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = metadata_agent_registration("agent-1");
     registration.agent_instance_id = "inst".to_string();
     registration.job_concurrency_limit = Some(4);
@@ -2659,7 +2659,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         AgentConfigReloadStatus, AgentPolicySummary, ClaudeCodeProviderStatus, ProviderCallSummary,
         ToolProvidersStatus,
     };
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = metadata_agent_registration("policy-agent");
     registration.agent_instance_id = "inst-p".to_string();
     registration.owner = Some("alice".to_string());
@@ -2783,7 +2783,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .unwrap()
         .input_schema
         .clone();
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = metadata_agent_registration("provider-surface");
     registration.agent_instance_id = "inst-surface".to_string();
     registration.policy = Some(AgentPolicySummary {
@@ -2848,7 +2848,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
 
 #[tokio::test]
 async fn runtime_status_policy_summary_is_null_for_older_agents() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     // Older agent: no policy field (None).
     let mut registration = metadata_agent_registration("legacy-agent");
     registration.agent_instance_id = "inst-l".to_string();
@@ -3107,7 +3107,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
 #[tokio::test]
 async fn list_runners_includes_sanitized_policy_summary() {
     use crate::shell_protocol::AgentPolicySummary;
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = metadata_agent_registration("list-policy-agent");
     registration.agent_instance_id = "inst-lp".to_string();
     registration.job_concurrency_limit = Some(8);
@@ -3162,15 +3162,15 @@ async fn list_runners_includes_sanitized_policy_summary() {
 
 #[tokio::test]
 async fn runtime_status_distinguishes_stale_registration_from_transport_connection() {
-    use crate::shell_client::AgentTransport;
-    let registry = Arc::new(ShellClientRegistry::default());
+    use crate::runner_http::RunnerTransport;
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = metadata_agent_registration("ws-stale");
     registration.agent_instance_id = "inst".to_string();
     registration.display_name = Some("Stale WS".to_string());
     registration.owner = Some("alice".to_string());
     registry.register(registration).await.unwrap();
     registry
-        .set_transport("ws-stale", AgentTransport::WebSocket)
+        .set_transport("ws-stale", RunnerTransport::WebSocket)
         .await
         .unwrap();
     // Force the agent past the 60s online window so it reads as stale.
@@ -3211,7 +3211,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
 
 #[tokio::test]
 async fn runtime_status_reflects_websocket_transport_label() {
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let runtime = ToolRuntime::new(registry.clone(), Arc::new(RuntimeInfo::default()));
     let mut registration = metadata_agent_registration("ws-agent");
     registration.agent_instance_id = "inst".to_string();
@@ -3220,7 +3220,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
     // Simulate the authoritative WebSocket ingress without changing the raw
     // announced compatibility label.
     registry
-        .set_transport("ws-agent", crate::shell_client::AgentTransport::WebSocket)
+        .set_transport("ws-agent", crate::runner_http::RunnerTransport::WebSocket)
         .await
         .unwrap();
 

@@ -5,12 +5,12 @@
 //! auth, OpenAPI, console, audit, and test-only route tables.
 
 mod account;
-mod agent_transport;
 mod connector;
 mod consoles;
 mod mcp;
 mod oauth;
 mod operations;
+mod runner_transport;
 mod runtime;
 
 use webcodex_core::authority::OAuthRouteScopePolicy;
@@ -55,7 +55,7 @@ pub(crate) enum RouteSurface {
     AccountManagement,
     AccountControl,
     Pairing,
-    AgentTransport,
+    RunnerTransport,
     /// Public browser/document delivery only. This surface carries no bearer
     /// authentication or token-admission semantics.
     PublicWeb,
@@ -202,12 +202,12 @@ pub(crate) enum RouteId {
     ShellJobsLog,
     ShellJobsStop,
     ShellJobsList,
-    ShellAgentRegister,
-    ShellAgentPoll,
-    ShellAgentResult,
-    ShellAgentPersistentShellResult,
-    ShellAgentJobUpdate,
-    AgentsWs,
+    RunnerRegister,
+    RunnerPoll,
+    RunnerResult,
+    RunnerPersistentShellResult,
+    RunnerJobUpdate,
+    RunnerWs,
     AuditSessions,
     AuditSession,
     AuditStats,
@@ -281,7 +281,7 @@ const ROUTE_GROUPS: &[&[RouteSpec]] = &[
     oauth::MANAGEMENT_ROUTES,
     account::ROUTES,
     runtime::SHELL_ROUTES,
-    agent_transport::ROUTES,
+    runner_transport::ROUTES,
     operations::AUDIT_ROUTES,
     operations::PUBLIC_WEB_ROUTES,
     consoles::PUBLIC_WEB_ROUTES,
@@ -463,8 +463,8 @@ mod tests {
         // allowlists and must not inherit the scope lookup's normalization.
         assert!(lookup_path("/api/runtime/status").is_some());
         assert!(lookup_path("/api/runtime/status/").is_none());
-        assert!(path_has_surface("/api/agents/ws", AgentTransport));
-        assert!(!path_has_surface("/api/agents/ws/", AgentTransport));
+        assert!(path_has_surface("/api/agents/ws", RunnerTransport));
+        assert!(!path_has_surface("/api/agents/ws/", RunnerTransport));
     }
 
     #[test]

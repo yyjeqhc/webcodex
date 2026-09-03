@@ -37,7 +37,7 @@ pub(super) fn stable_subject_id(auth: &AuthContext) -> Result<String, String> {
 
 pub(super) fn connector_access(auth: &AuthContext) -> Result<ConnectorAccess, String> {
     let principal = ConnectorPrincipalId::new(stable_subject_id(auth)?)?;
-    let runner_access = crate::shell_client::runner_access_from_auth(Some(auth))
+    let runner_access = crate::runner_http::runner_access_from_auth(Some(auth))
         .expect("authenticated Connector access has Runner access projection");
     Ok(ConnectorAccess {
         principal,

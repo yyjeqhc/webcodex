@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn registry_allows_session_scoped_run_without_ssh_resource() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(ShellClientRegisterRequest {
             process_started_at: None,
@@ -65,7 +65,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
 
 #[tokio::test]
 async fn registry_rejects_unknown_client_run() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let err = registry
         .enqueue_run(
             ShellRunRequest {

@@ -3,9 +3,9 @@ use super::*;
 #[tokio::test]
 async fn computer_control_enqueue_requires_independent_capability() {
     // CU-AX2 control remains independently fenced from CU-AX3 text input.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-control",
         "alice",
@@ -29,7 +29,7 @@ async fn computer_control_enqueue_requires_independent_capability() {
         .unwrap_err();
     assert!(error.contains("does not support computer_control"));
 
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-control",
         "alice",
@@ -67,9 +67,9 @@ async fn computer_control_enqueue_requires_independent_capability() {
 
 #[tokio::test]
 async fn computer_scroll_to_element_requires_independent_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-scroll-control-only",
         "alice",
@@ -145,9 +145,9 @@ async fn computer_scroll_to_element_requires_independent_capability() {
 
 #[tokio::test]
 async fn computer_key_input_requires_independent_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-key-control-only",
         "alice",
@@ -223,7 +223,7 @@ async fn computer_key_input_requires_independent_capability() {
 
 #[tokio::test]
 async fn computer_pointer_enqueue_requires_independent_capability_and_typed_envelope() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     let payload = r#"{"display_id":"display_0123456789abcdef0123456789abcdef","snapshot_generation":7,"x":123,"y":456}"#;
 
@@ -321,7 +321,7 @@ async fn computer_pointer_enqueue_requires_independent_capability_and_typed_enve
 }
 #[tokio::test]
 async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_envelopes() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
 
     registry
@@ -501,9 +501,9 @@ async fn computer_clipboard_enqueue_requires_independent_capabilities_and_typed_
 
 #[tokio::test]
 async fn computer_window_activation_requires_its_own_additive_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-activate",
         "alice",

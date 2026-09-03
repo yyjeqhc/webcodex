@@ -727,7 +727,7 @@ pub(super) fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>)
         config,
         db,
         session_store,
-        Arc::new(crate::ShellClientRegistry::default()),
+        Arc::new(crate::RunnerRegistry::default()),
     )
 }
 
@@ -735,7 +735,7 @@ pub(super) fn build_router_with_session_and_registry(
     config: Arc<crate::Config>,
     db: Arc<crate::Database>,
     session_store: Arc<AuthorizeSessionStore>,
-    registry: Arc<crate::ShellClientRegistry>,
+    registry: Arc<crate::RunnerRegistry>,
 ) -> Router {
     Router::new()
         .hoop(salvo::prelude::affix_state::inject(config))

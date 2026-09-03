@@ -1,11 +1,11 @@
 use super::*;
 
 /// Helper: register a long-lived-transport (WebSocket/QUIC) client bound to
-/// a server-internal `connection_id`. Mirrors what `agent_ws`/`agent_quic`
+/// a server-internal `connection_id`. Mirrors what `runner_ws`/`runner_quic`
 /// do at register time. Returns the view along with the connection_id so a
 /// test can drive the connection-scoped poll/touch/result/update APIs.
 async fn register_with_connection(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance: &str,
     connection_id: &str,
@@ -31,7 +31,7 @@ async fn register_with_connection(
             },
             None,
             connection_id,
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -40,7 +40,7 @@ async fn register_with_connection(
 
 #[tokio::test]
 async fn streaming_registration_commits_transport_connection_and_notifier_together() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let notify = Arc::new(Notify::new());
     let registration = runner_registration("atomic-stream", "atomic-instance", Vec::new());
 
@@ -49,7 +49,7 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
             registration,
             None,
             "atomic-connection",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             notify.clone(),
         )
         .await
@@ -64,10 +64,10 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
     );
 
     let inner = registry.inner.lock().await;
-    let client = inner.clients.get("atomic-stream").unwrap();
+    let client = inner.runners.get("atomic-stream").unwrap();
     let notifier = inner.notifiers.get("atomic-stream").unwrap();
     assert_eq!(client.connection_id.as_deref(), Some("atomic-connection"));
-    assert_eq!(client.transport, AgentTransport::WebSocket);
+    assert_eq!(client.transport, RunnerTransport::WebSocket);
     assert_eq!(notifier.agent_instance_id, "atomic-instance");
     assert_eq!(notifier.connection_id.as_deref(), Some("atomic-connection"));
     assert!(Arc::ptr_eq(&notifier.notify, &notify));
@@ -75,24 +75,24 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
 
 #[tokio::test]
 async fn streaming_registration_rejects_polling_transport_authority() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let error = registry
         .register_streaming_session(
             runner_registration("invalid-stream", "inst", Vec::new()),
             None,
             "invalid-connection",
-            AgentTransport::Polling,
+            RunnerTransport::Polling,
             Arc::new(Notify::new()),
         )
         .await
         .unwrap_err();
-    assert_eq!(error, "streaming agent transport is unsupported");
-    assert!(registry.list_clients().await.is_empty());
+    assert_eq!(error, "streaming Runner transport is unsupported");
+    assert!(registry.list_runners().await.is_empty());
 }
 
 #[tokio::test]
 async fn failed_streaming_registration_preserves_current_session_exactly() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let notify_a = Arc::new(Notify::new());
     let initial = runner_registration("atomic-preserve", "atomic-instance", Vec::new());
     let (_view_a, cancel_a) = registry
@@ -100,7 +100,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
             initial,
             None,
             "connection-a",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             notify_a.clone(),
         )
         .await
@@ -114,7 +114,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
     .await;
     let before = {
         let inner = registry.inner.lock().await;
-        inner.clients.get("atomic-preserve").unwrap().clone()
+        inner.runners.get("atomic-preserve").unwrap().clone()
     };
 
     let notify_b = Arc::new(Notify::new());
@@ -125,7 +125,7 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
             rejected,
             None,
             "connection-b",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             notify_b.clone(),
         )
         .await
@@ -137,14 +137,14 @@ async fn failed_streaming_registration_preserves_current_session_exactly() {
     );
     assert!(
         registry
-            .get_client_view_for_connection("atomic-preserve", "atomic-instance", "connection-a")
+            .get_runner_view_for_connection("atomic-preserve", "atomic-instance", "connection-a")
             .await
             .expect("failed replacement must preserve connection A")
             .connected
     );
 
     let inner = registry.inner.lock().await;
-    let after = inner.clients.get("atomic-preserve").unwrap();
+    let after = inner.runners.get("atomic-preserve").unwrap();
     let notifier = inner.notifiers.get("atomic-preserve").unwrap();
     assert_eq!(after.connection_id, before.connection_id);
     assert_eq!(after.transport, before.transport);
@@ -174,7 +174,7 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // connection error AND leave the request in the queue / undispatched /
     // job un-transitioned (atomic: not just a stale error string). B then
     // polls and is the only one to receive the request.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
 
     // Start an async job (queued -> agent_queued only on dispatch).
@@ -225,7 +225,7 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // Atomicity: the request must still be queued, undispatched, and the
     // job must still be queued (no queued -> agent_queued transition).
     let pending_depth = registry
-        .get_client_view("oe")
+        .get_runner_view("oe")
         .await
         .unwrap()
         .pending_requests;
@@ -289,7 +289,7 @@ async fn stale_connection_keepalive_does_not_refresh_new_lease() {
     // connection must not refresh the new connection's last_seen or revive
     // a disconnected client. The current connection's keepalive does
     // refresh.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
     register_with_connection(&registry, "oe", "inst-x", "conn-b").await;
 
@@ -300,7 +300,7 @@ async fn stale_connection_keepalive_does_not_refresh_new_lease() {
 
     // A's connection-scoped touch fails and leaves last_seen unchanged.
     let err = registry
-        .touch_client_for_connection("oe", "inst-x", "conn-a")
+        .touch_runner_for_connection("oe", "inst-x", "conn-a")
         .await
         .unwrap_err();
     assert!(
@@ -308,25 +308,25 @@ async fn stale_connection_keepalive_does_not_refresh_new_lease() {
         "error was: {err}"
     );
     assert_eq!(
-        registry.get_client_view("oe").await.unwrap().last_seen,
+        registry.get_runner_view("oe").await.unwrap().last_seen,
         pinned,
         "stale connection touch must not refresh last_seen"
     );
 
     // B's connection-scoped touch succeeds and advances last_seen.
     registry
-        .touch_client_for_connection("oe", "inst-x", "conn-b")
+        .touch_runner_for_connection("oe", "inst-x", "conn-b")
         .await
         .unwrap();
     assert!(
-        registry.get_client_view("oe").await.unwrap().last_seen > pinned,
+        registry.get_runner_view("oe").await.unwrap().last_seen > pinned,
         "current connection touch must refresh last_seen"
     );
 
     // An even newer connection C supersedes B; B's touch now fails too.
     register_with_connection(&registry, "oe", "inst-x", "conn-c").await;
     let err = registry
-        .touch_client_for_connection("oe", "inst-x", "conn-b")
+        .touch_runner_for_connection("oe", "inst-x", "conn-b")
         .await
         .unwrap_err();
     assert!(
@@ -339,7 +339,7 @@ async fn stale_connection_keepalive_does_not_refresh_new_lease() {
 async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
     // A stale same-instance connection must not overwrite the current
     // connection's provider metadata. The current connection can.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let register_with_policy = async |connection_id: &str| {
         registry
             .register_streaming_session(
@@ -362,7 +362,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                 },
                 None,
                 connection_id,
-                AgentTransport::WebSocket,
+                RunnerTransport::WebSocket,
                 Arc::new(Notify::new()),
             )
             .await
@@ -398,7 +398,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
         .unwrap();
     {
         let inner = registry.inner.lock().await;
-        let client = inner.clients.get("oe").unwrap();
+        let client = inner.runners.get("oe").unwrap();
         assert_eq!(
             client
                 .policy
@@ -430,7 +430,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
     );
     {
         let inner = registry.inner.lock().await;
-        let client = inner.clients.get("oe").unwrap();
+        let client = inner.runners.get("oe").unwrap();
         assert_eq!(
             client
                 .policy
@@ -451,7 +451,7 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
     // Same-instance reconnect: A's delayed disconnect cleanup must not
     // touch B's notifier/queue/liveness. Extends the existing same-instance
     // reconnect coverage to the connection lease.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
     let job = registry
         .start_job(
@@ -487,10 +487,10 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
     );
     {
         let inner = registry.inner.lock().await;
-        let client = inner.clients.get("oe").unwrap();
+        let client = inner.runners.get("oe").unwrap();
         let notifier = inner.notifiers.get("oe").unwrap();
         assert_eq!(client.connection_id.as_deref(), Some("conn-b"));
-        assert_eq!(client.transport, AgentTransport::WebSocket);
+        assert_eq!(client.transport, RunnerTransport::WebSocket);
         assert_eq!(notifier.connection_id.as_deref(), Some("conn-b"));
         assert_eq!(notifier.agent_instance_id, "inst-x");
     }
@@ -522,7 +522,7 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     // A — it belongs to the same instance — but must NOT refresh B's
     // liveness. A cannot then poll a new request that arrived after B's
     // register.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
 
     // Enqueue a sync request and let A poll it (still current lease).
@@ -585,7 +585,7 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     assert!(response.success);
     // But it did NOT refresh B's liveness.
     assert_eq!(
-        registry.get_client_view("oe").await.unwrap().last_seen,
+        registry.get_runner_view("oe").await.unwrap().last_seen,
         pinned,
         "late result on stale connection must not refresh new lease liveness"
     );
@@ -642,7 +642,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     // update arriving over stale connection A is still applied (ownership
     // + update_seq), but does not refresh B's liveness. A replaced runner
     // instance is still rejected.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
     let job = registry
         .start_job(
@@ -717,7 +717,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     );
     // But B's liveness was not refreshed.
     assert_eq!(
-        registry.get_client_view("oe").await.unwrap().last_seen,
+        registry.get_runner_view("oe").await.unwrap().last_seen,
         pinned,
         "late job update on stale connection must not refresh new lease liveness"
     );

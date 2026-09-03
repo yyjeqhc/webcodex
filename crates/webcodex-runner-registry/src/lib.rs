@@ -6,7 +6,6 @@
 
 mod access;
 mod access_control;
-mod agents;
 mod capabilities;
 mod job_status;
 mod job_updates;
@@ -18,6 +17,7 @@ mod protocol;
 mod reconciliation;
 mod registry;
 mod requests;
+mod runners;
 mod state;
 mod telemetry;
 mod validation;
@@ -28,13 +28,11 @@ mod reconciliation_tests;
 mod tests;
 
 #[cfg(test)]
+pub(crate) use registry::clamp_grace;
+#[cfg(test)]
 pub(crate) use webcodex_core::{
     artifact_policy, job_observation, lsp_bridge, mcp_gateway, shell_protocol,
 };
-#[cfg(test)]
-pub(crate) type ShellClientRegistry = RunnerRegistry;
-#[cfg(test)]
-pub(crate) use registry::clamp_grace;
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -132,14 +130,14 @@ pub use jobs::{command_preview, process_preview, script_preview, COMMAND_PREVIEW
 pub(crate) use protocol::AcceptedRunnerProtocol;
 pub use reconciliation::recovery_timeout_sweep;
 pub use registry::{
-    job_recovery_grace_secs, AgentTransport, RunnerRegistry, CLIENT_ONLINE_WINDOW_SECS,
-    DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
-    JOB_RECOVERY_GRACE_MAX_SECS, JOB_RECOVERY_GRACE_MIN_SECS, JOB_RECOVERY_GRACE_SECS,
-    RECOVERY_SWEEP_INTERVAL_SECS, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
+    job_recovery_grace_secs, RunnerRegistry, RunnerTransport, DETACHED_IDEMPOTENCY_CONFLICT,
+    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, JOB_RECOVERY_GRACE_MAX_SECS, JOB_RECOVERY_GRACE_MIN_SECS,
+    JOB_RECOVERY_GRACE_SECS, RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
+    TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
 };
 pub(crate) use registry::{
-    now_ts, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_CLIENT, MAX_RETIRED_INSTANCES_PER_CLIENT,
+    now_ts, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_RUNNER, MAX_RETIRED_INSTANCES_PER_RUNNER,
 };
 pub use requests::EnqueueLspError;
-pub use state::{ShellClientSemanticView, ShellJobVisibility};
+pub use state::{RunnerSemanticView, ShellJobVisibility};
 pub use telemetry::{NoopRunnerRegistryTelemetry, RunnerRegistryTelemetry};

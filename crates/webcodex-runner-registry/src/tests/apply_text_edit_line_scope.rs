@@ -41,7 +41,7 @@ fn line_scope_request(client_id: &str, occurrence: Option<usize>) -> ShellFileOp
 }
 
 async fn register_line_scope_instance(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     line_scope: bool,
 ) {
@@ -62,7 +62,7 @@ async fn register_line_scope_instance(
 
 #[tokio::test]
 async fn enqueue_scoped_apply_text_edits_requires_explicit_line_scope_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "scope-off", false).await;
 
     let error = registry
@@ -114,7 +114,7 @@ fn enqueue_scoped_occurrence_requires_both_capabilities_before_admission() {
 
 #[tokio::test]
 async fn generic_file_enqueue_rejects_scoped_edit_without_line_scope_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "generic-scope-off", false).await;
 
     let error = registry
@@ -138,7 +138,7 @@ async fn generic_file_enqueue_rejects_scoped_edit_without_line_scope_capability(
 
 #[tokio::test]
 async fn generic_file_enqueue_preserves_unscoped_edit_without_line_scope_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "generic-unscoped", false).await;
 
     let mut request = line_scope_request("generic-unscoped", None);
@@ -168,7 +168,7 @@ async fn generic_file_enqueue_preserves_unscoped_edit_without_line_scope_capabil
 
 #[tokio::test]
 async fn generic_file_enqueue_treats_null_optional_fences_as_absent() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "generic-null-fences", false).await;
 
     let mut request = line_scope_request("generic-null-fences", None);
@@ -197,7 +197,7 @@ async fn generic_file_enqueue_treats_null_optional_fences_as_absent() {
 
 #[tokio::test]
 async fn generic_file_enqueue_scoped_edit_uses_capability_fenced_path() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "generic-scope-on", true).await;
 
     let (request_id, _rx) = registry
@@ -228,7 +228,7 @@ async fn generic_file_enqueue_scoped_edit_uses_capability_fenced_path() {
 
 #[tokio::test]
 async fn enqueue_scoped_apply_text_edits_preserves_scope_and_global_occurrence_payload() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_line_scope_instance(&registry, "scope-on", true).await;
     let (request_id, _rx) = registry
         .enqueue_apply_text_edits_with_line_scope(

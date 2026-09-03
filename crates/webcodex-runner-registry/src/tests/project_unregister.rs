@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-jobs").await;
     let request = |command: &str| ShellJobOpRequest {
         op: "start".to_string(),

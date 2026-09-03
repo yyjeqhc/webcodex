@@ -28,7 +28,7 @@ fn patch_request(client_id: &str, strict_matching: bool) -> ShellFileOpRequest {
 }
 
 async fn register_patch_instance(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     supported: bool,
     metadata_supported: bool,
@@ -51,7 +51,7 @@ async fn register_patch_instance(
 
 #[tokio::test]
 async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     register_patch_instance(&registry, "patch-off", false, false, false)
         .await
         .unwrap();

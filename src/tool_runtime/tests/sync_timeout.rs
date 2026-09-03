@@ -55,7 +55,7 @@ async fn assert_no_pending_shell_request(
     client_id: &str,
 ) {
     let req = runtime
-        .shell_clients
+        .runner_registry
         .poll(ShellAgentPollRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -291,14 +291,14 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
         .is_some_and(|error| error.contains("Do not automatically retry")));
 
     let client = runtime
-        .shell_clients
-        .get_client_view(client_id)
+        .runner_registry
+        .get_runner_view(client_id)
         .await
         .expect("registered client");
     assert_eq!(client.pending_requests, 0);
-    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     let late = runtime
-        .shell_clients
+        .runner_registry
         .complete(ShellAgentResultRequest {
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -350,8 +350,8 @@ async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
         .as_deref()
         .is_some_and(|error| error.contains("timed out waiting 1 seconds for agent shell result")));
     let client = runtime
-        .shell_clients
-        .get_client_view(client_id)
+        .runner_registry
+        .get_runner_view(client_id)
         .await
         .expect("registered client");
     assert_eq!(client.pending_requests, 0);
@@ -379,7 +379,7 @@ async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(
         runtime
-            .shell_clients
+            .runner_registry
             .cancel_request_dispatch_state(&request.request_id)
             .await,
         Some(true)

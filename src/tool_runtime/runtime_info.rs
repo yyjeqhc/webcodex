@@ -147,10 +147,10 @@ impl ToolRuntime {
             }
         }
 
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let mut clients = self
-            .shell_clients
-            .list_clients_for_auth(access.as_ref())
+            .runner_registry
+            .list_runners_for_auth(access.as_ref())
             .await;
         clients.sort_by(|a, b| a.client_id.cmp(&b.client_id));
         clients.retain(|client| {
@@ -165,7 +165,7 @@ impl ToolRuntime {
             true
         });
         let mut runner_jobs = self
-            .shell_clients
+            .runner_registry
             .list_all_jobs_for_auth(access.as_ref())
             .await;
         if options.client_id.is_some() || options.client_ids.is_some() {
@@ -267,10 +267,10 @@ impl ToolRuntime {
     /// stdout/stderr. Returns a structured JSON object with service metadata,
     /// Runner-registered Project status, Runner summaries, and Job counts.
     pub(crate) async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let clients = self
-            .shell_clients
-            .list_clients_for_auth(access.as_ref())
+            .runner_registry
+            .list_runners_for_auth(access.as_ref())
             .await;
 
         // -- Projects summary -------------------------------------------------
@@ -317,7 +317,7 @@ impl ToolRuntime {
 
         let now = chrono::Utc::now().timestamp();
         let runner_jobs = self
-            .shell_clients
+            .runner_registry
             .list_all_jobs_for_auth(access.as_ref())
             .await;
 
@@ -507,10 +507,10 @@ impl ToolRuntime {
                 json!({"error_kind": "invalid_client_id"}),
             );
         }
-        let access = crate::shell_client::runner_access_from_auth(auth);
+        let access = crate::runner_http::runner_access_from_auth(auth);
         let visible_clients = self
-            .shell_clients
-            .list_clients_for_auth(access.as_ref())
+            .runner_registry
+            .list_runners_for_auth(access.as_ref())
             .await;
         let Some(client) = visible_clients
             .iter()
@@ -524,7 +524,7 @@ impl ToolRuntime {
             );
         };
         let visible_jobs = self
-            .shell_clients
+            .runner_registry
             .list_all_jobs_for_auth(access.as_ref())
             .await;
         let selected_jobs: Vec<ShellJobInfo> = visible_jobs
@@ -847,7 +847,7 @@ fn host_context_projection(context: Option<&crate::shell_protocol::AgentHostCont
 }
 
 /// Stale threshold for runner-derived layers (heartbeat window).
-const RUNNER_STALE_AFTER_SECS: i64 = crate::shell_client::CLIENT_ONLINE_WINDOW_SECS;
+const RUNNER_STALE_AFTER_SECS: i64 = crate::runner_http::RUNNER_ONLINE_WINDOW_SECS;
 /// Stale threshold for connector/tool-call activity observations.
 const ACTIVITY_STALE_AFTER_SECS: i64 = 600;
 

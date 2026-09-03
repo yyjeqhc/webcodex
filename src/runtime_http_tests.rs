@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::test_support::{seed_oauth_client, seed_user, test_config, test_config_oauth2, test_db};
 use salvo::test::{ResponseExt, TestClient};
 use salvo::Service;
@@ -196,7 +196,7 @@ fn phase2_oauth_service_with_shared_key_hash(
 fn runtime_with_local_project(root: &std::path::Path, project_id: &str) -> ToolRuntime {
     let _ = (root, project_id);
     ToolRuntime::new(
-        Arc::new(ShellClientRegistry::default()),
+        Arc::new(RunnerRegistry::default()),
         Arc::new(crate::tool_runtime::RuntimeInfo::default()),
     )
 }
@@ -261,9 +261,9 @@ fn effective_status(resp: &Response) -> StatusCode {
 async fn register_import_agent_with_capabilities(
     root: &std::path::Path,
     capabilities: Option<crate::shell_protocol::ShellClientCapabilities>,
-) -> (Arc<ToolRuntime>, Arc<ShellClientRegistry>) {
+) -> (Arc<ToolRuntime>, Arc<RunnerRegistry>) {
     use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientRegisterRequest};
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     registry
         .register(crate::test_support::current_runner_registration(
             ShellClientRegisterRequest {
@@ -309,20 +309,18 @@ async fn register_import_agent_with_capabilities(
         }],
     )
     .await;
-    let runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+    let runtime = Arc::new(ToolRuntime::new_for_tests_with_runner_registry(
         registry.clone(),
     ));
     (runtime, registry)
 }
 
-async fn register_import_agent(
-    root: &std::path::Path,
-) -> (Arc<ToolRuntime>, Arc<ShellClientRegistry>) {
+async fn register_import_agent(root: &std::path::Path) -> (Arc<ToolRuntime>, Arc<RunnerRegistry>) {
     register_import_agent_with_capabilities(root, None).await
 }
 
 async fn complete_one_agent_request(
-    registry: Arc<ShellClientRegistry>,
+    registry: Arc<RunnerRegistry>,
     stdout: impl Into<String>,
     stderr: impl Into<String>,
     exit_code: i32,
@@ -356,7 +354,7 @@ async fn complete_one_agent_request(
         .unwrap();
 }
 
-fn spawn_startup_agent_executor(registry: Arc<ShellClientRegistry>) -> tokio::task::JoinHandle<()> {
+fn spawn_startup_agent_executor(registry: Arc<RunnerRegistry>) -> tokio::task::JoinHandle<()> {
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentResultRequest, ShellAgentShellRequest,
     };

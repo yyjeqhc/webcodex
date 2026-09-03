@@ -21,7 +21,7 @@ fn managed_oauth_auth_context(
 
 #[tokio::test]
 async fn registry_filters_lightweight_clients_by_auth_group() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let shared_a = crate::auth::shared_key::shared_key_context("token-a");
     let shared_b = crate::auth::shared_key::shared_key_context("token-b");
     let shared_hash = crate::auth::shared_key::shared_key_hash_of("token-a");
@@ -102,50 +102,50 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
     }
 
     let visible_to_a: Vec<String> = registry
-        .list_clients_for_auth(Some(&shared_a_access))
+        .list_runners_for_auth(Some(&shared_a_access))
         .await
         .into_iter()
         .map(|c| c.client_id)
         .collect();
     assert_eq!(visible_to_a, vec!["shared-a"]);
     let visible_to_bridge_a: Vec<String> = registry
-        .list_clients_for_auth(Some(&bridge_a_access))
+        .list_runners_for_auth(Some(&bridge_a_access))
         .await
         .into_iter()
         .map(|c| c.client_id)
         .collect();
     assert_eq!(visible_to_bridge_a, vec!["shared-a"]);
     assert!(registry
-        .assert_client_access(Some(&shared_a_access), "shared-a")
+        .assert_runner_access(Some(&shared_a_access), "shared-a")
         .await
         .is_ok());
     assert!(registry
-        .assert_client_access(Some(&bridge_a_access), "shared-a")
+        .assert_runner_access(Some(&bridge_a_access), "shared-a")
         .await
         .is_ok());
     assert!(registry
-        .assert_client_access(Some(&shared_a_access), "shared-b")
+        .assert_runner_access(Some(&shared_a_access), "shared-b")
         .await
         .unwrap_err()
         .contains("unknown shell client"));
     assert!(registry
-        .assert_client_access(Some(&shared_a_access), "open")
+        .assert_runner_access(Some(&shared_a_access), "open")
         .await
         .unwrap_err()
         .contains("unknown shell client"));
     assert!(registry
-        .assert_client_access(Some(&bridge_a_access), "shared-b")
+        .assert_runner_access(Some(&bridge_a_access), "shared-b")
         .await
         .unwrap_err()
         .contains("unknown shell client"));
     assert!(registry
-        .assert_client_access(Some(&bridge_a_access), "open")
+        .assert_runner_access(Some(&bridge_a_access), "open")
         .await
         .unwrap_err()
         .contains("unknown shell client"));
 
     let visible_to_open: Vec<String> = registry
-        .list_clients_for_auth(Some(&open_access))
+        .list_runners_for_auth(Some(&open_access))
         .await
         .into_iter()
         .map(|c| c.client_id)
@@ -166,30 +166,30 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
     assert!(!managed_oauth.is_oauth_shared_key_subject());
     for managed_auth in [&managed_oauth_access, &managed_pat_access] {
         let visible: Vec<String> = registry
-            .list_clients_for_auth(Some(managed_auth))
+            .list_runners_for_auth(Some(managed_auth))
             .await
             .into_iter()
             .map(|c| c.client_id)
             .collect();
         assert_eq!(visible, vec!["alice-laptop", "alice-server"]);
         assert!(registry
-            .assert_client_access(Some(managed_auth), "alice-laptop")
+            .assert_runner_access(Some(managed_auth), "alice-laptop")
             .await
             .is_ok());
         assert!(registry
-            .assert_client_access(Some(managed_auth), "bob-runner")
+            .assert_runner_access(Some(managed_auth), "bob-runner")
             .await
             .unwrap_err()
             .contains("unknown shell client"));
         assert!(registry
-            .assert_client_access(Some(managed_auth), "shared-a")
+            .assert_runner_access(Some(managed_auth), "shared-a")
             .await
             .unwrap_err()
             .contains("unknown shell client"));
     }
 
     let visible_to_bootstrap: Vec<String> = registry
-        .list_clients_for_auth(Some(&bootstrap_access))
+        .list_runners_for_auth(Some(&bootstrap_access))
         .await
         .into_iter()
         .map(|c| c.client_id)
@@ -209,7 +209,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
 
 #[tokio::test]
 async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -238,7 +238,7 @@ async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
     assert!(!admin_access.owner_bypass);
     assert_eq!(
         registry
-            .list_clients_for_auth(Some(&admin_access))
+            .list_runners_for_auth(Some(&admin_access))
             .await
             .into_iter()
             .map(|client| client.client_id)
@@ -246,7 +246,7 @@ async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
         vec!["bob-runner"]
     );
     let error = registry
-        .assert_client_access(Some(&admin_access), "bob-runner")
+        .assert_runner_access(Some(&admin_access), "bob-runner")
         .await
         .unwrap_err();
     assert!(error.contains("owned by bob"), "{error}");
@@ -257,14 +257,14 @@ async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
     assert!(bootstrap_access.global_visibility);
     assert!(bootstrap_access.owner_bypass);
     assert!(registry
-        .assert_client_access(Some(&bootstrap_access), "bob-runner")
+        .assert_runner_access(Some(&bootstrap_access), "bob-runner")
         .await
         .is_ok());
 }
 
 #[tokio::test]
 async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     let bob = auth_context(Some("bob"), false);
     let bootstrap = auth_context(None, true);
@@ -328,7 +328,7 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
     }
 
     assert!(registry
-        .coding_agent_run_for_client_for_auth(
+        .coding_agent_run_for_runner_for_auth(
             Some(&alice_access),
             "alice-runner",
             "wc_agent_run_alice",
@@ -336,7 +336,7 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
         .await
         .is_some());
     assert!(registry
-        .coding_agent_run_for_client_for_auth(Some(&alice_access), "bob-runner", "wc_agent_run_bob")
+        .coding_agent_run_for_runner_for_auth(Some(&alice_access), "bob-runner", "wc_agent_run_bob")
         .await
         .is_none());
     assert!(registry
@@ -357,7 +357,7 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
 async fn same_client_id_in_different_project_grants_is_isolated() {
     // Expected pre-fix failure: reusing the same instance id currently
     // lets a second auth group replace the first group's global lease.
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let grant_a = crate::auth::shared_key::project_credential_context("wc_pgrant_aaaaaaaaaaaaaaaa");
     let grant_b = crate::auth::shared_key::project_credential_context("wc_pgrant_bbbbbbbbbbbbbbbb");
     let grant_a_access = runner_access_from_auth(Some(&grant_a)).unwrap();
@@ -398,19 +398,19 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
     assert!(!error.contains("grant-a-host"));
     assert!(!error.contains("grant-a-project"));
     let original = registry
-        .get_client_view_for_auth("same-project-agent", Some(&grant_a_access))
+        .get_runner_view_for_auth("same-project-agent", Some(&grant_a_access))
         .await
         .expect("the original grant must retain its lease");
     assert_eq!(original.hostname.as_deref(), Some("grant-a-host"));
     assert!(registry
-        .get_client_view_for_auth("same-project-agent", Some(&grant_b_access))
+        .get_runner_view_for_auth("same-project-agent", Some(&grant_b_access))
         .await
         .is_none());
 }
 
 #[tokio::test]
 async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connection() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let shared_a = crate::auth::shared_key::shared_key_context("shared-a");
     let shared_b = crate::auth::shared_key::shared_key_context("shared-b");
     let managed = agent_auth_context(
@@ -453,7 +453,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-a", None),
             Some(&shared_a_access),
             "connection-a",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -468,7 +468,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             ),
             Some(&managed_access),
             "managed-connection",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
@@ -479,16 +479,16 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-b", None),
             Some(&shared_b_access),
             "connection-b",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
         .unwrap_err();
-    assert_eq!(collision, "agent client identity is unavailable");
+    assert_eq!(collision, "runner identity is unavailable");
     assert!(!collision.contains("host-a"));
     assert_eq!(
         registry
-            .get_client_view_for_auth("shared-client", Some(&shared_a_access))
+            .get_runner_view_for_auth("shared-client", Some(&shared_a_access))
             .await
             .unwrap()
             .hostname
@@ -497,19 +497,19 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
         "cross-group collision must not refresh or replace the original record"
     );
     assert!(registry
-        .get_client_view_for_auth("shared-client", Some(&shared_b_access))
+        .get_runner_view_for_auth("shared-client", Some(&shared_b_access))
         .await
         .is_none());
     assert!(registry
-        .get_client_view_for_auth("shared-client", Some(&managed_access))
+        .get_runner_view_for_auth("shared-client", Some(&managed_access))
         .await
         .is_none());
     assert!(registry
-        .get_client_view_for_auth("managed-client", Some(&shared_a_access))
+        .get_runner_view_for_auth("managed-client", Some(&shared_a_access))
         .await
         .is_none());
     assert!(registry
-        .get_client_view_for_auth("shared-client", Some(&bootstrap_access))
+        .get_runner_view_for_auth("shared-client", Some(&bootstrap_access))
         .await
         .is_some());
 
@@ -520,18 +520,18 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
             registration("shared-client", "shared-instance", "host-a-new", None),
             Some(&shared_a_access),
             "connection-new",
-            AgentTransport::WebSocket,
+            RunnerTransport::WebSocket,
             Arc::new(Notify::new()),
         )
         .await
         .unwrap();
     let old_connection = registry
-        .touch_client_for_connection("shared-client", "shared-instance", "connection-a")
+        .touch_runner_for_connection("shared-client", "shared-instance", "connection-a")
         .await
         .unwrap_err();
     assert!(old_connection.contains("transport connection is no longer active"));
     registry
-        .touch_client_for_connection("shared-client", "shared-instance", "connection-new")
+        .touch_runner_for_connection("shared-client", "shared-instance", "connection-new")
         .await
         .unwrap();
 }

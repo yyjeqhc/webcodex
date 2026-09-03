@@ -15,7 +15,7 @@ use super::structured_execution::{
 use super::tool_audit::{assertion_validation_identity, run_process_validation_identity};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::shell_client::{
+use crate::runner_http::{
     process_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
     StructuredJobExecution, DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
@@ -409,7 +409,11 @@ impl ToolRuntime {
         };
         let resolved_cwd =
             project_relative_runner_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
-        let features = match self.shell_clients.get_client_feature_set(&client_id).await {
+        let features = match self
+            .runner_registry
+            .get_runner_feature_set(&client_id)
+            .await
+        {
             Ok(features) => features,
             Err(error) => {
                 return process_tool_failure_result(
@@ -432,8 +436,8 @@ impl ToolRuntime {
                 ShellCommandExecutionState::NotStarted,
             );
         }
-        let access = crate::shell_client::runner_access_from_auth(auth);
-        let detached_initiator = match crate::shell_client::detached_initiator_identity_from_auth(auth)
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        let detached_initiator = match crate::runner_http::detached_initiator_identity_from_auth(auth)
         {
             Ok(identity) => identity,
             Err(error) => {
@@ -448,7 +452,7 @@ impl ToolRuntime {
             }
         };
         match self
-            .shell_clients
+            .runner_registry
             .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
                     op: "start".to_string(),
@@ -694,7 +698,7 @@ impl ToolRuntime {
         }
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
-                .shell_clients
+                .runner_registry
                 .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
                         op: "start".to_string(),
@@ -731,7 +735,7 @@ impl ToolRuntime {
                         stdin,
                         ..Default::default()
                     },
-                    crate::shell_client::runner_access_from_auth(auth).as_ref(),
+                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     None,
                 )
                 .await;
@@ -766,7 +770,7 @@ impl ToolRuntime {
                 .structured_execution_sync_wait
                 .min(Duration::from_secs(budget.sync_wait_secs));
             let handoff = await_hidden_structured_job(
-                self.shell_clients.clone(),
+                self.runner_registry.clone(),
                 job.job_id.clone(),
                 wait,
                 auth.cloned(),
@@ -779,7 +783,7 @@ impl ToolRuntime {
                     stderr,
                 }) => {
                     let result = terminal_structured_job_result(&job, stdout, stderr, timeout);
-                    self.shell_clients
+                    self.runner_registry
                         .remove_projected_hidden_structured_job_record(&job.job_id)
                         .await;
                     result
@@ -845,7 +849,7 @@ impl ToolRuntime {
         }
         let wait_timeout = timeout;
         let (request_id, receiver) = match self
-                .shell_clients
+                .runner_registry
                 .enqueue_process(
                     client_id,
                     Some(effective_cwd),
@@ -921,7 +925,7 @@ impl ToolRuntime {
                 }
                 Ok(Err(_)) => {
                     let dispatch = self
-                        .shell_clients
+                        .runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await;
                     if dispatch == Some(false) {
@@ -941,7 +945,7 @@ impl ToolRuntime {
                 }
                 Err(_) => {
                     let dispatch = self
-                        .shell_clients
+                        .runner_registry
                         .cancel_request_dispatch_state(&request_id)
                         .await;
                     let state = dispatch_uncertainty_lifecycle(dispatch);

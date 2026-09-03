@@ -6,7 +6,7 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
     use salvo::Service;
 
     let client_id = "raw-shell-timeout";
-    let registry = Arc::new(ShellClientRegistry::default());
+    let registry = Arc::new(RunnerRegistry::default());
     let mut registration = runner_registration(
         client_id,
         "inst",

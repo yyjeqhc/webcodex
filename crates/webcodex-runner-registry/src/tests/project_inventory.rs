@@ -54,7 +54,7 @@ fn snapshot_pages(
 }
 
 async fn apply_snapshot(
-    registry: &ShellClientRegistry,
+    registry: &RunnerRegistry,
     client_id: &str,
     instance_id: &str,
     generation: &str,
@@ -85,7 +85,7 @@ fn assert_resolves_edges(projects: &[ShellAgentProjectSummary], count: usize) {
 
 #[tokio::test]
 async fn paged_inventory_has_no_project_count_liveness_boundary() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     for count in [64usize, 65, 100, 256, 1024] {
         let client_id = format!("paged-scale-{count}");
         let instance_id = format!("paged-instance-{count}");
@@ -115,7 +115,7 @@ async fn paged_inventory_has_no_project_count_liveness_boundary() {
         )
         .await;
         assert_eq!(status.sync_state, "complete");
-        let published = registry.list_client_projects(&client_id).await.unwrap();
+        let published = registry.list_runner_projects(&client_id).await.unwrap();
         assert_eq!(published.len(), count);
         assert_resolves_edges(&published, count);
     }
@@ -123,7 +123,7 @@ async fn paged_inventory_has_no_project_count_liveness_boundary() {
 
 #[tokio::test]
 async fn registration_does_not_publish_project_inventory_before_snapshot() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "v2-bootstrap";
     let instance_id = "v2-bootstrap-instance";
     let view = registry
@@ -155,7 +155,7 @@ async fn registration_does_not_publish_project_inventory_before_snapshot() {
     assert_eq!(completed.sync_state, "complete");
     assert_eq!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .len(),
@@ -165,7 +165,7 @@ async fn registration_does_not_publish_project_inventory_before_snapshot() {
 
 #[tokio::test]
 async fn generation2_registration_accepts_canonical_inventory_pages() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-generation2";
     let instance_id = "inventory-generation2-instance";
     let registered = registry
@@ -186,14 +186,14 @@ async fn generation2_registration_accepts_canonical_inventory_pages() {
     .await;
     assert_eq!(status.sync_state, "complete");
     assert!(status.last_error_code.is_none());
-    let published = registry.list_client_projects(client_id).await.unwrap();
+    let published = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(published.len(), 1);
     assert_eq!(published[0].id, "replacement");
 }
 
 #[tokio::test]
 async fn inventory_round_trip_preserves_registration_source_and_tolerates_future_values() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-registration-source";
     let instance_id = "inventory-registration-source-instance";
     registry
@@ -215,7 +215,7 @@ async fn inventory_round_trip_preserves_registration_source_and_tolerates_future
         .unwrap();
     assert_eq!(status.sync_state, "complete");
     assert!(status.last_error_code.is_none());
-    let published = registry.list_client_projects(client_id).await.unwrap();
+    let published = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(published.len(), 2);
     assert_eq!(
         published
@@ -235,7 +235,7 @@ async fn inventory_round_trip_preserves_registration_source_and_tolerates_future
 
 #[tokio::test]
 async fn unsupported_protocol_registration_does_not_publish_project_inventory() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-strategy-unsupported";
     let instance_id = "inventory-strategy-unsupported-instance";
     let mut registration = runner_registration(
@@ -247,14 +247,14 @@ async fn unsupported_protocol_registration_does_not_publish_project_inventory() 
 
     let error = registry.register(registration).await.unwrap_err();
     assert_eq!(error, "agent_protocol_generation is unsupported");
-    assert!(registry.get_client_view(client_id).await.is_none());
-    assert!(registry.list_client_projects(client_id).await.is_err());
+    assert!(registry.get_runner_view(client_id).await.is_none());
+    assert!(registry.list_runner_projects(client_id).await.is_err());
 }
 
 #[tokio::test]
 async fn paged_inventory_scales_and_reconnects_without_cardinality_admission() {
     for count in [100usize, 256, 1024] {
-        let registry = ShellClientRegistry::default();
+        let registry = RunnerRegistry::default();
         let client_id = format!("paged-scale-{count}");
         let instance_id = format!("paged-instance-{count}");
         let initial = registry
@@ -295,7 +295,7 @@ async fn paged_inventory_scales_and_reconnects_without_cardinality_admission() {
         assert_eq!(status.sync_state, "complete");
         assert_eq!(status.total_reported, Some(count));
         assert_eq!(status.total_synced, count);
-        let published = registry.list_client_projects(&client_id).await.unwrap();
+        let published = registry.list_runner_projects(&client_id).await.unwrap();
         assert_eq!(published.len(), count);
         assert_resolves_edges(&published, count);
 
@@ -331,7 +331,7 @@ async fn paged_inventory_scales_and_reconnects_without_cardinality_admission() {
 
 #[tokio::test]
 async fn completed_snapshot_atomically_removes_projects_and_stale_pages_cannot_resurrect_them() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-removal";
     let instance_id = "inventory-removal-instance";
     registry
@@ -363,7 +363,7 @@ async fn completed_snapshot_atomically_removes_projects_and_stale_pages_cannot_r
         .await
         .unwrap();
     assert_eq!(first_status.sync_state, "in_progress");
-    let during = registry.list_client_projects(client_id).await.unwrap();
+    let during = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(
         during.len(),
         200,
@@ -390,7 +390,7 @@ async fn completed_snapshot_atomically_removes_projects_and_stale_pages_cannot_r
             .await
             .unwrap();
     }
-    let completed = registry.list_client_projects(client_id).await.unwrap();
+    let completed = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(completed.len(), 197);
     for removed in [37usize, 88, 199] {
         assert!(
@@ -414,7 +414,7 @@ async fn completed_snapshot_atomically_removes_projects_and_stale_pages_cannot_r
     );
     assert_eq!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .len(),
@@ -424,7 +424,7 @@ async fn completed_snapshot_atomically_removes_projects_and_stale_pages_cannot_r
 
 #[tokio::test]
 async fn snapshot_sequence_high_water_rejects_replay_after_retired_generation_cleanup() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-sequence-high-water";
     let instance_id = "inventory-sequence-instance";
     registry
@@ -461,7 +461,7 @@ async fn snapshot_sequence_high_water_rejects_replay_after_retired_generation_cl
     }
     {
         let inner = registry.inner.lock().await;
-        let state = &inner.clients.get(client_id).unwrap().project_inventory;
+        let state = &inner.runners.get(client_id).unwrap().project_inventory;
         assert_eq!(state.highest_snapshot_sequence, 24);
         assert!(
             !state
@@ -481,14 +481,14 @@ async fn snapshot_sequence_high_water_rejects_replay_after_retired_generation_cl
         replay.last_error_code.as_deref(),
         Some("project_inventory_stale_generation")
     );
-    let projects = registry.list_client_projects(client_id).await.unwrap();
+    let projects = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].path, "/tmp/generation-24");
 }
 
 #[tokio::test]
 async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_full_snapshot() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-dynamic-convergence";
     let instance_id = "inventory-dynamic-instance";
     registry
@@ -507,7 +507,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
     assert_eq!(staged_a.sync_state, "in_progress");
     assert!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .is_empty(),
@@ -515,14 +515,14 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
     );
 
     registry
-        .upsert_client_project_for_instance(
+        .upsert_runner_project_for_instance(
             client_id,
             instance_id,
             project_summary("dynamic-added", "/tmp/dynamic-added"),
         )
         .await
         .expect("dynamic register projection should commit against the active instance");
-    let after_register = registry.list_client_projects(client_id).await.unwrap();
+    let after_register = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(after_register.len(), 1);
     assert_eq!(after_register[0].id, "dynamic-added");
 
@@ -551,7 +551,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         stale_after_register.last_error_code.as_deref(),
         Some("project_inventory_stale_generation")
     );
-    let still_dynamic_only = registry.list_client_projects(client_id).await.unwrap();
+    let still_dynamic_only = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(still_dynamic_only.len(), 1);
     assert_eq!(still_dynamic_only[0].id, "dynamic-added");
 
@@ -570,7 +570,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
     .await;
     assert_eq!(converged_after_register.sync_state, "complete");
     assert_eq!(converged_after_register.total_synced, 71);
-    let after_full_register = registry.list_client_projects(client_id).await.unwrap();
+    let after_full_register = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(after_full_register.len(), 71);
     assert!(after_full_register
         .iter()
@@ -580,10 +580,10 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .any(|project| project.id == "dynamic-added"));
 
     assert!(registry
-        .remove_client_project_for_instance(client_id, instance_id, "project-0037")
+        .remove_runner_project_for_instance(client_id, instance_id, "project-0037")
         .await
         .expect("dynamic unregister projection should commit against the active instance"));
-    let after_unregister = registry.list_client_projects(client_id).await.unwrap();
+    let after_unregister = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(after_unregister.len(), 70);
     assert!(after_unregister
         .iter()
@@ -613,7 +613,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
     .await;
     assert_eq!(converged.sync_state, "complete");
     assert_eq!(converged.total_synced, 70);
-    let final_projects = registry.list_client_projects(client_id).await.unwrap();
+    let final_projects = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(final_projects.len(), 70);
     assert!(final_projects
         .iter()
@@ -626,7 +626,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
         .apply_project_inventory_page(client_id, instance_id, stale_a_pages[1].clone())
         .await
         .unwrap();
-    let after_stale = registry.list_client_projects(client_id).await.unwrap();
+    let after_stale = registry.list_runner_projects(client_id).await.unwrap();
     assert_eq!(after_stale.len(), 70);
     assert!(after_stale
         .iter()
@@ -638,7 +638,7 @@ async fn dynamic_register_unregister_retire_prior_generation_and_converge_with_f
 
 #[tokio::test]
 async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_instance_routing() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-restart";
     let old_instance = "inventory-old-instance";
     registry
@@ -664,7 +664,7 @@ async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_in
     );
     assert_eq!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .len(),
@@ -678,7 +678,7 @@ async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_in
         .unwrap();
     assert_eq!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .len(),
@@ -716,7 +716,7 @@ async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_in
     assert!(stale_instance.contains("stale or replaced"));
     assert!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .is_empty(),
@@ -736,14 +736,14 @@ async fn missing_out_of_order_and_restart_midway_keep_atomicity_without_cross_in
     assert_eq!(status.sync_state, "complete");
     assert_eq!(status.total_synced, 161);
     assert_resolves_edges(
-        &registry.list_client_projects(client_id).await.unwrap(),
+        &registry.list_runner_projects(client_id).await.unwrap(),
         161,
     );
 }
 
 #[tokio::test]
 async fn malformed_and_oversized_inventory_degrades_without_revoking_runner_liveness() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let client_id = "inventory-bounds";
     let instance_id = "inventory-bounds-instance";
     let trusted = synthetic_projects(3);
@@ -841,18 +841,18 @@ async fn malformed_and_oversized_inventory_degrades_without_revoking_runner_live
     );
     assert_eq!(
         registry
-            .list_client_projects(client_id)
+            .list_runner_projects(client_id)
             .await
             .unwrap()
             .len(),
         trusted.len()
     );
-    assert!(registry.get_client_view(client_id).await.unwrap().connected);
+    assert!(registry.get_runner_view(client_id).await.unwrap().connected);
 }
 
 #[tokio::test]
 async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     for index in 0..=PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS {
         let client_id = format!("staging-{index}");
         let instance_id = format!("staging-instance-{index}");
@@ -885,7 +885,7 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
             );
             assert!(
                 registry
-                    .get_client_view(&client_id)
+                    .get_runner_view(&client_id)
                     .await
                     .unwrap()
                     .connected
@@ -897,7 +897,7 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
     {
         let mut inner = registry.inner.lock().await;
         let staging = inner
-            .clients
+            .runners
             .get_mut(client_id)
             .and_then(|client| client.project_inventory.staging.as_mut())
             .expect("first client has staging");
@@ -944,7 +944,7 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
         .await
         .unwrap();
     assert_eq!(completed.sync_state, "complete");
-    let published = registry.list_client_projects(&denied_client).await.unwrap();
+    let published = registry.list_runner_projects(&denied_client).await.unwrap();
     assert_eq!(published.len(), 2);
     assert!(published.iter().any(|project| project.id == "first"));
     assert!(published.iter().any(|project| project.id == "second"));
@@ -976,7 +976,7 @@ async fn staging_capacity_and_timeout_are_bounded_without_taking_runners_offline
         "capacity admission must reclaim expired staging before rejecting a new sync"
     );
 
-    let expired = registry.get_client_view(client_id).await.unwrap();
+    let expired = registry.get_runner_view(client_id).await.unwrap();
     let status = expired.project_inventory.unwrap();
     assert_eq!(status.sync_state, "degraded");
     assert_eq!(

@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn computer_snapshot_artifact_rechecks_current_target_project_and_authority_under_registry_lock(
 ) {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
     let request = |client_id: &str| {
         ShellFileOpRequest {

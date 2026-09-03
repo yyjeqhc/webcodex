@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn computer_accessibility_enqueue_requires_distinct_capability() {
-    let registry = ShellClientRegistry::default();
-    register_computer_test_client(&registry, "computer-ax", "alice", true, false, false, false)
+    let registry = RunnerRegistry::default();
+    register_computer_test_runner(&registry, "computer-ax", "alice", true, false, false, false)
         .await;
     let alice = auth_context(Some("alice"), false);
     let error = registry
@@ -19,7 +19,7 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
         .unwrap_err();
     assert!(error.contains("does not support computer_accessibility_observe"));
 
-    register_computer_test_client(&registry, "computer-ax", "alice", true, true, false, false)
+    register_computer_test_runner(&registry, "computer-ax", "alice", true, true, false, false)
         .await;
     let (_request_id, _rx) = registry
         .enqueue_computer(
@@ -46,9 +46,9 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
 
 #[tokio::test]
 async fn computer_element_state_requires_its_own_additive_capability() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_computer_test_client(
+    register_computer_test_runner(
         &registry,
         "computer-state",
         "alice",

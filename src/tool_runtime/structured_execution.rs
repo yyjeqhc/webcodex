@@ -1,6 +1,6 @@
 use super::helpers::{bounded_tail, COMMAND_STDIO_TAIL_CHARS};
 use crate::auth::AuthContext;
-use crate::shell_client::ShellClientRegistry;
+use crate::runner_http::RunnerRegistry;
 use crate::shell_protocol::{
     ShellJobInfo, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
@@ -85,7 +85,7 @@ pub(crate) struct StructuredJobObservation {
 }
 
 pub(crate) async fn structured_job_observation(
-    clients: &ShellClientRegistry,
+    clients: &RunnerRegistry,
     access: Option<&RunnerAccess>,
     job_id: &str,
 ) -> Result<StructuredJobObservation, String> {
@@ -118,12 +118,12 @@ pub(crate) async fn structured_job_observation(
 }
 
 pub(crate) async fn await_hidden_structured_job(
-    clients: Arc<ShellClientRegistry>,
+    clients: Arc<RunnerRegistry>,
     job_id: String,
     sync_wait: Duration,
     auth: Option<AuthContext>,
 ) -> Result<HiddenStructuredJobWait, String> {
-    let access = crate::shell_client::runner_access_from_auth(auth.as_ref());
+    let access = crate::runner_http::runner_access_from_auth(auth.as_ref());
     let mut guard = HiddenJobCleanupGuard::new(clients.clone(), job_id.clone(), access.clone());
     let deadline = std::time::Instant::now() + sync_wait;
     loop {
@@ -182,7 +182,7 @@ fn continued_execution_state(status: &str, started: bool) -> (&'static str, bool
 }
 
 async fn hidden_terminal_snapshot(
-    clients: &ShellClientRegistry,
+    clients: &RunnerRegistry,
     access: Option<&RunnerAccess>,
     job_id: &str,
 ) -> Result<HiddenStructuredJobWait, String> {
@@ -199,18 +199,14 @@ async fn hidden_terminal_snapshot(
 /// Cancels an initially hidden Job if the initiating future is dropped before
 /// it can return either a terminal projection or a public continuation.
 struct HiddenJobCleanupGuard {
-    clients: Arc<ShellClientRegistry>,
+    clients: Arc<RunnerRegistry>,
     job_id: String,
     access: Option<RunnerAccess>,
     armed: bool,
 }
 
 impl HiddenJobCleanupGuard {
-    fn new(
-        clients: Arc<ShellClientRegistry>,
-        job_id: String,
-        access: Option<RunnerAccess>,
-    ) -> Self {
+    fn new(clients: Arc<RunnerRegistry>, job_id: String, access: Option<RunnerAccess>) -> Self {
         Self {
             clients,
             job_id,

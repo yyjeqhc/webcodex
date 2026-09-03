@@ -382,9 +382,6 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .7rem; letter-spacing: 
 .recent-panel-meta { margin-left: auto; color: var(--placeholder); font-size: .68rem; font-weight: 400; }
 .recent-panel-summary::after { content: "›"; display: inline-block; color: var(--placeholder); font-size: .95rem; line-height: 1; transform: rotate(0deg); transition: transform 140ms var(--ease-out); }
 .recent-panel[open] > .recent-panel-summary::after { transform: rotate(90deg); }
-.sidebar-details { margin: 4px 10px 0; }
-.sidebar-details > summary { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; color: var(--muted); font-size: .72rem; cursor: pointer; list-style: none; }
-.sidebar-details > summary::-webkit-details-marker { display: none; }
 .recent-session-list { max-height: 250px; }
 .recent-session-row { appearance: none; width: 100%; min-width: 0; display: grid; gap: 4px; padding: 8px 10px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .recent-session-row:hover, .recent-session-row.selected { background: var(--sidebar-selected); }
@@ -913,7 +910,7 @@ body:not(.runtime-has-session) .topbar-controls { padding-right: 0; }
   .context-trigger, .icon-btn, .send-btn, .mobile-nav-control, .inspector-close { min-width: 44px; min-height: 44px; }
   .runner-filter select, .sidebar-search input, .sidebar-view-item, .operations-nav-item { min-height: 44px; }
   .message-action { width: 44px; height: 44px; }
-  .recent-panel-summary, .sidebar-details > summary { min-height: 44px; align-items: center; }
+  .recent-panel-summary { min-height: 44px; align-items: center; }
   .message-actions { opacity: 1; }
 }
 

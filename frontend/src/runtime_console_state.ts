@@ -628,3 +628,39 @@ export function resolveRuntimeContextState(
     isDocked,
   };
 }
+
+export type RuntimeContextUserAction =
+  | { type: "toggle_trigger"; currentVisible: boolean }
+  | { type: "explicit_open" }
+  | { type: "explicit_close" };
+
+export function reduceRuntimeContextUserIntent(
+  _previousIntent: boolean | null,
+  action: RuntimeContextUserAction
+): boolean {
+  switch (action.type) {
+    case "toggle_trigger":
+      return !action.currentVisible;
+    case "explicit_open":
+      return true;
+    case "explicit_close":
+      return false;
+  }
+}
+
+export interface RuntimeContextFocusTransitionOptions {
+  wasDocked: boolean;
+  nextDocked: boolean;
+  isTriggerFocused: boolean;
+}
+
+export type RuntimeContextFocusTarget = "inspector_close" | "none";
+
+export function resolveRuntimeContextFocusTransition(
+  options: RuntimeContextFocusTransitionOptions
+): RuntimeContextFocusTarget {
+  if (!options.wasDocked && options.nextDocked && options.isTriggerFocused) {
+    return "inspector_close";
+  }
+  return "none";
+}

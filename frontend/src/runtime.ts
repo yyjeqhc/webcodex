@@ -52,8 +52,8 @@ import {
   takeRuntimeCollaborationMutationNotice,
   resolveRunnerDisclosure,
   resolveRuntimeContextState,
-  type RuntimeContextPresentationMode,
-  type RuntimeContextResolvedState,
+  reduceRuntimeContextUserIntent,
+  resolveRuntimeContextFocusTransition,
 } from "./runtime_console_state.js";
 
 const API_BASE = "/api/runtime-console/";
@@ -71,7 +71,6 @@ const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
 const WIDE_CONTEXT_MEDIA = "(min-width: 1600px)";
 
 let contextUserIntent: boolean | null = null;
-let syncingContextDom = false;
 
 type AppearancePreference = "system" | "light" | "dark";
 type RuntimeLanguage = "en" | "zh-CN";
@@ -763,6 +762,9 @@ function syncContextUi(restoreFocus = false): void {
   const shell = el("runtime-console");
   const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
   const trigger = inspector?.querySelector(".context-trigger") as HTMLElement | null;
+  const wasDocked = !!shell?.classList.contains("context-docked");
+  const isTriggerFocused = document.activeElement === trigger;
+
   const resolved = resolveRuntimeContextState({
     userIntent: contextUserIntent,
     isWideViewport: window.matchMedia(WIDE_CONTEXT_MEDIA).matches,
@@ -773,14 +775,17 @@ function syncContextUi(restoreFocus = false): void {
 
   shell?.classList.toggle("context-docked", resolved.isDocked);
   if (inspector && inspector.open !== resolved.visible) {
-    syncingContextDom = true;
-    try {
-      inspector.open = resolved.visible;
-    } finally {
-      syncingContextDom = false;
-    }
+    inspector.open = resolved.visible;
   }
-  if (restoreFocus && !resolved.visible && trigger) {
+
+  const focusTarget = resolveRuntimeContextFocusTransition({
+    wasDocked,
+    nextDocked: resolved.isDocked,
+    isTriggerFocused,
+  });
+  if (focusTarget === "inspector_close") {
+    el("runtime-inspector-close")?.focus();
+  } else if (restoreFocus && !resolved.visible && trigger) {
     trigger.focus();
   }
 }
@@ -789,7 +794,7 @@ function closeRuntimeInspector(restoreFocus = false, forceDocked = false): boole
   if (isContextDocked() && !forceDocked) return false;
   const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
   if (!inspector?.open && !isContextDocked()) return false;
-  contextUserIntent = false;
+  contextUserIntent = reduceRuntimeContextUserIntent(contextUserIntent, { type: "explicit_close" });
   syncContextUi(restoreFocus);
   return true;
 }
@@ -1264,7 +1269,8 @@ function clearSessionSurface(): void {
 
 function lock(message = "", clearRemembered = true): void {
   setMobileNavigationOpen(false, false);
-  closeRuntimeInspector(false);
+  closeRuntimeInspector(false, true);
+  contextUserIntent = null;
   detachCommunicationEndpointsBestEffort();
   token = "";
   if (clearRemembered) {
@@ -3919,6 +3925,19 @@ el("runtime-mobile-nav-close")?.addEventListener("click", () => setMobileNavigat
 el("runtime-mobile-nav-backdrop")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-inspector-backdrop")?.addEventListener("click", () => closeRuntimeInspector(true));
 el("runtime-inspector-close")?.addEventListener("click", () => closeRuntimeInspector(true, true));
+document.querySelector(".context-trigger")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
+  const currentlyVisible = !!inspector?.open;
+  contextUserIntent = reduceRuntimeContextUserIntent(contextUserIntent, {
+    type: "toggle_trigger",
+    currentVisible: currentlyVisible,
+  });
+  if (contextUserIntent && mobileNavigationViewport()) {
+    setMobileNavigationOpen(false, false);
+  }
+  syncContextUi(false);
+});
 document.querySelectorAll<HTMLButtonElement>("[data-runtime-view]").forEach((button) => {
   button.addEventListener("click", () => applyWorkspaceView(workspaceViewPreference(button.dataset.runtimeView)));
 });
@@ -3978,19 +3997,17 @@ el("runtime-timeline")?.addEventListener("scroll", () => {
   updateWorkflowSessionFollowFromScroll(state.workflow, node.scrollTop, node.clientHeight, node.scrollHeight); syncFollowUi();
 });
 document.querySelector(".runtime-inspector")?.addEventListener("toggle", (event) => {
-  if (syncingContextDom) return;
   const inspector = event.currentTarget as HTMLDetailsElement | null;
   if (!inspector) return;
-  contextUserIntent = inspector.open;
-  if (inspector.open && mobileNavigationViewport()) {
-    setMobileNavigationOpen(false, false);
-  }
-  const trigger = inspector.querySelector(".context-trigger") as HTMLElement | null;
-  const wasTriggerFocused = document.activeElement === trigger;
-  syncContextUi(false);
-  const shell = el("runtime-console");
-  if (shell?.classList.contains("context-docked") && wasTriggerFocused) {
-    el("runtime-inspector-close")?.focus();
+  const resolved = resolveRuntimeContextState({
+    userIntent: contextUserIntent,
+    isWideViewport: window.matchMedia(WIDE_CONTEXT_MEDIA).matches,
+    isMobileViewport: mobileNavigationViewport(),
+    hasSelectedSession: !!state.workflow?.selectedSessionId,
+    workspaceView,
+  });
+  if (inspector.open !== resolved.visible) {
+    inspector.open = resolved.visible;
   }
 });
 document.addEventListener("keydown", (event) => {

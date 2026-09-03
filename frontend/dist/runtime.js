@@ -779,6 +779,22 @@ function resolveRuntimeContextState(options) {
         isDocked,
     };
 }
+function reduceRuntimeContextUserIntent(_previousIntent, action) {
+    switch (action.type) {
+        case "toggle_trigger":
+            return !action.currentVisible;
+        case "explicit_open":
+            return true;
+        case "explicit_close":
+            return false;
+    }
+}
+function resolveRuntimeContextFocusTransition(options) {
+    if (!options.wasDocked && options.nextDocked && options.isTriggerFocused) {
+        return "inspector_close";
+    }
+    return "none";
+}
 
 const API_BASE = "/api/runtime-console/";
 const REFRESH_MS = 30000;
@@ -794,7 +810,6 @@ const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
 const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
 const WIDE_CONTEXT_MEDIA = "(min-width: 1600px)";
 let contextUserIntent = null;
-let syncingContextDom = false;
 const RUNTIME_ZH_TEXT = {
     "WebCodex — Runtime Console": "WebCodex — 运行控制台",
     "WebCodex Runtime Console": "WebCodex 运行控制台",
@@ -1474,6 +1489,8 @@ function syncContextUi(restoreFocus = false) {
     const shell = el("runtime-console");
     const inspector = document.querySelector(".runtime-inspector");
     const trigger = inspector?.querySelector(".context-trigger");
+    const wasDocked = !!shell?.classList.contains("context-docked");
+    const isTriggerFocused = document.activeElement === trigger;
     const resolved = resolveRuntimeContextState({
         userIntent: contextUserIntent,
         isWideViewport: window.matchMedia(WIDE_CONTEXT_MEDIA).matches,
@@ -1483,15 +1500,17 @@ function syncContextUi(restoreFocus = false) {
     });
     shell?.classList.toggle("context-docked", resolved.isDocked);
     if (inspector && inspector.open !== resolved.visible) {
-        syncingContextDom = true;
-        try {
-            inspector.open = resolved.visible;
-        }
-        finally {
-            syncingContextDom = false;
-        }
+        inspector.open = resolved.visible;
     }
-    if (restoreFocus && !resolved.visible && trigger) {
+    const focusTarget = resolveRuntimeContextFocusTransition({
+        wasDocked,
+        nextDocked: resolved.isDocked,
+        isTriggerFocused,
+    });
+    if (focusTarget === "inspector_close") {
+        el("runtime-inspector-close")?.focus();
+    }
+    else if (restoreFocus && !resolved.visible && trigger) {
         trigger.focus();
     }
 }
@@ -1501,7 +1520,7 @@ function closeRuntimeInspector(restoreFocus = false, forceDocked = false) {
     const inspector = document.querySelector(".runtime-inspector");
     if (!inspector?.open && !isContextDocked())
         return false;
-    contextUserIntent = false;
+    contextUserIntent = reduceRuntimeContextUserIntent(contextUserIntent, { type: "explicit_close" });
     syncContextUi(restoreFocus);
     return true;
 }
@@ -1994,7 +2013,8 @@ function clearSessionSurface() {
 }
 function lock(message = "", clearRemembered = true) {
     setMobileNavigationOpen(false, false);
-    closeRuntimeInspector(false);
+    closeRuntimeInspector(false, true);
+    contextUserIntent = null;
     detachCommunicationEndpointsBestEffort();
     token = "";
     if (clearRemembered) {
@@ -4996,6 +5016,19 @@ el("runtime-mobile-nav-close")?.addEventListener("click", () => setMobileNavigat
 el("runtime-mobile-nav-backdrop")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-inspector-backdrop")?.addEventListener("click", () => closeRuntimeInspector(true));
 el("runtime-inspector-close")?.addEventListener("click", () => closeRuntimeInspector(true, true));
+document.querySelector(".context-trigger")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const inspector = document.querySelector(".runtime-inspector");
+    const currentlyVisible = !!inspector?.open;
+    contextUserIntent = reduceRuntimeContextUserIntent(contextUserIntent, {
+        type: "toggle_trigger",
+        currentVisible: currentlyVisible,
+    });
+    if (contextUserIntent && mobileNavigationViewport()) {
+        setMobileNavigationOpen(false, false);
+    }
+    syncContextUi(false);
+});
 document.querySelectorAll("[data-runtime-view]").forEach((button) => {
     button.addEventListener("click", () => applyWorkspaceView(workspaceViewPreference(button.dataset.runtimeView)));
 });
@@ -5066,21 +5099,18 @@ el("runtime-timeline")?.addEventListener("scroll", () => {
     syncFollowUi();
 });
 document.querySelector(".runtime-inspector")?.addEventListener("toggle", (event) => {
-    if (syncingContextDom)
-        return;
     const inspector = event.currentTarget;
     if (!inspector)
         return;
-    contextUserIntent = inspector.open;
-    if (inspector.open && mobileNavigationViewport()) {
-        setMobileNavigationOpen(false, false);
-    }
-    const trigger = inspector.querySelector(".context-trigger");
-    const wasTriggerFocused = document.activeElement === trigger;
-    syncContextUi(false);
-    const shell = el("runtime-console");
-    if (shell?.classList.contains("context-docked") && wasTriggerFocused) {
-        el("runtime-inspector-close")?.focus();
+    const resolved = resolveRuntimeContextState({
+        userIntent: contextUserIntent,
+        isWideViewport: window.matchMedia(WIDE_CONTEXT_MEDIA).matches,
+        isMobileViewport: mobileNavigationViewport(),
+        hasSelectedSession: !!state.workflow?.selectedSessionId,
+        workspaceView,
+    });
+    if (inspector.open !== resolved.visible) {
+        inspector.open = resolved.visible;
     }
 });
 document.addEventListener("keydown", (event) => {

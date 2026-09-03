@@ -48,6 +48,8 @@ import {
   resolveRunnerDisclosure,
   resolveRuntimeContextState,
   resolveRuntimeContextPresentationMode,
+  reduceRuntimeContextUserIntent,
+  resolveRuntimeContextFocusTransition,
 } from "../dist/runtime_console_state.js";
 
 test("communication transcript window follows the latest bounded page", () => {
@@ -964,6 +966,193 @@ test("runtime context resolution separates presentation mode from user visibilit
   assert.equal(sessionRestored.isDocked, true);
 });
 
+test("context user intent reducer and lifecycle transitions ensure programmatic projections never pollute intent", () => {
+  // Scenario 1: Initial wide viewport defaults to open; programmatic DOM projection does NOT contaminate userIntent.
+  let userIntent = null;
+  const wideDefault = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(wideDefault.visible, true);
+  assert.equal(wideDefault.isDocked, true);
+
+  // Programmatic DOM projection sets inspector.open = true.
+  // Critical invariant: userIntent must remain null!
+  assert.equal(userIntent, null);
+
+  // Resize to normal viewport: null intent correctly resolves to closed.
+  const normalAfterResize = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(normalAfterResize.visible, false);
+  assert.equal(normalAfterResize.isDocked, false);
+
+  // Scenario 2: User explicitly opens context. Switching to Operations hides it, returning to Sessions restores it.
+  userIntent = reduceRuntimeContextUserIntent(userIntent, { type: "explicit_open" });
+  assert.equal(userIntent, true);
+
+  const opsView = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "operations",
+  });
+  assert.equal(opsView.visible, false, "Operations view temporarily hides session context");
+  // Switching views or programmatic closing must NOT overwrite userIntent
+  assert.equal(userIntent, true, "userIntent remains true during operations view");
+
+  const backToSessions = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(backToSessions.visible, true, "Context re-opens when returning to Sessions view");
+
+  // Scenario 3: Selected session temporarily unavailable does NOT record as manual collapse.
+  const sessionUnavailable = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: false,
+    workspaceView: "sessions",
+  });
+  assert.equal(sessionUnavailable.visible, false);
+  assert.equal(userIntent, true, "temporary unavailability does not clear userIntent");
+
+  const sessionAvailableAgain = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(sessionAvailableAgain.visible, true);
+  assert.equal(sessionAvailableAgain.isDocked, true);
+
+  // Scenario 4: Explicit user close sets userIntent = false and persists across refresh / resize.
+  userIntent = reduceRuntimeContextUserIntent(userIntent, { type: "explicit_close" });
+  assert.equal(userIntent, false);
+
+  const closedOnWide = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(closedOnWide.visible, false);
+  assert.equal(closedOnWide.isDocked, false);
+
+  // Refresh / resize simulation: userIntent remains false
+  const closedAfterRefresh = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(closedAfterRefresh.visible, false);
+
+  // Scenario 5: Trigger toggle action correctly inverts visibility.
+  // When visible in DOM, toggle action closes context.
+  const toggledClosed = reduceRuntimeContextUserIntent(null, { type: "toggle_trigger", currentVisible: true });
+  assert.equal(toggledClosed, false);
+
+  // When hidden in DOM, toggle action opens context.
+  const toggledOpen = reduceRuntimeContextUserIntent(null, { type: "toggle_trigger", currentVisible: false });
+  assert.equal(toggledOpen, true);
+
+  // 1599 <-> 1600 transitions with explicit open intent preserve intent and only switch presentation mode.
+  userIntent = true;
+  const at1599 = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: false,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(at1599.visible, true);
+  assert.equal(at1599.presentationMode, "popover");
+  assert.equal(at1599.isDocked, false);
+
+  const at1600 = resolveRuntimeContextState({
+    userIntent,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "sessions",
+  });
+  assert.equal(at1600.visible, true);
+  assert.equal(at1600.presentationMode, "docked");
+  assert.equal(at1600.isDocked, true);
+});
+
+test("context focus transition preserves accessible focus across breakpoint and close actions", () => {
+  // P2 Case 1: Popover is open and trigger is focused. Viewport resizes 1599 -> 1600.
+  // Trigger will be hidden by CSS (display: none), so focus MUST transfer to #runtime-inspector-close.
+  assert.equal(
+    resolveRuntimeContextFocusTransition({
+      wasDocked: false,
+      nextDocked: true,
+      isTriggerFocused: true,
+    }),
+    "inspector_close"
+  );
+
+  // P2 Case 2: Popover is open but focus was elsewhere (e.g. inside chat or timeline).
+  // Resize to 1600 must NOT steal focus!
+  assert.equal(
+    resolveRuntimeContextFocusTransition({
+      wasDocked: false,
+      nextDocked: true,
+      isTriggerFocused: false,
+    }),
+    "none"
+  );
+
+  // P2 Case 3: Context is closed and user resizes across 1599 <-> 1600.
+  // nextDocked is false because closed context never docks; focus must never be stolen.
+  assert.equal(
+    resolveRuntimeContextFocusTransition({
+      wasDocked: false,
+      nextDocked: false,
+      isTriggerFocused: true,
+    }),
+    "none"
+  );
+
+  // P2 Case 4: Already docked; resize within >=1600 range does not transfer focus.
+  assert.equal(
+    resolveRuntimeContextFocusTransition({
+      wasDocked: true,
+      nextDocked: true,
+      isTriggerFocused: false,
+    }),
+    "none"
+  );
+
+  // P2 Case 5: Reverse transition from docked (1600) to popover (1599).
+  // Close button remains visible in popover header; no focus jump needed.
+  assert.equal(
+    resolveRuntimeContextFocusTransition({
+      wasDocked: true,
+      nextDocked: false,
+      isTriggerFocused: false,
+    }),
+    "none"
+  );
+});
+
 test("navigation and inspector source contracts maintain disclosure hierarchy and accessibility", async () => {
   const [html, css, source] = await Promise.all([
     readFile(new URL("../src/runtime.html", import.meta.url), "utf8"),
@@ -971,19 +1160,29 @@ test("navigation and inspector source contracts maintain disclosure hierarchy an
     readFile(new URL("../src/runtime.ts", import.meta.url), "utf8"),
   ]);
 
+  // P3: Recent Sessions component semantics - clean class, no legacy sidebar-details overrides
+  assert.match(html, /<details id="runtime-recent-panel" class="recent-panel">/);
   assert.match(html, /<span class="recent-panel-title">Recent Sessions<\/span>/);
-  assert.doesNotMatch(css, /\.sidebar-details > summary > span\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(html, /class="[^"]*sidebar-details/);
+  assert.doesNotMatch(css, /\.sidebar-details/);
   assert.doesNotMatch(css, /summary::before\s*\{\s*content:\s*"Show more"/);
   assert.doesNotMatch(css, /summary\[open\]::before\s*\{\s*content:\s*"Recent Sessions"/);
   assert.match(css, /\.recent-panel\s*\{[^}]*border-top:/);
 
+  // P1 & P2: Inspector triggers and close controls with deterministic user intent handling
   assert.match(html, /id="runtime-inspector-close"[^>]*aria-label="Close session context"/);
   assert.match(html, /id="runtime-inspector-backdrop"[^>]*aria-label="Close session context"/);
   assert.match(source, /"Close session context": "关闭会话上下文"/);
   assert.match(source, /el\("runtime-inspector-close"\)\?\.addEventListener\("click", \(\) => closeRuntimeInspector\(true, true\)\)/);
+  assert.match(source, /document\.querySelector\("\.context-trigger"\)\?\.addEventListener\("click",/);
+  assert.match(source, /reduceRuntimeContextUserIntent/);
+  assert.match(source, /resolveRuntimeContextFocusTransition/);
+  assert.doesNotMatch(source, /syncingContextDom/);
+  assert.doesNotMatch(source, /contextUserIntent\s*=\s*inspector\.open/);
+  assert.match(source, /function lock[\s\S]*closeRuntimeInspector\(false, true\);[\s\S]*contextUserIntent = null;/);
+
   assert.match(source, /function isContextDocked/);
   assert.match(source, /function syncContextUi/);
-
   assert.match(source, /function revealRunner/);
   assert.match(source, /function switchProject[\s\S]*if \(device\) revealRunner\(device\)/);
   assert.match(source, /function selectRecentSession[\s\S]*if \(clientId\) revealRunner\(clientId\)/);

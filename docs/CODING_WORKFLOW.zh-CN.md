@@ -137,6 +137,9 @@ test，或使用 `min_tests: N` 声明更大的 bounded minimum；两者同时�
 返回 `tests_run_count: 0` 与 `zero_tests_run: true`。显式 count assertion 只有在完整 parser
 evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 validation contract 会失败，
 但不会改写真实 process exit code。count assertion 不能与 `no_run: true` 同时使用。
+当 count assertion 无法证明时，`test_count_assertion.evidence_reason_code` 会进一步区分
+输出被截断、harness summary 不完整、或完全没有完整 summary；这些诊断不会放松 fail-closed
+的 test-count 证明要求。
 
 **在执行前声明非默认结果。** 支持该契约的执行与 structured-validation 工具接受
 `result_expectation`：省略（或 `success`）保持默认的 fail-closed 成功要求；`failure` 用于

@@ -80,6 +80,10 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
         result.output["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
+    assert_eq!(
+        result.output["test_count_assertion"]["evidence_reason_code"],
+        "complete_summary"
+    );
     assert_eq!(result.output["tests_run_count"], 0);
     assert_eq!(result.output["zero_tests_run"], true);
     assert_eq!(result.output["test_count_assertion"]["actual_tests_run"], 0);
@@ -193,6 +197,10 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
     assert_eq!(
         status.output["validation"]["test_count_assertion"]["reason_code"],
         "minimum_not_met"
+    );
+    assert_eq!(
+        status.output["validation"]["test_count_assertion"]["evidence_reason_code"],
+        "complete_summary"
     );
     assert_eq!(
         status.output["validation"]["test_count_assertion"]["minimum_tests"],

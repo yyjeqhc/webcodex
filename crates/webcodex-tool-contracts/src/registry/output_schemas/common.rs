@@ -439,9 +439,14 @@ pub fn cargo_test_count_assertion_schema() -> Value {
             "reason_code": {
                 "type": "string",
                 "enum": ["minimum_satisfied", "minimum_not_met", "test_count_unproven"]
+            },
+            "evidence_reason_code": {
+                "type": "string",
+                "enum": ["complete_summary", "output_truncated", "partial_harness_summary", "no_complete_summary"],
+                "description": "Why executed-test count evidence was proven or remained unavailable; this refines evidence diagnostics without changing the assertion verdict."
             }
         },
-        "required": ["minimum_tests", "actual_tests_run", "status", "reason_code"]
+        "required": ["minimum_tests", "actual_tests_run", "status", "reason_code", "evidence_reason_code"]
     })
 }
 

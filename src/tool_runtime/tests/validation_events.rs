@@ -483,6 +483,7 @@ fn cargo_test_run_metadata_counts_only_executed_tests() {
     assert!(metadata.tests_detected);
     assert_eq!(metadata.tests_run_count, Some(1));
     assert_eq!(metadata.zero_tests_run, Some(false));
+    assert_eq!(metadata.count_evidence_reason, "complete_summary");
 
     let measured_only = parse_cargo_test_run_metadata(
         "running 2 tests\n\
@@ -545,6 +546,32 @@ fn cargo_test_run_metadata_keeps_positive_aggregate_when_last_harness_is_zero() 
     assert_eq!(metadata.tests_failed, Some(0));
     assert_eq!(metadata.tests_run_count, Some(2788));
     assert_eq!(metadata.zero_tests_run, Some(false));
+    assert_eq!(metadata.count_evidence_reason, "complete_summary");
+}
+
+#[test]
+fn cargo_test_run_metadata_reports_precise_unproven_reason() {
+    let real_success = parse_cargo_test_run_metadata(
+        "running 224 tests\n\
+         test result: ok. 224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+    );
+    assert_eq!(real_success.tests_run_count, Some(224));
+    assert_eq!(real_success.count_evidence_reason, "complete_summary");
+
+    let partial_after_success = parse_cargo_test_run_metadata(
+        "running 224 tests\n\
+         test result: ok. 224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\
+         test result: ok. 0 passed;\n",
+    );
+    assert_eq!(partial_after_success.tests_run_count, None);
+    assert_eq!(
+        partial_after_success.count_evidence_reason,
+        "partial_harness_summary"
+    );
+
+    let no_complete = parse_cargo_test_run_metadata("running 224 tests\n");
+    assert_eq!(no_complete.tests_run_count, None);
+    assert_eq!(no_complete.count_evidence_reason, "no_complete_summary");
 }
 
 #[test]

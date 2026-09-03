@@ -171,6 +171,9 @@ explicit count assertion passes only when complete parser evidence proves the
 minimum; incomplete or truncated evidence fails the validation contract without
 rewriting the process exit code. Count assertions cannot be combined with
 `no_run: true`.
+When a count assertion is unproven, `test_count_assertion.evidence_reason_code`
+distinguishes truncated output, a partial harness summary, and the absence of a
+complete summary without weakening the fail-closed count proof.
 
 **Declare non-default execution outcomes before running them.** Supported execution and
 structured-validation tools accept `result_expectation` with three meanings: omitted

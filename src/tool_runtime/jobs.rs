@@ -92,6 +92,7 @@ pub(crate) struct StructuredValidationEvidence {
     pub(crate) tests_passed: Option<u64>,
     pub(crate) tests_failed: Option<u64>,
     pub(crate) zero_tests_run: Option<bool>,
+    pub(crate) test_count_evidence_reason: Option<&'static str>,
     pub(crate) warnings_count: Option<u64>,
     pub(crate) errors_count: Option<u64>,
 }
@@ -115,6 +116,7 @@ pub(crate) fn structured_validation_evidence(
         tests_passed: None,
         tests_failed: None,
         zero_tests_run: None,
+        test_count_evidence_reason: None,
         warnings_count: None,
         errors_count: None,
     };
@@ -141,6 +143,11 @@ pub(crate) fn structured_validation_evidence(
         "test" => {
             let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
             evidence.tests_detected = Some(metadata.tests_detected);
+            evidence.test_count_evidence_reason = Some(if truncated {
+                "output_truncated"
+            } else {
+                metadata.count_evidence_reason
+            });
             if !truncated {
                 evidence.tests_run_count = metadata.tests_run_count;
                 evidence.tests_passed = metadata.tests_passed;
@@ -256,6 +263,9 @@ pub(crate) fn validation_job_projection(
                         "actual_tests_run": evidence.tests_run_count,
                         "status": status,
                         "reason_code": reason_code,
+                        "evidence_reason_code": evidence
+                            .test_count_evidence_reason
+                            .unwrap_or("no_complete_summary"),
                     });
                 }
             }
@@ -1814,6 +1824,10 @@ mod recovery_projection_tests {
             ignored_only_required["test_count_assertion"]["reason_code"],
             "minimum_not_met"
         );
+        assert_eq!(
+            ignored_only_required["test_count_assertion"]["evidence_reason_code"],
+            "complete_summary"
+        );
 
         let one_passed_with_ignored = project(
             "running 6 tests\n\ntest result: ok. 1 passed; 0 failed; 5 ignored\n",
@@ -1866,6 +1880,10 @@ mod recovery_projection_tests {
             assert_eq!(value["test_count_assertion"]["actual_tests_run"], actual);
             assert_eq!(value["test_count_assertion"]["status"], status);
             assert_eq!(
+                value["test_count_assertion"]["evidence_reason_code"],
+                "complete_summary"
+            );
+            assert_eq!(
                 value["test_count_assertion"]["reason_code"],
                 if passed {
                     "minimum_satisfied"
@@ -1890,6 +1908,24 @@ mod recovery_projection_tests {
             );
             assert!(unproven["test_count_assertion"]["actual_tests_run"].is_null());
         }
+
+        assert_eq!(
+            project("", false, Some(1))["test_count_assertion"]["evidence_reason_code"],
+            "no_complete_summary"
+        );
+        assert_eq!(
+            project("test result: ok. 10 passed;\n", false, Some(6))["test_count_assertion"]
+                ["evidence_reason_code"],
+            "partial_harness_summary"
+        );
+        assert_eq!(
+            project(
+                "test result: ok. 10 passed; 0 failed; 0 ignored\n",
+                true,
+                Some(6)
+            )["test_count_assertion"]["evidence_reason_code"],
+            "output_truncated"
+        );
 
         let command_failure = validation_job_projection(
             Some("cargo_test"),

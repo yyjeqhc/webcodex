@@ -97,6 +97,7 @@ pub(crate) struct CargoTestRunMetadata {
     pub(crate) tests_passed: Option<u64>,
     pub(crate) tests_failed: Option<u64>,
     pub(crate) zero_tests_run: Option<bool>,
+    pub(crate) count_evidence_reason: &'static str,
 }
 
 pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
@@ -152,6 +153,7 @@ pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata 
             tests_passed: Some(tests_passed),
             tests_failed: Some(tests_failed),
             zero_tests_run: Some(tests_run_count == 0),
+            count_evidence_reason: "complete_summary",
         }
     } else {
         CargoTestRunMetadata {
@@ -160,6 +162,11 @@ pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata 
             tests_passed: None,
             tests_failed: None,
             zero_tests_run: None,
+            count_evidence_reason: if incomplete_summary_found {
+                "partial_harness_summary"
+            } else {
+                "no_complete_summary"
+            },
         }
     }
 }

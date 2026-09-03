@@ -144,6 +144,15 @@ fn tool_specs_structured_validation_schema_and_output() {
             "test_count_unproven"
         ])
     );
+    assert_eq!(
+        cargo_test_output["test_count_assertion"]["properties"]["evidence_reason_code"]["enum"],
+        serde_json::json!([
+            "complete_summary",
+            "output_truncated",
+            "partial_harness_summary",
+            "no_complete_summary"
+        ])
+    );
     for name in ["job_status", "job_log"] {
         let output = &spec_named(&specs, name).output_schema["properties"]["output"]["properties"];
         assert_eq!(

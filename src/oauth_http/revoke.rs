@@ -165,7 +165,7 @@ pub(crate) async fn oauth_revoke(req: &mut Request, depot: &mut Depot, res: &mut
     };
 
     // --- Client authentication ---
-    let secret_ok = match db.verify_oauth_client_secret(client_id, client_secret) {
+    let secret_ok = match crate::auth::verify_oauth_client_secret(&db, client_id, client_secret) {
         Ok(ok) => ok,
         Err(_) => {
             oauth_error(

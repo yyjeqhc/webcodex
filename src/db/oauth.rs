@@ -25,7 +25,8 @@ fn validate_oauth_client_owner(record: &OAuthClientRecord) -> anyhow::Result<()>
     ) {
         (Some(user_id), None, None) if !user_id.trim().is_empty() => Ok(()),
         (None, Some(grant_id), None) => {
-            crate::auth::validate_project_grant_id(grant_id).map_err(anyhow::Error::msg)
+            webcodex_core::authority::validate_project_grant_id(grant_id)
+                .map_err(anyhow::Error::msg)
         }
         (None, None, Some(shared_key_hash)) => validate_shared_key_owner_hash(shared_key_hash),
         _ => anyhow::bail!(
@@ -62,14 +63,15 @@ fn validate_oauth_subject(
                 anyhow::bail!("shared_key OAuth subject_id must match shared_key_hash");
             }
         }
-        crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND => {
+        webcodex_core::authority::PROJECT_SHARE_OAUTH_SUBJECT_KIND => {
             if user_id.is_some() {
                 anyhow::bail!("project_share OAuth subject must not include user_id");
             }
             if shared_key_hash.is_some() {
                 anyhow::bail!("project_share OAuth subject must not include shared_key_hash");
             }
-            crate::auth::parse_project_share_subject_id(subject_id).map_err(anyhow::Error::msg)?;
+            webcodex_core::authority::parse_project_share_subject_id(subject_id)
+                .map_err(anyhow::Error::msg)?;
         }
         _ => anyhow::bail!("unknown OAuth subject_kind: {}", subject_kind),
     }
@@ -201,26 +203,6 @@ impl Database {
             params![id, ts],
         )?;
         Ok(())
-    }
-
-    /// Verify that `plaintext_secret` matches the stored hash for the given
-    /// client. Returns `true` if the hash matches, `false` otherwise. Uses
-    /// constant-time comparison to avoid timing leaks. Does not leak the hash
-    /// or plaintext on mismatch.
-    pub fn verify_oauth_client_secret(
-        &self,
-        client_id: &str,
-        plaintext_secret: &str,
-    ) -> anyhow::Result<bool> {
-        let client = self.get_oauth_client_by_client_id(client_id)?;
-        let Some(client) = client else {
-            return Ok(false);
-        };
-        let computed = crate::auth::hash_token(plaintext_secret);
-        Ok(crate::config::constant_time_eq(
-            computed.as_bytes(),
-            client.client_secret_hash.as_bytes(),
-        ))
     }
 
     /// List all OAuth clients (including revoked ones), ordered by creation

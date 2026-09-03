@@ -1271,7 +1271,7 @@ impl ToolRuntime {
                 error_summary: result.error.as_deref(),
                 // Derived from the verified caller here, not looked up later
                 // from whoever holds this client id at read time.
-                scope: super::activity::ActivityScope::from_auth(auth),
+                scope: super::activity::activity_scope_from_auth(auth),
             });
         }
         if result.success && super::observations::is_meaningful_activity_tool(tool_name) {

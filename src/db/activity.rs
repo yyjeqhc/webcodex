@@ -4,17 +4,12 @@
 //! grow without bound.
 
 use super::Database;
-use crate::tool_runtime::activity::{ActivityRecord, ActivityRecorder, ActivityVisibility};
 use rusqlite::params;
 use serde::Serialize;
-use std::sync::Arc;
+use webcodex_core::activity_contract::{ActivityRecord, ActivityVisibility};
 
-/// Character budgets. Previews reuse the 120-char discipline of
-/// `shell_client`'s command_preview; errors stay one short line.
-const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
+/// Persisted error summaries stay one short line.
 const ERROR_SUMMARY_MAX_CHARS: usize = 200;
-
-const DEFAULT_MAX_ROWS: i64 = 2_000;
 
 #[derive(Debug, Serialize)]
 pub struct WorkspaceActivityRow {
@@ -186,70 +181,6 @@ impl Database {
     }
 }
 
-/// SQLite-backed [`ActivityRecorder`] wired into the server's `ToolRuntime`.
-/// Env knobs (self-hosted operators own the privacy tradeoff):
-/// - `WEBCODEX_ACTIVITY=0` disables recording entirely.
-/// - `WEBCODEX_ACTIVITY_COMMAND_PREVIEW=0` drops command previews.
-/// - `WEBCODEX_ACTIVITY_MAX_ROWS` bounds the ledger (default 2000).
-pub struct WorkspaceActivityStore {
-    db: Arc<Database>,
-    preview_enabled: bool,
-    max_rows: i64,
-}
-
-impl WorkspaceActivityStore {
-    #[cfg(test)]
-    fn with_preview(db: Arc<Database>, preview_enabled: bool) -> Self {
-        Self {
-            db,
-            preview_enabled,
-            max_rows: DEFAULT_MAX_ROWS,
-        }
-    }
-
-    pub fn from_env(db: Arc<Database>) -> Option<Self> {
-        if env_flag_disabled("WEBCODEX_ACTIVITY") {
-            return None;
-        }
-        let max_rows = std::env::var("WEBCODEX_ACTIVITY_MAX_ROWS")
-            .ok()
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            .unwrap_or(DEFAULT_MAX_ROWS)
-            .clamp(100, 100_000);
-        Some(Self {
-            db,
-            preview_enabled: !env_flag_disabled("WEBCODEX_ACTIVITY_COMMAND_PREVIEW"),
-            max_rows,
-        })
-    }
-}
-
-impl ActivityRecorder for WorkspaceActivityStore {
-    fn record(&self, record: ActivityRecord<'_>) {
-        let preview = record
-            .command
-            .filter(|_| self.preview_enabled)
-            .map(|command| truncate_chars(command, COMMAND_PREVIEW_MAX_CHARS));
-        if let Err(error) = self.db.insert_workspace_activity(
-            chrono::Utc::now().timestamp(),
-            &record,
-            preview.as_deref(),
-            self.max_rows,
-        ) {
-            tracing::warn!(error = %error, "workspace activity insert failed");
-        }
-    }
-}
-
-fn env_flag_disabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            value == "0" || value == "false" || value == "off"
-        })
-        .unwrap_or(false)
-}
-
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
@@ -262,7 +193,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool_runtime::activity::ActivityScope;
+    use webcodex_core::activity_contract::ActivityScope;
 
     fn sample<'a>(tool: &'a str, success: bool, error: Option<&'a str>) -> ActivityRecord<'a> {
         ActivityRecord {
@@ -614,43 +545,5 @@ mod tests {
         ];
         let unique: std::collections::HashSet<_> = kinds.iter().collect();
         assert_eq!(unique.len(), kinds.len());
-    }
-
-    #[test]
-    fn disabling_the_preview_stores_no_command_text() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = std::sync::Arc::new(Database::open(&tmp.path().join("activity.db")).unwrap());
-
-        // Operators who turn previews off must get a NULL column, not a
-        // truncated command: the point of the switch is that the text never
-        // reaches the database at all.
-        let off = WorkspaceActivityStore::with_preview(db.clone(), false);
-        off.record(ActivityRecord {
-            command: Some("deploy --token wc_pat_supersecret"),
-            ..sample("run_shell", true, None)
-        });
-        let rows = db
-            .list_workspace_activity_for_clients(10, None, ActivityVisibility::Global, &[])
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0].command_preview.is_none(),
-            "command text was stored with previews disabled: {:?}",
-            rows[0].command_preview
-        );
-        // The rest of the row is still recorded, so the ledger stays useful.
-        assert_eq!(rows[0].tool, "run_shell");
-        assert_eq!(rows[0].paths, vec!["a.rs".to_string()]);
-
-        // With previews on, the same call records a bounded preview.
-        let on = WorkspaceActivityStore::with_preview(db.clone(), true);
-        on.record(ActivityRecord {
-            command: Some("cargo test"),
-            ..sample("run_shell", true, None)
-        });
-        let rows = db
-            .list_workspace_activity_for_clients(10, None, ActivityVisibility::Global, &[])
-            .unwrap();
-        assert_eq!(rows[0].command_preview.as_deref(), Some("cargo test"));
     }
 }

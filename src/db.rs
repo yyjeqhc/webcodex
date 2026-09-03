@@ -23,7 +23,6 @@ mod oauth;
 mod schema;
 mod task_kernel;
 
-pub use self::activity::WorkspaceActivityStore;
 pub(crate) use self::admin_project_lifecycle::AdminProjectAudit;
 pub(crate) use self::agent_task::{
     AgentTaskCodingRunBindingIntent, AgentTaskCodingRunBindingRecord,
@@ -69,6 +68,7 @@ pub(crate) use self::task_kernel::{
     ConnectorWorkspaceTransition, GuidanceReadState, NewConnectorResult, NewConnectorTask,
     WindowProjectActivation,
 };
+pub(crate) use crate::workspace_activity_store::WorkspaceActivityStore;
 pub struct Database {
     conn: Mutex<Connection>,
     state_path: PathBuf,

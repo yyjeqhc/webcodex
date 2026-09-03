@@ -66,7 +66,7 @@ pub(crate) use project_credential::{
 };
 pub(crate) use project_share::{
     configured_project_share_subject, generate_project_share_session_id,
-    parse_project_share_subject_id, project_share_scopes_are_bounded, validate_project_grant_id,
+    parse_project_share_subject_id, project_share_scopes_are_bounded,
     validate_project_share_grant_subject, PROJECT_SHARE_OAUTH_SCOPES,
     PROJECT_SHARE_OAUTH_SUBJECT_KIND, PROJECT_SHARE_OAUTH_TOKEN_KIND,
 };
@@ -106,6 +106,25 @@ pub(crate) use shared_key::{
     allow_anonymous_enabled, is_managed_token_prefix, open_anonymous_context, shared_key_context,
     shared_key_enabled, shared_key_hash_of, DIRECT_SHARED_KEY_MODEL_SCOPES,
 };
+
+/// Root auth policy for OAuth client-secret verification. Persistence returns
+/// the stored hash; hashing and constant-time comparison stay outside the
+/// durable store boundary.
+pub(crate) fn verify_oauth_client_secret(
+    db: &Database,
+    client_id: &str,
+    plaintext_secret: &str,
+) -> anyhow::Result<bool> {
+    let client = db.get_oauth_client_by_client_id(client_id)?;
+    let Some(client) = client else {
+        return Ok(false);
+    };
+    let computed = pat::hash_token(plaintext_secret);
+    Ok(crate::config::constant_time_eq(
+        computed.as_bytes(),
+        client.client_secret_hash.as_bytes(),
+    ))
+}
 
 pub(crate) use tokens::{authenticate, is_oauth2_access_token};
 #[cfg(test)]

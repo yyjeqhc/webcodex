@@ -1,5 +1,6 @@
 //! Side-effect-free shared protocol contracts and helpers for WebCodex.
 
+pub mod activity_contract;
 pub mod apply_edits_shared;
 pub mod apply_patch_shared;
 pub mod artifact_policy;

@@ -845,17 +845,20 @@ fn verify_oauth_client_secret_works() {
     let (client, plaintext_secret) = oauth_seed_client(&db, &user, "Test App");
 
     // Correct secret verifies.
-    assert!(db
-        .verify_oauth_client_secret(&client.client_id, &plaintext_secret)
-        .unwrap());
+    assert!(
+        crate::auth::verify_oauth_client_secret(&db, &client.client_id, &plaintext_secret).unwrap()
+    );
     // Wrong secret rejects.
-    assert!(!db
-        .verify_oauth_client_secret(&client.client_id, "wrong-secret")
-        .unwrap());
+    assert!(
+        !crate::auth::verify_oauth_client_secret(&db, &client.client_id, "wrong-secret").unwrap()
+    );
     // Unknown client_id rejects.
-    assert!(!db
-        .verify_oauth_client_secret("wc_client_nonexistent", &plaintext_secret)
-        .unwrap());
+    assert!(!crate::auth::verify_oauth_client_secret(
+        &db,
+        "wc_client_nonexistent",
+        &plaintext_secret
+    )
+    .unwrap());
 }
 
 #[test]

@@ -30,6 +30,62 @@ pub const SCOPE_AGENT_RESULT: &str = "agent:result";
 pub const SCOPE_AGENT_JOB_UPDATE: &str = "agent:job_update";
 pub const SCOPE_ACCOUNT_MANAGE: &str = "account:manage";
 
+/// Stable project-grant identity grammar shared by auth and persistence.
+pub const PROJECT_GRANT_ID_PREFIX: &str = "wc_pgrant_";
+/// Stable OAuth subject vocabulary for project-share credentials.
+pub const PROJECT_SHARE_OAUTH_SUBJECT_KIND: &str = "project_share";
+/// Stable session component prefix inside a project-share OAuth subject id.
+pub const PROJECT_SHARE_SESSION_PREFIX: &str = "wc_share_";
+
+pub fn validate_project_grant_id(value: &str) -> Result<(), String> {
+    let suffix = value
+        .strip_prefix(PROJECT_GRANT_ID_PREFIX)
+        .unwrap_or_default();
+    if suffix.len() != 24
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("configured project grant identity is invalid".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_project_share_session_id(value: &str) -> Result<(), String> {
+    let suffix = value
+        .strip_prefix(PROJECT_SHARE_SESSION_PREFIX)
+        .unwrap_or_default();
+    if suffix.len() != 64
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("configured project share session identity is invalid".to_string());
+    }
+    Ok(())
+}
+
+pub fn project_share_subject_id(
+    project_grant_id: &str,
+    session_id: &str,
+) -> Result<String, String> {
+    validate_project_grant_id(project_grant_id)?;
+    validate_project_share_session_id(session_id)?;
+    Ok(format!("{project_grant_id}|{session_id}"))
+}
+
+pub fn parse_project_share_subject_id(value: &str) -> Result<(&str, &str), String> {
+    let (grant_id, session_id) = value
+        .split_once('|')
+        .ok_or_else(|| "project-share OAuth subject is malformed".to_string())?;
+    if session_id.contains('|') {
+        return Err("project-share OAuth subject is malformed".to_string());
+    }
+    validate_project_grant_id(grant_id)?;
+    validate_project_share_session_id(session_id)?;
+    Ok((grant_id, session_id))
+}
+
 pub const COMMUNICATION_READ_SCOPES: &[&str] = &[SCOPE_COMMUNICATION_READ];
 pub const COMMUNICATION_MANAGE_SCOPES: &[&str] =
     &[SCOPE_COMMUNICATION_READ, SCOPE_COMMUNICATION_MANAGE];

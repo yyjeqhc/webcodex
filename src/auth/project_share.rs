@@ -9,10 +9,12 @@ use super::{
     SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
     SCOPE_SESSION_COLLABORATE,
 };
+pub(crate) use webcodex_core::authority::{
+    parse_project_share_subject_id, PROJECT_SHARE_OAUTH_SUBJECT_KIND,
+};
+use webcodex_core::authority::{project_share_subject_id, PROJECT_SHARE_SESSION_PREFIX};
 
-pub(crate) const PROJECT_SHARE_OAUTH_SUBJECT_KIND: &str = "project_share";
 pub(crate) const PROJECT_SHARE_OAUTH_TOKEN_KIND: &str = "oauth2_project";
-pub(crate) const PROJECT_SHARE_SESSION_PREFIX: &str = "wc_share_";
 pub(crate) const PROJECT_SHARE_OAUTH_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
     SCOPE_SESSION_COLLABORATE,
@@ -21,18 +23,6 @@ pub(crate) const PROJECT_SHARE_OAUTH_SCOPES: &[&str] = &[
     SCOPE_JOB_RUN,
 ];
 
-pub(crate) fn validate_project_grant_id(value: &str) -> Result<(), String> {
-    let suffix = value.strip_prefix("wc_pgrant_").unwrap_or_default();
-    if suffix.len() != 24
-        || !suffix
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        return Err("configured project grant identity is invalid".to_string());
-    }
-    Ok(())
-}
-
 pub(crate) fn generate_project_share_session_id() -> String {
     let mut random = String::with_capacity(64);
     while random.len() < 64 {
@@ -40,41 +30,6 @@ pub(crate) fn generate_project_share_session_id() -> String {
     }
     random.truncate(64);
     format!("{PROJECT_SHARE_SESSION_PREFIX}{random}")
-}
-
-pub(crate) fn validate_project_share_session_id(value: &str) -> Result<(), String> {
-    let suffix = value
-        .strip_prefix(PROJECT_SHARE_SESSION_PREFIX)
-        .unwrap_or_default();
-    if suffix.len() != 64
-        || !suffix
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err("configured project share session identity is invalid".to_string());
-    }
-    Ok(())
-}
-
-pub(crate) fn project_share_subject_id(
-    project_grant_id: &str,
-    session_id: &str,
-) -> Result<String, String> {
-    validate_project_grant_id(project_grant_id)?;
-    validate_project_share_session_id(session_id)?;
-    Ok(format!("{project_grant_id}|{session_id}"))
-}
-
-pub(crate) fn parse_project_share_subject_id(value: &str) -> Result<(&str, &str), String> {
-    let (grant_id, session_id) = value
-        .split_once('|')
-        .ok_or_else(|| "project-share OAuth subject is malformed".to_string())?;
-    if session_id.contains('|') {
-        return Err("project-share OAuth subject is malformed".to_string());
-    }
-    validate_project_grant_id(grant_id)?;
-    validate_project_share_session_id(session_id)?;
-    Ok((grant_id, session_id))
 }
 
 pub(crate) fn configured_project_share_subject(

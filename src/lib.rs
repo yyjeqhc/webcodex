@@ -53,6 +53,7 @@ mod test_support;
 mod tool_request_trace;
 mod tool_runtime;
 mod users_http;
+mod workspace_activity_store;
 
 #[cfg(test)]
 pub(crate) use webcodex_admin as admin_cli;

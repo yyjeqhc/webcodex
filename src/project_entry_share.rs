@@ -318,8 +318,7 @@ fn prepare_share_oauth_client(
                 || !client.is_project_grant_owned()
                 || client.redirect_uris_vec() != vec![redirect_uri.clone()]
                 || client.allowed_scopes != scopes
-                || !db
-                    .verify_oauth_client_secret(&client_id, &client_secret)
+                || !crate::auth::verify_oauth_client_secret(&db, &client_id, &client_secret)
                     .unwrap_or(false)
             {
                 return Err(share_oauth_state_error(

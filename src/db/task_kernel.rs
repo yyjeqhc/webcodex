@@ -5,13 +5,13 @@
 //! one executor attempt; events are its bounded, ordered audit trail.
 
 use super::Database;
-use crate::project_context::ProjectContextFingerprint;
 use rusqlite::types::Type;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
+use webcodex_workspace::project_context::ProjectContextFingerprint;
 
 pub(crate) struct ConnectorBinding<'a> {
     pub project_id: &'a str,

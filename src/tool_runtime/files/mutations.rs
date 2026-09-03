@@ -614,6 +614,28 @@ const APPLY_PATCH_SUCCESS_EDIT_FIELDS: [&str; 10] = [
     "strict_match",
 ];
 
+const APPLY_PATCH_FAILURE_TOP_LEVEL_FIELDS: [&str; 19] = [
+    "changed",
+    "state_changed",
+    "execution_state",
+    "error_kind",
+    "failure_kind",
+    "tool_failure",
+    "recovery_action",
+    "recovery_kind",
+    "recovery_tool",
+    "rollback_complete",
+    "change_index",
+    "kind",
+    "path",
+    "patch_line",
+    "expected_format",
+    "retry_guidance",
+    "error",
+    "match_diagnostic",
+    "capability",
+];
+
 const APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS: [&str; 10] = [
     "chunk_index",
     "match_source",
@@ -627,7 +649,31 @@ const APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS: [&str; 10] = [
     "first_exact_mismatch_offset",
 ];
 
-fn valid_apply_patch_failure_match_diagnostic(value: &Value) -> bool {
+fn expected_apply_patch_failure_pattern_len(
+    hunk: &crate::apply_patch_shared::CodexPatchHunk,
+    chunk_index: usize,
+    match_source: &str,
+) -> Option<usize> {
+    let crate::apply_patch_shared::CodexPatchHunk::UpdateFile { chunks, .. } = hunk else {
+        return None;
+    };
+    let chunk = chunks.get(chunk_index)?;
+    match match_source {
+        "change_context" => chunk.change_context.as_ref().map(|_| 1),
+        "old_lines" if !chunk.old_lines.is_empty() => {
+            let count = chunk.old_lines.len()
+                - usize::from(chunk.old_lines.last().is_some_and(String::is_empty));
+            (count > 0).then_some(count)
+        }
+        _ => None,
+    }
+}
+
+fn valid_apply_patch_failure_match_diagnostic(
+    value: &Value,
+    patch: &crate::apply_patch_shared::CodexPatch,
+    failure_output: &Value,
+) -> bool {
     let Some(diagnostic) = value.as_object() else {
         return false;
     };
@@ -635,13 +681,44 @@ fn valid_apply_patch_failure_match_diagnostic(value: &Value) -> bool {
         || !diagnostic
             .keys()
             .all(|key| APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS.contains(&key.as_str()))
+        || failure_output.get("error_kind").and_then(Value::as_str) != Some("context_mismatch")
     {
         return false;
     }
+
+    let Some(change_index) = failure_output
+        .get("change_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return false;
+    };
+    let Some(hunk) = patch.hunks.get(change_index) else {
+        return false;
+    };
+    if failure_output.get("path").and_then(Value::as_str) != Some(hunk.path()) {
+        return false;
+    }
+    let Some(chunk_index) = diagnostic
+        .get("chunk_index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return false;
+    };
+    let Some(match_source) = diagnostic.get("match_source").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(expected_pattern_len) =
+        expected_apply_patch_failure_pattern_len(hunk, chunk_index, match_source)
+    else {
+        return false;
+    };
     let Some(expected_line_count) = diagnostic
         .get("expected_line_count")
         .and_then(Value::as_u64)
-        .filter(|count| *count >= 1)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|count| *count == expected_pattern_len)
     else {
         return false;
     };
@@ -652,58 +729,64 @@ fn valid_apply_patch_failure_match_diagnostic(value: &Value) -> bool {
     else {
         return false;
     };
-    if diagnostic
-        .get("chunk_index")
+    let Some(available_line_count) = diagnostic
+        .get("available_line_count")
         .and_then(Value::as_u64)
-        .is_none()
-        || !diagnostic
-            .get("match_source")
-            .and_then(Value::as_str)
-            .is_some_and(|source| matches!(source, "old_lines" | "change_context"))
-        || diagnostic
-            .get("available_line_count")
-            .and_then(Value::as_u64)
-            .is_none()
-    {
+    else {
+        return false;
+    };
+    let Some(exact) = diagnostic
+        .get("closest_exact_line_matches")
+        .and_then(Value::as_u64)
+    else {
+        return false;
+    };
+    let Some(trim_end) = diagnostic
+        .get("closest_trim_end_line_matches")
+        .and_then(Value::as_u64)
+    else {
+        return false;
+    };
+    let Some(trim) = diagnostic
+        .get("closest_trim_line_matches")
+        .and_then(Value::as_u64)
+    else {
+        return false;
+    };
+    let expected_line_count = expected_line_count as u64;
+    if !(exact <= trim_end && trim_end <= trim && trim < expected_line_count) {
         return false;
     }
-    for key in [
-        "closest_exact_line_matches",
-        "closest_trim_end_line_matches",
-        "closest_trim_line_matches",
-    ] {
-        if !diagnostic
-            .get(key)
-            .and_then(Value::as_u64)
-            .is_some_and(|count| count <= expected_line_count)
-        {
-            return false;
-        }
-    }
+
     let closest_start_valid = match diagnostic.get("closest_start_line") {
-        Some(Value::Null) => true,
-        Some(value) => value.as_u64().is_some_and(|line| line >= search_start_line),
+        Some(Value::Null) => available_line_count == 0 && exact == 0 && trim_end == 0 && trim == 0,
+        Some(value) => value.as_u64().is_some_and(|line| {
+            available_line_count > 0
+                && line >= search_start_line
+                && line < search_start_line.saturating_add(available_line_count)
+        }),
         None => false,
     };
-    let mismatch_valid = match diagnostic.get("first_exact_mismatch_offset") {
-        Some(Value::Null) => true,
-        Some(value) => value
-            .as_u64()
-            .is_some_and(|offset| (1..=expected_line_count).contains(&offset)),
-        None => false,
-    };
+    let mismatch_valid = diagnostic
+        .get("first_exact_mismatch_offset")
+        .and_then(Value::as_u64)
+        .is_some_and(|offset| (1..=expected_line_count).contains(&offset));
     closest_start_valid && mismatch_valid
 }
 
-fn sanitize_apply_patch_failure_match_diagnostic(output: &mut Value) {
-    let Some(output) = output.as_object_mut() else {
+fn sanitize_apply_patch_failure_metadata(
+    output: &mut Value,
+    patch: &crate::apply_patch_shared::CodexPatch,
+) {
+    let diagnostic_valid = output
+        .get("match_diagnostic")
+        .is_none_or(|value| valid_apply_patch_failure_match_diagnostic(value, patch, output));
+    let Some(fields) = output.as_object_mut() else {
         return;
     };
-    if output
-        .get("match_diagnostic")
-        .is_some_and(|value| !valid_apply_patch_failure_match_diagnostic(value))
-    {
-        output.remove("match_diagnostic");
+    fields.retain(|key, _| APPLY_PATCH_FAILURE_TOP_LEVEL_FIELDS.contains(&key.as_str()));
+    if !diagnostic_valid {
+        fields.remove("match_diagnostic");
     }
 }
 
@@ -932,7 +1015,7 @@ fn apply_patch_agent_stdout_result(
         expected_dry_run,
     );
     if !result.success {
-        sanitize_apply_patch_failure_match_diagnostic(&mut result.output);
+        sanitize_apply_patch_failure_metadata(&mut result.output, patch);
         return result;
     }
     sanitize_apply_patch_success_metadata(&mut result.output);
@@ -2137,32 +2220,61 @@ mod tests {
             "state_changed": false,
             "execution_state": "not_started",
             "error_kind": "context_mismatch",
+            "change_index": 0,
+            "path": "file.txt",
             "error": "Rejected Codex patch before write: context mismatch. No files were modified.",
+            "future_body_field": "NEVER_SURVIVE_PATCH_FAILURE",
             "match_diagnostic": {
                 "chunk_index": 0,
                 "match_source": "old_lines",
                 "search_start_line": 3,
-                "expected_line_count": 2,
+                "expected_line_count": 1,
                 "available_line_count": 8,
                 "closest_start_line": 5,
-                "closest_exact_line_matches": 1,
-                "closest_trim_end_line_matches": 1,
-                "closest_trim_line_matches": 1,
-                "first_exact_mismatch_offset": 2
+                "closest_exact_line_matches": 0,
+                "closest_trim_end_line_matches": 0,
+                "closest_trim_line_matches": 0,
+                "first_exact_mismatch_offset": 1
             }
         });
         let result = apply_patch_agent_stdout_result(&valid.to_string(), &patch, false, true);
         assert!(!result.success);
         assert_eq!(result.output["match_diagnostic"]["closest_start_line"], 5);
-
-        let mut invalid = valid;
-        invalid["match_diagnostic"]["unexpected_field"] = json!("must-not-survive");
-        let result = apply_patch_agent_stdout_result(&invalid.to_string(), &patch, false, true);
-        assert!(!result.success);
-        assert!(result.output.get("match_diagnostic").is_none());
+        assert!(result.output.get("future_body_field").is_none());
         assert!(!serde_json::to_string(&result.output)
             .unwrap()
-            .contains("must-not-survive"));
+            .contains("NEVER_SURVIVE_PATCH_FAILURE"));
+
+        let mut cases = Vec::new();
+        let mut unexpected_field = valid.clone();
+        unexpected_field["match_diagnostic"]["unexpected_field"] = json!("must-not-survive");
+        cases.push(unexpected_field);
+        let mut wrong_change = valid.clone();
+        wrong_change["change_index"] = json!(1);
+        cases.push(wrong_change);
+        let mut wrong_path = valid.clone();
+        wrong_path["path"] = json!("other.txt");
+        cases.push(wrong_path);
+        let mut wrong_chunk = valid.clone();
+        wrong_chunk["match_diagnostic"]["chunk_index"] = json!(1);
+        cases.push(wrong_chunk);
+        let mut wrong_count = valid.clone();
+        wrong_count["match_diagnostic"]["expected_line_count"] = json!(2);
+        cases.push(wrong_count);
+        let mut impossible_order = valid;
+        impossible_order["match_diagnostic"]["closest_exact_line_matches"] = json!(1);
+        cases.push(impossible_order);
+
+        for invalid in cases {
+            let result = apply_patch_agent_stdout_result(&invalid.to_string(), &patch, false, true);
+            assert!(!result.success);
+            assert_eq!(result.output["execution_state"], "not_started");
+            assert_eq!(result.output["state_changed"], false);
+            assert!(result.output.get("match_diagnostic").is_none());
+            assert!(!serde_json::to_string(&result.output)
+                .unwrap()
+                .contains("must-not-survive"));
+        }
     }
 
     #[test]

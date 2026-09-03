@@ -565,9 +565,18 @@ fn diagnose_sequence_miss(
     let effective_start = start.min(lines.len());
     let available_line_count = lines.len().saturating_sub(effective_start);
     let mut best: Option<(usize, usize, usize, usize)> = None;
+    // Prefer candidates that have enough remaining source lines to represent the
+    // complete expected pattern. Only fall back to EOF-partial candidates when
+    // the search range itself is shorter than the pattern. Within that candidate
+    // set, broad whitespace-normalized positional coverage is more useful for
+    // recovery than one isolated exact line.
+    let has_complete_candidate = available_line_count >= pattern.len();
 
     for index in effective_start..lines.len() {
         let compared = pattern.len().min(lines.len() - index);
+        if has_complete_candidate && compared < pattern.len() {
+            break;
+        }
         let mut exact = 0usize;
         let mut trim_end = 0usize;
         let mut trim = 0usize;
@@ -578,10 +587,10 @@ fn diagnose_sequence_miss(
             trim_end += usize::from(candidate.trim_end() == expected.trim_end());
             trim += usize::from(candidate.trim() == expected.trim());
         }
-        let score = (exact, trim_end, trim);
+        let score = (trim, trim_end, exact);
         let replace = best
             .map(|(_, best_exact, best_trim_end, best_trim)| {
-                score > (best_exact, best_trim_end, best_trim)
+                score > (best_trim, best_trim_end, best_exact)
             })
             .unwrap_or(true);
         if replace {
@@ -995,6 +1004,27 @@ mod tests {
         assert_eq!(diagnostic.closest_trim_end_line_matches, 2);
         assert_eq!(diagnostic.closest_trim_line_matches, 2);
         assert_eq!(diagnostic.first_exact_mismatch_offset, Some(2));
+    }
+
+    #[test]
+    fn context_mismatch_prefers_full_high_coverage_candidate_over_partial_eof_exact_line() {
+        let chunks = vec![CodexPatchChunk {
+            old_lines: vec!["alpha".into(), "beta".into(), "gamma".into()],
+            new_lines: vec!["changed".into()],
+            ..Default::default()
+        }];
+        let error = derive_codex_patch_update_with_matches(
+            " alpha \n beta \nchanged\nnoise\nalpha\n",
+            "file.txt",
+            &chunks,
+        )
+        .unwrap_err();
+
+        let diagnostic = error.match_diagnostic.expect("match diagnostic");
+        assert_eq!(diagnostic.closest_start_line, Some(1));
+        assert_eq!(diagnostic.closest_exact_line_matches, 0);
+        assert_eq!(diagnostic.closest_trim_line_matches, 2);
+        assert_eq!(diagnostic.first_exact_mismatch_offset, Some(1));
     }
 
     #[test]

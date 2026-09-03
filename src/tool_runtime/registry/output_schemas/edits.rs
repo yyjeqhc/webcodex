@@ -54,7 +54,7 @@ fn apply_patch_match_diagnostic_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "Body-free structural diagnostics for a deterministic apply_patch context mismatch. Contains only positions, counts, and match-source classification; never source or patch line text.",
+        "description": "Body-free structural diagnostics for a deterministic apply_patch context mismatch. The Server validates this projection against the original parsed patch and the failed file/chunk before exposing it. Contains only positions, counts, and match-source classification; never source or patch line text.",
         "properties": {
             "chunk_index": {"type": "integer", "minimum": 0},
             "match_source": {"type": "string", "enum": ["old_lines", "change_context"]},

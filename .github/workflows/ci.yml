@@ -85,6 +85,7 @@ jobs:
           - shard: workspace-crates
             packages: >-
               -p webcodex-admin
+              -p webcodex-computer
               -p webcodex-runner-config
               -p webcodex-core
               -p webcodex-cli
@@ -181,8 +182,8 @@ jobs:
       github.event_name == 'push' ||
       github.event.pull_request.user.login != github.repository_owner ||
       contains(github.event.pull_request.labels.*.name, 'run-ci')
-    # Native macOS gates for both published architectures plus the Runner's
-    # detached ownership/restart suites. Keep these ahead of immutable tagging.
+    # Native macOS gates for both published architectures plus the Runner and
+    # Computer platform suites. Keep these ahead of immutable tagging.
     strategy:
       fail-fast: false
       matrix:
@@ -212,13 +213,15 @@ jobs:
           rust_host="$(rustc -vV | sed -n 's/^host: //p')"
           test "$rust_host" = "$EXPECTED_RUST_HOST"
       - name: Check macOS release production surfaces
-        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
-      - name: Run native macOS Runner tests
-        run: cargo test --locked -p webcodex-runner
+        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner -p webcodex-computer
+      - name: Run native macOS Runner and Computer tests
+        run: cargo test --locked -p webcodex-runner -p webcodex-computer
 
   # Keep Windows process-heavy suites isolated on separate hosted VMs. The
   # webcodex-runner lane remains test-function-serial because its real
   # PowerShell/process-tree fixtures can starve each other on hosted Windows.
+  # Keep webcodex-computer in the same native lane so platform tests continue
+  # running after the Computer runtime was split out of the Runner crate.
   # Core/library and packaging coverage can run independently in parallel.
   test-windows-core:
     needs: contract
@@ -258,12 +261,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-runner-ci
-      - name: Run Windows Runner tests
+      - name: Run Windows Runner and Computer tests
         # The Runner suite starts many real PowerShell/process-tree fixtures. On
         # hosted Windows, parallel test functions can starve process startup long
         # enough to trip intentionally tight command timeouts. Serialize only
         # the test functions; concurrency exercised inside each test is unchanged.
-        run: cargo test --locked -p webcodex-runner -- --test-threads=1
+        run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=1
 
   test-windows-package:
     needs: contract

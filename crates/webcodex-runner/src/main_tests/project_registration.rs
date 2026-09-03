@@ -25,12 +25,11 @@ fn register_project_writes_valid_toml_into_project_registry_dir() {
         value["project_record_path"], value["projects_config_path"],
         "legacy projects_config_path must remain an additive alias"
     );
+    let expected_record_path =
+        std::fs::canonicalize(project_registry_dir.join("demo.toml")).unwrap();
     assert_eq!(
         value["project_record_path"],
-        project_registry_dir
-            .join("demo.toml")
-            .to_string_lossy()
-            .as_ref()
+        expected_record_path.to_string_lossy().as_ref()
     );
 
     let content = std::fs::read_to_string(project_registry_dir.join("demo.toml")).unwrap();

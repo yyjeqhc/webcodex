@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use xml::reader::{EventReader, XmlEvent};
@@ -62,12 +62,13 @@ pub(crate) fn validate_artifact_runner_path(path: &str) -> Result<(), String> {
         return Err("path cannot contain NUL bytes".to_string());
     }
     let p = Path::new(path);
-    if p.is_absolute() {
+    let bytes = path.as_bytes();
+    let windows_drive_prefix =
+        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if p.has_root() || path.starts_with('\\') || windows_drive_prefix {
         return Err("path must be project-relative".to_string());
     }
-    if p.components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
+    if path.split(['/', '\\']).any(|component| component == "..") {
         return Err("path cannot contain parent traversal".to_string());
     }
     if is_sensitive_artifact_path(path) {
@@ -77,18 +78,7 @@ pub(crate) fn validate_artifact_runner_path(path: &str) -> Result<(), String> {
 }
 
 fn is_sensitive_artifact_path(path: &str) -> bool {
-    for comp in path.to_lowercase().split('/') {
-        if matches!(
-            comp,
-            ".git" | "target" | "node_modules" | "secrets" | "tokens"
-        ) {
-            return true;
-        }
-        if comp == ".env" || comp.starts_with(".env") || comp.ends_with(".pem") {
-            return true;
-        }
-    }
-    false
+    webcodex_core::sensitive_paths::is_bulk_skipped_path(path)
 }
 
 fn parse_json_payload(request: &ShellAgentShellRequest) -> Result<Value, String> {
@@ -2603,6 +2593,29 @@ fn handle_read_project_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_runner_path_validation_is_cross_platform_and_uses_shared_sensitive_policy() {
+        assert!(validate_artifact_runner_path("artifacts/report.bin").is_ok());
+        for path in [
+            "/absolute/report.bin",
+            "\\rooted\\report.bin",
+            "C:\\absolute\\report.bin",
+            "C:drive-relative\\report.bin",
+            "../report.bin",
+            "nested\\..\\report.bin",
+            ".git\\config",
+            "secrets\\token.bin",
+            "certs\\server.key",
+            "config\\runner.toml",
+            "project-registry\\demo.toml",
+        ] {
+            assert!(
+                validate_artifact_runner_path(path).is_err(),
+                "{path} should be rejected"
+            );
+        }
+    }
 
     #[test]
     fn atomic_artifact_write_create_only_never_replaces_existing_target() {

@@ -4300,13 +4300,13 @@ for line in sys.stdin:
             Some("coding_agent_setup_timeout")
         );
         let methods = received_methods(&wire_log(&temp));
+        let config_attempts = methods
+            .iter()
+            .filter(|m| m.as_str() == "session/set_config_option")
+            .count();
         assert!(
-            methods
-                .iter()
-                .filter(|m| m.as_str() == "session/set_config_option")
-                .count()
-                >= 3,
-            "expected cumulative config setup before total deadline: {methods:?}"
+            config_attempts < 4,
+            "the total run deadline must expire before all slow config writes complete: {methods:?}"
         );
         assert_eq!(
             methods

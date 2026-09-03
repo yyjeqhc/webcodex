@@ -4054,14 +4054,23 @@ fn removed_legacy_edit_tools_are_rejected_as_unknown() {
 }
 
 #[test]
-fn validate_artifact_file_path_rejects_sensitive_paths() {
+fn validate_artifact_file_path_rejects_unsafe_and_sensitive_paths() {
     assert!(validate_artifact_file_path("docs/assets/generated.png").is_ok());
     for path in [
+        "/absolute/evil.png",
+        "\\rooted\\evil.png",
+        "C:\\absolute\\evil.png",
+        "C:drive-relative\\evil.png",
         "../evil.png",
+        "nested\\..\\evil.png",
         ".git/config",
+        ".git\\config",
         ".env",
         "secrets/key.pem",
+        "secrets\\key.pem",
         "tokens/api.txt",
+        "certs\\server.key",
+        "config\\agent.toml",
         "target/out.bin",
         "node_modules/pkg/file",
     ] {

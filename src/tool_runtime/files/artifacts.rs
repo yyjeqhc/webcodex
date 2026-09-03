@@ -120,12 +120,13 @@ pub(crate) fn validate_artifact_file_path(path: &str) -> Result<(), String> {
         return Err("path cannot contain NUL bytes".to_string());
     }
     let p = Path::new(path);
-    if p.is_absolute() {
+    let bytes = path.as_bytes();
+    let windows_drive_prefix =
+        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if p.has_root() || path.starts_with('\\') || windows_drive_prefix {
         return Err("path must be project-relative".to_string());
     }
-    if p.components()
-        .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
+    if path.split(['/', '\\']).any(|component| component == "..") {
         return Err("path cannot contain parent traversal".to_string());
     }
     if is_sensitive_artifact_path(path) {

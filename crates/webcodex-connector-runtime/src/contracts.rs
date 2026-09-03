@@ -11,7 +11,7 @@ pub type ConnectorHostFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// Stable, non-secret owner identity projected by root authentication policy.
 ///
 /// The Connector runtime treats this value as opaque. It never interprets
-/// OAuth/API-key/AuthKind categories and never receives plaintext credentials.
+/// root authentication-mechanism categories and never receives plaintext credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConnectorPrincipalId(String);
 
@@ -273,7 +273,7 @@ pub struct ConnectorValidationEvidenceRequest {
 }
 
 /// Root policy adapter used only for operations whose canonical implementation
-/// still requires ToolRuntime/validation-profile policy. Runner observation,
+/// still requires root tool/validation-profile policy. Runner observation,
 /// logs, visibility, Store, and Workspace operations are intentionally absent.
 pub trait ConnectorExecutionHost: Send + Sync {
     fn invoke_tool(

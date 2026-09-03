@@ -576,10 +576,19 @@ try {
         if ($null -ne $ShareCliProcess) {
             try { $ShareCliProcess.WaitForExit(5000) | Out-Null } catch {}
         }
-        foreach ($trackedPid in @($ShareServerPid, $ShareRunnerPid)) {
-            if ($null -ne $trackedPid -and $null -ne (Get-Process -Id $trackedPid -ErrorAction SilentlyContinue)) {
-                throw "Windows share smoke left a tracked child process running"
-            }
+        $trackedSharePids = @($ShareServerPid, $ShareRunnerPid) | Where-Object { $null -ne $_ }
+        $cleanupDeadline = [System.Diagnostics.Stopwatch]::StartNew()
+        $leftRunning = @($trackedSharePids | Where-Object {
+            $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue)
+        })
+        while ($leftRunning.Count -gt 0 -and $cleanupDeadline.Elapsed -lt [TimeSpan]::FromSeconds(5)) {
+            Start-Sleep -Milliseconds 50
+            $leftRunning = @($trackedSharePids | Where-Object {
+                $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue)
+            })
+        }
+        if ($leftRunning.Count -gt 0) {
+            throw "Windows share smoke left a tracked child process running after the cleanup deadline"
         }
         foreach ($name in $ShareEnvNames) {
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue

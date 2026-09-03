@@ -149,7 +149,7 @@ fn withdrawing_wake_capability_reconciles_exact_endpoint_attempts() {
     let endpoint = attach_wake_endpoint(&db, &fixture, "host", "withdraw-endpoint");
     let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
 
-    let _claimed = db
+    let first_claimed = db
         .claim_next_agent_wake(
             &fixture.owner,
             &fixture.receiver_agent_id,
@@ -174,7 +174,12 @@ fn withdrawing_wake_capability_reconciles_exact_endpoint_attempts() {
         AgentWakeState::Pending
     );
     assert_eq!(
-        db.agent_wake_attempts(&wake_id).unwrap()[0].state,
+        db.agent_wake_attempts(&wake_id)
+            .unwrap()
+            .into_iter()
+            .find(|attempt| attempt.attempt_id == first_claimed.attempt.attempt_id)
+            .unwrap()
+            .state,
         AgentWakeAttemptState::Revoked
     );
 
@@ -220,7 +225,12 @@ fn withdrawing_wake_capability_reconciles_exact_endpoint_attempts() {
         AgentWakeState::DeliveryUnknown
     );
     assert_eq!(
-        db.agent_wake_attempts(&wake_id).unwrap()[1].state,
+        db.agent_wake_attempts(&wake_id)
+            .unwrap()
+            .into_iter()
+            .find(|attempt| attempt.attempt_id == claimed.attempt.attempt_id)
+            .unwrap()
+            .state,
         AgentWakeAttemptState::DeliveryUnknown
     );
 }

@@ -1,14 +1,14 @@
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 
-pub(crate) const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
+pub const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
 // Two already-bounded 256 KiB UTF-8 streams can expand substantially under
 // JSON escaping. Keep the persisted MCP task snapshot hard-bounded while
 // allowing any ordinary Connector output-tail projection to serialize.
 pub(crate) const MAX_MCP_TASK_OUTPUT_TAIL_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectorExecutionContinuationIntent {
+pub enum ConnectorExecutionContinuationIntent {
     None,
     ArmedForTerminal,
 }
@@ -35,7 +35,7 @@ impl ConnectorExecutionContinuationIntent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectorTerminalContinuationDeliveryState {
+pub enum ConnectorTerminalContinuationDeliveryState {
     Unclaimed,
     Claimed,
     Dispatching,
@@ -80,7 +80,7 @@ pub(crate) struct ConnectorTerminalContinuationClaim {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConnectorExecution {
+pub struct ConnectorExecution {
     pub execution_id: String,
     pub kind: String,
     pub task_id: String,
@@ -120,39 +120,39 @@ pub(crate) struct ConnectorExecution {
 }
 
 impl ConnectorExecution {
-    pub(crate) fn state_is_active(state: &str) -> bool {
+    pub fn state_is_active(state: &str) -> bool {
         matches!(
             state,
             "accepted" | "queued" | "starting" | "running" | "cancel_requested"
         )
     }
 
-    pub(crate) fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         Self::state_is_active(&self.state)
     }
 
-    pub(crate) fn is_terminal(&self) -> bool {
+    pub fn is_terminal(&self) -> bool {
         !self.is_active()
     }
 
-    pub(crate) fn terminal_continuation_is_armed(&self) -> bool {
+    pub fn terminal_continuation_is_armed(&self) -> bool {
         self.continuation_intent == ConnectorExecutionContinuationIntent::ArmedForTerminal
             && self.continuation_armed_at.is_some()
     }
 
-    pub(crate) fn mcp_task_is_materialized(&self) -> bool {
+    pub fn mcp_task_is_materialized(&self) -> bool {
         self.mcp_task_materialized_at.is_some()
     }
 
-    pub(crate) fn mcp_task_result_is_finalized(&self) -> bool {
+    pub fn mcp_task_result_is_finalized(&self) -> bool {
         self.mcp_task_result_finalized_at.is_some()
     }
 
-    pub(crate) fn blocks_finish(&self) -> bool {
+    pub fn blocks_finish(&self) -> bool {
         self.is_active() || self.state == "unknown"
     }
 
-    pub(crate) fn executor_status_recognized(status: &str) -> bool {
+    pub fn executor_status_recognized(status: &str) -> bool {
         matches!(
             status,
             "queued"
@@ -172,12 +172,12 @@ impl ConnectorExecution {
     }
 }
 
-pub(crate) enum ConnectorExecutionReservation {
+pub enum ConnectorExecutionReservation {
     Created(ConnectorExecution),
     Existing(ConnectorExecution),
 }
 
-pub(crate) enum ConnectorExecutionFailure {
+pub enum ConnectorExecutionFailure {
     Submission(&'static str),
     Unknown(&'static str),
     /// A business invariant failed deterministically (e.g. workspace
@@ -190,7 +190,7 @@ pub(crate) enum ConnectorExecutionFailure {
     },
 }
 
-pub(crate) struct ConnectorExecutionObservation<'a> {
+pub struct ConnectorExecutionObservation<'a> {
     pub executor_status: &'a str,
     pub stdout_cursor: usize,
     pub stderr_cursor: usize,

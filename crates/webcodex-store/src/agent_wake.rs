@@ -13,10 +13,10 @@ use rusqlite::{
 };
 use serde::Serialize;
 
-pub(crate) const AGENT_WAKE_ID_PREFIX: &str = "wc_wake_";
+pub const AGENT_WAKE_ID_PREFIX: &str = "wc_wake_";
 pub(crate) const AGENT_WAKE_ATTEMPT_ID_PREFIX: &str = "wc_wake_attempt_";
 pub(crate) const AGENT_WAKE_CLAIM_FENCE_PREFIX: &str = "wc_wake_claim_";
-pub(crate) const AGENT_WAKE_CONSUME_TOKEN_PREFIX: &str = "wc_wake_consume_";
+pub const AGENT_WAKE_CONSUME_TOKEN_PREFIX: &str = "wc_wake_consume_";
 
 const DEFAULT_WAKE_CLAIM_LEASE_MS: i64 = 30_000;
 const MAX_ADAPTER_KIND_CHARS: usize = 64;
@@ -24,7 +24,7 @@ const WAKE_TRIGGER_INBOX_CHANGED: &str = "inbox_changed";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentWakeState {
+pub enum AgentWakeState {
     Pending,
     Claimed,
     Prepared,
@@ -65,7 +65,7 @@ impl AgentWakeState {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentWakeAttemptState {
+pub enum AgentWakeAttemptState {
     Claimed,
     Prepared,
     Delivered,
@@ -93,119 +93,119 @@ impl AgentWakeAttemptState {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeRecord {
-    pub(crate) wake_id: String,
-    pub(crate) target_agent_id: String,
-    pub(crate) trigger_kind: String,
-    pub(crate) first_triggering_delivery_id: String,
-    pub(crate) latest_triggering_delivery_id: String,
-    pub(crate) latest_conversation_id: String,
-    pub(crate) latest_message_id: String,
-    pub(crate) inbox_high_watermark: i64,
-    pub(crate) queued_delivery_count_snapshot: i64,
-    pub(crate) state: AgentWakeState,
-    pub(crate) revision: i64,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
-    pub(crate) claimed_attempt_id: Option<String>,
-    pub(crate) claimed_endpoint_id: Option<String>,
-    pub(crate) claimed_controller_generation: Option<i64>,
-    pub(crate) claim_lease_expires_at_unix_ms: Option<i64>,
-    pub(crate) consumed_at_unix_ms: Option<i64>,
-    pub(crate) consumed_by_endpoint_id: Option<String>,
-    pub(crate) consumed_controller_generation: Option<i64>,
+pub struct AgentWakeRecord {
+    pub wake_id: String,
+    pub target_agent_id: String,
+    pub trigger_kind: String,
+    pub first_triggering_delivery_id: String,
+    pub latest_triggering_delivery_id: String,
+    pub latest_conversation_id: String,
+    pub latest_message_id: String,
+    pub inbox_high_watermark: i64,
+    pub queued_delivery_count_snapshot: i64,
+    pub state: AgentWakeState,
+    pub revision: i64,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub claimed_attempt_id: Option<String>,
+    pub claimed_endpoint_id: Option<String>,
+    pub claimed_controller_generation: Option<i64>,
+    pub claim_lease_expires_at_unix_ms: Option<i64>,
+    pub consumed_at_unix_ms: Option<i64>,
+    pub consumed_by_endpoint_id: Option<String>,
+    pub consumed_controller_generation: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeAttemptRecord {
-    pub(crate) attempt_id: String,
-    pub(crate) wake_id: String,
-    pub(crate) endpoint_id: String,
-    pub(crate) controller_generation: i64,
-    pub(crate) adapter_kind: String,
-    pub(crate) state: AgentWakeAttemptState,
-    pub(crate) claimed_at_unix_ms: i64,
-    pub(crate) claim_lease_expires_at_unix_ms: i64,
-    pub(crate) prepared_at_unix_ms: Option<i64>,
-    pub(crate) delivered_at_unix_ms: Option<i64>,
-    pub(crate) delivery_unknown_at_unix_ms: Option<i64>,
-    pub(crate) revoked_at_unix_ms: Option<i64>,
-    pub(crate) consumed_at_unix_ms: Option<i64>,
+pub struct AgentWakeAttemptRecord {
+    pub attempt_id: String,
+    pub wake_id: String,
+    pub endpoint_id: String,
+    pub controller_generation: i64,
+    pub adapter_kind: String,
+    pub state: AgentWakeAttemptState,
+    pub claimed_at_unix_ms: i64,
+    pub claim_lease_expires_at_unix_ms: i64,
+    pub prepared_at_unix_ms: Option<i64>,
+    pub delivered_at_unix_ms: Option<i64>,
+    pub delivery_unknown_at_unix_ms: Option<i64>,
+    pub revoked_at_unix_ms: Option<i64>,
+    pub consumed_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeClaim {
-    pub(crate) wake: AgentWakeRecord,
-    pub(crate) attempt: AgentWakeAttemptRecord,
+pub struct AgentWakeClaim {
+    pub wake: AgentWakeRecord,
+    pub attempt: AgentWakeAttemptRecord,
     #[serde(skip_serializing)]
-    pub(crate) claim_fence: String,
+    pub claim_fence: String,
     #[serde(skip_serializing)]
-    pub(crate) consume_token: String,
+    pub consume_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeEnvelope {
-    pub(crate) wake_id: String,
-    pub(crate) agent_id: String,
-    pub(crate) endpoint_id: String,
-    pub(crate) controller_generation: i64,
-    pub(crate) queued_delivery_count: i64,
-    pub(crate) inbox_high_watermark: i64,
-    pub(crate) consume_token: String,
-    pub(crate) resume_hint: String,
+pub struct AgentWakeEnvelope {
+    pub wake_id: String,
+    pub agent_id: String,
+    pub endpoint_id: String,
+    pub controller_generation: i64,
+    pub queued_delivery_count: i64,
+    pub inbox_high_watermark: i64,
+    pub consume_token: String,
+    pub resume_hint: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakePrepared {
-    pub(crate) wake: AgentWakeRecord,
-    pub(crate) attempt: AgentWakeAttemptRecord,
-    pub(crate) envelope: AgentWakeEnvelope,
+pub struct AgentWakePrepared {
+    pub wake: AgentWakeRecord,
+    pub attempt: AgentWakeAttemptRecord,
+    pub envelope: AgentWakeEnvelope,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeConsumeResult {
-    pub(crate) wake_id: String,
-    pub(crate) target_agent_id: String,
-    pub(crate) state: AgentWakeState,
-    pub(crate) already_consumed: bool,
-    pub(crate) consumed_at_unix_ms: i64,
-    pub(crate) state_changed: bool,
+pub struct AgentWakeConsumeResult {
+    pub wake_id: String,
+    pub target_agent_id: String,
+    pub state: AgentWakeState,
+    pub already_consumed: bool,
+    pub consumed_at_unix_ms: i64,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentInboxBootstrapSummary {
-    pub(crate) queued_delivery_count: i64,
-    pub(crate) inbox_high_watermark: i64,
+pub struct AgentInboxBootstrapSummary {
+    pub queued_delivery_count: i64,
+    pub inbox_high_watermark: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeBootstrapSummary {
-    pub(crate) wake_id: String,
-    pub(crate) state: AgentWakeState,
-    pub(crate) revision: i64,
-    pub(crate) conversation_id: String,
-    pub(crate) latest_message_id: String,
-    pub(crate) queued_delivery_count: i64,
-    pub(crate) inbox_high_watermark: i64,
+pub struct AgentWakeBootstrapSummary {
+    pub wake_id: String,
+    pub state: AgentWakeState,
+    pub revision: i64,
+    pub conversation_id: String,
+    pub latest_message_id: String,
+    pub queued_delivery_count: i64,
+    pub inbox_high_watermark: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentConversationBootstrapRecord {
-    pub(crate) acting_agent: DurableAgentIdentity,
-    pub(crate) endpoint: AgentEndpointRecord,
-    pub(crate) selected_conversation: Option<ConversationSummaryRecord>,
-    pub(crate) inbox: AgentInboxBootstrapSummary,
-    pub(crate) wake: Option<AgentWakeBootstrapSummary>,
+pub struct AgentConversationBootstrapRecord {
+    pub acting_agent: DurableAgentIdentity,
+    pub endpoint: AgentEndpointRecord,
+    pub selected_conversation: Option<ConversationSummaryRecord>,
+    pub inbox: AgentInboxBootstrapSummary,
+    pub wake: Option<AgentWakeBootstrapSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentWakeExplicitActivation {
-    pub(crate) wake: AgentWakeRecord,
-    pub(crate) attempt_id: String,
+pub struct AgentWakeExplicitActivation {
+    pub wake: AgentWakeRecord,
+    pub attempt_id: String,
     #[serde(skip_serializing)]
-    pub(crate) consume_token: String,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+    pub consume_token: String,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 impl Database {
@@ -324,7 +324,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn recover_agent_wakes_for_server_takeover(
+    pub fn recover_agent_wakes_for_server_takeover(
         &self,
         ownership: &crate::server_instance::ServerInstanceGuard,
         now: i64,
@@ -395,7 +395,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn claim_next_agent_wake(
+    pub fn claim_next_agent_wake(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -522,7 +522,7 @@ impl Database {
         }))
     }
 
-    pub(crate) fn release_agent_wake_claim(
+    pub fn release_agent_wake_claim(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -587,7 +587,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn prepare_agent_wake_dispatch(
+    pub fn prepare_agent_wake_dispatch(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -682,7 +682,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn complete_agent_wake_delivery(
+    pub fn complete_agent_wake_delivery(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -709,7 +709,7 @@ impl Database {
     /// has already been crossed, so replacement after preparation remains
     /// conservatively uncertain.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn verify_agent_wake_dispatch_binding(
+    pub fn verify_agent_wake_dispatch_binding(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -771,7 +771,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn mark_agent_wake_delivery_unknown(
+    pub fn mark_agent_wake_delivery_unknown(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -883,7 +883,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn consume_agent_wake(
+    pub fn consume_agent_wake(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -1036,7 +1036,7 @@ impl Database {
     /// Return a bounded, authoritative Agent-turn bootstrap without copying
     /// transcript bodies, Inbox message bodies, raw fences/tokens, or principal
     /// identity into ambient Host state.
-    pub(crate) fn bootstrap_agent_conversation(
+    pub fn bootstrap_agent_conversation(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -1159,7 +1159,7 @@ impl Database {
     /// Unlike a continuation adapter this does not request a new turn. The
     /// caller key makes both the durable Attempt and returned consume token
     /// exactly recoverable if the tool response is lost.
-    pub(crate) fn accept_explicit_agent_wake_activation(
+    pub fn accept_explicit_agent_wake_activation(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,

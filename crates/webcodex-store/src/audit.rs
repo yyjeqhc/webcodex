@@ -1,5 +1,5 @@
 use super::Database;
-use crate::{ActionEventRecord, ActionSessionRecord};
+use crate::models::{ActionEventRecord, ActionSessionRecord};
 use rusqlite::{params, Connection};
 
 impl Database {

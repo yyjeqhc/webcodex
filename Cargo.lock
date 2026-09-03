@@ -5139,6 +5139,7 @@ dependencies = [
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-runner-config",
+ "webcodex-store",
  "webcodex-tool-contracts",
  "webcodex-workflow-session",
  "webcodex-workspace",
@@ -5280,6 +5281,24 @@ dependencies = [
  "serde",
  "toml 0.8.23",
  "webcodex-core",
+]
+
+[[package]]
+name = "webcodex-store"
+version = "0.3.9"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "fs2",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "webcodex-core",
+ "webcodex-workspace",
 ]
 
 [[package]]

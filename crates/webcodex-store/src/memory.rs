@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub(crate) const MAX_MEMORIES_PER_PROJECT: usize = 256;
-pub(crate) const MAX_MEMORIES_GLOBAL: usize = 8_192;
-pub(crate) use webcodex_core::memory_contract::{
+pub const MAX_MEMORIES_PER_PROJECT: usize = 256;
+pub const MAX_MEMORIES_GLOBAL: usize = 8_192;
+pub use webcodex_core::memory_contract::{
     MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS,
     MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT,
     MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
@@ -36,18 +36,18 @@ const MAX_MEMORY_PRINCIPAL_KIND_CHARS: usize = 64;
 const MAX_MEMORY_PROJECT_RUNTIME_ID_CHARS: usize = 512;
 const MAX_MEMORY_RUNNER_CLIENT_ID_CHARS: usize = 128;
 
-pub(crate) const MEMORY_SCOPE_IDENTITY_ATTRIBUTED: &str = "attributed";
+pub const MEMORY_SCOPE_IDENTITY_ATTRIBUTED: &str = "attributed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MemoryPriority {
+pub enum MemoryPriority {
     High,
     Normal,
     Low,
 }
 
 impl MemoryPriority {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::High => "high",
             Self::Normal => "normal",
@@ -55,7 +55,7 @@ impl MemoryPriority {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Result<Self, MemoryStoreError> {
+    pub fn parse(value: &str) -> Result<Self, MemoryStoreError> {
         match value {
             "high" => Ok(Self::High),
             "normal" => Ok(Self::Normal),
@@ -64,7 +64,7 @@ impl MemoryPriority {
         }
     }
 
-    pub(crate) fn bootstrap_rank(self) -> u8 {
+    pub fn bootstrap_rank(self) -> u8 {
         match self {
             Self::High => 0,
             Self::Normal => 1,
@@ -74,97 +74,97 @@ impl MemoryPriority {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectMemoryRecord {
-    pub(crate) memory_id: String,
-    pub(crate) memory_key: String,
-    pub(crate) summary: String,
-    pub(crate) body: String,
-    pub(crate) priority: MemoryPriority,
-    pub(crate) bootstrap: bool,
-    pub(crate) tags: Vec<String>,
+pub struct ProjectMemoryRecord {
+    pub memory_id: String,
+    pub memory_key: String,
+    pub summary: String,
+    pub body: String,
+    pub priority: MemoryPriority,
+    pub bootstrap: bool,
+    pub tags: Vec<String>,
     /// Canonical model-relevant definition identity. Internal durable metadata;
     /// it is deliberately distinct from the model-facing CAS state revision.
-    pub(crate) definition_hash: String,
-    pub(crate) created_by_kind: String,
-    pub(crate) created_by_principal_digest: Option<String>,
-    pub(crate) updated_by_kind: String,
-    pub(crate) updated_by_principal_digest: Option<String>,
+    pub definition_hash: String,
+    pub created_by_kind: String,
+    pub created_by_principal_digest: Option<String>,
+    pub updated_by_kind: String,
+    pub updated_by_principal_digest: Option<String>,
     /// Monotonic generation within the current memory_id incarnation.
-    pub(crate) generation: u64,
+    pub generation: u64,
     /// Opaque state-generation ETag used for read/update/delete CAS.
-    pub(crate) revision: String,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
+    pub revision: String,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemoryPrincipalAttribution {
-    pub(crate) kind: String,
-    pub(crate) principal_digest: String,
+pub struct MemoryPrincipalAttribution {
+    pub kind: String,
+    pub principal_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemoryScopeAttribution {
-    pub(crate) project_runtime_id: String,
-    pub(crate) runner_client_id: String,
-    pub(crate) root_fingerprint: String,
+pub struct MemoryScopeAttribution {
+    pub project_runtime_id: String,
+    pub runner_client_id: String,
+    pub root_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectMemoryScopeRecord {
-    pub(crate) memory_scope_id: String,
-    pub(crate) identity_state: String,
-    pub(crate) project_runtime_id: Option<String>,
-    pub(crate) runner_client_id: Option<String>,
-    pub(crate) root_fingerprint: Option<String>,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) last_mutated_at_unix_ms: i64,
+pub struct ProjectMemoryScopeRecord {
+    pub memory_scope_id: String,
+    pub identity_state: String,
+    pub project_runtime_id: Option<String>,
+    pub runner_client_id: Option<String>,
+    pub root_fingerprint: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub last_mutated_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectMemoryScopeSnapshot {
-    pub(crate) scope: ProjectMemoryScopeRecord,
-    pub(crate) memories: Vec<ProjectMemoryRecord>,
+pub struct ProjectMemoryScopeSnapshot {
+    pub scope: ProjectMemoryScopeRecord,
+    pub memories: Vec<ProjectMemoryRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemoryScopePurgeOutcome {
-    pub(crate) memory_scope_id: String,
-    pub(crate) catalog_revision: Option<String>,
-    pub(crate) purged_count: usize,
-    pub(crate) purged: bool,
-    pub(crate) state_changed: bool,
+pub struct MemoryScopePurgeOutcome {
+    pub memory_scope_id: String,
+    pub catalog_revision: Option<String>,
+    pub purged_count: usize,
+    pub purged: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemorySetInput {
-    pub(crate) memory_key: String,
-    pub(crate) summary: String,
-    pub(crate) body: String,
-    pub(crate) priority: MemoryPriority,
-    pub(crate) bootstrap: bool,
-    pub(crate) tags: Vec<String>,
-    pub(crate) expected_revision: Option<String>,
+pub struct MemorySetInput {
+    pub memory_key: String,
+    pub summary: String,
+    pub body: String,
+    pub priority: MemoryPriority,
+    pub bootstrap: bool,
+    pub tags: Vec<String>,
+    pub expected_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemorySetOutcome {
-    pub(crate) record: ProjectMemoryRecord,
-    pub(crate) old_revision: Option<String>,
-    pub(crate) created: bool,
-    pub(crate) state_changed: bool,
+pub struct MemorySetOutcome {
+    pub record: ProjectMemoryRecord,
+    pub old_revision: Option<String>,
+    pub created: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemoryDeleteOutcome {
-    pub(crate) memory_id: Option<String>,
-    pub(crate) revision: Option<String>,
-    pub(crate) deleted: bool,
-    pub(crate) state_changed: bool,
+pub struct MemoryDeleteOutcome {
+    pub memory_id: Option<String>,
+    pub revision: Option<String>,
+    pub deleted: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MemoryStoreError {
+pub enum MemoryStoreError {
     InvalidScope,
     InvalidKey,
     InvalidSummary,
@@ -184,7 +184,7 @@ pub(crate) enum MemoryStoreError {
 }
 
 impl MemoryStoreError {
-    pub(crate) fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::InvalidScope => "memory_scope_invalid",
             Self::InvalidKey => "memory_key_invalid",
@@ -205,7 +205,7 @@ impl MemoryStoreError {
         }
     }
 
-    pub(crate) fn current_revision(&self) -> Option<&str> {
+    pub fn current_revision(&self) -> Option<&str> {
         match self {
             Self::Changed { current_revision }
             | Self::ExpectedRevisionRequired { current_revision } => Some(current_revision),
@@ -213,7 +213,7 @@ impl MemoryStoreError {
         }
     }
 
-    pub(crate) fn current_catalog_revision(&self) -> Option<&str> {
+    pub fn current_catalog_revision(&self) -> Option<&str> {
         match self {
             Self::ScopeChanged {
                 current_catalog_revision,
@@ -236,7 +236,7 @@ fn validate_scope(scope_id: &str) -> Result<(), MemoryStoreError> {
     }
 }
 
-pub(crate) fn validate_memory_key(value: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_key(value: &str) -> Result<(), MemoryStoreError> {
     if value.is_empty()
         || value == "."
         || value == ".."
@@ -255,7 +255,7 @@ fn valid_guidance_char(ch: char) -> bool {
     !ch.is_control() || matches!(ch, '\n' | '\t')
 }
 
-pub(crate) fn validate_memory_summary(value: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_summary(value: &str) -> Result<(), MemoryStoreError> {
     if value.trim().is_empty()
         || value.chars().count() > MAX_MEMORY_SUMMARY_CHARS
         || value.chars().any(|ch| !valid_guidance_char(ch))
@@ -266,7 +266,7 @@ pub(crate) fn validate_memory_summary(value: &str) -> Result<(), MemoryStoreErro
     }
 }
 
-pub(crate) fn validate_memory_body(value: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_body(value: &str) -> Result<(), MemoryStoreError> {
     if value.len() > MAX_MEMORY_BODY_BYTES || value.chars().any(|ch| !valid_guidance_char(ch)) {
         Err(MemoryStoreError::InvalidBody)
     } else {
@@ -274,7 +274,7 @@ pub(crate) fn validate_memory_body(value: &str) -> Result<(), MemoryStoreError> 
     }
 }
 
-pub(crate) fn canonicalize_memory_tags(tags: Vec<String>) -> Result<Vec<String>, MemoryStoreError> {
+pub fn canonicalize_memory_tags(tags: Vec<String>) -> Result<Vec<String>, MemoryStoreError> {
     if tags.len() > MAX_MEMORY_TAGS {
         return Err(MemoryStoreError::InvalidTags);
     }
@@ -294,7 +294,7 @@ pub(crate) fn canonicalize_memory_tags(tags: Vec<String>) -> Result<Vec<String>,
     Ok(canonical.into_iter().collect())
 }
 
-pub(crate) fn validate_memory_query(query: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_query(query: &str) -> Result<(), MemoryStoreError> {
     if query.chars().count() > MAX_MEMORY_QUERY_CHARS || query.chars().any(char::is_control) {
         Err(MemoryStoreError::InvalidQuery)
     } else {
@@ -310,7 +310,7 @@ fn valid_lower_hex_prefixed(value: &str, prefix: &str, hex_len: usize) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-pub(crate) fn validate_memory_scope_id(value: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_scope_id(value: &str) -> Result<(), MemoryStoreError> {
     validate_scope(value)
 }
 
@@ -373,7 +373,7 @@ fn validate_memory_definition_hash(value: &str) -> Result<(), MemoryStoreError> 
     }
 }
 
-pub(crate) fn validate_memory_revision(value: &str) -> Result<(), MemoryStoreError> {
+pub fn validate_memory_revision(value: &str) -> Result<(), MemoryStoreError> {
     if valid_lower_hex_prefixed(value, MEMORY_REVISION_PREFIX, 64) {
         Ok(())
     } else {
@@ -408,7 +408,7 @@ fn memory_definition_digest(
     hasher.finalize()
 }
 
-pub(crate) fn memory_definition_hash(
+pub fn memory_definition_hash(
     memory_key: &str,
     summary: &str,
     body: &str,
@@ -422,7 +422,7 @@ pub(crate) fn memory_definition_hash(
     )
 }
 
-pub(crate) fn memory_state_revision(
+pub fn memory_state_revision(
     memory_scope_id: &str,
     memory_id: &str,
     generation: u64,
@@ -620,7 +620,7 @@ fn validate_scope_record_for_memories(
     Ok(scope)
 }
 
-pub(crate) fn memory_catalog_revision(records: &[ProjectMemoryRecord]) -> String {
+pub fn memory_catalog_revision(records: &[ProjectMemoryRecord]) -> String {
     let mut pairs = records
         .iter()
         .map(|record| (record.memory_key.as_str(), record.revision.as_str()))
@@ -635,7 +635,7 @@ pub(crate) fn memory_catalog_revision(records: &[ProjectMemoryRecord]) -> String
     format!("{MEMORY_CATALOG_REVISION_PREFIX}{:x}", hasher.finalize())
 }
 
-pub(crate) fn valid_memory_catalog_revision(value: &str) -> bool {
+pub fn valid_memory_catalog_revision(value: &str) -> bool {
     value.len() == MEMORY_CATALOG_REVISION_PREFIX.len() + 64
         && value.starts_with(MEMORY_CATALOG_REVISION_PREFIX)
         && value[MEMORY_CATALOG_REVISION_PREFIX.len()..]
@@ -923,7 +923,7 @@ fn ensure_scope_for_mutation(
 }
 
 impl Database {
-    pub(crate) fn list_project_memories(
+    pub fn list_project_memories(
         &self,
         memory_scope_id: &str,
     ) -> Result<Vec<ProjectMemoryRecord>, MemoryStoreError> {
@@ -932,7 +932,7 @@ impl Database {
         list_project_memories_with_conn(&conn, memory_scope_id)
     }
 
-    pub(crate) fn get_project_memory(
+    pub fn get_project_memory(
         &self,
         memory_scope_id: &str,
         memory_key: &str,
@@ -959,7 +959,7 @@ impl Database {
         Ok(record)
     }
 
-    pub(crate) fn set_project_memory_attributed(
+    pub fn set_project_memory_attributed(
         &self,
         memory_scope_id: &str,
         scope_attribution: &MemoryScopeAttribution,
@@ -1182,7 +1182,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn delete_project_memory_attributed(
+    pub fn delete_project_memory_attributed(
         &self,
         memory_scope_id: &str,
         scope_attribution: &MemoryScopeAttribution,
@@ -1308,7 +1308,7 @@ impl Database {
         )
     }
 
-    pub(crate) fn list_project_memory_scopes(
+    pub fn list_project_memory_scopes(
         &self,
         offset: usize,
         limit: usize,
@@ -1368,7 +1368,7 @@ impl Database {
         Ok((total as usize, snapshots))
     }
 
-    pub(crate) fn get_project_memory_scope(
+    pub fn get_project_memory_scope(
         &self,
         memory_scope_id: &str,
     ) -> Result<Option<ProjectMemoryScopeSnapshot>, MemoryStoreError> {
@@ -1394,7 +1394,7 @@ impl Database {
         Ok(Some(ProjectMemoryScopeSnapshot { scope, memories }))
     }
 
-    pub(crate) fn purge_project_memory_scope(
+    pub fn purge_project_memory_scope(
         &self,
         memory_scope_id: &str,
         expected_catalog_revision: &str,

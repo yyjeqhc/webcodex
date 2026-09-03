@@ -315,7 +315,7 @@ impl Database {
 
     /// Disable (or re-enable) a user. When disabling, both the legacy
     /// `disabled` flag and the Phase 2 `disabled_at` timestamp are set so the
-    /// existing AuthMiddleware check (`disabled != 0`) and the new
+    /// existing authentication disabled-flag check (`disabled != 0`) and the new
     /// `disabled_at`-based check agree. Phase 2.
     pub fn set_user_disabled(
         &self,

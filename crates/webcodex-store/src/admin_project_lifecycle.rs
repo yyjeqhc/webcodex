@@ -5,13 +5,13 @@ const MAX_ROWS: i64 = 2_000;
 const RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 
 #[derive(Debug, Clone)]
-pub(crate) struct AdminProjectIdempotencyRecord {
+pub struct AdminProjectIdempotencyRecord {
     pub request_hash: String,
     pub http_status: i64,
     pub response_json: String,
 }
 
-pub(crate) struct AdminProjectAudit<'a> {
+pub struct AdminProjectAudit<'a> {
     pub correlation_id: &'a str,
     pub subject_type: &'a str,
     pub subject_id: &'a str,
@@ -25,7 +25,7 @@ pub(crate) struct AdminProjectAudit<'a> {
 }
 
 impl Database {
-    pub(crate) fn insert_admin_project_lifecycle_audit(
+    pub fn insert_admin_project_lifecycle_audit(
         &self,
         audit: &AdminProjectAudit<'_>,
     ) -> anyhow::Result<()> {
@@ -59,7 +59,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn get_admin_project_idempotency(
+    pub fn get_admin_project_idempotency(
         &self,
         subject: &str,
         action: &str,
@@ -80,7 +80,7 @@ impl Database {
         }))
     }
 
-    pub(crate) fn delete_admin_project_idempotency(
+    pub fn delete_admin_project_idempotency(
         &self,
         subject: &str,
         action: &str,
@@ -96,7 +96,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn insert_admin_project_idempotency(
+    pub fn insert_admin_project_idempotency(
         &self,
         subject: &str,
         action: &str,

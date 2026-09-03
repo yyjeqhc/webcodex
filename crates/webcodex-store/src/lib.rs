@@ -1,0 +1,118 @@
+//! Durable WebCodex state persistence and SQLite storage semantics.
+
+use crate::models::PairingCodeRecord;
+use rusqlite::Connection;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+mod accounts;
+mod activity;
+mod admin_project_lifecycle;
+mod agent_task;
+mod agent_wake;
+mod audit;
+mod communication;
+mod execution_model;
+mod executions;
+mod memory;
+pub mod models;
+mod oauth;
+mod schema;
+mod server_instance;
+mod task_kernel;
+
+pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
+pub use self::agent_task::{
+    AgentTaskAttemptCompletionMutation, AgentTaskAttemptHeartbeatMutation, AgentTaskAttemptRecord,
+    AgentTaskAttemptStartMutation, AgentTaskAttemptState, AgentTaskCodingRunBindingIntent,
+    AgentTaskCodingRunBindingRecord, AgentTaskCodingRunDispatchClaim,
+    AgentTaskCodingRunDispatchState, AgentTaskCodingRunObservation, AgentTaskCodingRunPrepared,
+    AgentTaskCodingRunReconcileMutation, AgentTaskCodingRunStartContext, AgentTaskDetail,
+    AgentTaskExecutionRecoveryKind, AgentTaskExecutionStatus, AgentTaskMutation, AgentTaskPage,
+    AgentTaskState, AgentTaskSummary, NewAgentTask, MAX_AGENT_TASK_LIST_LIMIT,
+    MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
+};
+#[allow(unused_imports)]
+pub use self::agent_wake::{
+    AgentConversationBootstrapRecord, AgentInboxBootstrapSummary, AgentWakeAttemptRecord,
+    AgentWakeAttemptState, AgentWakeBootstrapSummary, AgentWakeClaim, AgentWakeConsumeResult,
+    AgentWakeEnvelope, AgentWakeExplicitActivation, AgentWakePrepared, AgentWakeRecord,
+    AgentWakeState, AGENT_WAKE_CONSUME_TOKEN_PREFIX, AGENT_WAKE_ID_PREFIX,
+};
+pub use self::communication::{
+    AgentEndpointMutation, AgentEndpointRecord, AgentIdentityMutation, AgentIdentityPage,
+    AgentInboxItem, AgentInboxPage, AgentProfilePatch, CommunicationPrincipal,
+    CommunicationStoreError, ConversationAccess, ConversationDetailRecord,
+    ConversationMessageMutation, ConversationMessageRecord, ConversationMutation, ConversationPage,
+    ConversationParticipantRecord, ConversationSummaryRecord, DeliveryConsumeResult,
+    DurableAgentIdentity, MessageAuthorRecord, MessageDeliveryRecord, NewAgentEndpoint,
+    NewAgentIdentity, NewConversation, NewConversationMessage,
+    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_DURABLE_AGENTS,
+};
+#[cfg(any(test, feature = "root-test-support"))]
+pub use self::execution_model::ConnectorExecutionContinuationIntent;
+pub use self::execution_model::{
+    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
+    ConnectorExecutionReservation, ConnectorTerminalContinuationDeliveryState,
+    MAX_ASSERTION_EVIDENCE_BYTES,
+};
+#[allow(unused_imports)]
+pub use self::memory::{
+    canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
+    validate_memory_query, validate_memory_revision, validate_memory_scope_id, MemoryDeleteOutcome,
+    MemoryPrincipalAttribution, MemoryPriority, MemoryScopeAttribution, MemoryScopePurgeOutcome,
+    MemorySetInput, MemorySetOutcome, MemoryStoreError, ProjectMemoryRecord,
+    ProjectMemoryScopeRecord, ProjectMemoryScopeSnapshot, MAX_MEMORIES_GLOBAL,
+    MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS,
+    MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT,
+    MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
+    MAX_MEMORY_TAG_CHARS,
+};
+#[cfg(any(test, feature = "root-test-support"))]
+pub use self::memory::{
+    memory_definition_hash, memory_state_revision, validate_memory_body, validate_memory_key,
+    validate_memory_summary, MAX_MEMORIES_PER_PROJECT, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
+};
+pub use self::oauth::RotateResult;
+pub use self::server_instance::ServerInstanceGuard;
+pub use self::task_kernel::{
+    AppliedPaths, ConnectorApproval, ConnectorApprovalGate, ConnectorBinding,
+    ConnectorEditOperationGate, ConnectorPreservedWorkspace, ConnectorResultDecisionRecovery,
+    ConnectorTaskContinuation, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, ConnectorWindowBinding, ConnectorWindowContext,
+    ConnectorWorkspaceTransition, GuidanceReadState, LocalReviewableTask, NewConnectorResult,
+    NewConnectorTask, WindowProjectActivation,
+};
+pub struct Database {
+    conn: Mutex<Connection>,
+    state_path: PathBuf,
+    /// Ephemeral navigation only. Connector work stays in wc_tasks and
+    /// wc_window_project_contexts; AgentTask owns separate durable tables, and
+    /// restarting never guesses a window's current project.
+    window_projects: Mutex<HashMap<(String, String), String>>,
+}
+
+impl Database {
+    pub(crate) fn state_path(&self) -> &Path {
+        &self.state_path
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PairingConsumeResult {
+    NotFound,
+    Consumed(PairingCodeRecord),
+    AlreadyUsed(PairingCodeRecord),
+    Expired(PairingCodeRecord),
+    ClientMismatch(PairingCodeRecord),
+}
+
+#[cfg(any(test, feature = "root-test-support"))]
+impl Database {
+    /// Test-only access to the underlying connection so tests can assert on
+    /// raw storage (e.g. that a plaintext token is never stored as `key_hash`).
+    pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+}

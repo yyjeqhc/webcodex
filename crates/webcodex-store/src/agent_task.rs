@@ -21,9 +21,9 @@ pub(crate) const AGENT_TASK_ATTEMPT_FENCE_PREFIX: &str = "wc_agent_task_fence_";
 
 pub(crate) const MAX_AGENT_TASK_TITLE_CHARS: usize = 200;
 pub(crate) const MAX_AGENT_TASK_INSTRUCTION_BYTES: usize = 8_192;
-pub(crate) const MAX_AGENT_TASK_TERMINAL_TEXT_BYTES: usize = 4_096;
+pub const MAX_AGENT_TASK_TERMINAL_TEXT_BYTES: usize = 4_096;
 pub(crate) const MAX_AGENT_TASK_PROJECT_REF_CHARS: usize = 256;
-pub(crate) const MAX_AGENT_TASK_LIST_LIMIT: usize = 100;
+pub const MAX_AGENT_TASK_LIST_LIMIT: usize = 100;
 pub(crate) const DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS: i64 = 60_000;
 
 const OP_CREATE_AGENT_TASK: &str = "create_agent_task";
@@ -31,19 +31,19 @@ const OP_START_AGENT_TASK_ATTEMPT: &str = "start_agent_task_attempt";
 const OP_COMPLETE_AGENT_TASK_ATTEMPT: &str = "complete_agent_task_attempt";
 
 #[derive(Debug, Clone)]
-pub(crate) struct NewAgentTask {
-    pub(crate) title: String,
-    pub(crate) instruction: String,
-    pub(crate) assignee_agent_id: Option<String>,
-    pub(crate) source_conversation_id: Option<String>,
-    pub(crate) source_message_id: Option<String>,
-    pub(crate) referenced_project_id: Option<String>,
-    pub(crate) idempotency_key: String,
+pub struct NewAgentTask {
+    pub title: String,
+    pub instruction: String,
+    pub assignee_agent_id: Option<String>,
+    pub source_conversation_id: Option<String>,
+    pub source_message_id: Option<String>,
+    pub referenced_project_id: Option<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentTaskState {
+pub enum AgentTaskState {
     Ready,
     Active,
     Succeeded,
@@ -51,7 +51,7 @@ pub(crate) enum AgentTaskState {
 }
 
 impl AgentTaskState {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ready => "ready",
             Self::Active => "active",
@@ -81,7 +81,7 @@ impl AgentTaskState {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentTaskAttemptState {
+pub enum AgentTaskAttemptState {
     Active,
     Expired,
     Succeeded,
@@ -89,7 +89,7 @@ pub(crate) enum AgentTaskAttemptState {
 }
 
 impl AgentTaskAttemptState {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
             Self::Expired => "expired",
@@ -115,7 +115,7 @@ impl AgentTaskAttemptState {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentTaskCodingRunDispatchState {
+pub enum AgentTaskCodingRunDispatchState {
     Prepared,
     NotStarted,
     OutcomeUnknown,
@@ -124,7 +124,7 @@ pub(crate) enum AgentTaskCodingRunDispatchState {
 }
 
 impl AgentTaskCodingRunDispatchState {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Prepared => "prepared",
             Self::NotStarted => "not_started",
@@ -156,7 +156,7 @@ impl AgentTaskCodingRunDispatchState {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentTaskExecutionStatus {
+pub enum AgentTaskExecutionStatus {
     NotStarted,
     Active,
     WaitingPermission,
@@ -166,62 +166,62 @@ pub(crate) enum AgentTaskExecutionStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentTaskExecutionRecoveryKind {
+pub enum AgentTaskExecutionRecoveryKind {
     None,
     Observe,
     Reconcile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunBindingIntent {
-    pub(crate) run_id: String,
-    pub(crate) runtime_project_id: String,
-    pub(crate) provider_id: String,
-    pub(crate) provider_instance_id: String,
-    pub(crate) authority_fingerprint: String,
-    pub(crate) coding_agent_intent_fingerprint: String,
-    pub(crate) binding_intent_fingerprint: String,
+pub struct AgentTaskCodingRunBindingIntent {
+    pub run_id: String,
+    pub runtime_project_id: String,
+    pub provider_id: String,
+    pub provider_instance_id: String,
+    pub authority_fingerprint: String,
+    pub coding_agent_intent_fingerprint: String,
+    pub binding_intent_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunObservation {
-    pub(crate) run_id: String,
-    pub(crate) runtime_project_id: String,
-    pub(crate) provider_id: String,
-    pub(crate) provider_instance_id: String,
-    pub(crate) authority_fingerprint: String,
-    pub(crate) coding_agent_intent_fingerprint: String,
-    pub(crate) run_state: String,
-    pub(crate) execution_state: String,
-    pub(crate) observation_revision: i64,
-    pub(crate) terminal_stop_reason: Option<String>,
-    pub(crate) terminal_error_code: Option<String>,
-    pub(crate) terminal_message: Option<String>,
-    pub(crate) completed_at_unix: Option<i64>,
+pub struct AgentTaskCodingRunObservation {
+    pub run_id: String,
+    pub runtime_project_id: String,
+    pub provider_id: String,
+    pub provider_instance_id: String,
+    pub authority_fingerprint: String,
+    pub coding_agent_intent_fingerprint: String,
+    pub run_state: String,
+    pub execution_state: String,
+    pub observation_revision: i64,
+    pub terminal_stop_reason: Option<String>,
+    pub terminal_error_code: Option<String>,
+    pub terminal_message: Option<String>,
+    pub completed_at_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunBindingRecord {
-    pub(crate) task_id: String,
-    pub(crate) attempt_id: String,
-    pub(crate) run_id: String,
-    pub(crate) runtime_project_id: String,
-    pub(crate) provider_id: String,
-    pub(crate) provider_instance_id: String,
-    pub(crate) authority_fingerprint: String,
-    pub(crate) coding_agent_intent_fingerprint: String,
-    pub(crate) binding_intent_fingerprint: String,
-    pub(crate) dispatch_state: AgentTaskCodingRunDispatchState,
-    pub(crate) last_observed_run_state: Option<String>,
-    pub(crate) last_observed_execution_state: Option<String>,
-    pub(crate) last_observation_revision: Option<i64>,
-    pub(crate) terminal_stop_reason: Option<String>,
-    pub(crate) terminal_error_code: Option<String>,
-    pub(crate) terminal_message: Option<String>,
-    pub(crate) completed_at_unix: Option<i64>,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
-    pub(crate) terminal_at_unix_ms: Option<i64>,
+pub struct AgentTaskCodingRunBindingRecord {
+    pub task_id: String,
+    pub attempt_id: String,
+    pub run_id: String,
+    pub runtime_project_id: String,
+    pub provider_id: String,
+    pub provider_instance_id: String,
+    pub authority_fingerprint: String,
+    pub coding_agent_intent_fingerprint: String,
+    pub binding_intent_fingerprint: String,
+    pub dispatch_state: AgentTaskCodingRunDispatchState,
+    pub last_observed_run_state: Option<String>,
+    pub last_observed_execution_state: Option<String>,
+    pub last_observation_revision: Option<i64>,
+    pub terminal_stop_reason: Option<String>,
+    pub terminal_error_code: Option<String>,
+    pub terminal_message: Option<String>,
+    pub completed_at_unix: Option<i64>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub terminal_at_unix_ms: Option<i64>,
 }
 
 impl AgentTaskCodingRunBindingRecord {
@@ -265,111 +265,111 @@ impl AgentTaskCodingRunBindingRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunStartContext {
-    pub(crate) task: AgentTaskDetail,
-    pub(crate) attempt: AgentTaskAttemptRecord,
+pub struct AgentTaskCodingRunStartContext {
+    pub task: AgentTaskDetail,
+    pub attempt: AgentTaskAttemptRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunPrepared {
-    pub(crate) binding: AgentTaskCodingRunBindingRecord,
-    pub(crate) replayed: bool,
+pub struct AgentTaskCodingRunPrepared {
+    pub binding: AgentTaskCodingRunBindingRecord,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunDispatchClaim {
-    pub(crate) binding: AgentTaskCodingRunBindingRecord,
-    pub(crate) may_dispatch: bool,
+pub struct AgentTaskCodingRunDispatchClaim {
+    pub binding: AgentTaskCodingRunBindingRecord,
+    pub may_dispatch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentTaskCodingRunReconcileMutation {
-    pub(crate) task: AgentTaskSummary,
-    pub(crate) attempt: AgentTaskAttemptRecord,
-    pub(crate) binding: AgentTaskCodingRunBindingRecord,
-    pub(crate) state_changed: bool,
+pub struct AgentTaskCodingRunReconcileMutation {
+    pub task: AgentTaskSummary,
+    pub attempt: AgentTaskAttemptRecord,
+    pub binding: AgentTaskCodingRunBindingRecord,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskAttemptRecord {
-    pub(crate) attempt_id: String,
-    pub(crate) task_id: String,
-    pub(crate) attempt_number: i64,
-    pub(crate) assignee_agent_id: String,
-    pub(crate) state: AgentTaskAttemptState,
-    pub(crate) lease_expires_at_unix_ms: i64,
-    pub(crate) lease_active: bool,
-    pub(crate) attempt_controller_generation: i64,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) started_at_unix_ms: i64,
-    pub(crate) terminal_at_unix_ms: Option<i64>,
-    pub(crate) terminal_result: Option<String>,
-    pub(crate) terminal_reason: Option<String>,
+pub struct AgentTaskAttemptRecord {
+    pub attempt_id: String,
+    pub task_id: String,
+    pub attempt_number: i64,
+    pub assignee_agent_id: String,
+    pub state: AgentTaskAttemptState,
+    pub lease_expires_at_unix_ms: i64,
+    pub lease_active: bool,
+    pub attempt_controller_generation: i64,
+    pub created_at_unix_ms: i64,
+    pub started_at_unix_ms: i64,
+    pub terminal_at_unix_ms: Option<i64>,
+    pub terminal_result: Option<String>,
+    pub terminal_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskSummary {
-    pub(crate) task_id: String,
-    pub(crate) assignee_agent_id: Option<String>,
-    pub(crate) title: String,
-    pub(crate) source_conversation_id: Option<String>,
-    pub(crate) source_message_id: Option<String>,
-    pub(crate) referenced_project_id: Option<String>,
-    pub(crate) state: AgentTaskState,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
-    pub(crate) terminal_at_unix_ms: Option<i64>,
-    pub(crate) latest_attempt: Option<AgentTaskAttemptRecord>,
-    pub(crate) execution_bound: bool,
-    pub(crate) execution_status: Option<AgentTaskExecutionStatus>,
-    pub(crate) recovery_kind: AgentTaskExecutionRecoveryKind,
+pub struct AgentTaskSummary {
+    pub task_id: String,
+    pub assignee_agent_id: Option<String>,
+    pub title: String,
+    pub source_conversation_id: Option<String>,
+    pub source_message_id: Option<String>,
+    pub referenced_project_id: Option<String>,
+    pub state: AgentTaskState,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub terminal_at_unix_ms: Option<i64>,
+    pub latest_attempt: Option<AgentTaskAttemptRecord>,
+    pub execution_bound: bool,
+    pub execution_status: Option<AgentTaskExecutionStatus>,
+    pub recovery_kind: AgentTaskExecutionRecoveryKind,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskDetail {
-    pub(crate) summary: AgentTaskSummary,
-    pub(crate) instruction: String,
+pub struct AgentTaskDetail {
+    pub summary: AgentTaskSummary,
+    pub instruction: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskMutation {
-    pub(crate) task: AgentTaskDetail,
-    pub(crate) created: bool,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct AgentTaskMutation {
+    pub task: AgentTaskDetail,
+    pub created: bool,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskPage {
-    pub(crate) total_count: i64,
-    pub(crate) offset: usize,
-    pub(crate) next_offset: Option<usize>,
-    pub(crate) truncated: bool,
-    pub(crate) tasks: Vec<AgentTaskSummary>,
+pub struct AgentTaskPage {
+    pub total_count: i64,
+    pub offset: usize,
+    pub next_offset: Option<usize>,
+    pub truncated: bool,
+    pub tasks: Vec<AgentTaskSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskAttemptStartMutation {
-    pub(crate) task: AgentTaskSummary,
-    pub(crate) attempt: AgentTaskAttemptRecord,
-    pub(crate) attempt_fence: String,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct AgentTaskAttemptStartMutation {
+    pub task: AgentTaskSummary,
+    pub attempt: AgentTaskAttemptRecord,
+    pub attempt_fence: String,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskAttemptHeartbeatMutation {
-    pub(crate) task: AgentTaskSummary,
-    pub(crate) attempt: AgentTaskAttemptRecord,
-    pub(crate) state_changed: bool,
+pub struct AgentTaskAttemptHeartbeatMutation {
+    pub task: AgentTaskSummary,
+    pub attempt: AgentTaskAttemptRecord,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentTaskAttemptCompletionMutation {
-    pub(crate) task: AgentTaskSummary,
-    pub(crate) attempt: AgentTaskAttemptRecord,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct AgentTaskAttemptCompletionMutation {
+    pub task: AgentTaskSummary,
+    pub attempt: AgentTaskAttemptRecord,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -584,7 +584,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn create_agent_task(
+    pub fn create_agent_task(
         &self,
         principal: &CommunicationPrincipal,
         input: NewAgentTask,
@@ -709,7 +709,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn list_agent_tasks(
+    pub fn list_agent_tasks(
         &self,
         principal: &CommunicationPrincipal,
         assignee_agent_id: Option<&str>,
@@ -816,7 +816,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn read_agent_task(
+    pub fn read_agent_task(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -836,7 +836,7 @@ impl Database {
         Ok(load_owned_task(&conn, principal, task_id, now)?.detail(now))
     }
 
-    pub(crate) fn assign_agent_task(
+    pub fn assign_agent_task(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -932,7 +932,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn start_agent_task_attempt(
+    pub fn start_agent_task_attempt(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1115,7 +1115,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn heartbeat_agent_task_attempt(
+    pub fn heartbeat_agent_task_attempt(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1293,7 +1293,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn complete_agent_task_attempt(
+    pub fn complete_agent_task_attempt(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1497,7 +1497,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn agent_task_coding_run_start_context(
+    pub fn agent_task_coding_run_start_context(
         &self,
         principal: &CommunicationPrincipal,
         project: &str,
@@ -1594,7 +1594,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn prepare_agent_task_coding_run(
+    pub fn prepare_agent_task_coding_run(
         &self,
         principal: &CommunicationPrincipal,
         project: &str,
@@ -1794,7 +1794,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn read_agent_task_coding_run_binding(
+    pub fn read_agent_task_coding_run_binding(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1824,7 +1824,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn claim_agent_task_coding_run_dispatch(
+    pub fn claim_agent_task_coding_run_dispatch(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1899,7 +1899,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn record_agent_task_coding_run_not_started(
+    pub fn record_agent_task_coding_run_not_started(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1946,7 +1946,7 @@ impl Database {
         Ok(binding)
     }
 
-    pub(crate) fn record_agent_task_coding_run_observation(
+    pub fn record_agent_task_coding_run_observation(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -1972,7 +1972,7 @@ impl Database {
         Ok(binding)
     }
 
-    pub(crate) fn mark_agent_task_coding_run_reconcile_unavailable(
+    pub fn mark_agent_task_coding_run_reconcile_unavailable(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,
@@ -2012,7 +2012,7 @@ impl Database {
         Ok(binding)
     }
 
-    pub(crate) fn terminalize_agent_task_coding_run(
+    pub fn terminalize_agent_task_coding_run(
         &self,
         principal: &CommunicationPrincipal,
         task_id: &str,

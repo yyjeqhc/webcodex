@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 use webcodex_workspace::project_context::ProjectContextFingerprint;
 
-pub(crate) struct ConnectorBinding<'a> {
+pub struct ConnectorBinding<'a> {
     pub project_id: &'a str,
     pub project_name: &'a str,
     pub workspace_id: &'a str,
@@ -23,7 +23,7 @@ pub(crate) struct ConnectorBinding<'a> {
     pub now: i64,
 }
 
-pub(crate) struct NewConnectorTask<'a> {
+pub struct NewConnectorTask<'a> {
     pub task_id: &'a str,
     pub run_id: &'a str,
     pub project_id: &'a str,
@@ -41,7 +41,7 @@ pub(crate) struct NewConnectorTask<'a> {
     pub now: i64,
 }
 
-pub(crate) struct ConnectorTaskContinuation<'a> {
+pub struct ConnectorTaskContinuation<'a> {
     pub task_id: &'a str,
     pub project_id: &'a str,
     pub subject_id: &'a str,
@@ -51,7 +51,7 @@ pub(crate) struct ConnectorTaskContinuation<'a> {
     pub now: i64,
 }
 
-pub(crate) struct ConnectorWorkspaceTransition<'a> {
+pub struct ConnectorWorkspaceTransition<'a> {
     pub target_executor_ref: &'a str,
     pub execution_executor_ref: &'a str,
     pub target_root: &'a str,
@@ -60,7 +60,7 @@ pub(crate) struct ConnectorWorkspaceTransition<'a> {
     pub baseline_tree: &'a str,
 }
 
-pub(crate) struct ConnectorWindowBinding<'a> {
+pub struct ConnectorWindowBinding<'a> {
     pub window_key: &'a str,
     pub window_source: &'a str,
     pub project_root_sha256: &'a str,
@@ -70,7 +70,7 @@ pub(crate) struct ConnectorWindowBinding<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConnectorWindowContext {
+pub struct ConnectorWindowContext {
     pub task_id: String,
     pub target_path: String,
     pub fingerprint: ProjectContextFingerprint,
@@ -79,13 +79,13 @@ pub(crate) struct ConnectorWindowContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WindowProjectActivation {
+pub struct WindowProjectActivation {
     pub previous_project: Option<String>,
     pub current_project: String,
     pub switched: bool,
 }
 
-pub(crate) struct NewConnectorResult<'a> {
+pub struct NewConnectorResult<'a> {
     pub result_id: &'a str,
     pub summary: &'a str,
     pub patch_artifact: Option<&'a str>,
@@ -97,7 +97,7 @@ pub(crate) struct NewConnectorResult<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConnectorPreservedWorkspace {
+pub struct ConnectorPreservedWorkspace {
     pub task_id: String,
     pub run_id: String,
     pub execution_root: String,
@@ -106,7 +106,7 @@ pub(crate) struct ConnectorPreservedWorkspace {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct ConnectorTaskSnapshot {
+pub struct ConnectorTaskSnapshot {
     pub task_id: String,
     pub run_id: String,
     pub project_id: String,
@@ -136,7 +136,7 @@ pub(crate) struct ConnectorTaskSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct LocalReviewableTask {
+pub struct LocalReviewableTask {
     pub task_id: String,
     pub goal: String,
     pub task_status: String,
@@ -151,7 +151,7 @@ pub(crate) struct LocalReviewableTask {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct ConnectorTaskResult {
+pub struct ConnectorTaskResult {
     pub result_id: String,
     pub task_id: String,
     pub run_id: String,
@@ -173,7 +173,7 @@ pub(crate) struct ConnectorTaskResult {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct ConnectorResultDecisionRecovery {
+pub struct ConnectorResultDecisionRecovery {
     pub state: String,
     pub decision: String,
     pub error_code: Option<String>,
@@ -182,7 +182,7 @@ pub(crate) struct ConnectorResultDecisionRecovery {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct ConnectorApproval {
+pub struct ConnectorApproval {
     pub approval_id: String,
     pub task_id: String,
     pub run_id: String,
@@ -199,7 +199,7 @@ pub(crate) struct ConnectorApproval {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ConnectorApprovalGate {
+pub enum ConnectorApprovalGate {
     Pending(ConnectorApproval),
     Denied(ConnectorApproval),
     Expired(ConnectorApproval),
@@ -208,7 +208,7 @@ pub(crate) enum ConnectorApprovalGate {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ConnectorEditOperationGate {
+pub enum ConnectorEditOperationGate {
     Started,
     Replay(Value),
     Pending,
@@ -218,14 +218,14 @@ pub(crate) enum ConnectorEditOperationGate {
 /// Paths a task has applied, with the total so a bounded list is never
 /// mistaken for the whole set.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AppliedPaths {
-    pub(crate) paths: Vec<String>,
-    pub(crate) total: usize,
-    pub(crate) complete: bool,
+pub struct AppliedPaths {
+    pub paths: Vec<String>,
+    pub total: usize,
+    pub complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(crate) struct ConnectorTaskEvent {
+pub struct ConnectorTaskEvent {
     pub event_id: String,
     pub sequence: i64,
     pub kind: String,
@@ -237,13 +237,13 @@ pub(crate) struct ConnectorTaskEvent {
 /// console. `seen_seq` is the watermark the model has claimed up to;
 /// `last_pending_seq` is the newest guidance still unread, or `None`.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct GuidanceReadState {
+pub struct GuidanceReadState {
     pub seen_seq: i64,
     pub last_pending_seq: Option<i64>,
 }
 
 #[derive(Debug)]
-pub(crate) enum ConnectorTaskStoreError {
+pub enum ConnectorTaskStoreError {
     NotFound,
     OperationIdConflict(String),
     Decision(&'static str, String),
@@ -252,7 +252,7 @@ pub(crate) enum ConnectorTaskStoreError {
 }
 
 impl ConnectorTaskStoreError {
-    pub(crate) fn decision(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn decision(code: &'static str, message: impl Into<String>) -> Self {
         Self::Decision(code, message.into())
     }
 }
@@ -299,7 +299,7 @@ impl Database {
     /// below is deliberately separate, so a restart cannot invent a current
     /// project but can still recover exact prior work when the next request
     /// names that project.
-    pub(crate) fn activate_window_project(
+    pub fn activate_window_project(
         &self,
         subject_id: &str,
         window_key: &str,
@@ -318,7 +318,7 @@ impl Database {
         }
     }
 
-    pub(crate) fn connector_window_context(
+    pub fn connector_window_context(
         &self,
         window_key: &str,
         project_id: &str,
@@ -357,7 +357,7 @@ impl Database {
         }))
     }
 
-    pub(crate) fn connector_window_context_for_task(
+    pub fn connector_window_context_for_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -395,7 +395,7 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn bind_connector_window_context(
+    pub fn bind_connector_window_context(
         &self,
         window_key: &str,
         window_source: &str,
@@ -427,7 +427,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn ensure_connector_binding(
+    pub fn ensure_connector_binding(
         &self,
         binding: ConnectorBinding<'_>,
     ) -> Result<(), ConnectorTaskStoreError> {
@@ -473,14 +473,14 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn start_connector_task(
+    pub fn start_connector_task(
         &self,
         task: NewConnectorTask<'_>,
     ) -> Result<ConnectorTaskSnapshot, ConnectorTaskStoreError> {
         self.start_connector_task_transaction(task, None)
     }
 
-    pub(crate) fn start_connector_task_and_bind(
+    pub fn start_connector_task_and_bind(
         &self,
         task: NewConnectorTask<'_>,
         binding: ConnectorWindowBinding<'_>,
@@ -593,7 +593,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn continue_connector_task_and_bind(
+    pub fn continue_connector_task_and_bind(
         &self,
         continuation: ConnectorTaskContinuation<'_>,
         binding: ConnectorWindowBinding<'_>,
@@ -737,7 +737,7 @@ impl Database {
     /// resumed. This is metadata-only and intentionally does not change mode,
     /// run status, or workspace ownership.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn append_interrupted_connector_instruction_and_bind(
+    pub fn append_interrupted_connector_instruction_and_bind(
         &self,
         task_id: &str,
         project_id: &str,
@@ -826,7 +826,7 @@ impl Database {
         Ok(sequence)
     }
 
-    pub(crate) fn connector_task(
+    pub fn connector_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -836,7 +836,7 @@ impl Database {
         load_task(&conn, task_id, project_id, subject_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
 
-    pub(crate) fn append_connector_task_event(
+    pub fn append_connector_task_event(
         &self,
         task_id: &str,
         project_id: &str,
@@ -871,7 +871,7 @@ impl Database {
     /// running task, so a terminal-state write stays consistent with it.
     /// Everything else goes through [`Self::append_connector_task_event`],
     /// which enforces the running guard.
-    pub(crate) fn append_connector_decision_guidance(
+    pub fn append_connector_decision_guidance(
         &self,
         task_id: &str,
         project_id: &str,
@@ -898,7 +898,7 @@ impl Database {
         Ok(sequence)
     }
 
-    pub(crate) fn begin_connector_edit_operation(
+    pub fn begin_connector_edit_operation(
         &self,
         task_id: &str,
         project_id: &str,
@@ -965,7 +965,7 @@ impl Database {
         Ok(ConnectorEditOperationGate::Started)
     }
 
-    pub(crate) fn complete_connector_edit_operation(
+    pub fn complete_connector_edit_operation(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1002,7 +1002,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn fail_connector_edit_operation(
+    pub fn fail_connector_edit_operation(
         &self,
         task_id: &str,
         operation_id: &str,
@@ -1024,7 +1024,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn finish_connector_task(
+    pub fn finish_connector_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1097,7 +1097,7 @@ impl Database {
         Ok(sequence)
     }
 
-    pub(crate) fn record_connector_workspace_release(
+    pub fn record_connector_workspace_release(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1173,7 +1173,7 @@ impl Database {
     /// One transaction, one query scoped to `human_guidance`, so neither is
     /// possible: the second claimer sees the advanced watermark, and unrelated
     /// event volume cannot push guidance out of view.
-    pub(crate) fn claim_pending_connector_guidance(
+    pub fn claim_pending_connector_guidance(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1257,7 +1257,7 @@ impl Database {
     /// [`claim_pending_connector_guidance`], this never advances the watermark
     /// — a host opening the review page must not consume guidance the model
     /// has not yet read. Returns `None` when the task does not exist.
-    pub(crate) fn connector_guidance_read_state(
+    pub fn connector_guidance_read_state(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1303,7 +1303,7 @@ impl Database {
     /// timeline, so a path applied early in a long task is still reported. The
     /// caller gets the total alongside a bounded list and must say which it is
     /// showing — a truncated list must never be presented as complete.
-    pub(crate) fn connector_task_applied_paths(
+    pub fn connector_task_applied_paths(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1355,7 +1355,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn connector_task_events(
+    pub fn connector_task_events(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1397,7 +1397,7 @@ impl Database {
         Ok(events)
     }
 
-    pub(crate) fn connector_task_result(
+    pub fn connector_task_result(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1410,7 +1410,7 @@ impl Database {
         load_result(&conn, task_id)
     }
 
-    pub(crate) fn connector_preserved_workspaces(
+    pub fn connector_preserved_workspaces(
         &self,
         project_id: &str,
     ) -> Result<Vec<ConnectorPreservedWorkspace>, ConnectorTaskStoreError> {
@@ -1440,7 +1440,7 @@ impl Database {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn request_or_consume_connector_approval(
+    pub fn request_or_consume_connector_approval(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1583,7 +1583,7 @@ impl Database {
         Ok(gate)
     }
 
-    pub(crate) fn local_connector_tasks(
+    pub fn local_connector_tasks(
         &self,
         project_id: &str,
         limit: usize,
@@ -1608,7 +1608,7 @@ impl Database {
         Ok(tasks)
     }
 
-    pub(crate) fn local_reviewable_tasks(
+    pub fn local_reviewable_tasks(
         &self,
         project_id: &str,
         include_completed: bool,
@@ -1682,7 +1682,7 @@ impl Database {
     /// session: everything [`Self::local_reviewable_tasks`] computes, but
     /// scoped to the owning subject and always including closed history — a
     /// new session often needs the context of an already-decided task.
-    pub(crate) fn connector_tasks_for_subject(
+    pub fn connector_tasks_for_subject(
         &self,
         project_id: &str,
         subject_id: &str,
@@ -1751,7 +1751,7 @@ impl Database {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn local_connector_task(
+    pub fn local_connector_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1768,7 +1768,7 @@ impl Database {
         load_task(&conn, task_id, project_id, &subject_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
 
-    pub(crate) fn local_connector_task_result(
+    pub fn local_connector_task_result(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1788,7 +1788,7 @@ impl Database {
         load_result(&conn, task_id)
     }
 
-    pub(crate) fn local_connector_task_events(
+    pub fn local_connector_task_events(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1798,7 +1798,7 @@ impl Database {
         self.connector_task_events(task_id, project_id, &task.owner_subject_id, limit)
     }
 
-    pub(crate) fn local_connector_task_approvals(
+    pub fn local_connector_task_approvals(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1825,7 +1825,7 @@ impl Database {
 
     /// Pending, unexpired approvals across the whole project, newest first,
     /// each with its task goal for the console approvals panel.
-    pub(crate) fn local_pending_connector_approvals(
+    pub fn local_pending_connector_approvals(
         &self,
         project_id: &str,
         now: i64,
@@ -1846,7 +1846,7 @@ impl Database {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn resume_connector_task(
+    pub fn resume_connector_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1907,7 +1907,7 @@ impl Database {
         load_task(&conn, task_id, project_id, &subject_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
 
-    pub(crate) fn abandon_interrupted_connector_task(
+    pub fn abandon_interrupted_connector_task(
         &self,
         task_id: &str,
         project_id: &str,
@@ -1982,7 +1982,7 @@ impl Database {
             .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
     }
 
-    pub(crate) fn begin_connector_result_decision(
+    pub fn begin_connector_result_decision(
         &self,
         task_id: &str,
         project_id: &str,
@@ -2021,7 +2021,7 @@ impl Database {
         ))
     }
 
-    pub(crate) fn abort_connector_result_decision(
+    pub fn abort_connector_result_decision(
         &self,
         task_id: &str,
         result_id: &str,
@@ -2034,7 +2034,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn connector_result_decision_intents(
+    pub fn connector_result_decision_intents(
         &self,
         project_id: &str,
     ) -> Result<Vec<(String, String, String)>, ConnectorTaskStoreError> {
@@ -2052,7 +2052,7 @@ impl Database {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn mark_connector_result_decision_needs_attention(
+    pub fn mark_connector_result_decision_needs_attention(
         &self,
         task_id: &str,
         project_id: &str,
@@ -2113,7 +2113,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn finalize_connector_result_decision(
+    pub fn finalize_connector_result_decision(
         &self,
         task_id: &str,
         project_id: &str,
@@ -2201,7 +2201,7 @@ impl Database {
             .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
     }
 
-    pub(crate) fn decide_connector_approval(
+    pub fn decide_connector_approval(
         &self,
         task_id: &str,
         project_id: &str,
@@ -2635,7 +2635,3 @@ fn bind_window_context(
 fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
-
-#[cfg(test)]
-#[path = "task_kernel_tests.rs"]
-mod tests;

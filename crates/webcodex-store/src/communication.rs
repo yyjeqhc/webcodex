@@ -15,7 +15,7 @@ pub(crate) const CONVERSATION_ID_PREFIX: &str = "wc_conv_";
 pub(crate) const CONVERSATION_PARTICIPANT_ID_PREFIX: &str = "wc_participant_";
 pub(crate) const CONVERSATION_MESSAGE_ID_PREFIX: &str = "wc_cmsg_";
 pub(crate) const AGENT_DELIVERY_ID_PREFIX: &str = "wc_delivery_";
-pub(crate) const COMMUNICATION_PRINCIPAL_DIGEST_PREFIX: &str = "wc_commprincipal_";
+pub const COMMUNICATION_PRINCIPAL_DIGEST_PREFIX: &str = "wc_commprincipal_";
 
 pub(crate) const MAX_AGENT_HANDLE_CHARS: usize = 64;
 pub(crate) const MAX_AGENT_DISPLAY_NAME_CHARS: usize = 128;
@@ -34,7 +34,7 @@ const MAX_COMMUNICATION_PRINCIPAL_KIND_CHARS: usize = 64;
 
 pub(crate) const DEFAULT_ENDPOINT_LEASE_MS: i64 = 120_000;
 
-pub(crate) const MAX_DURABLE_AGENTS: i64 = 4_096;
+pub const MAX_DURABLE_AGENTS: i64 = 4_096;
 const MAX_CONVERSATIONS: i64 = 8_192;
 const MAX_MESSAGES_PER_CONVERSATION: i64 = 100_000;
 
@@ -46,14 +46,14 @@ const OP_POST_WAKE_REPLY: &str = "post_agent_wake_reply";
 const MAX_WAKE_REPLY_OPERATION_INDEX: i64 = 31;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CommunicationStoreError {
+pub struct CommunicationStoreError {
     code: &'static str,
     message: String,
     current_profile_revision: Option<i64>,
 }
 
 impl CommunicationStoreError {
-    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -71,15 +71,15 @@ impl CommunicationStoreError {
         }
     }
 
-    pub(crate) fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         self.code
     }
 
-    pub(crate) fn message(&self) -> &str {
+    pub fn message(&self) -> &str {
         &self.message
     }
 
-    pub(crate) fn current_profile_revision(&self) -> Option<i64> {
+    pub fn current_profile_revision(&self) -> Option<i64> {
         self.current_profile_revision
     }
 }
@@ -101,46 +101,46 @@ pub(super) fn store_error(error: rusqlite::Error) -> CommunicationStoreError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CommunicationPrincipal {
-    pub(crate) kind: String,
-    pub(crate) digest: String,
+pub struct CommunicationPrincipal {
+    pub kind: String,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NewAgentIdentity {
-    pub(crate) handle: String,
-    pub(crate) display_name: String,
-    pub(crate) description: String,
-    pub(crate) specialty_labels: Vec<String>,
-    pub(crate) idempotency_key: String,
+pub struct NewAgentIdentity {
+    pub handle: String,
+    pub display_name: String,
+    pub description: String,
+    pub specialty_labels: Vec<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct AgentProfilePatch {
-    pub(crate) handle: Option<String>,
-    pub(crate) display_name: Option<String>,
-    pub(crate) description: Option<String>,
-    pub(crate) specialty_labels: Option<Vec<String>>,
+pub struct AgentProfilePatch {
+    pub handle: Option<String>,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub specialty_labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NewAgentEndpoint {
-    pub(crate) agent_id: String,
-    pub(crate) host: String,
-    pub(crate) client_attachment_id: Option<String>,
-    pub(crate) wake_capable: bool,
-    pub(crate) idempotency_key: String,
+pub struct NewAgentEndpoint {
+    pub agent_id: String,
+    pub host: String,
+    pub client_attachment_id: Option<String>,
+    pub wake_capable: bool,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NewConversation {
-    pub(crate) title: Option<String>,
-    pub(crate) agent_ids: Vec<String>,
-    pub(crate) idempotency_key: String,
+pub struct NewConversation {
+    pub title: Option<String>,
+    pub agent_ids: Vec<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ConversationAccess {
+pub enum ConversationAccess {
     Human,
     Agent {
         agent_id: String,
@@ -150,197 +150,197 @@ pub(crate) enum ConversationAccess {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct NewConversationMessage {
-    pub(crate) conversation_id: String,
-    pub(crate) body: String,
-    pub(crate) author_agent_id: Option<String>,
-    pub(crate) endpoint_id: Option<String>,
-    pub(crate) expected_controller_generation: Option<i64>,
+pub struct NewConversationMessage {
+    pub conversation_id: String,
+    pub body: String,
+    pub author_agent_id: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub expected_controller_generation: Option<i64>,
     /// None means every Agent participant except the Agent author. Some([])
     /// means transcript-only delivery to the room/human participants.
-    pub(crate) recipient_agent_ids: Option<Vec<String>>,
-    pub(crate) reply_to: Option<String>,
-    pub(crate) idempotency_key: Option<String>,
+    pub recipient_agent_ids: Option<Vec<String>>,
+    pub reply_to: Option<String>,
+    pub idempotency_key: Option<String>,
     /// Stable automatic/manual resumed-turn reply identity. The store derives
     /// the idempotency identity from the exact Wake plus this bounded operation
     /// index; callers never need to invent a fresh key after an uncertain reply.
-    pub(crate) wake_reply_id: Option<String>,
-    pub(crate) reply_operation_index: Option<i64>,
+    pub wake_reply_id: Option<String>,
+    pub reply_operation_index: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct DurableAgentIdentity {
-    pub(crate) agent_id: String,
-    pub(crate) handle: String,
-    pub(crate) display_name: String,
-    pub(crate) description: String,
-    pub(crate) specialty_labels: Vec<String>,
-    pub(crate) profile_revision: i64,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
-    pub(crate) current_controller_generation: i64,
-    pub(crate) active_endpoint_count: i64,
-    pub(crate) queued_delivery_count: i64,
-    pub(crate) unresolved_wake_count: i64,
-    pub(crate) latest_wake_id: Option<String>,
-    pub(crate) latest_wake_state: Option<String>,
+pub struct DurableAgentIdentity {
+    pub agent_id: String,
+    pub handle: String,
+    pub display_name: String,
+    pub description: String,
+    pub specialty_labels: Vec<String>,
+    pub profile_revision: i64,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub current_controller_generation: i64,
+    pub active_endpoint_count: i64,
+    pub queued_delivery_count: i64,
+    pub unresolved_wake_count: i64,
+    pub latest_wake_id: Option<String>,
+    pub latest_wake_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentIdentityMutation {
-    pub(crate) agent: DurableAgentIdentity,
-    pub(crate) created: bool,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct AgentIdentityMutation {
+    pub agent: DurableAgentIdentity,
+    pub created: bool,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentIdentityPage {
-    pub(crate) total_count: i64,
-    pub(crate) offset: usize,
-    pub(crate) next_offset: Option<usize>,
-    pub(crate) truncated: bool,
-    pub(crate) agents: Vec<DurableAgentIdentity>,
+pub struct AgentIdentityPage {
+    pub total_count: i64,
+    pub offset: usize,
+    pub next_offset: Option<usize>,
+    pub truncated: bool,
+    pub agents: Vec<DurableAgentIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentEndpointRecord {
-    pub(crate) endpoint_id: String,
-    pub(crate) agent_id: String,
-    pub(crate) host: String,
-    pub(crate) client_attachment_id: Option<String>,
-    pub(crate) wake_capable: bool,
-    pub(crate) controller_generation: i64,
-    pub(crate) lifecycle: String,
-    pub(crate) attached_at_unix_ms: i64,
-    pub(crate) last_seen_at_unix_ms: i64,
-    pub(crate) lease_expires_at_unix_ms: i64,
-    pub(crate) expired_at_unix_ms: Option<i64>,
-    pub(crate) detached_at_unix_ms: Option<i64>,
+pub struct AgentEndpointRecord {
+    pub endpoint_id: String,
+    pub agent_id: String,
+    pub host: String,
+    pub client_attachment_id: Option<String>,
+    pub wake_capable: bool,
+    pub controller_generation: i64,
+    pub lifecycle: String,
+    pub attached_at_unix_ms: i64,
+    pub last_seen_at_unix_ms: i64,
+    pub lease_expires_at_unix_ms: i64,
+    pub expired_at_unix_ms: Option<i64>,
+    pub detached_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentEndpointMutation {
-    pub(crate) endpoint: AgentEndpointRecord,
-    pub(crate) created: bool,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct AgentEndpointMutation {
+    pub endpoint: AgentEndpointRecord,
+    pub created: bool,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationParticipantRecord {
-    pub(crate) participant_id: String,
-    pub(crate) participant_kind: String,
-    pub(crate) agent_id: Option<String>,
-    pub(crate) handle: Option<String>,
-    pub(crate) display_name: Option<String>,
-    pub(crate) principal_kind: Option<String>,
-    pub(crate) joined_at_unix_ms: i64,
+pub struct ConversationParticipantRecord {
+    pub participant_id: String,
+    pub participant_kind: String,
+    pub agent_id: Option<String>,
+    pub handle: Option<String>,
+    pub display_name: Option<String>,
+    pub principal_kind: Option<String>,
+    pub joined_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct MessageAuthorRecord {
-    pub(crate) participant_kind: String,
-    pub(crate) agent_id: Option<String>,
-    pub(crate) handle: Option<String>,
-    pub(crate) display_name: Option<String>,
-    pub(crate) principal_kind: Option<String>,
+pub struct MessageAuthorRecord {
+    pub participant_kind: String,
+    pub agent_id: Option<String>,
+    pub handle: Option<String>,
+    pub display_name: Option<String>,
+    pub principal_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct MessageDeliveryRecord {
-    pub(crate) delivery_order: i64,
-    pub(crate) delivery_id: String,
-    pub(crate) recipient_agent_id: String,
-    pub(crate) state: String,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) consumed_at_unix_ms: Option<i64>,
+pub struct MessageDeliveryRecord {
+    pub delivery_order: i64,
+    pub delivery_id: String,
+    pub recipient_agent_id: String,
+    pub state: String,
+    pub created_at_unix_ms: i64,
+    pub consumed_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationMessageRecord {
-    pub(crate) message_id: String,
-    pub(crate) conversation_id: String,
-    pub(crate) seq: i64,
-    pub(crate) author: MessageAuthorRecord,
-    pub(crate) body: String,
-    pub(crate) reply_to: Option<String>,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) deliveries: Vec<MessageDeliveryRecord>,
+pub struct ConversationMessageRecord {
+    pub message_id: String,
+    pub conversation_id: String,
+    pub seq: i64,
+    pub author: MessageAuthorRecord,
+    pub body: String,
+    pub reply_to: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub deliveries: Vec<MessageDeliveryRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationSummaryRecord {
-    pub(crate) conversation_id: String,
-    pub(crate) title: Option<String>,
-    pub(crate) lifecycle: String,
-    pub(crate) created_at_unix_ms: i64,
-    pub(crate) updated_at_unix_ms: i64,
-    pub(crate) participant_count: i64,
-    pub(crate) message_count: i64,
-    pub(crate) last_seq: i64,
-    pub(crate) queued_delivery_count: Option<i64>,
+pub struct ConversationSummaryRecord {
+    pub conversation_id: String,
+    pub title: Option<String>,
+    pub lifecycle: String,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub participant_count: i64,
+    pub message_count: i64,
+    pub last_seq: i64,
+    pub queued_delivery_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationPage {
-    pub(crate) total_count: i64,
-    pub(crate) offset: usize,
-    pub(crate) next_offset: Option<usize>,
-    pub(crate) truncated: bool,
-    pub(crate) conversations: Vec<ConversationSummaryRecord>,
+pub struct ConversationPage {
+    pub total_count: i64,
+    pub offset: usize,
+    pub next_offset: Option<usize>,
+    pub truncated: bool,
+    pub conversations: Vec<ConversationSummaryRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationDetailRecord {
-    pub(crate) conversation: ConversationSummaryRecord,
-    pub(crate) participants: Vec<ConversationParticipantRecord>,
-    pub(crate) messages: Vec<ConversationMessageRecord>,
-    pub(crate) after_seq: i64,
-    pub(crate) next_after_seq: Option<i64>,
-    pub(crate) truncated: bool,
+pub struct ConversationDetailRecord {
+    pub conversation: ConversationSummaryRecord,
+    pub participants: Vec<ConversationParticipantRecord>,
+    pub messages: Vec<ConversationMessageRecord>,
+    pub after_seq: i64,
+    pub next_after_seq: Option<i64>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationMutation {
-    pub(crate) conversation: ConversationDetailRecord,
-    pub(crate) created: bool,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct ConversationMutation {
+    pub conversation: ConversationDetailRecord,
+    pub created: bool,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ConversationMessageMutation {
-    pub(crate) message: ConversationMessageRecord,
-    pub(crate) replayed: bool,
-    pub(crate) state_changed: bool,
+pub struct ConversationMessageMutation {
+    pub message: ConversationMessageRecord,
+    pub replayed: bool,
+    pub state_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentInboxItem {
-    pub(crate) delivery_id: String,
-    pub(crate) state: String,
-    pub(crate) conversation_id: String,
-    pub(crate) conversation_title: Option<String>,
-    pub(crate) message: ConversationMessageRecord,
+pub struct AgentInboxItem {
+    pub delivery_id: String,
+    pub state: String,
+    pub conversation_id: String,
+    pub conversation_title: Option<String>,
+    pub message: ConversationMessageRecord,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentInboxPage {
-    pub(crate) agent_id: String,
-    pub(crate) total_queued_count: i64,
-    pub(crate) after_delivery_order: i64,
-    pub(crate) next_after_delivery_order: Option<i64>,
-    pub(crate) truncated: bool,
-    pub(crate) deliveries: Vec<AgentInboxItem>,
+pub struct AgentInboxPage {
+    pub agent_id: String,
+    pub total_queued_count: i64,
+    pub after_delivery_order: i64,
+    pub next_after_delivery_order: Option<i64>,
+    pub truncated: bool,
+    pub deliveries: Vec<AgentInboxItem>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct DeliveryConsumeResult {
-    pub(crate) agent_id: String,
-    pub(crate) consumed_delivery_ids: Vec<String>,
-    pub(crate) already_consumed_delivery_ids: Vec<String>,
-    pub(crate) state_changed: bool,
+pub struct DeliveryConsumeResult {
+    pub agent_id: String,
+    pub consumed_delivery_ids: Vec<String>,
+    pub already_consumed_delivery_ids: Vec<String>,
+    pub state_changed: bool,
 }
 
 impl Database {
@@ -497,7 +497,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn create_agent_identity(
+    pub fn create_agent_identity(
         &self,
         principal: &CommunicationPrincipal,
         input: NewAgentIdentity,
@@ -587,7 +587,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn list_agent_identities(
+    pub fn list_agent_identities(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: Option<&str>,
@@ -684,7 +684,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn update_agent_identity(
+    pub fn update_agent_identity(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -780,7 +780,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn attach_agent_endpoint(
+    pub fn attach_agent_endpoint(
         &self,
         principal: &CommunicationPrincipal,
         input: NewAgentEndpoint,
@@ -943,7 +943,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn detach_agent_endpoint(
+    pub fn detach_agent_endpoint(
         &self,
         principal: &CommunicationPrincipal,
         endpoint_id: &str,
@@ -1001,7 +1001,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn renew_agent_endpoint(
+    pub fn renew_agent_endpoint(
         &self,
         principal: &CommunicationPrincipal,
         endpoint_id: &str,
@@ -1054,7 +1054,7 @@ impl Database {
 
     /// Verify one exact current Endpoint without exposing process-local Host
     /// adapter state.
-    pub(crate) fn verify_current_agent_endpoint(
+    pub fn verify_current_agent_endpoint(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -1076,7 +1076,7 @@ impl Database {
     /// Endpoint capability bit. Only Host/controller infrastructure calls this
     /// exact Endpoint-generation transition; public attach requests always
     /// create non-wake-capable Endpoints.
-    pub(crate) fn set_agent_endpoint_wake_capability(
+    pub fn set_agent_endpoint_wake_capability(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -1132,7 +1132,7 @@ impl Database {
         Ok(endpoint)
     }
 
-    pub(crate) fn create_conversation(
+    pub fn create_conversation(
         &self,
         principal: &CommunicationPrincipal,
         input: NewConversation,
@@ -1262,7 +1262,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn list_conversations(
+    pub fn list_conversations(
         &self,
         principal: &CommunicationPrincipal,
         access: &ConversationAccess,
@@ -1337,7 +1337,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn read_conversation(
+    pub fn read_conversation(
         &self,
         principal: &CommunicationPrincipal,
         access: &ConversationAccess,
@@ -1362,7 +1362,7 @@ impl Database {
         read_conversation_in_connection(&conn, principal, access, conversation_id, after_seq, limit)
     }
 
-    pub(crate) fn post_conversation_message(
+    pub fn post_conversation_message(
         &self,
         principal: &CommunicationPrincipal,
         input: NewConversationMessage,
@@ -1772,7 +1772,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn list_agent_inbox(
+    pub fn list_agent_inbox(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,
@@ -1865,7 +1865,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn consume_agent_deliveries(
+    pub fn consume_agent_deliveries(
         &self,
         principal: &CommunicationPrincipal,
         agent_id: &str,

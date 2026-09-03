@@ -34,6 +34,8 @@ fn repo(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let state = temp.path().join("state");
     fs::create_dir(&root).unwrap();
     git(&["init", "-q"], &root);
+    git(&["config", "core.autocrlf", "false"], &root);
+    git(&["config", "core.longpaths", "true"], &root);
     fs::write(root.join("README.md"), "fixture\n").unwrap();
     git(&["add", "README.md"], &root);
     git(
@@ -562,7 +564,7 @@ fn record_agent_request(recorder: &Arc<Mutex<Vec<String>>>, request: &ShellAgent
 }
 
 fn run_agent_shell_request(request: &ShellAgentShellRequest) -> (i32, String, String) {
-    let mut command = Command::new("sh");
+    let mut command = Command::new(crate::tool_runtime::test_shell());
     command.args(["-lc", &request.command]);
     if let Some(cwd) = request.cwd.as_deref() {
         command.current_dir(cwd);
@@ -667,9 +669,9 @@ async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
         }),
     )
     .await;
-    registration.await.unwrap();
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{started}");
     assert_eq!(started["ok"], true, "{started}");
+    registration.await.unwrap();
     let task_id = started["task_id"].as_str().unwrap().to_string();
 
     let registry = fixture.registry.clone();
@@ -799,9 +801,9 @@ async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
         command,
     )
     .await;
-    commander.await.unwrap();
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{commanded}");
     assert_eq!(commanded["ok"], true, "{commanded}");
+    commander.await.unwrap();
 
     let registry = fixture.registry.clone();
     let client_id = fixture.client_id.clone();
@@ -1729,7 +1731,7 @@ fn doctor_reports_malformed_registration() {
 
 #[test]
 fn doctor_reports_conflicting_registration() {
-    let (_temp, root, state) = repo("conflicting-registration");
+    let (temp, root, state) = repo("conflicting-registration");
     let options = options(root, state.clone());
     setup(&options).unwrap();
     let project_path = fs::read_dir(state.join("agent/project-registry"))
@@ -1739,11 +1741,12 @@ fn doctor_reports_conflicting_registration() {
         .unwrap()
         .path();
     let before = fs::read_to_string(&project_path).unwrap();
-    let canonical_root = options.root.canonicalize().unwrap();
-    let conflicting = before.replace(
-        &format!("path = \"{}\"", canonical_root.display()),
-        "path = \"/different/project\"",
-    );
+    let different_root = temp.path().join("different-project");
+    fs::create_dir(&different_root).unwrap();
+    let different_root = different_root.canonicalize().unwrap();
+    let mut registration: toml::Value = toml::from_str(&before).unwrap();
+    registration["path"] = toml::Value::String(different_root.to_string_lossy().into_owned());
+    let conflicting = toml::to_string(&registration).unwrap();
     assert_ne!(conflicting, before);
     fs::write(&project_path, &conflicting).unwrap();
 

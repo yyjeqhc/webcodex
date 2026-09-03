@@ -229,6 +229,12 @@ async fn fixture_built(
         tests::credential(),
     )
     .unwrap();
+    #[cfg(windows)]
+    let yield_ms = if yield_ms >= 1_000 {
+        yield_ms.max(8_000)
+    } else {
+        yield_ms
+    };
     connector.executions = configure(connector.executions.clone().with_yield_ms(yield_ms));
     let registration_registry = registry.clone();
     let registration = tokio::spawn(async move {

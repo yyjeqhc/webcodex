@@ -81,8 +81,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let db = Database::open(&temp.path().join("metadata.db")).unwrap();
         let guard = ServerInstanceGuard::acquire(&db).unwrap();
-        let lock_path = lock_path_for_database(db.state_path());
-        assert_eq!(std::fs::read(lock_path).unwrap(), Vec::<u8>::new());
+        assert_eq!(guard.file.metadata().unwrap().len(), 0);
         drop(guard);
     }
 }

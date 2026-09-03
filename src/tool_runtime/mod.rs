@@ -33,6 +33,8 @@ mod handoff;
 mod handoff_brief;
 mod handoff_tools;
 mod helpers;
+#[cfg(test)]
+pub(crate) use helpers::test_shell;
 mod hygiene;
 mod hygiene_tools;
 mod job_tools;

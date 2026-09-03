@@ -10,7 +10,8 @@ pub(crate) fn run_command_sync(
     cwd: &Path,
     timeout_secs: u64,
 ) -> (i32, String, String, u64) {
-    run_command_sync_with_shell(cmd, cwd, timeout_secs, "sh")
+    let shell = test_shell();
+    run_command_sync_with_shell(cmd, cwd, timeout_secs, &shell)
 }
 
 #[cfg(test)]
@@ -18,13 +19,15 @@ fn run_command_sync_with_shell(
     cmd: &str,
     cwd: &Path,
     timeout_secs: u64,
-    shell: &str,
+    shell: &Path,
 ) -> (i32, String, String, u64) {
     let start = Instant::now();
     let mut command = std::process::Command::new(shell);
+    #[cfg(windows)]
+    command.arg("-s").stdin(std::process::Stdio::piped());
+    #[cfg(not(windows))]
+    command.arg("-c").arg(cmd);
     command
-        .arg("-c")
-        .arg(cmd)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -50,6 +53,25 @@ fn run_command_sync_with_shell(
             );
         }
     };
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let write_result = child
+            .stdin
+            .take()
+            .expect("test shell stdin")
+            .write_all(cmd.as_bytes());
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return (
+                -1,
+                String::new(),
+                format!("Failed to write command to test shell: {error}"),
+                start.elapsed().as_millis() as u64,
+            );
+        }
+    }
     // Under `process_group(0)` the child's pid is also its process-group id.
     let pgid = child.id();
     let timeout = Duration::from_secs(timeout_secs);
@@ -115,6 +137,33 @@ fn run_command_sync_with_shell(
             elapsed,
         ),
     }
+}
+
+#[cfg(all(test, not(windows)))]
+pub(crate) fn test_shell() -> PathBuf {
+    PathBuf::from("sh")
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn test_shell() -> PathBuf {
+    git_for_windows_shell().unwrap_or_else(|| PathBuf::from("sh"))
+}
+
+#[cfg(all(test, windows))]
+fn git_for_windows_shell() -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("--exec-path")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let exec_path = String::from_utf8_lossy(&output.stdout);
+    let exec_path = PathBuf::from(exec_path.trim());
+    exec_path.ancestors().find_map(|ancestor| {
+        let candidate = ancestor.join("bin").join("sh.exe");
+        candidate.is_file().then_some(candidate)
+    })
 }
 
 /// Best-effort SIGKILL of an entire process group (`kill(-pgid, SIGKILL)`; a

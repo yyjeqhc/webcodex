@@ -1011,7 +1011,9 @@ fn is_trusted_search_record_path(path: &str) -> bool {
         return false;
     }
     let p = Path::new(path);
-    if p.is_absolute()
+    if p.has_root()
+        || p.components()
+            .any(|component| matches!(component, std::path::Component::Prefix(_)))
         || p.components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
@@ -1021,6 +1023,10 @@ fn is_trusted_search_record_path(path: &str) -> bool {
 }
 
 fn normalize_search_record_path(path: &str) -> Option<String> {
+    #[cfg(windows)]
+    let normalized = path.replace('\\', "/");
+    #[cfg(windows)]
+    let path = normalized.as_str();
     let path = path.strip_prefix("./").unwrap_or(path);
     if !is_trusted_search_record_path(path) {
         return None;

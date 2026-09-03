@@ -657,6 +657,8 @@ mod tests {
             );
         };
         git(&["init", "-q"]);
+        git(&["config", "core.autocrlf", "false"]);
+        git(&["config", "core.longpaths", "true"]);
         std::fs::write(root.join("README.md"), "before\n").unwrap();
         git(&["add", "README.md"]);
         git(&[

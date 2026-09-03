@@ -134,34 +134,34 @@ fn explicit_override_is_authoritative_then_path_is_used() {
 
 #[test]
 fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let home = temp.path().join("home");
+    let local = temp.path().join("local");
     assert_eq!(
         managed_cloudflared_root_from(
-            Some(OsStr::new("/state")),
-            Some(OsStr::new("/home/user")),
-            Some(OsStr::new("/local")),
+            Some(state.as_os_str()),
+            Some(home.as_os_str()),
+            Some(local.as_os_str()),
         )
         .unwrap(),
-        PathBuf::from("/state/webcodex/tools/cloudflared")
+        state.join("webcodex/tools/cloudflared")
     );
     assert_eq!(
-        managed_cloudflared_root_from(
-            None,
-            Some(OsStr::new("/home/user")),
-            Some(OsStr::new("/local")),
-        )
-        .unwrap(),
-        PathBuf::from("/home/user/.local/state/webcodex/tools/cloudflared")
+        managed_cloudflared_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
+            .unwrap(),
+        home.join(".local/state/webcodex/tools/cloudflared")
     );
     assert_eq!(
-        managed_cloudflared_root_from(None, None, Some(OsStr::new("/local"))).unwrap(),
-        PathBuf::from("/local/WebCodex/tools/cloudflared")
+        managed_cloudflared_root_from(None, None, Some(local.as_os_str())).unwrap(),
+        local.join("WebCodex/tools/cloudflared")
     );
     let error = managed_cloudflared_root_from(None, None, None).unwrap_err();
     assert_eq!(error.code, "tunnel_unavailable");
     assert!(error.message.contains("private user directory"));
     let relative_xdg = managed_cloudflared_root_from(
         Some(OsStr::new("relative-state")),
-        Some(OsStr::new("/home/user")),
+        Some(home.as_os_str()),
         None,
     )
     .unwrap_err();

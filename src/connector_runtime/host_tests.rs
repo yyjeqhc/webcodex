@@ -33,6 +33,8 @@ fn fixture(finish: bool) -> Fixture {
     let root = temp.path().join("project");
     fs::create_dir(&root).unwrap();
     git(&root, &["init", "-q"]);
+    git(&root, &["config", "core.autocrlf", "false"]);
+    git(&root, &["config", "core.longpaths", "true"]);
     fs::write(root.join("README.md"), "before\n").unwrap();
     git(&root, &["add", "README.md"]);
     git(

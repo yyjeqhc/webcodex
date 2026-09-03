@@ -178,17 +178,11 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
         command.args(&process.args);
         (command, req.stdin.clone())
     } else if let Some(script) = internal_posix {
-        #[cfg(windows)]
-        let mut command = std::process::Command::new("bash.exe");
-        #[cfg(not(windows))]
-        let mut command = std::process::Command::new("sh");
+        let mut command = std::process::Command::new(crate::tool_runtime::helpers::test_shell());
         command.arg("-s");
         (command, Some(script.to_string()))
     } else if let Some(script) = internal_search {
-        #[cfg(windows)]
-        let mut command = std::process::Command::new("bash.exe");
-        #[cfg(not(windows))]
-        let mut command = std::process::Command::new("sh");
+        let mut command = std::process::Command::new(crate::tool_runtime::helpers::test_shell());
         command.arg("-s");
         let script = if cfg!(windows) {
             format!(
@@ -199,7 +193,7 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
         };
         (command, Some(script))
     } else {
-        let mut command = std::process::Command::new("sh");
+        let mut command = std::process::Command::new(crate::tool_runtime::helpers::test_shell());
         command.arg("-c").arg(&req.command);
         (command, req.stdin.clone())
     };

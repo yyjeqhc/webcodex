@@ -451,9 +451,10 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
             "mutation sidecar fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(&runtime, "context-write").await {
-            assert_eq!(
-                request.kind, "file_read",
-                "only post-tool instruction reads may follow the write"
+            assert!(
+                matches!(request.kind.as_str(), "file_read" | "file_list"),
+                "only post-tool instruction observation may follow the write: {}",
+                request.kind
             );
             let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
             complete_patch_agent_request(

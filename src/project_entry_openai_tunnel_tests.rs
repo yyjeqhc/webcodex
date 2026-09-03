@@ -76,32 +76,32 @@ fn official_release_assets_and_extracted_binaries_are_pinned_per_supported_platf
 
 #[test]
 fn managed_root_prefers_private_xdg_then_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let home = temp.path().join("home");
+    let local = temp.path().join("local");
     assert_eq!(
         managed_tunnel_client_root_from(
-            Some(OsStr::new("/state")),
-            Some(OsStr::new("/home/user")),
-            Some(OsStr::new("/local")),
+            Some(state.as_os_str()),
+            Some(home.as_os_str()),
+            Some(local.as_os_str()),
         )
         .unwrap(),
-        PathBuf::from("/state/webcodex/tools/tunnel-client")
+        state.join("webcodex/tools/tunnel-client")
     );
     assert_eq!(
-        managed_tunnel_client_root_from(
-            None,
-            Some(OsStr::new("/home/user")),
-            Some(OsStr::new("/local")),
-        )
-        .unwrap(),
-        PathBuf::from("/home/user/.local/state/webcodex/tools/tunnel-client")
+        managed_tunnel_client_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
+            .unwrap(),
+        home.join(".local/state/webcodex/tools/tunnel-client")
     );
     assert_eq!(
-        managed_tunnel_client_root_from(None, None, Some(OsStr::new("/local"))).unwrap(),
-        PathBuf::from("/local/WebCodex/tools/tunnel-client")
+        managed_tunnel_client_root_from(None, None, Some(local.as_os_str())).unwrap(),
+        local.join("WebCodex/tools/tunnel-client")
     );
     assert!(managed_tunnel_client_root_from(None, None, None).is_err());
     assert!(managed_tunnel_client_root_from(
         Some(OsStr::new("relative")),
-        Some(OsStr::new("/home/user")),
+        Some(home.as_os_str()),
         None,
     )
     .is_err());

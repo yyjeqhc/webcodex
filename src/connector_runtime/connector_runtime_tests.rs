@@ -212,6 +212,8 @@ pub(crate) fn init_repo(project: &Path) {
         );
     };
     run(&["init", "-q"]);
+    run(&["config", "core.autocrlf", "false"]);
+    run(&["config", "core.longpaths", "true"]);
     std::fs::write(project.join("README.md"), "fixture\n").unwrap();
     std::fs::write(
         project.join("Cargo.toml"),

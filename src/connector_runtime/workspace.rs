@@ -345,13 +345,14 @@ impl WorkspaceManager {
                 })
         } else {
             let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
+            let git_execution_root = git_cli_path(&execution_root);
             git_output(
                 target_root,
                 [
                     OsStr::new("worktree"),
                     OsStr::new("add"),
                     OsStr::new("--detach"),
-                    execution_root.as_os_str(),
+                    git_execution_root.as_os_str(),
                     OsStr::new(&baseline_commit),
                 ],
             )
@@ -1770,6 +1771,35 @@ fn git_text<const N: usize>(root: &Path, args: [&str; N]) -> Result<String, Stri
         .map_err(|_| "Git returned non-UTF-8 metadata".to_string())
 }
 
+#[cfg(not(windows))]
+fn git_cli_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
+#[cfg(windows)]
+fn git_cli_path(path: &Path) -> PathBuf {
+    use std::path::Prefix;
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_path_buf();
+    };
+    let mut normalized = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => PathBuf::from(format!("{}:", char::from(letter))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut root = PathBuf::from(r"\\");
+            root.push(server);
+            root.push(share);
+            root
+        }
+        _ => return path.to_path_buf(),
+    };
+    for component in components {
+        normalized.push(component.as_os_str());
+    }
+    normalized
+}
+
 fn git_output<I, S>(root: &Path, args: I) -> Result<Output, String>
 where
     I: IntoIterator<Item = S>,
@@ -1791,7 +1821,7 @@ where
     Command::new("git")
         .arg("-C")
         .arg(root)
-        .env("GIT_INDEX_FILE", index)
+        .env("GIT_INDEX_FILE", git_cli_path(index))
         .args(args)
         .output()
         .map_err(|error| format!("cannot start Git precondition operation: {error}"))
@@ -1951,6 +1981,8 @@ mod tests {
         let root = temp.path().join("project");
         fs::create_dir(&root).unwrap();
         git(&root, &["init", "-q"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "core.longpaths", "true"]);
         fs::write(root.join("README.md"), "before\n").unwrap();
         git(&root, &["add", "README.md"]);
         git(

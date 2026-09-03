@@ -5207,21 +5207,40 @@ fn simulate_transport_tail(stdout: &str, max_bytes: usize) -> String {
 /// the child status. Used by large-output regression tests where the command
 /// legitimately exceeds the pipe buffer.
 fn run_command_full_capture(cmd: &str, cwd: &Path, timeout_secs: u64) -> (i32, String, String) {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::process::Command;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
-    let mut command = Command::new("sh");
+    let mut command = Command::new(crate::tool_runtime::helpers::test_shell());
+    #[cfg(windows)]
+    command.arg("-s").stdin(std::process::Stdio::piped());
+    #[cfg(not(windows))]
+    command.arg("-c").arg(cmd);
     command
-        .arg("-c")
-        .arg(cmd)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = match command.spawn() {
         Ok(c) => c,
-        Err(_) => return (-1, String::new(), "failed to spawn".to_string()),
+        Err(error) => return (-1, String::new(), format!("failed to spawn: {error}")),
     };
+    #[cfg(windows)]
+    {
+        let write_result = child
+            .stdin
+            .take()
+            .expect("test shell stdin")
+            .write_all(cmd.as_bytes());
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return (
+                -1,
+                String::new(),
+                format!("failed to write shell command: {error}"),
+            );
+        }
+    }
     let mut stdout = child.stdout.take().expect("stdout piped");
     let mut stderr = child.stderr.take().expect("stderr piped");
     // Drain each pipe on its own thread so the child never blocks on a full
@@ -5727,7 +5746,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
 
     let mut rejected_seen = false;
     for (i, path) in paths.iter().enumerate() {
-        let display = path.to_string_lossy();
+        let display = path.to_string_lossy().replace('\\', "/");
         let preamble = format!("diff --git a/{display} b/{display}");
         let body = format!("+changed-{i}");
         let accepted = frames.diff.contains(&preamble);

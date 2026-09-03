@@ -2,7 +2,7 @@ use crate::tool_runtime::git::{
     collect_show_changes_untracked_previews_for_root, git_log_command, parse_porcelain_summary,
     parse_show_changes_output, show_changes_command, split_show_changes_stdout,
 };
-use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
+use crate::tool_runtime::helpers::run_command_sync;
 use crate::tool_runtime::{
     ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
 };
@@ -15,6 +15,8 @@ pub(in crate::tool_runtime::tests) fn init_git_repo(root: &Path) {
         "git init",
         "git config user.email webcodex-test@example.com",
         "git config user.name 'WebCodex Test'",
+        "git config core.autocrlf false",
+        "git config core.longpaths true",
     ] {
         let (exit_code, stdout, stderr, _) = run_command_sync(cmd, root, 30);
         assert_eq!(
@@ -31,16 +33,34 @@ pub(in crate::tool_runtime::tests) fn commit_file(
     subject: &str,
 ) {
     fs::write(root.join(path), content).unwrap();
-    for cmd in [
-        format!("git add -- {}", shell_escape_simple(path)),
-        format!("git commit -m {}", shell_escape_simple(subject)),
-    ] {
-        let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, root, 30);
-        assert_eq!(
-            exit_code, 0,
-            "git commit helper command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        );
-    }
+    let add = std::process::Command::new("git")
+        .args(["add", "--"])
+        .arg(path)
+        .current_dir(root)
+        .output()
+        .expect("run git add fixture command");
+    assert!(
+        add.status.success(),
+        "git add fixture command failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&add.stdout),
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let message_path = root.join(".git").join("webcodex-test-commit-message");
+    fs::write(&message_path, subject).unwrap();
+    let commit = std::process::Command::new("git")
+        .args(["commit", "-F"])
+        .arg(&message_path)
+        .current_dir(root)
+        .output()
+        .expect("run git commit fixture command");
+    let _ = fs::remove_file(&message_path);
+    assert!(
+        commit.status.success(),
+        "git commit fixture command failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&commit.stdout),
+        String::from_utf8_lossy(&commit.stderr)
+    );
 }
 
 pub(in crate::tool_runtime::tests) fn git_log_stdout(

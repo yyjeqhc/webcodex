@@ -12,6 +12,9 @@ pub mod tool_definition;
 pub mod tool_policy;
 pub mod tool_spec;
 
+#[cfg(any(test, feature = "root-test-support"))]
+pub mod test_support;
+
 pub use metadata::*;
 pub use registry::*;
 pub use tool_catalog::*;

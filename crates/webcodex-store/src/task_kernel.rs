@@ -2635,3 +2635,7 @@ fn bind_window_context(
 fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
+
+#[cfg(test)]
+#[path = "task_kernel_tests.rs"]
+mod tests;

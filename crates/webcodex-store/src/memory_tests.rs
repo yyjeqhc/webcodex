@@ -1,8 +1,8 @@
-use super::*;
-use crate::db::memory::{
+use super::memory::{
     memory_definition_hash, memory_state_revision, MemoryPrincipalAttribution, MemoryPriority,
     MemoryScopeAttribution, MemorySetInput, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
 };
+use super::*;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Barrier};
 

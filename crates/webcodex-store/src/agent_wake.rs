@@ -1324,8 +1324,8 @@ impl Database {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn agent_wake(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn agent_wake(
         &self,
         wake_id: &str,
     ) -> Result<Option<AgentWakeRecord>, CommunicationStoreError> {
@@ -1334,8 +1334,8 @@ impl Database {
         load_wake(&conn, wake_id)
     }
 
-    #[cfg(test)]
-    pub(crate) fn agent_wake_attempts(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn agent_wake_attempts(
         &self,
         wake_id: &str,
     ) -> Result<Vec<AgentWakeAttemptRecord>, CommunicationStoreError> {

@@ -50,12 +50,14 @@ pub use self::communication::{
     NewAgentIdentity, NewConversation, NewConversationMessage,
     COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_DURABLE_AGENTS,
 };
-#[cfg(any(test, feature = "root-test-support"))]
-pub use self::execution_model::ConnectorExecutionContinuationIntent;
 pub use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, ConnectorTerminalContinuationDeliveryState,
     MAX_ASSERTION_EVIDENCE_BYTES,
+};
+#[cfg(any(test, feature = "root-test-support"))]
+pub use self::execution_model::{
+    ConnectorExecutionContinuationIntent, ConnectorTerminalContinuationClaim,
 };
 #[allow(unused_imports)]
 pub use self::memory::{
@@ -116,3 +118,20 @@ impl Database {
         self.conn.lock().unwrap()
     }
 }
+
+#[cfg(test)]
+mod agent_task_tests;
+#[cfg(test)]
+mod agent_wake_recovery_tests;
+#[cfg(test)]
+mod agent_wake_tests;
+#[cfg(test)]
+mod communication_tests;
+#[cfg(test)]
+mod continuation_delivery_tests;
+#[cfg(test)]
+mod db_tests;
+#[cfg(test)]
+mod execution_intent_tests;
+#[cfg(test)]
+mod memory_tests;

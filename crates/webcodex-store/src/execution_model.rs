@@ -74,7 +74,7 @@ impl ConnectorTerminalContinuationDeliveryState {
 // A2 stops at the durable claim/delivery boundary; the next host-adapter slice
 // will become the first production reader of the returned claim handle.
 #[allow(dead_code)]
-pub(crate) struct ConnectorTerminalContinuationClaim {
+pub struct ConnectorTerminalContinuationClaim {
     pub execution: ConnectorExecution,
     pub claim_fence: String,
 }

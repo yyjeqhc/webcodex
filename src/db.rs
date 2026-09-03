@@ -4,9 +4,9 @@ pub(crate) use crate::workspace_activity_store::WorkspaceActivityStore;
 pub use webcodex_store::*;
 
 #[cfg(test)]
-pub(crate) mod memory {
-    pub(crate) use webcodex_store::{
-        memory_definition_hash, memory_state_revision, MemoryPrincipalAttribution, MemoryPriority,
-        MemoryScopeAttribution, MemorySetInput, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
-    };
-}
+#[path = "db/agent_wake_tests.rs"]
+mod agent_wake_host_tests;
+
+#[cfg(test)]
+#[path = "db_tests.rs"]
+mod tests;

@@ -5,16 +5,21 @@ use super::execution_model::{
     execution_event_kind, latest_execution, latest_execution_by_kind, load_execution,
     load_execution_by_operation, observed_state, ConnectorExecution,
     ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation, ConnectorTerminalContinuationClaim,
-    ConnectorTerminalContinuationDeliveryState, EXECUTION_COLUMNS, MAX_MCP_TASK_OUTPUT_TAIL_BYTES,
+    ConnectorExecutionReservation, ConnectorTerminalContinuationDeliveryState,
+    MAX_MCP_TASK_OUTPUT_TAIL_BYTES,
 };
+#[cfg(any(test, feature = "root-test-support"))]
+use super::execution_model::{ConnectorTerminalContinuationClaim, EXECUTION_COLUMNS};
 use super::task_kernel::{
     expire_task_approvals, insert_event, load_task, require_running, touch_task,
 };
 use super::{ConnectorTaskSnapshot, ConnectorTaskStoreError, Database};
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Transaction};
+#[cfg(any(test, feature = "root-test-support"))]
+use rusqlite::{OptionalExtension, TransactionBehavior};
 use serde_json::json;
 
+#[cfg(any(test, feature = "root-test-support"))]
 const TERMINAL_CONTINUATION_READY_PREDICATE: &str =
     "terminal_continuation_intent = 'armed_for_terminal' \
      AND state NOT IN ('accepted','queued','starting','running','cancel_requested') \
@@ -285,8 +290,8 @@ impl Database {
 
     // Ready remains derived: A1 intent + terminal execution truth + unclaimed
     // delivery state. No second durable ready bit exists.
-    #[allow(dead_code)]
-    pub(crate) fn terminal_ready_connector_executions(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn terminal_ready_connector_executions(
         &self,
     ) -> Result<Vec<ConnectorExecution>, ConnectorTaskStoreError> {
         let conn = self.conn.lock().unwrap();
@@ -301,8 +306,8 @@ impl Database {
         Ok(executions)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn claim_next_terminal_continuation(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn claim_next_terminal_continuation(
         &self,
     ) -> Result<Option<ConnectorTerminalContinuationClaim>, ConnectorTaskStoreError> {
         let mut conn = self.conn.lock().unwrap();
@@ -902,8 +907,8 @@ impl Database {
         self.reconcile_connector_executions_inner(project_id, now, true)
     }
 
-    #[cfg(test)]
-    pub(crate) fn reconcile_connector_executions(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn reconcile_connector_executions(
         &self,
         project_id: &str,
         now: i64,

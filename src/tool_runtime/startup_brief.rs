@@ -38,9 +38,11 @@ const MAX_FAILURE_FILE_JSON_BYTES: usize = 160;
 const MAX_ACTION_JSON_BYTES: usize = 384;
 const MAX_INSTRUCTION_EXCERPT_JSON_BYTES: usize = 768;
 
-pub(crate) const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 5;
-pub(crate) const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
+#[cfg(test)]
+pub(crate) use webcodex_core::runtime_contract::BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS;
+pub(crate) use webcodex_core::runtime_contract::{
+    BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_VERSION,
+};
 
 /// Stable model-facing coding/review semantics owned by WebCodex itself.
 ///

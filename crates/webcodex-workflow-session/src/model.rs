@@ -8,6 +8,17 @@ use webcodex_core::project_instructions::{
     ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
 use webcodex_core::workflow_session_contract::{ExecutionShell, PermissionDecision, SessionMode};
+pub use webcodex_core::workflow_session_contract::{
+    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_ACCEPTED_EXIT_CODES_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD, TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
+    TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
+    TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+    TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
+};
 
 pub const SESSION_ID_PREFIX: &str = "wc_sess_";
 pub const EVENT_ID_PREFIX: &str = "evt_";
@@ -32,10 +43,6 @@ pub const DEFAULT_SUMMARY_LIMIT: usize = 50;
 pub const MAX_SUMMARY_LIMIT: usize = 200;
 pub const MAX_SUMMARY_STRING_CHARS: usize = 240;
 pub const MAX_INPUT_STRING_CHARS: usize = 120;
-/// Public model-facing `assertion_name` bound. Keep this aligned with the
-/// ordinary Session input-string bound so correlation labels stay compact.
-pub const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize =
-    webcodex_core::shell_protocol::VALIDATION_ASSERTION_NAME_MAX_CHARS;
 pub const MAX_INPUT_OBJECT_KEYS: usize = 16;
 pub const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
@@ -60,30 +67,6 @@ pub const TOOL_EXPECTATION_RESULT_MATCHED_RESULT: &str = "matched_expected_resul
 pub const TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE: &str = "unexpected_failure";
 pub const TOOL_EXPECTATION_RESULT_MISMATCH: &str = "expectation_mismatch";
 pub const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_success";
-pub const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session_id";
-pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
-pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_ack_session_message_ids";
-pub const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: &str = "session_message_resolution";
-pub const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_session_message_resolution";
-pub const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: &str = "ack_session_context_revision";
-pub const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_ack_session_context_revision";
-pub const MAX_TOOL_CALL_ACK_MESSAGE_IDS: usize = 8;
-pub const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
-pub const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
-pub const TOOL_RESULT_EXPECTATION_FIELD: &str = "result_expectation";
-pub const TOOL_ACCEPTED_EXIT_CODES_FIELD: &str = "accepted_exit_codes";
-pub const TOOL_ASSERTION_NAME_FIELD: &str = "assertion_name";
-pub const TOOL_CALL_EXPECTATION_METADATA_FIELDS: &[&str] = &[
-    TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD,
-    TOOL_RESULT_EXPECTATION_FIELD,
-    TOOL_ACCEPTED_EXIT_CODES_FIELD,
-    TOOL_ASSERTION_NAME_FIELD,
-];
-
 /// Durable execution defaults inherited by a closed set of execution tools
 /// attached to a project-scoped Workflow Session.
 ///
@@ -1199,11 +1182,6 @@ pub struct SessionInboxOpenCounts {
     pub todo: usize,
     pub risk: usize,
 }
-
-pub const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON: &str =
-    "high_priority_guidance_requires_ack";
-pub const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION: &str =
-    "High-priority Session guidance is pending. Read session_discussion_summary before continuing.";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInboxHint {

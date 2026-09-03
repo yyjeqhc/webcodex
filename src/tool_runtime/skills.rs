@@ -29,10 +29,10 @@ pub(crate) const MAX_SKILL_INVALID_DIAGNOSTICS: usize = 8;
 pub(crate) const MAX_SKILL_RESOURCE_FILE_BYTES: usize = 512 * 1024;
 pub(crate) const MAX_SKILL_CATALOG_RESULT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_SKILL_SIDECAR_CATALOG_BYTES: usize = 8 * 1024;
-pub(crate) const MAX_SKILL_LIST_LIMIT: usize = 64;
-pub(crate) const MAX_SKILL_QUERY_CHARS: usize = 200;
-pub(crate) const MAX_SKILL_RESOURCE_PATH_CHARS: usize = 512;
-pub(crate) const MAX_SKILL_READ_LINES: usize = 400;
+pub(crate) use webcodex_core::runtime_contract::{
+    MAX_SKILL_LIST_LIMIT, MAX_SKILL_QUERY_CHARS, MAX_SKILL_READ_LINES,
+    MAX_SKILL_RESOURCE_PATH_CHARS,
+};
 pub(crate) const MAX_SKILL_READ_TEXT_BYTES: usize = 48 * 1024;
 pub(crate) const MAX_SKILL_READ_RESULT_BYTES: usize = 64 * 1024;
 const MAX_SKILL_DISCOVERY_READ_LINES: usize = 128;

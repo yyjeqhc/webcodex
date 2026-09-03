@@ -1,18 +1,19 @@
-mod annotations;
-pub(super) mod input_schemas;
-mod output_schemas;
-mod tool_specs;
+//! Compatibility facade for declarative tool schemas and registered specs.
 
-pub(crate) use annotations::tool_annotations;
-#[cfg(test)]
-pub(crate) use input_schemas::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;
-pub(crate) use input_schemas::{
+pub(super) mod input_schemas {
+    #[allow(unused_imports)]
+    pub(super) use webcodex_tool_contracts::registry::input_schemas::*;
+}
+
+#[allow(unused_imports)]
+pub(crate) use webcodex_tool_contracts::registry::{
     accepted_flattened_args_for_spec, generic_tool_call_flattened_args_for_spec,
-};
-#[cfg(test)]
-pub(crate) use output_schemas::coding_workflow_diagnostic_output_schema_for_test;
-pub(crate) use output_schemas::output_schema_for_tool;
-pub(crate) use tool_specs::{
     memory_management_tool_specs, memory_runtime_tool_specs, operator_diagnostic_tool_specs,
-    registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
+    output_schema_for_tool, registered_tool_specs, skill_management_tool_specs,
+    skill_runtime_tool_specs, tool_annotations,
+};
+
+#[cfg(test)]
+pub(crate) use webcodex_tool_contracts::registry::{
+    coding_workflow_diagnostic_output_schema_for_test, ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER,
 };

@@ -13,8 +13,9 @@ use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 pub(crate) const MAX_SEARCH_PROJECT_TEXTS_QUERIES: usize = 8;
 pub(crate) const MAX_SEARCH_PROJECT_TEXTS_CONCURRENCY: usize = 2;
 pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE: Duration = Duration::from_secs(30);
-pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 64 * 1024;
-pub(crate) const MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 8 * 1024;
+pub(crate) use webcodex_core::runtime_contract::{
+    DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES, MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES,
+};
 
 fn search_request_and_pattern_mode(
     query: SearchProjectTextsQuery,

@@ -10,6 +10,7 @@ members = [
     "crates/webcodex-runner",
     "crates/webcodex-workspace",
     "crates/webcodex-workflow-session",
+    "crates/webcodex-tool-contracts",
 ]
 resolver = "2"
 
@@ -32,6 +33,7 @@ path = "src/bin/webcodex-server.rs"
 webcodex-admin = { path = "crates/webcodex-admin" }
 webcodex-runner-config = { path = "crates/webcodex-runner-config" }
 webcodex-core = { path = "crates/webcodex-core" }
+webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts" }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session" }
 webcodex-persistent-shell = { path = "crates/webcodex-persistent-shell" }
 webcodex-workspace = { path = "crates/webcodex-workspace" }
@@ -109,6 +111,7 @@ codegen-units = 16
 incremental = true
 
 [dev-dependencies]
+webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts", features = ["root-test-support"] }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session", features = ["root-test-support"] }
 urlencoding = "2"
 salvo = { version = "0.93", features = ["test"] }

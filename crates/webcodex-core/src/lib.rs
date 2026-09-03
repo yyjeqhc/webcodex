@@ -12,6 +12,7 @@ pub mod mcp_gateway;
 pub mod memory_contract;
 pub mod project_instructions;
 pub mod project_listing;
+pub mod runtime_contract;
 pub mod sensitive_paths;
 pub mod shell_protocol;
 pub mod skill_metadata;

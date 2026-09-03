@@ -9,7 +9,7 @@ use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
 
-pub(crate) const MAX_UNIFIED_DIFF_BYTES: usize = 256 * 1024;
+pub(crate) use webcodex_core::runtime_contract::MAX_UNIFIED_DIFF_BYTES;
 const MAX_UNIFIED_DIFF_AFFECTED_FILES: usize = 128;
 const MAX_UNIFIED_DIFF_WARNINGS: usize = 32;
 const UNIFIED_DIFF_STDERR_MAX_CHARS: usize = 4096;

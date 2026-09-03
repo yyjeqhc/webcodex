@@ -1,5 +1,6 @@
 //! Compatibility facade and root adapters for the Workflow Session domain crate.
 
+#[allow(unused_imports)]
 pub(crate) use webcodex_workflow_session::{
     aggregate_console_list, canonical_tool_call_finished_events, current_attempt_event_view,
     execution_output_summary_for_tool_result, exploration_tool_kind,
@@ -7,11 +8,11 @@ pub(crate) use webcodex_workflow_session::{
     redact_and_bound_instruction, safe_model_facing_assertion_name,
     strip_tool_call_expectation_metadata, tool_failure_summary_from_events,
     tool_supports_model_facing_assertion_name, validate_model_facing_assertion_name,
-    validate_model_facing_result_expectation,
-    CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput, ConsoleValidationHooks,
-    ExplorationToolKind, ListSessionMessagesFilter, PostSessionMessageInput,
-    RecordedModelFacingToolCall, ReplaceSessionMessageInput, SessionAckObservation,
-    SessionCloseError, SessionContextRevisionAck, SessionCreateOptions, SessionDiscussionCounts,
+    validate_model_facing_result_expectation, CodingSessionError, CodingSessionRequest,
+    CompleteSessionMessageInput, ConsoleValidationHooks, ExplorationToolKind,
+    ListSessionMessagesFilter, PostSessionMessageInput, RecordedModelFacingToolCall,
+    ReplaceSessionMessageInput, SessionAckObservation, SessionCloseError,
+    SessionContextRevisionAck, SessionCreateOptions, SessionDiscussionCounts,
     SessionDiscussionSummary, SessionEvent, SessionExecutionContext,
     SessionExecutionContextUpdateError, SessionGuardDenial, SessionGuards, SessionLifecycle,
     SessionLifecycleDenial, SessionMessage, SessionMessageError, SessionMessageKind,

@@ -5139,6 +5139,7 @@ dependencies = [
  "webcodex-core",
  "webcodex-persistent-shell",
  "webcodex-runner-config",
+ "webcodex-tool-contracts",
  "webcodex-workflow-session",
  "webcodex-workspace",
  "windows-sys 0.61.2",
@@ -5282,6 +5283,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-tool-contracts"
+version = "0.3.9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "webcodex-core",
+]
+
+[[package]]
 name = "webcodex-workflow-session"
 version = "0.3.9"
 dependencies = [
@@ -5305,6 +5315,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "webcodex-core",
 ]
 
 [[package]]

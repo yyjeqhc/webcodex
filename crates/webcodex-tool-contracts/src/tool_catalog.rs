@@ -1,0 +1,571 @@
+//! Model-facing runtime tool discovery groups, recommended flows, and intents.
+
+use super::tool_definition::{ToolDiscoveryGroup, ToolManifestIntent, ToolRecommendedFlow};
+
+pub const TOOL_DISCOVERY_GROUP_CHECKPOINT: &str = "checkpoint";
+pub const TOOL_DISCOVERY_GROUP_CLEANUP: &str = "cleanup";
+pub const TOOL_DISCOVERY_GROUP_CODING_AGENT: &str = "coding_agent";
+pub const TOOL_DISCOVERY_GROUP_COMMUNICATION: &str = "communication";
+pub const TOOL_DISCOVERY_GROUP_AGENT_TASK: &str = "agent_task";
+pub const TOOL_DISCOVERY_GROUP_EDIT: &str = "edit";
+pub const TOOL_DISCOVERY_GROUP_GIT: &str = "git";
+pub const TOOL_DISCOVERY_GROUP_INSPECT: &str = "inspect";
+pub const TOOL_DISCOVERY_GROUP_JOBS: &str = "jobs";
+pub const TOOL_DISCOVERY_GROUP_PATCH: &str = "patch";
+pub const TOOL_DISCOVERY_GROUP_PROJECTS: &str = "projects";
+pub const TOOL_DISCOVERY_GROUP_REVIEW: &str = "review";
+pub const TOOL_DISCOVERY_GROUP_RUNTIME: &str = "runtime";
+pub const TOOL_DISCOVERY_GROUP_SHELL: &str = "shell";
+pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
+
+pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_INSPECT,
+        tools: &[
+            "list_tools",
+            "list_projects",
+            "list_agents",
+            "runtime_status",
+            "work_on_project",
+            "project_overview",
+            "list_project_tracked_files",
+            "read_file",
+            "read_files",
+            "run_process",
+            "run_script",
+            "run_shell",
+            "search_project_text",
+            "search_project_texts",
+            "document_symbols",
+            "document_diagnostics",
+            "hover",
+            "workspace_symbols",
+            "goto_definition",
+            "find_references",
+            "call_hierarchy",
+            "lsp_status",
+            "list_project_files",
+            "show_changes",
+            "git_status",
+            "git_diff",
+            "git_diff_summary",
+            "git_review_summary",
+            "git_diff_hunks",
+            "git_log",
+            "workspace_checkpoint_list",
+            "workspace_checkpoint_show",
+            "computer_list_targets",
+            "computer_list_windows",
+            "computer_list_displays",
+            "computer_list_applications",
+            "computer_launch_application",
+            "computer_accessibility_status",
+            "computer_accessibility_tree",
+            "computer_find_elements",
+            "computer_element_state",
+            "computer_activate_window",
+            "computer_control",
+            "computer_scroll_to_element",
+            "computer_key_input",
+            "computer_read_clipboard",
+            "computer_write_clipboard",
+            "computer_pointer_move",
+            "computer_pointer_click",
+            "computer_input_text",
+            "computer_snapshot",
+            "computer_snapshot_display",
+            "computer_save_snapshot",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_AGENT_TASK,
+        tools: &[
+            "create_agent_task",
+            "list_agent_tasks",
+            "read_agent_task",
+            "assign_agent_task",
+            "start_agent_task_attempt",
+            "start_agent_task_coding_run",
+            "reconcile_agent_task_coding_run",
+            "heartbeat_agent_task_attempt",
+            "complete_agent_task_attempt",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_COMMUNICATION,
+        tools: &[
+            "create_agent_identity",
+            "list_agent_identities",
+            "update_agent_identity",
+            "attach_agent_endpoint",
+            "bootstrap_agent_conversation",
+            "detach_agent_endpoint",
+            "create_conversation",
+            "list_conversations",
+            "read_conversation",
+            "post_conversation_message",
+            "list_agent_inbox",
+            "consume_agent_deliveries",
+            "consume_agent_wake",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_PROJECTS,
+        tools: &[
+            "list_projects",
+            "register_project",
+            "unregister_project",
+            "create_project",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_GIT,
+        tools: &[
+            "git_status",
+            "git_diff",
+            "git_diff_summary",
+            "git_review_summary",
+            "git_diff_hunks",
+            "git_log",
+            "show_changes",
+            "git_restore_paths",
+            "discard_untracked",
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_restore",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_REVIEW,
+        tools: &[
+            "finish_coding_task",
+            "show_changes",
+            "git_review_summary",
+            "git_diff_hunks",
+            "workspace_hygiene_check",
+            "git_diff_summary",
+            "git_log",
+            "git_status",
+            "git_diff",
+            "workspace_checkpoint_show",
+            "workspace_checkpoint_list",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_VALIDATION,
+        tools: &[
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+            "validation_summary",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_PATCH,
+        tools: &["apply_patch", "apply_unified_diff"],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_EDIT,
+        tools: &[
+            "apply_patch",
+            "apply_text_edits",
+            "apply_unified_diff",
+            "write_project_file",
+            "save_project_artifact",
+            "read_project_artifact_metadata",
+            "read_project_artifact",
+            "import_conversation_files_to_project",
+            "export_project_artifact",
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_SHELL,
+        tools: &[
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "run_process",
+            "run_detached_process",
+            "run_script",
+            "run_shell",
+            "open_session_shell",
+            "session_shell_exec",
+            "session_shell_status",
+            "close_session_shell",
+            "run_job",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_JOBS,
+        tools: &[
+            "open_session_shell",
+            "session_shell_exec",
+            "session_shell_status",
+            "close_session_shell",
+            "run_detached_process",
+            "run_job",
+            "stop_job",
+            "job_status",
+            "job_log",
+            "observe_jobs",
+            "list_jobs",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_RUNTIME,
+        tools: &[
+            "list_tools",
+            "work_on_project",
+            "finish_coding_task",
+            "session_summary",
+            "update_session_context",
+            "close_session",
+            "post_session_message",
+            "list_session_messages",
+            "get_session_assignment",
+            "observe_session_messages",
+            "resolve_session_message",
+            "complete_session_message",
+            "session_discussion_summary",
+            "session_handoff_summary",
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_list",
+            "workspace_checkpoint_show",
+            "workspace_checkpoint_restore",
+            "workspace_checkpoint_delete",
+            "list_projects",
+            "list_agents",
+            "runtime_status",
+            "tool_manifest",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_CODING_AGENT,
+        tools: &[
+            "coding_agent_start",
+            "coding_agent_observe",
+            "coding_agent_cancel",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_CLEANUP,
+        tools: &[
+            "delete_project_files",
+            "git_restore_paths",
+            "discard_untracked",
+            "workspace_checkpoint_delete",
+        ],
+    },
+    ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_CHECKPOINT,
+        tools: &[
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_list",
+            "workspace_checkpoint_show",
+            "workspace_checkpoint_restore",
+            "workspace_checkpoint_delete",
+        ],
+    },
+];
+
+pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
+    ToolRecommendedFlow {
+        name: "discovery",
+        summary: "Discovery: use search_project_text for bounded code search after list_projects/project_overview. Prefer run_process for native argv and run_script for typed scripts; run_shell with rg or git grep remains the diagnostic escape hatch.",
+        manifest_purpose:
+            "Resolve the project, inspect bounded structure, then search code with search_project_text or search_project_texts.",
+        tools: &[
+            "list_projects",
+            "project_overview",
+            "read_file",
+            "read_files",
+            "search_project_text",
+            "search_project_texts",
+            "run_process",
+            "run_script",
+            "run_shell",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "inspect",
+        summary: "Inspect: use search_project_text and read_file before editing. Prefer run_process for native argv and run_script for typed scripts; run_shell with rg or git grep is the diagnostic escape hatch; show_changes reviews.",
+        manifest_purpose:
+            "Use bounded structured search and file reads for code inspection, then review the worktree.",
+        tools: &[
+            "search_project_text",
+            "search_project_texts",
+            "read_file",
+            "read_files",
+            "run_process",
+            "run_script",
+            "run_shell",
+            "show_changes",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "edit",
+        summary:
+            "Edit: prefer apply_patch for model-generated contextual, multi-hunk, or multi-file changes; use apply_text_edits for small exact guarded edits; apply_unified_diff only for external raw diffs; write_project_file only for intentional whole-file rewrites.",
+        manifest_purpose:
+            "Prefer Codex-compatible transactional patches for model-generated changes; use guarded exact edits only when exact matching is intentional, raw unified diff for external patch input, and whole-file write for intentional rewrites.",
+        tools: &[
+            "apply_patch",
+            "apply_text_edits",
+            "apply_unified_diff",
+            "write_project_file",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "validate",
+        summary:
+            "Validate: use cargo_check / cargo_test / go_test; long validation continues as a Job. Prefer structured validation tools when available; raw run_shell is a bounded escape hatch, not the primary validation path.",
+        manifest_purpose:
+            "Use structured Rust or Go validation; long checks become Jobs. Prefer structured validation tools when available; run_shell remains an explicit escape hatch, not the primary validation path.",
+        tools: &[
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+            "observe_jobs",
+            "job_status",
+            "validation_summary",
+            "run_process",
+            "run_script",
+            "run_shell",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "computer_observe",
+        summary: "Computer observe: discover a caller-visible capable Runner, list its exact windows, then inspect accessibility or capture one exact surface. Read-only; no control actions.",
+        manifest_purpose:
+            "Discover a Computer-capable Runner, list its windows, then inspect accessibility or capture one exact surface.",
+        tools: &[
+            "computer_list_targets",
+            "computer_list_windows",
+            "computer_accessibility_status",
+            "computer_accessibility_tree",
+            "computer_find_elements",
+            "computer_element_state",
+            "computer_snapshot",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "computer_application_launch",
+        summary: "Computer application launch: discover fresh bounded opaque application IDs, launch exactly one ID, then re-list windows and activate an exact surface only if needed.",
+        manifest_purpose:
+            "Discover a macOS or Windows application, submit its exact native launch request, then re-observe windows before any follow-up UI effect.",
+        tools: &[
+            "computer_list_applications",
+            "computer_launch_application",
+            "computer_list_windows",
+            "computer_activate_window",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "review",
+        summary: "Review: start with show_changes for the bounded worktree overview; if hunks truncate, continue/focus with git_diff_hunks. For committed ranges, map with git_review_summary then inspect exact-range git_diff_hunks; use workspace_hygiene_check before final response.",
+        manifest_purpose: "Map committed review ranges, inspect targeted diffs, and check workspace hygiene before the final response.",
+        tools: &[
+            "git_review_summary",
+            "show_changes",
+            "git_diff_hunks",
+            "workspace_hygiene_check",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "handoff",
+        summary: "Handoff: use session_summary / session_handoff_summary; coordinator posts a todo, worker reads it once with get_session_assignment, then passes its fence to complete_session_message. Use observe_session_messages only for later generic deltas.",
+        manifest_purpose: "Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
+        tools: &[
+            "session_summary",
+            "post_session_message",
+            "session_handoff_summary",
+            "list_session_messages",
+            "get_session_assignment",
+            "observe_session_messages",
+            "complete_session_message",
+            "session_discussion_summary",
+            "validation_summary",
+            "finish_coding_task",
+        ],
+    },
+];
+
+/// Single ordered, unique source of truth for the `local_coding` MCP surface
+/// and `tool_manifest(intent="coding")`. The order is both the MCP tools/list
+/// order and the coding manifest ranking.
+pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
+    // entry
+    "work_on_project",
+    "list_projects",
+    // exact coordinator assignment read + atomic completion
+    "get_session_assignment",
+    "complete_session_message",
+    // delegated ACP coding-agent Runs (explicit coding_agent:run authority)
+    "coding_agent_start",
+    "coding_agent_observe",
+    "coding_agent_cancel",
+    // project discovery + read
+    "project_overview",
+    "list_project_tracked_files",
+    "list_project_files",
+    "search_project_text",
+    "search_project_texts",
+    "read_file",
+    "read_files",
+    // LSP navigation
+    "lsp_status",
+    "document_symbols",
+    "document_diagnostics",
+    "hover",
+    "workspace_symbols",
+    "goto_definition",
+    "find_references",
+    "call_hierarchy",
+    // guarded edits
+    "apply_patch",
+    "apply_text_edits",
+    "apply_unified_diff",
+    // structured process, shell escape hatch, and jobs
+    "run_process",
+    "run_script",
+    "run_shell",
+    "run_job",
+    "observe_jobs",
+    "job_status",
+    "job_log",
+    "list_jobs",
+    "stop_job",
+    // validation
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    "validation_summary",
+    // git review
+    "git_status",
+    "git_log",
+    "git_review_summary",
+    "git_diff",
+    "git_diff_hunks",
+    "show_changes",
+    "workspace_hygiene_check",
+    // finish
+    "finish_coding_task",
+];
+
+/// Stable task-intent views for `tool_manifest(intent=...)`.
+/// Ordered lists are ranked for model selection; not a substitute for category.
+/// Intent views only filter and rank discovery output; they do not change tool
+/// behavior, policy, permissions, execution, or finish verdict semantics.
+pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
+    ToolManifestIntent {
+        name: "coding",
+        purpose: "Default coding loop: start, inspect, structured edit, validate, review, report.",
+        tools: LOCAL_CODING_TOOL_NAMES,
+    },
+    ToolManifestIntent {
+        name: "audit",
+        purpose: "Review/audit without Project mutation or command execution: establish bounded Workflow context, inspect, read git history/diff, check hygiene, finish or handoff.",
+        tools: &[
+            "work_on_project",
+            "project_overview",
+            "list_project_tracked_files",
+            "read_file",
+            "read_files",
+            "search_project_text",
+            "search_project_texts",
+            "list_project_files",
+            "git_status",
+            "git_log",
+            "git_review_summary",
+            "git_diff_summary",
+            "git_diff_hunks",
+            "show_changes",
+            "workspace_hygiene_check",
+            "finish_coding_task",
+            "session_handoff_summary",
+            "validation_summary",
+            "tool_manifest",
+        ],
+    },
+    ToolManifestIntent {
+        name: "exploration",
+        purpose: "Light repository exploration without shell/jobs or default write paths.",
+        tools: &[
+            "list_projects",
+            "runtime_status",
+            "project_overview",
+            "list_project_tracked_files",
+            "list_project_files",
+            "search_project_text",
+            "search_project_texts",
+            "read_file",
+            "read_files",
+            "git_status",
+            "git_log",
+            "tool_manifest",
+        ],
+    },
+    ToolManifestIntent {
+        name: "release",
+        purpose: "Release closeout checks: hygiene, validation, jobs status, changes, finish.",
+        tools: &[
+            "runtime_status",
+            "git_status",
+            "git_diff_summary",
+            "workspace_hygiene_check",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "validation_summary",
+            "observe_jobs",
+            "list_jobs",
+            "show_changes",
+            "finish_coding_task",
+        ],
+    },
+    ToolManifestIntent {
+        name: "discovery",
+        purpose: "Runtime and project discovery before choosing a work intent.",
+        tools: &[
+            "tool_manifest",
+            "list_tools",
+            "runtime_status",
+            "list_agents",
+            "list_projects",
+            "project_overview",
+        ],
+    },
+];
+
+pub fn available_tool_manifest_intent_names() -> Vec<&'static str> {
+    TOOL_MANIFEST_INTENTS
+        .iter()
+        .map(|intent| intent.name)
+        .collect()
+}
+
+/// Resolve a caller-supplied intent name.
+///
+/// Returns `Ok(None)` for empty/whitespace input (treated as no intent).
+/// Returns `Err(raw)` when a non-empty name does not match a known intent.
+pub fn resolve_tool_manifest_intent(
+    name: &str,
+) -> Result<Option<&'static ToolManifestIntent>, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let normalized = trimmed.to_ascii_lowercase().replace('-', "_");
+    match TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == normalized)
+    {
+        Some(intent) => Ok(Some(intent)),
+        None => Err(trimmed.to_string()),
+    }
+}

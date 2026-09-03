@@ -33,7 +33,7 @@ const DEFAULT_MAX_HUNKS: usize = 30;
 const MAX_MAX_HUNKS: usize = 100;
 const DEFAULT_MAX_HUNK_LINES: usize = 160;
 const MAX_MAX_HUNK_LINES: usize = 400;
-pub(crate) const GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES: usize = 512;
+pub(crate) use webcodex_core::runtime_contract::GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES;
 const GIT_DIFF_HUNKS_CONTINUATION_PREFIX: &str = "wcdh1.";
 const GIT_DIFF_HUNKS_CONTINUATION_VERSION: u8 = 1;
 const GIT_DIFF_HUNKS_COMMITTED_CONTINUATION_VERSION: u8 = 2;

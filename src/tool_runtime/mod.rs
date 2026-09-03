@@ -132,9 +132,7 @@ pub use tool_inputs::{
     SessionMode, StartupDetail,
 };
 pub use tool_result::ToolResult;
-pub(crate) use tool_result::{
-    RecoveryKind, RecoveryTool, RECOVERY_KIND_VALUES, RECOVERY_TOOL_VALUES,
-};
+pub(crate) use tool_result::{RecoveryKind, RecoveryTool, RECOVERY_KIND_VALUES};
 pub use tool_spec::ToolSpec;
 
 use serde_json::json;

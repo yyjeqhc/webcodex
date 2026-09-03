@@ -1,0 +1,268 @@
+use super::AgentCapability::CodingAgentRuns;
+use super::ToolVisibility::ModelVisible;
+use super::{
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
+};
+use crate::metadata::{
+    ToolPathHint::None as NoPath,
+    ToolRisk::{JobRun, Read, WorkflowManage},
+    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_AGENT,
+    TOOL_PROVIDER_CONTROL,
+};
+use crate::registry::input_schemas::{
+    assign_agent_task_input_schema, complete_agent_task_attempt_input_schema,
+    create_agent_task_input_schema, heartbeat_agent_task_attempt_input_schema,
+    list_agent_tasks_input_schema, read_agent_task_input_schema,
+    reconcile_agent_task_coding_run_input_schema, start_agent_task_attempt_input_schema,
+    start_agent_task_coding_run_input_schema,
+};
+use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
+
+pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    require_all_scopes(
+        model_spec(
+            def(
+                "create_agent_task",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Create explicit durable Agent work independent from windows, Endpoints, Conversation Messages, Workflow Sessions, Connector Tasks, Projects, and execution backends. Optional source/project fields are correlation only. Exact keyed replay returns the same Task.",
+            create_agent_task_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "list_agent_tasks",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(COMMUNICATION_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "List bounded AgentTasks owned by the current communication principal, optionally filtered by assignee. Returns latest Attempt state without instruction bodies or attempt fences; lease state is derived from durable Server-time truth.",
+            list_agent_tasks_input_schema,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "read_agent_task",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(COMMUNICATION_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Read one exact owned durable AgentTask with its bounded instruction and latest Attempt metadata. The response never returns attempt_fence, credentials, Conversation bodies, or Project authority.",
+            read_agent_task_input_schema,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        permission_risk(
+            model_spec(
+            def(
+                "assign_agent_task",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::DesiredState,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                true,
+                false,
+            ),
+            "Explicitly assign or reassign an owned AgentTask to an owned durable Agent. A live unexpired Attempt fences reassignment; lease expiry never transfers work automatically. Assignment grants no Project or executor authority.",
+            assign_agent_task_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "start_agent_task_attempt",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "Atomically claim execution ownership for the explicit current AgentTask assignee. Creates one leased fenced AgentTaskAttempt only; it does not dispatch CodingAgentRun, Job, shell, model, Wake, Endpoint, or Workflow Session work. Exact keyed retry returns the original Attempt and fence.",
+            start_agent_task_attempt_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    permission_risk(
+        model_spec(
+            require_all_scopes(
+                def(
+                    "start_agent_task_coding_run",
+                    ModelVisible,
+                    TOOL_CATEGORY_AGENT_TASK,
+                    Some(CodingAgentRuns),
+                    TOOL_PROVIDER_AGENT,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Execute,
+                        risk: JobRun,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::FencedReplay,
+                    },
+                    Some(CODING_AGENT_RUN),
+                    true,
+                    NoPath,
+                    true,
+                    false,
+                ),
+                &[
+                    COMMUNICATION_READ,
+                    COMMUNICATION_MANAGE,
+                    CODING_AGENT_RUN,
+                    webcodex_core::authority::SCOPE_PROJECT_WRITE,
+                ],
+            ),
+            "Explicitly dispatch the exact latest unexpired fenced AgentTaskAttempt to its one durable CodingAgentRun backend. The Server derives the backend replay identity from the Attempt and uses AgentTask.instruction; the supplied Project must match referenced_project_id and is independently re-authorized through normal CodingAgent admission. Durable binding and outcome-unknown fencing precede external dispatch, so uncertain retries never mint replacement work.",
+            start_agent_task_coding_run_input_schema,
+        ),
+        PERMISSION_RISK_JOB,
+    ),
+    permission_risk(
+        model_spec(
+            require_all_scopes(
+                def(
+                "reconcile_agent_task_coding_run",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::DesiredState,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                true,
+                false,
+                ),
+                &[COMMUNICATION_READ, COMMUNICATION_MANAGE, CODING_AGENT_RUN],
+            ),
+            "Reconcile only the exact CodingAgentRun already durably bound to one owned AgentTaskAttempt. It never starts execution, chooses a provider, changes intent, or requires the old browser's Attempt fence. Authoritative Completed/Failed/Cancelled truth can terminalize the exact latest bound Attempt even after its ordinary lease expires; Lost remains outcome_unknown.",
+            reconcile_agent_task_coding_run_input_schema,
+        ),
+        PERMISSION_RISK_WRITE,
+    ),
+    require_all_scopes(
+        permission_risk(
+            model_spec(
+            def(
+                "heartbeat_agent_task_attempt",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                true,
+                false,
+            ),
+            "Renew only the exact latest unexpired AgentTaskAttempt identified by task, attempt, assignee, opaque fence, and current Attempt-local controller generation. Expired, superseded, wrong-generation, or wrong-fence Attempts remain stale and cannot be revived.",
+            heartbeat_agent_task_attempt_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        permission_risk(
+            model_spec(
+            def(
+                "complete_agent_task_attempt",
+                ModelVisible,
+                TOOL_CATEGORY_AGENT_TASK,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                true,
+                false,
+            ),
+            "Commit terminal success or failure only from the exact latest unexpired AgentTaskAttempt with matching assignee, fence, and controller generation. Completion is independently keyed: exact retry replays once, changed reuse conflicts, and stale Attempts cannot write Task truth.",
+            complete_agent_task_attempt_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+];

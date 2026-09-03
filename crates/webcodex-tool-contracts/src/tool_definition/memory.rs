@@ -1,0 +1,134 @@
+use super::ToolVisibility::ModelHidden;
+use super::{def, require_all_scopes, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use crate::metadata::{
+    ToolPathHint::None as NoPath,
+    ToolRisk::{MemoryManage, Read},
+    ADMIN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
+};
+use webcodex_core::authority::{MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES};
+
+/// Fixed Control-owned project Memory runtime contract. These tools remain
+/// globally hidden and are projected only by the capable Stateless MCP Full
+/// Operator surface; the kernel capability gate is authoritative.
+pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    require_all_scopes(
+        def(
+            "memory_search",
+            ModelHidden,
+            TOOL_CATEGORY_RUNTIME,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        MEMORY_READ_SCOPES,
+    ),
+    require_all_scopes(
+        def(
+            "memory_read",
+            ModelHidden,
+            TOOL_CATEGORY_RUNTIME,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        MEMORY_READ_SCOPES,
+    ),
+    require_all_scopes(
+        def(
+            "memory_set",
+            ModelHidden,
+            TOOL_CATEGORY_RUNTIME,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Mutate,
+                risk: MemoryManage,
+                approval: super::ToolApprovalPolicy::Standard,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(PROJECT_WRITE),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        MEMORY_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        def(
+            "memory_delete",
+            ModelHidden,
+            TOOL_CATEGORY_RUNTIME,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Mutate,
+                risk: MemoryManage,
+                approval: super::ToolApprovalPolicy::Standard,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(PROJECT_WRITE),
+            true,
+            NoPath,
+            true,
+            false,
+        ),
+        MEMORY_MANAGE_SCOPES,
+    ),
+    def(
+        "memory_scope_list",
+        ModelHidden,
+        TOOL_CATEGORY_RUNTIME,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
+        Some(ADMIN),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
+    def(
+        "memory_scope_purge",
+        ModelHidden,
+        TOOL_CATEGORY_RUNTIME,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: MemoryManage,
+            approval: super::ToolApprovalPolicy::Standard,
+            idempotency: super::ToolIdempotency::NonIdempotent,
+        },
+        Some(ADMIN),
+        false,
+        NoPath,
+        true,
+        false,
+    ),
+];

@@ -5,6 +5,8 @@ use webcodex_core::lsp_bridge::{
     CallHierarchyResult, DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult,
     LocationsResult, WorkspaceSymbolsResult,
 };
+use webcodex_core::workflow_session_contract::is_tool_call_expectation_metadata_field as shared_is_tool_call_expectation_metadata_field;
+pub use webcodex_core::workflow_session_contract::EXPLORATION_TOOL_NAMES;
 
 use super::model::{
     PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, SessionSummary,
@@ -445,7 +447,7 @@ pub fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCallExpect
 }
 
 pub fn is_tool_call_expectation_metadata_field(field: &str) -> bool {
-    TOOL_CALL_EXPECTATION_METADATA_FIELDS.contains(&field)
+    shared_is_tool_call_expectation_metadata_field(field)
 }
 
 pub fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
@@ -799,20 +801,6 @@ pub enum ExplorationToolKind {
     Search,
     Navigation,
 }
-
-pub const EXPLORATION_TOOL_NAMES: &[&str] = &[
-    "read_file",
-    "read_files",
-    "search_project_text",
-    "search_project_texts",
-    "document_symbols",
-    "document_diagnostics",
-    "hover",
-    "workspace_symbols",
-    "goto_definition",
-    "find_references",
-    "call_hierarchy",
-];
 
 pub fn exploration_tool_kind(tool_name: &str) -> Option<ExplorationToolKind> {
     if !EXPLORATION_TOOL_NAMES.contains(&tool_name) {

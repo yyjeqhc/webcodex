@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) const STRUCTURED_EXECUTION_SYNC_WAIT_SECS: u64 = 10;
-pub(crate) const STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS: u64 = 60;
+pub(crate) use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StructuredExecutionBudget {

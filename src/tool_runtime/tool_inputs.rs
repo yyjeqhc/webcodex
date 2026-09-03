@@ -60,17 +60,9 @@ impl StartupDetail {
     }
 }
 
-pub(crate) const CHECKPOINT_KIND_VALUES: &[&str] = &[
-    "snapshot",
-    "baseline",
-    "before_refactor",
-    "after_refactor",
-    "last_known_good",
-    "rollback_candidate",
-];
-
-pub(crate) const CHECKPOINT_VALIDATION_STATUS_VALUES: &[&str] =
-    &["unknown", "not_run", "passed", "failed"];
+pub(crate) use webcodex_core::runtime_contract::{
+    CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES,
+};
 
 pub(crate) fn is_checkpoint_kind(value: &str) -> bool {
     CHECKPOINT_KIND_VALUES.contains(&value)

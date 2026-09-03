@@ -1,0 +1,184 @@
+use super::AgentCapability::{FileRead, Shell};
+use super::ToolVisibility::ModelVisible;
+use super::{
+    adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
+    TOOL_CATEGORY_FILE, TOOL_CATEGORY_PROJECT,
+};
+use crate::metadata::{
+    ToolPathHint::{None as NoPath, SinglePath},
+    ToolRisk::Read,
+    PROJECT_READ, TOOL_PROVIDER_AGENT,
+};
+use crate::registry::input_schemas::{
+    list_project_files_input_schema, list_project_tracked_files_input_schema,
+    project_overview_input_schema, read_file_input_schema, read_files_input_schema,
+    search_project_text_input_schema, search_project_texts_input_schema,
+};
+
+pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
+    context_recovery_only(model_spec(
+        def(
+            "project_overview",
+            ModelVisible,
+            TOOL_CATEGORY_PROJECT,
+            Some(FileRead),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        "Deterministic, bounded, metadata-only overview of an unfamiliar project: conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_file for contents.",
+        project_overview_input_schema,
+    )),
+    context_recovery_only(model_spec(
+        def(
+            "list_project_files",
+            ModelVisible,
+            TOOL_CATEGORY_FILE,
+            Some(FileRead),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        "List files in an agent-registered project directory (bounded, read-only). Returns project-relative paths plus a file/dir kind. Routed to the owning registered agent; the server never reads the agent project path directly.",
+        list_project_files_input_schema,
+    )),
+    context_recovery_only(model_spec(
+        def(
+            "list_project_tracked_files",
+            ModelVisible,
+            TOOL_CATEGORY_FILE,
+            // Runs `git ls-files` on the agent, so the shell capability is what
+            // the agent must actually hold — not FileRead's directory op.
+            Some(Shell),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        "Default discovery tool: what files does this project contain? Lists Git-tracked paths in one bounded call, so ignored directories like .venv and target never appear. Supports globs, a scope, and paging; a project too large to list file by file rolls up to the deepest directory depth that fits.",
+        list_project_tracked_files_input_schema,
+    )),
+    context_recovery_only(model_spec(
+        def(
+            "search_project_text",
+            ModelVisible,
+            TOOL_CATEGORY_FILE,
+            Some(Shell),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        ),
+        "Default inspect/search tool for project text. Uses rg-first with grep fallback. Regex is default; prefer pattern_mode=literal for exact identifiers, snippets, and paths. Supports matches/files_with_matches/count and context. Structured output reports backend, truncated, and failure metadata.",
+        search_project_text_input_schema,
+    )),
+    adaptive_runtime_direct(
+        context_recovery_only(model_spec(
+            def(
+                "search_project_texts",
+                ModelVisible,
+                TOOL_CATEGORY_FILE,
+                Some(Shell),
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Run 1 to 8 independent project-text searches with isolated failures and at most two Runner requests in flight. Each query defaults to regex; prefer pattern_mode=literal for identifiers, snippets, paths, and exact text. Budget continuation is whole-query via next_index.",
+            search_project_texts_input_schema,
+        )),
+        40,
+    ),
+];
+
+pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
+    context_recovery_only(model_spec(
+        def(
+            "read_file",
+            ModelVisible,
+            TOOL_CATEGORY_FILE,
+            Some(FileRead),
+            TOOL_PROVIDER_AGENT,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            SinglePath,
+            false,
+            false,
+        ),
+        "Default inspect tool for targeted source reading. Bounded UTF-8 range read with full-file sha256 and a continuation cursor (next_start_line); line numbers only change text. Oversized ranges fail range_too_large: shrink limit or narrow the range.",
+        read_file_input_schema,
+    )),
+    adaptive_runtime_direct(
+        context_recovery_only(model_spec(
+            def(
+                "read_files",
+                ModelVisible,
+                TOOL_CATEGORY_FILE,
+                Some(FileRead),
+                TOOL_PROVIDER_AGENT,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+            ),
+            "Read 1 to 8 UTF-8 file ranges in request order with isolated failures and four Runner reads in flight. The primary batch projection defaults to ~64 KiB; max_result_bytes raises it to 256 KiB. Session/continuity overlays stay separately bounded. Partial reads return deterministic cursors.",
+            read_files_input_schema,
+        )),
+        50,
+    ),
+];

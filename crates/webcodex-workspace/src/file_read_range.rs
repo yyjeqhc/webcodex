@@ -32,7 +32,8 @@ pub const MAX_RANGE_CONTENT_BYTES: usize = 192 * 1024;
 /// Hard ceiling for the final serialized model output. The shared reader does
 /// not serialize, but it exposes this so the Runner can preflight its complete
 /// v1 envelope and ToolRuntime can re-check the final numbered/escaped output.
-pub const MAX_SERIALIZED_OUTPUT_BYTES: usize = 256 * 1024;
+pub const MAX_SERIALIZED_OUTPUT_BYTES: usize =
+    webcodex_core::runtime_contract::FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES;
 
 const RAW_READ_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -51,7 +52,9 @@ impl EffectiveRange {
     /// becomes `2000`, while `Some(0)` clamps to `1`.
     pub fn new(start_line: Option<usize>, limit: Option<usize>) -> Self {
         let start_line = start_line.unwrap_or(1).max(1);
-        let limit = limit.unwrap_or(2000).clamp(1, 2000);
+        let limit = limit
+            .unwrap_or(webcodex_core::runtime_contract::FILE_READ_DEFAULT_LIMIT)
+            .clamp(1, webcodex_core::runtime_contract::FILE_READ_MAX_LIMIT);
         Self { start_line, limit }
     }
 

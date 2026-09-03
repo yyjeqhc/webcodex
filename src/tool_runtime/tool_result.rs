@@ -3,25 +3,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) const RECOVERY_KIND_VALUES: [&str; 7] = [
-    "fix_input",
-    "retry_same",
-    "reobserve",
-    "reconcile",
-    "wait",
-    "user_action",
-    "none",
-];
-
-pub(crate) const RECOVERY_TOOL_VALUES: [&str; 7] = [
-    "list_jobs",
-    "computer_find_elements",
-    "computer_list_windows",
-    "computer_list_applications",
-    "computer_list_displays",
-    "computer_snapshot_display",
-    "read_project_artifact_metadata",
-];
+pub(crate) use webcodex_core::runtime_contract::RECOVERY_KIND_VALUES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecoveryKind {

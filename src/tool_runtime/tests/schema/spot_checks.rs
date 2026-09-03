@@ -259,6 +259,25 @@ fn job_activity_is_required_nullable_on_stable_model_surfaces() {
             .is_err(),
             "{name} must reject a missing activity field"
         );
+        let failure = serde_json::json!({
+            "success": false,
+            "output": {
+                "error_kind": "unknown_job",
+                "failure_kind": "job_not_found",
+                "job_id": "missing-job",
+                "state_changed": false,
+                "recovery_kind": "reobserve",
+                "recovery_tool": "list_jobs"
+            },
+            "error": "unknown job: missing-job"
+        });
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &failure,
+            &spec.output_schema,
+        )
+        .unwrap_or_else(|error| {
+            panic!("{name} failure output must not require Job activity: {error}")
+        });
     }
 
     let list = spec_named(&specs, "list_jobs");

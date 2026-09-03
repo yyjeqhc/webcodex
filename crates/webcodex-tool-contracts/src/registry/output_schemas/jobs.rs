@@ -280,6 +280,24 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
     ])
 }
 
+fn require_success_output_field(schema: &mut Value, field: &str) {
+    schema["allOf"]
+        .as_array_mut()
+        .expect("wrapped output schema allOf")
+        .push(json!({
+            "if": {
+                "properties": {"success": {"const": true}},
+                "required": ["success"]
+            },
+            "then": {
+                "required": ["output"],
+                "properties": {
+                    "output": {"required": [field]}
+                }
+            }
+        }));
+}
+
 fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -1152,7 +1170,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "True when command_preview is bounded and secret-like command text is replaced with [redacted]."),
             ),
             ]);
-            schema["properties"]["output"]["required"] = json!(["activity"]);
+            require_success_output_field(&mut schema, "activity");
             Some(schema)
         }
         "observe_jobs" => Some(observe_jobs_output_schema()),
@@ -1327,7 +1345,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             ]);
-            schema["properties"]["output"]["required"] = json!(["activity"]);
+            require_success_output_field(&mut schema, "activity");
             Some(schema)
         }
         _ => None,

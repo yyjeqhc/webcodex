@@ -442,6 +442,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
         crate::tool_runtime::sessions::SessionTransport::Api,
         "git_diff_hunks",
         &arguments,
+        crate::tool_runtime::sessions::session_tool_contract("git_diff_hunks"),
     );
     let summary = runtime
         .sessions
@@ -3187,6 +3188,7 @@ fn show_changes_with_session_id_includes_session_summary() {
         crate::tool_runtime::sessions::SessionTransport::Api,
         "write_project_file",
         &write_args,
+        crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
     );
     runtime
         .sessions
@@ -3197,6 +3199,7 @@ fn show_changes_with_session_id_includes_session_summary() {
         crate::tool_runtime::sessions::SessionTransport::Api,
         "run_shell",
         &shell_args,
+        crate::tool_runtime::sessions::session_tool_contract("run_shell"),
     );
     runtime
         .sessions
@@ -3268,6 +3271,7 @@ fn show_changes_session_changed_paths_are_deduped() {
             crate::tool_runtime::sessions::SessionTransport::Api,
             "write_project_file",
             &args,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
         );
         runtime
             .sessions
@@ -3310,6 +3314,7 @@ async fn show_changes_session_event_limit_is_bounded() {
             crate::tool_runtime::sessions::SessionTransport::Api,
             "write_project_file",
             &args,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
         );
         runtime
             .sessions
@@ -5360,6 +5365,7 @@ async fn show_changes_non_git_project_still_returns_session_summary() {
         crate::tool_runtime::sessions::SessionTransport::Api,
         "write_project_file",
         &args,
+        crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
     );
     runtime
         .sessions

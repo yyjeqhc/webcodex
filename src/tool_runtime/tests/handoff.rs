@@ -3270,6 +3270,7 @@ async fn session_handoff_summary_output_is_bounded() {
             crate::tool_runtime::sessions::SessionTransport::Api,
             "list_tools",
             &json!({}),
+            crate::tool_runtime::sessions::session_tool_contract("list_tools"),
         );
         runtime
             .sessions
@@ -3517,6 +3518,7 @@ fn record_handoff_tool_event(
         SessionTransport::Api,
         tool_name,
         &arguments,
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     let error = (!success).then_some("tool failed");
     runtime

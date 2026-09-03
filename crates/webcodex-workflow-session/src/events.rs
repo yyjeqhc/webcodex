@@ -1,17 +1,10 @@
 //! Tool-call event helpers: classification, expectations, validation excerpts, path extraction.
-use super::super::metadata::{ToolPathHint, ToolRisk};
-use super::super::tool_definition::{
-    runtime_tool_captures_validation_output, runtime_tool_category,
-    runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
-    runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
-    runtime_tool_session_risk_class, TOOL_CATEGORY_LSP,
-};
-use crate::lsp_bridge::{
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use webcodex_core::lsp_bridge::{
     CallHierarchyResult, DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult,
     LocationsResult, WorkspaceSymbolsResult,
 };
-use serde_json::{json, Value};
-use std::collections::HashMap;
 
 use super::model::{
     PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, SessionSummary,
@@ -35,7 +28,7 @@ impl ToolCallRecorderMetadata {
     /// Allocate one trusted logical request identity at the kernel boundary.
     /// The value is correlation/accounting metadata only and is never parsed
     /// from public arguments or consulted for execution authority.
-    pub(crate) fn assign_logical_invocation(&mut self) {
+    pub fn assign_logical_invocation(&mut self) {
         self.logical_invocation_id = Some(format!(
             "{LOGICAL_INVOCATION_ID_PREFIX}{}",
             uuid::Uuid::new_v4().simple()
@@ -45,17 +38,17 @@ impl ToolCallRecorderMetadata {
 
     /// The same kernel-generated identity follows the concrete business path,
     /// but the role changes so semantic projections can prefer its execution facts.
-    pub(crate) fn mark_business_execution(&mut self) {
+    pub fn mark_business_execution(&mut self) {
         if self.logical_invocation_id.is_some() {
             self.logical_invocation_role = Some(LOGICAL_INVOCATION_ROLE_BUSINESS.to_string());
         }
     }
 
-    pub(crate) fn from_arguments(arguments: &Value) -> Self {
+    pub fn from_arguments(arguments: &Value) -> Self {
         Self::from_arguments_with_context_continuity(arguments, false)
     }
 
-    pub(crate) fn from_arguments_with_context_continuity(
+    pub fn from_arguments_with_context_continuity(
         arguments: &Value,
         context_continuity_capable: bool,
     ) -> Self {
@@ -109,7 +102,7 @@ impl ToolCallRecorderMetadata {
     }
 }
 
-pub(crate) fn is_valid_session_id(session_id: &str) -> bool {
+pub fn is_valid_session_id(session_id: &str) -> bool {
     session_id.starts_with(SESSION_ID_PREFIX)
         && session_id.len() > SESSION_ID_PREFIX.len()
         && session_id
@@ -136,7 +129,7 @@ pub(super) fn is_valid_logical_invocation_role(value: &str) -> bool {
 /// Canonical finished-tool evidence for one Workflow Session. Correlated
 /// recorder/business duplicates are collapsed only inside the supplied Session
 /// slice; legacy events without complete correlation remain independent facts.
-pub(crate) fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
+pub fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
     let mut selected = Vec::<(usize, &SessionEvent)>::new();
     let mut correlated = HashMap::<&str, Vec<(usize, &SessionEvent)>>::new();
     for (event_index, event) in events.iter().enumerate() {
@@ -200,20 +193,20 @@ pub(crate) fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Ve
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CurrentAttemptEventView {
-    pub(crate) semantic_events: Vec<SessionEvent>,
-    pub(crate) attempt_start: usize,
-    pub(crate) boundary_source: &'static str,
-    pub(crate) boundary_reason_code: Option<&'static str>,
-    pub(crate) boundary_event_index: Option<usize>,
-    pub(crate) complete: bool,
+pub struct CurrentAttemptEventView {
+    pub semantic_events: Vec<SessionEvent>,
+    pub attempt_start: usize,
+    pub boundary_source: &'static str,
+    pub boundary_reason_code: Option<&'static str>,
+    pub boundary_event_index: Option<usize>,
+    pub complete: bool,
 }
 
 /// Resolve the current semantic attempt once for all read-only projections.
 /// Finished recorder/business duplicates are canonicalized against the whole
 /// retained Session before the post-instruction slice is taken, so a recorder
 /// finish that lands just after a new instruction cannot contaminate it.
-pub(crate) fn current_attempt_event_view(summary: &SessionSummary) -> CurrentAttemptEventView {
+pub fn current_attempt_event_view(summary: &SessionSummary) -> CurrentAttemptEventView {
     let events = &summary.events;
     let boundary_event_index = events
         .iter()
@@ -248,7 +241,7 @@ pub(crate) fn current_attempt_event_view(summary: &SessionSummary) -> CurrentAtt
     }
 }
 
-pub(crate) fn extract_project(value: &Value) -> Option<String> {
+pub fn extract_project(value: &Value) -> Option<String> {
     value
         .as_object()
         .and_then(|obj| obj.get("project"))
@@ -258,17 +251,14 @@ pub(crate) fn extract_project(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(crate) fn tool_supports_model_facing_assertion_name(tool_name: &str) -> bool {
+pub fn tool_supports_model_facing_assertion_name(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "run_process" | "run_script" | "run_shell" | "run_job"
     )
 }
 
-pub(crate) fn safe_model_facing_assertion_name(
-    tool_name: &str,
-    assertion_name: &str,
-) -> Option<String> {
+pub fn safe_model_facing_assertion_name(tool_name: &str, assertion_name: &str) -> Option<String> {
     if !tool_supports_model_facing_assertion_name(tool_name) {
         return None;
     }
@@ -280,7 +270,7 @@ pub(crate) fn safe_model_facing_assertion_name(
     .then(|| trimmed.to_string())
 }
 
-pub(crate) fn validate_model_facing_assertion_name(
+pub fn validate_model_facing_assertion_name(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<(), String> {
@@ -322,7 +312,7 @@ pub(crate) fn validate_model_facing_assertion_name(
     Ok(())
 }
 
-pub(crate) fn tool_supports_model_facing_result_expectation(tool_name: &str) -> bool {
+pub fn tool_supports_model_facing_result_expectation(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "run_process"
@@ -335,7 +325,7 @@ pub(crate) fn tool_supports_model_facing_result_expectation(tool_name: &str) -> 
     )
 }
 
-pub(crate) fn validate_model_facing_result_expectation(
+pub fn validate_model_facing_result_expectation(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<(), String> {
@@ -407,7 +397,7 @@ pub(crate) fn validate_model_facing_result_expectation(
     Ok(())
 }
 
-pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCallExpectation {
+pub fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCallExpectation {
     let Some(obj) = arguments.as_object() else {
         return ToolCallExpectation::default();
     };
@@ -454,11 +444,11 @@ pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCal
     }
 }
 
-pub(crate) fn is_tool_call_expectation_metadata_field(field: &str) -> bool {
+pub fn is_tool_call_expectation_metadata_field(field: &str) -> bool {
     TOOL_CALL_EXPECTATION_METADATA_FIELDS.contains(&field)
 }
 
-pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
+pub fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     let Value::Object(mut obj) = arguments else {
         return arguments;
     };
@@ -468,11 +458,11 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     obj.remove(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD);
     obj.remove(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD);
     obj.remove(TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD);
-    obj.remove(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD);
+    obj.remove(webcodex_core::workflow_session_contract::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD);
     Value::Object(obj)
 }
 
-pub(crate) fn tool_failure_summary_from_events(events: &[SessionEvent], limit: usize) -> Value {
+pub fn tool_failure_summary_from_events(events: &[SessionEvent], limit: usize) -> Value {
     let limit = limit.min(20);
     let mut expected_count = 0usize;
     let mut unexpected_count = 0usize;
@@ -719,44 +709,43 @@ pub(super) fn sanitize_tool_execution_state(value: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SessionToolClassification {
-    pub(crate) risk_class: &'static str,
-    pub(crate) read_like: bool,
-    pub(crate) write_like: bool,
-    pub(crate) shell_like: bool,
-    pub(crate) git_like: bool,
-    pub(crate) change_summary_like: bool,
+pub enum SessionPathHint {
+    None,
+    SinglePath,
+    PathList,
+    Patch,
+    Artifact,
 }
 
-impl SessionToolClassification {
-    pub(crate) fn for_tool(tool_name: &str) -> Self {
-        Self {
-            risk_class: runtime_tool_session_risk_class(tool_name),
-            read_like: runtime_tool_is_read_like(tool_name),
-            write_like: runtime_tool_is_write_like(tool_name),
-            shell_like: runtime_tool_is_shell_like(tool_name),
-            git_like: runtime_tool_is_git_like(tool_name),
-            change_summary_like: runtime_tool_is_change_summary_like(tool_name),
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionToolContract {
+    pub risk_class: &'static str,
+    pub read_like: bool,
+    pub write_like: bool,
+    pub shell_like: bool,
+    pub git_like: bool,
+    pub change_summary_like: bool,
+    pub project_write: bool,
+    pub path_hint: SessionPathHint,
+    pub accepts_context_ack: bool,
+    pub advances_context_checkpoint: bool,
 }
 
-pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
-    let metadata = runtime_tool_metadata(tool_name);
-    if metadata.risk != ToolRisk::ProjectWrite {
+pub fn changed_paths_for_tool(contract: SessionToolContract, arguments: &Value) -> Vec<String> {
+    if !contract.project_write {
         return Vec::new();
     }
     let Some(obj) = arguments.as_object() else {
         return Vec::new();
     };
     let mut paths = Vec::new();
-    match metadata.path_hint {
-        ToolPathHint::SinglePath => {
+    match contract.path_hint {
+        SessionPathHint::SinglePath => {
             if let Some(path) = obj.get("path").and_then(Value::as_str) {
                 push_path(&mut paths, path);
             }
         }
-        ToolPathHint::PathList => {
+        SessionPathHint::PathList => {
             if let Some(values) = obj.get("paths").and_then(Value::as_array) {
                 for path in values.iter().filter_map(Value::as_str) {
                     push_path(&mut paths, path);
@@ -772,14 +761,14 @@ pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<
                 }
             }
         }
-        ToolPathHint::Artifact => {
+        SessionPathHint::Artifact => {
             for key in ["path", "output_path", "target_path"] {
                 if let Some(path) = obj.get(key).and_then(Value::as_str) {
                     push_path(&mut paths, path);
                 }
             }
         }
-        ToolPathHint::Patch | ToolPathHint::None => {}
+        SessionPathHint::Patch | SessionPathHint::None => {}
     }
     paths
 }
@@ -787,7 +776,7 @@ pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<
 /// Add trusted result-side changed paths for canonical mutations whose input
 /// intentionally does not expose a structured path list. Never parses raw diff
 /// text; only authoritative bounded runtime result metadata is accepted.
-pub(crate) fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
+pub fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
     let key = match tool_name {
         "apply_unified_diff" => "affected_files",
         "apply_patch" => "changed_paths",
@@ -805,13 +794,13 @@ pub(crate) fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> 
 /// ToolDefinition category/path metadata. This is deliberately not exposed in
 /// the public tool metadata surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExplorationToolKind {
+pub enum ExplorationToolKind {
     Read,
     Search,
     Navigation,
 }
 
-pub(crate) const EXPLORATION_TOOL_NAMES: &[&str] = &[
+pub const EXPLORATION_TOOL_NAMES: &[&str] = &[
     "read_file",
     "read_files",
     "search_project_text",
@@ -825,24 +814,25 @@ pub(crate) const EXPLORATION_TOOL_NAMES: &[&str] = &[
     "call_hierarchy",
 ];
 
-pub(crate) fn exploration_tool_kind(tool_name: &str) -> Option<ExplorationToolKind> {
+pub fn exploration_tool_kind(tool_name: &str) -> Option<ExplorationToolKind> {
     if !EXPLORATION_TOOL_NAMES.contains(&tool_name) {
         return None;
     }
     match tool_name {
         "read_file" | "read_files" => Some(ExplorationToolKind::Read),
         "search_project_text" | "search_project_texts" => Some(ExplorationToolKind::Search),
-        _ if runtime_tool_category(tool_name) == TOOL_CATEGORY_LSP => {
-            Some(ExplorationToolKind::Navigation)
-        }
-        _ => None,
+        _ => Some(ExplorationToolKind::Navigation),
     }
 }
 
 /// Extract only explicit input paths for tools that establish focused
 /// exploration evidence. Search roots are intentionally excluded: search
 /// evidence comes from successful structured result records instead.
-pub(crate) fn observed_input_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
+pub fn observed_input_paths_for_tool(
+    tool_name: &str,
+    contract: SessionToolContract,
+    arguments: &Value,
+) -> Vec<String> {
     let Some(kind) = exploration_tool_kind(tool_name) else {
         return Vec::new();
     };
@@ -862,8 +852,7 @@ pub(crate) fn observed_input_paths_for_tool(tool_name: &str, arguments: &Value) 
         return paths;
     }
 
-    let metadata = runtime_tool_metadata(tool_name);
-    if metadata.path_hint != ToolPathHint::SinglePath {
+    if contract.path_hint != SessionPathHint::SinglePath {
         return Vec::new();
     }
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
@@ -875,7 +864,7 @@ pub(crate) fn observed_input_paths_for_tool(tool_name: &str, arguments: &Value) 
 /// Build the bounded audit input retained on a session event while ensuring
 /// exploration queries and shell command summaries never enter the ledger,
 /// even when an internal caller bypasses `ToolCall::session_log_arguments`.
-pub(crate) fn session_input_summary_for_tool(tool_name: &str, arguments: &Value) -> Value {
+pub fn session_input_summary_for_tool(tool_name: &str, arguments: &Value) -> Value {
     let mut summary = redact_and_bound_value(arguments);
     let Some(object) = summary.as_object_mut() else {
         return summary;
@@ -948,7 +937,7 @@ pub(crate) fn session_input_summary_for_tool(tool_name: &str, arguments: &Value)
     summary
 }
 
-pub(crate) fn persistent_shell_event_evidence_for_tool_result(
+pub fn persistent_shell_event_evidence_for_tool_result(
     tool_name: &str,
     output: &Value,
 ) -> Option<PersistentShellEventEvidence> {
@@ -980,7 +969,7 @@ pub(crate) fn persistent_shell_event_evidence_for_tool_result(
     )
 }
 
-pub(crate) fn sanitize_persistent_shell_event_evidence(
+pub fn sanitize_persistent_shell_event_evidence(
     tool_name: &str,
     mut evidence: PersistentShellEventEvidence,
 ) -> Option<PersistentShellEventEvidence> {
@@ -1028,7 +1017,7 @@ fn sanitize_shell_evidence_atom(value: String) -> Option<String> {
 /// Add paths from a successful structured tool result. Every branch follows a
 /// known output schema; this never recursively searches arbitrary JSON for
 /// fields named `path`.
-pub(crate) fn observed_paths_for_successful_result(
+pub fn observed_paths_for_successful_result(
     tool_name: &str,
     input_paths: Vec<String>,
     output: &Value,
@@ -1126,7 +1115,7 @@ fn push_lsp_result_paths(tool_name: &str, output: &Value, paths: &mut Vec<String
 /// Normalize one untrusted path into the only representation allowed in
 /// exploration evidence. Validation is lexical and never touches the
 /// filesystem, resolves symlinks, or reveals the repository root.
-pub(crate) fn normalize_observed_project_path(path: &str) -> Option<String> {
+pub fn normalize_observed_project_path(path: &str) -> Option<String> {
     const MAX_OBSERVED_PATH_BYTES: usize = 512;
 
     let path = path.trim();
@@ -1138,7 +1127,7 @@ pub(crate) fn normalize_observed_project_path(path: &str) -> Option<String> {
         return None;
     }
     if starts_with_uri_scheme(path)
-        || crate::validation_bridge::validate_project_relative_path(path).is_err()
+        || webcodex_core::validation_bridge::validate_project_relative_path(path).is_err()
     {
         return None;
     }
@@ -1149,7 +1138,7 @@ pub(crate) fn normalize_observed_project_path(path: &str) -> Option<String> {
         .join("/");
     if normalized.is_empty()
         || normalized.len() > MAX_OBSERVED_PATH_BYTES
-        || crate::validation_bridge::validate_project_relative_path(&normalized).is_err()
+        || webcodex_core::validation_bridge::validate_project_relative_path(&normalized).is_err()
     {
         return None;
     }
@@ -1169,7 +1158,7 @@ fn starts_with_uri_scheme(path: &str) -> bool {
         })
 }
 
-pub(crate) fn sanitize_observed_paths<I>(paths: I) -> Vec<String>
+pub fn sanitize_observed_paths<I>(paths: I) -> Vec<String>
 where
     I: IntoIterator,
     I::Item: AsRef<str>,
@@ -1495,10 +1484,7 @@ pub(super) fn context_result_summary_for_tool_result(
     };
     summary.map(|value| redact_and_bound_value(&value))
 }
-pub(crate) fn validation_output_summary_for_tool_result(
-    tool_name: &str,
-    output: &Value,
-) -> Option<Value> {
+pub fn validation_output_summary_for_tool_result(tool_name: &str, output: &Value) -> Option<Value> {
     if !is_cargo_validation_tool(tool_name)
         && !matches!(
             tool_name,
@@ -1669,7 +1655,7 @@ pub(super) fn sanitize_persisted_validation_output_summary(
 fn sanitized_test_count_assertion(value: Option<&Value>) -> Option<Value> {
     let object = value?.as_object()?;
     let minimum_tests = object.get("minimum_tests")?.as_u64()?;
-    if !(1..=crate::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum_tests) {
+    if !(1..=webcodex_core::shell_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum_tests) {
         return None;
     }
     let actual_tests_run = match object.get("actual_tests_run") {
@@ -1695,7 +1681,10 @@ fn sanitized_test_count_assertion(value: Option<&Value>) -> Option<Value> {
 }
 
 pub(super) fn is_cargo_validation_tool(tool_name: &str) -> bool {
-    runtime_tool_captures_validation_output(tool_name)
+    matches!(
+        tool_name,
+        "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
+    )
 }
 
 pub(super) fn cargo_test_tests_detected(output: &Value) -> Value {

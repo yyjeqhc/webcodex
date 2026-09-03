@@ -2103,6 +2103,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
         crate::tool_runtime::sessions::SessionTransport::Mcp,
         "write_project_file",
         &write_args,
+        crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
     );
     runtime
         .sessions

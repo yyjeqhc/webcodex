@@ -41,6 +41,7 @@ fn record_correlated_validation_invocation(
             &arguments,
             Some(project.to_string()),
             metadata,
+            crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         );
         runtime.sessions.record_tool_call_finished(
             start,
@@ -354,6 +355,7 @@ fn correlated_validation_matches_the_business_start_by_call_id() {
         &json!({"project": project, "validation_target_id": recorder_target}),
         Some(project.clone()),
         recorder,
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     let business_start = runtime.sessions.record_tool_call_started_with_metadata(
         Some(&session.session_id),
@@ -362,6 +364,7 @@ fn correlated_validation_matches_the_business_start_by_call_id() {
         &json!({"project": project, "validation_target_id": business_target}),
         Some(project.clone()),
         business,
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     let output = json!({
         "exit_code": 0,
@@ -447,6 +450,7 @@ fn durable_async_validation_terminal_success_resolves_same_target_without_accept
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": project, "validation_target_id": target}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     runtime.sessions.record_tool_call_finished(
         start,
@@ -483,6 +487,7 @@ fn durable_async_validation_terminal_success_resolves_same_target_without_accept
         "job-terminal-success",
         &["job-terminal-success"],
         "cargo_check",
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         Some(project.clone()),
         target,
         None,
@@ -500,6 +505,7 @@ fn durable_async_validation_terminal_success_resolves_same_target_without_accept
             "job-terminal-success",
             &["job-terminal-success"],
             "cargo_check",
+            crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
             Some(project),
             target,
             None,
@@ -716,6 +722,7 @@ fn record_validation_event(
         SessionTransport::Api,
         tool_name,
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     runtime.sessions.record_tool_call_finished(
         start,

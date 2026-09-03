@@ -4,8 +4,8 @@
 //! implemented here and must never be weakened by mode choice.
 
 use super::model::{
-    AuthorityMode, AuthorityModeParseError, PermissionDecision, PermissionOutcome,
-    AUTHORITY_MODE_ENV, LEGACY_PERMISSION_MODE_ENV,
+    new_permission_decision, AuthorityMode, AuthorityModeParseError, PermissionDecision,
+    PermissionOutcome, AUTHORITY_MODE_ENV, LEGACY_PERMISSION_MODE_ENV,
 };
 use serde_json::{json, Value};
 
@@ -167,7 +167,7 @@ pub(crate) fn decide_for_required_tool(
         EffectiveAuthorityConfig::Active {
             mode: AuthorityMode::TrustedAgent,
             ..
-        } => PermissionDecision::new(
+        } => new_permission_decision(
             AuthorityMode::TrustedAgent.as_str(),
             PermissionOutcome::AutoApproved,
             TRUSTED_AGENT_AUTO_REASON,
@@ -178,7 +178,7 @@ pub(crate) fn decide_for_required_tool(
         EffectiveAuthorityConfig::Active {
             mode: AuthorityMode::Restricted,
             ..
-        } => PermissionDecision::new(
+        } => new_permission_decision(
             AuthorityMode::Restricted.as_str(),
             PermissionOutcome::Denied,
             RESTRICTED_DENY_REASON,
@@ -186,7 +186,7 @@ pub(crate) fn decide_for_required_tool(
             tool_name,
             project,
         ),
-        EffectiveAuthorityConfig::InvalidMode { value, .. } => PermissionDecision::new(
+        EffectiveAuthorityConfig::InvalidMode { value, .. } => new_permission_decision(
             "invalid",
             PermissionOutcome::Denied,
             format!("invalid_authority_mode:{value}"),

@@ -8,8 +8,6 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::super::helpers::is_safe_job_id;
-use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
 use super::assignment::is_valid_assignment_fence_fingerprint;
 use super::events::{
     context_result_summary_for_tool_result, exploration_tool_kind, is_valid_session_id,
@@ -28,6 +26,8 @@ use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
     bound_chars, bound_event_error_summary, bound_summary_string, redact_and_bound_instruction,
 };
+use webcodex_core::project_instructions::ProjectInstructionsSummarySnapshot;
+use webcodex_core::workflow_session_contract::is_safe_job_id;
 
 #[derive(Deserialize)]
 struct SessionLedgerVersionProbe {
@@ -65,7 +65,7 @@ fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
 }
 
 impl PersistedSessionRecord {
-    pub(super) fn from_record(record: &SessionRecord, max_events_per_session: usize) -> Self {
+    pub fn from_record(record: &SessionRecord, max_events_per_session: usize) -> Self {
         let event_skip = record.events.len().saturating_sub(max_events_per_session);
         let message_skip = record
             .messages
@@ -124,7 +124,7 @@ impl PersistedSessionRecord {
         }
     }
 
-    pub(super) fn still_matches_record(&self, record: &SessionRecord) -> bool {
+    pub fn still_matches_record(&self, record: &SessionRecord) -> bool {
         self.session_id == record.session_id
             && self.project == record.project
             && self.owner_authority_fingerprint == record.owner_authority_fingerprint
@@ -430,7 +430,7 @@ fn sanitize_owner_authority_fingerprint(value: String) -> Option<String> {
     is_lower_hex_sha256(&value).then_some(value)
 }
 
-pub(super) fn cold_session_from_record(
+pub fn cold_session_from_record(
     record: &SessionRecord,
     max_events_per_session: usize,
 ) -> Result<ColdSessionRecord, serde_json::Error> {
@@ -443,7 +443,7 @@ pub(super) fn cold_session_from_record(
     cold_session_from_persisted(&persisted, project_instructions)
 }
 
-pub(super) fn cold_session_from_persisted(
+pub fn cold_session_from_persisted(
     persisted: &PersistedSessionRecord,
     project_instructions: Option<ProjectInstructionsSummarySnapshot>,
 ) -> Result<ColdSessionRecord, serde_json::Error> {
@@ -471,7 +471,7 @@ pub(super) fn cold_session_from_persisted(
     })
 }
 
-pub(super) fn materialize_cold_session(
+pub fn materialize_cold_session(
     record: &ColdSessionRecord,
     max_events_per_session: usize,
 ) -> Option<SessionRecord> {
@@ -480,11 +480,11 @@ pub(super) fn materialize_cold_session(
         .into_record(max_events_per_session)
 }
 
-pub(super) struct RestoredSessionLedger {
-    pub(super) sessions: HashMap<String, StoredSession>,
-    pub(super) lru: VecDeque<String>,
-    pub(super) restored_sessions: usize,
-    pub(super) last_persist_error: Option<String>,
+pub struct RestoredSessionLedger {
+    pub sessions: HashMap<String, StoredSession>,
+    pub lru: VecDeque<String>,
+    pub restored_sessions: usize,
+    pub last_persist_error: Option<String>,
 }
 
 impl RestoredSessionLedger {
@@ -498,7 +498,7 @@ impl RestoredSessionLedger {
     }
 }
 
-pub(super) fn load_persisted_ledger(
+pub fn load_persisted_ledger(
     path: &PathBuf,
     max_sessions: usize,
     max_events_per_session: usize,
@@ -605,10 +605,7 @@ fn is_lower_hex_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
 }
 
-pub(super) fn write_ledger_atomic(
-    path: &PathBuf,
-    ledger: &PersistedSessionLedger,
-) -> io::Result<()> {
+pub fn write_ledger_atomic(path: &PathBuf, ledger: &PersistedSessionLedger) -> io::Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -638,10 +635,7 @@ pub(super) fn write_ledger_atomic(
     Ok(())
 }
 
-pub(super) fn sanitize_persisted_event(
-    mut event: SessionEvent,
-    session_id: &str,
-) -> Option<SessionEvent> {
+pub fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option<SessionEvent> {
     if event.session_id != session_id || !event.event_id.starts_with(EVENT_ID_PREFIX) {
         return None;
     }
@@ -775,7 +769,7 @@ fn is_valid_persisted_message_id(message_id: &str) -> bool {
         })
 }
 
-pub(super) fn sanitize_persisted_message(
+pub fn sanitize_persisted_message(
     mut message: SessionMessage,
     session_id: &str,
 ) -> Option<SessionMessage> {

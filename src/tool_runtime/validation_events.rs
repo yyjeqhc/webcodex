@@ -619,6 +619,7 @@ impl ToolRuntime {
                 job_id,
                 &retained_terminal_job_ids,
                 tool_name,
+                super::sessions::session_tool_contract(tool_name),
                 Some(project.to_string()),
                 validation_target_id,
                 assertion_name.as_deref(),

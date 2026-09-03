@@ -7,19 +7,22 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
-use super::super::helpers::is_safe_job_id;
-use super::super::validation_events::{
-    event_observes_validation_activity, validation_summary_from_events,
-};
 use super::events::normalize_observed_project_path;
 use super::model::{SessionEvent, SessionMessageKind, SessionRecord};
 use super::query::build_messages_summary;
 use super::util::{bound_chars, looks_like_secret_string};
+use webcodex_core::workflow_session_contract::is_safe_job_id;
 
-pub(crate) const DEFAULT_CONSOLE_SESSION_LIST_LIMIT: usize = 20;
-pub(crate) const MAX_CONSOLE_SESSION_LIST_LIMIT: usize = 50;
-pub(crate) const DEFAULT_CONSOLE_ACTIVITY_LIMIT: usize = 100;
-pub(crate) const MAX_CONSOLE_ACTIVITY_LIMIT: usize = 200;
+#[derive(Clone, Copy)]
+pub struct ConsoleValidationHooks {
+    pub event_observes_validation_activity: fn(&SessionEvent) -> bool,
+    pub validation_summary_from_events: fn(&[SessionEvent], usize) -> serde_json::Value,
+}
+
+pub const DEFAULT_CONSOLE_SESSION_LIST_LIMIT: usize = 20;
+pub const MAX_CONSOLE_SESSION_LIST_LIMIT: usize = 50;
+pub const DEFAULT_CONSOLE_ACTIVITY_LIMIT: usize = 100;
+pub const MAX_CONSOLE_ACTIVITY_LIMIT: usize = 200;
 const MAX_CONSOLE_TEXT_CHARS: usize = 240;
 const MAX_CONSOLE_PATHS_PER_ITEM: usize = 8;
 const MAX_CONSOLE_LIST_TEXT_CHARS: usize = 120;
@@ -27,153 +30,153 @@ const MAX_CONSOLE_LIST_PATHS_PER_ITEM: usize = 3;
 const MAX_CONSOLE_GROUP_TOOLS: usize = 8;
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleList {
-    pub(crate) sessions: Vec<WorkflowSessionConsoleListItem>,
-    pub(crate) total: usize,
-    pub(crate) returned: usize,
-    pub(crate) truncated: bool,
+pub struct WorkflowSessionConsoleList {
+    pub sessions: Vec<WorkflowSessionConsoleListItem>,
+    pub total: usize,
+    pub returned: usize,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleListItem {
-    pub(crate) session_id: String,
-    pub(crate) title: String,
-    pub(crate) lifecycle: String,
-    pub(crate) mode: String,
-    pub(crate) updated_at: i64,
-    pub(crate) running_call: bool,
-    pub(crate) running_jobs: usize,
-    pub(crate) running_jobs_complete: bool,
+pub struct WorkflowSessionConsoleListItem {
+    pub session_id: String,
+    pub title: String,
+    pub lifecycle: String,
+    pub mode: String,
+    pub updated_at: i64,
+    pub running_call: bool,
+    pub running_jobs: usize,
+    pub running_jobs_complete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) current_activity: Option<WorkflowSessionConsoleActivityPreview>,
+    pub current_activity: Option<WorkflowSessionConsoleActivityPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) last_activity: Option<WorkflowSessionConsoleActivityPreview>,
-    pub(crate) overview: WorkflowSessionConsoleOverview,
+    pub last_activity: Option<WorkflowSessionConsoleActivityPreview>,
+    pub overview: WorkflowSessionConsoleOverview,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleOverview {
-    pub(crate) work: WorkflowSessionConsoleWorkOverview,
-    pub(crate) validation: WorkflowSessionConsoleValidationOverview,
-    pub(crate) attention: WorkflowSessionConsoleAttentionOverview,
+pub struct WorkflowSessionConsoleOverview {
+    pub work: WorkflowSessionConsoleWorkOverview,
+    pub validation: WorkflowSessionConsoleValidationOverview,
+    pub attention: WorkflowSessionConsoleAttentionOverview,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) reported_progress: Option<WorkflowSessionConsoleReportedProgress>,
+    pub reported_progress: Option<WorkflowSessionConsoleReportedProgress>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleWorkOverview {
-    pub(crate) exploration: usize,
-    pub(crate) edits: usize,
-    pub(crate) reviews: usize,
-    pub(crate) validations: usize,
-    pub(crate) runs: usize,
-    pub(crate) history_complete: bool,
-    pub(crate) history_truncated: bool,
+pub struct WorkflowSessionConsoleWorkOverview {
+    pub exploration: usize,
+    pub edits: usize,
+    pub reviews: usize,
+    pub validations: usize,
+    pub runs: usize,
+    pub history_complete: bool,
+    pub history_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleValidationOverview {
-    pub(crate) state: String,
+pub struct WorkflowSessionConsoleValidationOverview {
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) latest_kind: Option<String>,
+    pub latest_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) latest_at: Option<i64>,
-    pub(crate) unresolved_failure_count: usize,
+    pub latest_at: Option<i64>,
+    pub unresolved_failure_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) tests_run_count: Option<u64>,
-    pub(crate) history_complete: bool,
-    pub(crate) history_truncated: bool,
+    pub tests_run_count: Option<u64>,
+    pub history_complete: bool,
+    pub history_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleAttentionOverview {
-    pub(crate) open_guidance: usize,
-    pub(crate) open_questions: usize,
-    pub(crate) open_risks: usize,
-    pub(crate) open_todos: usize,
+pub struct WorkflowSessionConsoleAttentionOverview {
+    pub open_guidance: usize,
+    pub open_questions: usize,
+    pub open_risks: usize,
+    pub open_todos: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleAggregate {
-    pub(crate) retained_sessions: usize,
-    pub(crate) returned_sessions: usize,
-    pub(crate) sessions_truncated: bool,
-    pub(crate) active_sessions: usize,
-    pub(crate) running_sessions: usize,
+pub struct WorkflowSessionConsoleAggregate {
+    pub retained_sessions: usize,
+    pub returned_sessions: usize,
+    pub sessions_truncated: bool,
+    pub active_sessions: usize,
+    pub running_sessions: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) latest_updated_at: Option<i64>,
-    pub(crate) attention: WorkflowSessionConsoleAttentionOverview,
+    pub latest_updated_at: Option<i64>,
+    pub attention: WorkflowSessionConsoleAttentionOverview,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleReportedProgress {
-    pub(crate) reported_at: i64,
-    pub(crate) text: String,
+pub struct WorkflowSessionConsoleReportedProgress {
+    pub reported_at: i64,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleActivityPreview {
-    pub(crate) kind: String,
+pub struct WorkflowSessionConsoleActivityPreview {
+    pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) tool: Option<String>,
-    pub(crate) state: String,
+    pub tool: Option<String>,
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) execution_state: Option<String>,
-    pub(crate) job_handoff: bool,
+    pub execution_state: Option<String>,
+    pub job_handoff: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) job_id: Option<String>,
+    pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) summary: Option<String>,
+    pub summary: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) paths: Vec<String>,
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleDetail {
-    pub(crate) session_id: String,
-    pub(crate) title: String,
-    pub(crate) lifecycle: String,
-    pub(crate) mode: String,
-    pub(crate) created_at: i64,
-    pub(crate) updated_at: i64,
-    pub(crate) running_call: bool,
-    pub(crate) running_jobs: usize,
-    pub(crate) running_jobs_complete: bool,
-    pub(crate) overview: WorkflowSessionConsoleOverview,
-    pub(crate) activity: Vec<WorkflowSessionConsoleActivity>,
-    pub(crate) activity_total: usize,
-    pub(crate) activity_returned: usize,
-    pub(crate) activity_truncated: bool,
+pub struct WorkflowSessionConsoleDetail {
+    pub session_id: String,
+    pub title: String,
+    pub lifecycle: String,
+    pub mode: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub running_call: bool,
+    pub running_jobs: usize,
+    pub running_jobs_complete: bool,
+    pub overview: WorkflowSessionConsoleOverview,
+    pub activity: Vec<WorkflowSessionConsoleActivity>,
+    pub activity_total: usize,
+    pub activity_returned: usize,
+    pub activity_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct WorkflowSessionConsoleActivity {
-    pub(crate) kind: String,
+pub struct WorkflowSessionConsoleActivity {
+    pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) tool: Option<String>,
-    pub(crate) state: String,
+    pub tool: Option<String>,
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) execution_state: Option<String>,
-    pub(crate) job_handoff: bool,
-    pub(crate) started_at: i64,
+    pub execution_state: Option<String>,
+    pub job_handoff: bool,
+    pub started_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) finished_at: Option<i64>,
+    pub finished_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) duration_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) exit_code: Option<i64>,
+    pub exit_code: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) job_id: Option<String>,
+    pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) summary: Option<String>,
+    pub summary: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) paths: Vec<String>,
+    pub paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) group_count: Option<usize>,
+    pub group_count: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) group_kinds: Vec<String>,
+    pub group_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) group_tools: Vec<String>,
+    pub group_tools: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -204,6 +207,7 @@ pub(super) fn normalize_console_activity_limit(limit: Option<usize>) -> usize {
 pub(super) fn build_list_item(
     record: &SessionRecord,
     project: &str,
+    validation: ConsoleValidationHooks,
 ) -> WorkflowSessionConsoleListItem {
     let interactions = build_interactions(record);
     let running_call = interactions
@@ -227,7 +231,7 @@ pub(super) fn build_list_item(
                 .or(interaction.start)
                 .is_some_and(|event| !interaction_is_progress_metadata(event))
     });
-    let overview = build_overview(record, &interactions, false);
+    let overview = build_overview(record, &interactions, false, validation);
     WorkflowSessionConsoleListItem {
         session_id: record.session_id.clone(),
         title: console_title(record.title.as_deref()),
@@ -247,12 +251,13 @@ pub(super) fn build_detail(
     record: &SessionRecord,
     project: &str,
     limit: usize,
+    validation: ConsoleValidationHooks,
 ) -> WorkflowSessionConsoleDetail {
     let interactions = build_interactions(record);
     let running_call = interactions
         .iter()
         .any(|interaction| interaction.finish.is_none() && interaction.start.is_some());
-    let overview = build_overview(record, &interactions, true);
+    let overview = build_overview(record, &interactions, true, validation);
     let mut ordered_activity = interactions
         .into_iter()
         .map(|interaction| OrderedActivity {
@@ -322,6 +327,7 @@ fn build_overview(
     record: &SessionRecord,
     interactions: &[Interaction<'_>],
     include_reported_progress: bool,
+    validation: ConsoleValidationHooks,
 ) -> WorkflowSessionConsoleOverview {
     let history_truncated = event_history_truncated(record);
     let mut work = WorkflowSessionConsoleWorkOverview {
@@ -357,10 +363,10 @@ fn build_overview(
     let validation_activity_observed = interactions.iter().any(|interaction| {
         interaction
             .start
-            .is_some_and(event_observes_validation_activity)
+            .is_some_and(validation.event_observes_validation_activity)
             || interaction
                 .finish
-                .is_some_and(event_observes_validation_activity)
+                .is_some_and(validation.event_observes_validation_activity)
     });
 
     let retained_events = record
@@ -371,7 +377,7 @@ fn build_overview(
     // The validation module owns validation identity, parser, terminality, and
     // historical failure resolution. Console deliberately narrows that existing
     // aggregate instead of interpreting validation output itself.
-    let validation_summary = validation_summary_from_events(&retained_events, 1);
+    let validation_summary = (validation.validation_summary_from_events)(&retained_events, 1);
     let validation_available = validation_summary
         .get("available")
         .and_then(serde_json::Value::as_bool)
@@ -449,7 +455,7 @@ fn build_overview(
     }
 }
 
-pub(crate) fn aggregate_console_list(
+pub fn aggregate_console_list(
     list: &WorkflowSessionConsoleList,
 ) -> WorkflowSessionConsoleAggregate {
     let mut attention = WorkflowSessionConsoleAttentionOverview {

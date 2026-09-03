@@ -3258,6 +3258,7 @@ fn record_coding_task_tool_event(
         SessionTransport::Api,
         tool_name,
         &arguments,
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     let error = (!success).then_some("tool failed");
     runtime

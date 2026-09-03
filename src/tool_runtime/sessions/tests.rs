@@ -1,4 +1,4 @@
-use super::super::project_instructions::ProjectInstructionsSnapshot;
+use super::super::project_instructions::{LoadedInstructionCandidate, ProjectInstructionsSnapshot};
 use super::super::tool_inputs::{ExecutionShell, SessionMode};
 use super::events::{
     changed_paths_for_tool, normalize_observed_project_path, observed_paths_for_successful_result,
@@ -33,6 +33,7 @@ fn record_model_facing_result(
                 ack_session_context_revision: ack,
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract(tool_name),
         )
         .expect("recorded call start");
     let session_output = super::super::tool_audit::session_log_result_for_tool(tool_name, &output);
@@ -132,6 +133,7 @@ fn apply_unified_diff_finished_event_records_trusted_result_changed_paths() {
         SessionTransport::Api,
         "apply_unified_diff",
         &json!({"project": "demo", "diff": "@@ -1 +1 @@\n-old\n+new\n"}),
+        crate::tool_runtime::sessions::session_tool_contract("apply_unified_diff"),
     );
     store.record_tool_call_finished(
         start,
@@ -172,6 +174,7 @@ fn checkpoint_restore_finished_event_records_trusted_result_changed_paths() {
         SessionTransport::Api,
         "workspace_checkpoint_restore",
         &json!({"project": "demo", "checkpoint_id": "wc_ckpt_demo", "confirm": true}),
+        crate::tool_runtime::sessions::session_tool_contract("workspace_checkpoint_restore"),
     );
     store.record_tool_call_finished(
         start,
@@ -241,6 +244,7 @@ fn successful_reads_record_input_paths_but_failed_reads_do_not_finish_with_evide
         SessionTransport::Api,
         "read_file",
         &json!({"project": "demo", "path": "src\\lib.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(
         successful,
@@ -255,6 +259,7 @@ fn successful_reads_record_input_paths_but_failed_reads_do_not_finish_with_evide
         SessionTransport::Api,
         "read_file",
         &json!({"project": "demo", "path": "src/failed.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(
         failed,
@@ -356,6 +361,7 @@ fn lsp_observations_use_path_metadata_and_known_typed_result_locations_only() {
             "line": 4,
             "column": 9
         }),
+        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
     );
     store.record_tool_call_finished(
         start,
@@ -513,6 +519,7 @@ fn session_store_bounds_event_limit() {
             SessionTransport::Api,
             "write_project_file",
             &args,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
         );
         store.record_tool_call_finished(start, true, &json!({}), None, None);
     }
@@ -534,6 +541,7 @@ fn input_summary_redacts_sensitive_keys() {
             "token": "super-secret-token",
             "command": "curl -H 'Authorization: Bearer wc_pat_never_store'"
         }),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     let summary = store.summary(&summary.session_id, Some(10)).unwrap();
     assert_eq!(
@@ -711,6 +719,7 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
         SessionTransport::Mcp,
         "skill_list",
         &json!({"project": project, "query_present": false, "limit": 20}),
+        crate::tool_runtime::sessions::session_tool_contract("skill_list"),
     );
     store.record_model_facing_tool_call_finished(
         list_start,
@@ -740,6 +749,7 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
             "start_line": 1,
             "limit": 20
         }),
+        crate::tool_runtime::sessions::session_tool_contract("skill_read_file"),
     );
     store.record_model_facing_tool_call_finished(
         read_start,
@@ -822,6 +832,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         SessionTransport::Mcp,
         "memory_set",
         &set_args,
+        crate::tool_runtime::sessions::session_tool_contract("memory_set"),
     );
     store.record_model_facing_tool_call_finished(
         set_start,
@@ -857,6 +868,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         SessionTransport::Mcp,
         "memory_search",
         &search_args,
+        crate::tool_runtime::sessions::session_tool_contract("memory_search"),
     );
     store.record_model_facing_tool_call_finished(
         search_start,
@@ -892,6 +904,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
             "memory_key": "deployment-policy",
             "expected_revision": revision
         }),
+        crate::tool_runtime::sessions::session_tool_contract("memory_read"),
     );
     store.record_model_facing_tool_call_finished(
         read_start,
@@ -924,6 +937,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         SessionTransport::Mcp,
         "memory_scope_list",
         &json!({"offset": 0, "limit": 50}),
+        crate::tool_runtime::sessions::session_tool_contract("memory_scope_list"),
     );
     store.record_model_facing_tool_call_finished(
         scope_list_start,
@@ -964,6 +978,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
         SessionTransport::Mcp,
         "memory_scope_purge",
         &purge_args,
+        crate::tool_runtime::sessions::session_tool_contract("memory_scope_purge"),
     );
     store.record_model_facing_tool_call_finished(
         purge_start,
@@ -1312,6 +1327,7 @@ fn persistent_shell_evidence_survives_restore_without_command_or_output() {
             "command_summary": "export PRIVATE_LEDGER_VALUE=secret",
             "command_present": true
         }),
+        crate::tool_runtime::sessions::session_tool_contract("session_shell_exec"),
     );
     store.record_tool_call_finished(
         start,
@@ -1357,6 +1373,7 @@ fn validation_output_summary_survives_restore_sanitized() {
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(
         start,
@@ -1420,6 +1437,7 @@ fn malicious_persisted_validation_output_summary_is_resanitized_on_restore() {
             SessionTransport::Api,
             tool_name,
             &json!({"project": "agent:eval:demo"}),
+            crate::tool_runtime::sessions::session_tool_contract(tool_name),
         );
         store.record_tool_call_finished(
             start,
@@ -1522,6 +1540,7 @@ fn tool_call_start_and_finish_share_one_call_id() {
             SessionTransport::Api,
             "read_file",
             &json!({"project": "agent:eval:demo", "path": "src/lib.rs"}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .expect("start recorded");
     let call_id = start.call_id.clone();
@@ -1558,6 +1577,7 @@ fn legacy_session_events_without_call_id_restore() {
         SessionTransport::Api,
         "read_file",
         &json!({"project": "agent:eval:demo", "path": "src/legacy.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     store.flush_persistence();
@@ -1578,7 +1598,12 @@ fn legacy_session_events_without_call_id_restore() {
     assert_eq!(summary.counts.tool_calls, 1);
     assert!(summary.events.iter().all(|event| event.call_id.is_none()));
     let detail = restored
-        .console_detail_for_project("agent:eval:demo", &session.session_id, Some(20))
+        .console_detail_for_project(
+            "agent:eval:demo",
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.activity.len(), 1);
     assert_eq!(detail.activity[0].state, "succeeded");
@@ -1601,6 +1626,7 @@ fn reused_logical_invocation_metadata_does_not_suppress_ambiguous_evidence() {
             &json!({"project": "agent:eval:demo", "path": path}),
             Some("agent:eval:demo".to_string()),
             business.clone(),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         );
         store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     }
@@ -1623,8 +1649,13 @@ fn record_console_tool(
     success: bool,
     output: Value,
 ) {
-    let start =
-        store.record_tool_call_started(Some(session_id), SessionTransport::Api, tool, &input);
+    let start = store.record_tool_call_started(
+        Some(session_id),
+        SessionTransport::Api,
+        tool,
+        &input,
+        crate::tool_runtime::sessions::session_tool_contract(tool),
+    );
     store.record_tool_call_finished(
         start,
         success,
@@ -1769,7 +1800,11 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
         "working in /root/private/work.rs",
     );
 
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -1807,7 +1842,12 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
     }
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(100))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(100),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let progress = detail.overview.reported_progress.as_ref().unwrap();
     assert!(
@@ -1824,7 +1864,12 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
         "token=SUPER_SECRET_VALUE",
     );
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(100))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(100),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(
         detail
@@ -1874,7 +1919,12 @@ fn console_overview_marks_retained_event_history_truncated_without_claiming_tota
     }
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(100))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(100),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert!(detail.overview.work.history_truncated);
     assert!(!detail.overview.work.history_complete);
@@ -1891,7 +1941,12 @@ fn console_overview_validation_reuses_terminal_and_failure_resolution_semantics(
 
     let not_run = store.start_session(Some(project.to_string()), Some("not run".to_string()));
     let detail = store
-        .console_detail_for_project(project, &not_run.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &not_run.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.overview.validation.state, "not_run");
     assert_eq!(detail.overview.validation.unresolved_failure_count, 0);
@@ -1899,7 +1954,12 @@ fn console_overview_validation_reuses_terminal_and_failure_resolution_semantics(
     let passed = store.start_session(Some(project.to_string()), Some("passed".to_string()));
     record_console_validation(&store, &passed.session_id, project, true, 4);
     let detail = store
-        .console_detail_for_project(project, &passed.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &passed.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.overview.validation.state, "passed");
     assert_eq!(
@@ -1912,7 +1972,12 @@ fn console_overview_validation_reuses_terminal_and_failure_resolution_semantics(
     let failed = store.start_session(Some(project.to_string()), Some("failed".to_string()));
     record_console_validation(&store, &failed.session_id, project, false, 1);
     let detail = store
-        .console_detail_for_project(project, &failed.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &failed.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.overview.validation.state, "failed");
     assert_eq!(detail.overview.validation.unresolved_failure_count, 1);
@@ -1921,7 +1986,12 @@ fn console_overview_validation_reuses_terminal_and_failure_resolution_semantics(
     record_console_validation(&store, &resolved.session_id, project, false, 1);
     record_console_validation(&store, &resolved.session_id, project, true, 5);
     let detail = store
-        .console_detail_for_project(project, &resolved.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &resolved.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.overview.validation.state, "passed");
     assert_eq!(detail.overview.validation.unresolved_failure_count, 0);
@@ -1938,6 +2008,7 @@ fn console_overview_running_validation_job_handoff_is_work_not_validation_outcom
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     store.record_tool_call_finished(
         start,
@@ -1965,7 +2036,12 @@ fn console_overview_running_validation_job_handoff_is_work_not_validation_outcom
     );
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(detail.overview.work.validations, 1);
     assert_eq!(detail.overview.validation.state, "unavailable");
@@ -1986,10 +2062,15 @@ fn console_overview_unfinished_validation_call_is_current_without_terminal_evide
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     assert!(start.is_some());
 
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2038,6 +2119,7 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
             SessionTransport::Api,
             tool,
             &input,
+            crate::tool_runtime::sessions::session_tool_contract(tool),
         );
         store.record_tool_call_finished(start, true, &output, None, None);
     }
@@ -2046,6 +2128,7 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
         SessionTransport::Api,
         "goto_definition",
         &json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
+        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
     );
     assert!(running.is_some());
     store
@@ -2060,7 +2143,12 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
         .unwrap();
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(200))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(200),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let kinds = detail
         .activity
@@ -2105,7 +2193,12 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
     }
 
     let bounded = store
-        .console_detail_for_project(project, &session.session_id, Some(2))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(2),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(bounded.activity_returned, 2);
     assert!(bounded.activity_total > bounded.activity_returned);
@@ -2116,13 +2209,22 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
         Some("hidden".to_string()),
     );
     assert!(store
-        .console_detail_for_project(project, &other.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &other.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks()
+        )
         .is_none());
     let _second_visible = store.start_session(
         Some(project.to_string()),
         Some("second visible".to_string()),
     );
-    let list = store.console_list_for_project(project, Some(1));
+    let list = store.console_list_for_project(
+        project,
+        Some(1),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     assert_eq!(list.returned, 1);
     assert_eq!(list.total, 2);
     assert!(list.truncated);
@@ -2168,7 +2270,11 @@ fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties(
     std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
     let store = persistent_store(ledger);
 
-    let initial = store.console_list_for_project(project, Some(10));
+    let initial = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     assert_eq!(
         initial
             .sessions
@@ -2185,11 +2291,16 @@ fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties(
             SessionTransport::Api,
             "read_file",
             &json!({"project": project, "path": "src/lib.rs"}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .expect("older Session activity should be recorded");
     assert_eq!(activity.session_id, older);
 
-    let refreshed = store.console_list_for_project(project, Some(10));
+    let refreshed = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     assert_eq!(refreshed.sessions[0].session_id, older);
     assert!(refreshed.sessions[0].updated_at > refreshed.sessions[1].updated_at);
     assert_eq!(refreshed.sessions[1].session_id, tie_z);
@@ -2207,6 +2318,7 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
         SessionTransport::Api,
         "read_file",
         &json!({"project": project, "path": "src/lib.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(read, true, &json!({"content": "omitted"}), None, None);
 
@@ -2216,6 +2328,7 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     store.record_tool_call_finished(
         cargo,
@@ -2246,7 +2359,11 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
         })
         .unwrap();
 
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2271,9 +2388,14 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
         SessionTransport::Api,
         "goto_definition",
         &json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
+        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
     );
     assert!(running.is_some());
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2302,6 +2424,7 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
         SessionTransport::Api,
         "run_job",
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract("run_job"),
     );
     store.record_tool_call_finished(
         start,
@@ -2319,7 +2442,11 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
         None,
     );
 
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2340,6 +2467,7 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
         SessionTransport::Api,
         "job_status",
         &json!({"project": project, "job_id": job_id}),
+        crate::tool_runtime::sessions::session_tool_contract("job_status"),
     );
     store.record_tool_call_finished(
         observed,
@@ -2350,7 +2478,12 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
     );
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let handoff = detail
         .activity
@@ -2359,7 +2492,11 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
         .unwrap();
     assert_eq!(handoff.execution_state.as_deref(), Some("started"));
 
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2372,7 +2509,11 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
     );
 
     store.close_session(&session.session_id).unwrap();
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2408,6 +2549,7 @@ fn console_list_without_running_work_shows_last_meaningful_activity() {
             SessionTransport::Api,
             tool,
             &input,
+            crate::tool_runtime::sessions::session_tool_contract(tool),
         );
         store.record_tool_call_finished(start, true, &output, None, None);
     }
@@ -2422,7 +2564,11 @@ fn console_list_without_running_work_shows_last_meaningful_activity() {
         })
         .unwrap();
     store.close_session(&session.session_id).unwrap();
-    let list = store.console_list_for_project(project, Some(10));
+    let list = store.console_list_for_project(
+        project,
+        Some(10),
+        crate::tool_runtime::sessions::console_validation_hooks(),
+    );
     let row = list
         .sessions
         .iter()
@@ -2468,6 +2614,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
             SessionTransport::Api,
             tool,
             &input,
+            crate::tool_runtime::sessions::session_tool_contract(tool),
         );
         store.record_tool_call_finished(start, true, &output, None, None);
     }
@@ -2477,6 +2624,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
         SessionTransport::Api,
         "apply_text_edits",
         &json!({"project": project, "changes": [{"kind": "edit", "path": "src/a.rs"}]}),
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     store.record_tool_call_finished(
         edit,
@@ -2491,6 +2639,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
         SessionTransport::Api,
         "read_file",
         &json!({"project": project, "path": "src/d.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(
         read,
@@ -2504,6 +2653,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
         SessionTransport::Api,
         "search_project_text",
         &json!({"project": project, "pattern": "PRIVATE_FAILED_PATTERN", "path": "src"}),
+        crate::tool_runtime::sessions::session_tool_contract("search_project_text"),
     );
     store.record_tool_call_finished(
         failed,
@@ -2519,6 +2669,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(
         job,
@@ -2540,7 +2691,12 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     // Without an unordered Progress message, adjacent successful exploration
     // groups normally and concrete fact barriers remain separate.
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let kinds = detail
         .activity
@@ -2568,7 +2724,12 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     assert_eq!(detail.activity[4].job_id.as_deref(), Some(job_id));
 
     let bounded = store
-        .console_detail_for_project(project, &session.session_id, Some(3))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(3),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     assert_eq!(bounded.activity.len(), 3);
     assert!(bounded.activity_truncated);
@@ -2584,7 +2745,12 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
         })
         .unwrap();
     let with_progress = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let progress = with_progress
         .activity
@@ -2685,12 +2851,18 @@ fn console_projection_preserves_job_backed_execution_truth_and_safe_job_ids() {
             SessionTransport::Api,
             tool,
             &json!({"project": project}),
+            crate::tool_runtime::sessions::session_tool_contract(tool),
         );
         store.record_tool_call_finished(start, true, &output, None, None);
     }
 
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(40))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(40),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let states = detail
         .activity
@@ -2732,7 +2904,12 @@ fn console_title_and_progress_redact_absolute_private_paths() {
         })
         .unwrap();
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let serialized = serde_json::to_string(&detail).unwrap();
     for private in [
@@ -2774,7 +2951,12 @@ fn console_title_and_progress_redact_json_wrapped_private_paths() {
         })
         .unwrap();
     let detail = store
-        .console_detail_for_project(project, &session.session_id, Some(20))
+        .console_detail_for_project(
+            project,
+            &session.session_id,
+            Some(20),
+            crate::tool_runtime::sessions::console_validation_hooks(),
+        )
         .unwrap();
     let serialized = serde_json::to_string(&detail).unwrap();
     for private in ["/etc/passwd", "C:\\\\Users"] {
@@ -2797,6 +2979,7 @@ fn legacy_session_events_without_validation_output_summary_restore() {
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(start, true, &json!({"exit_code": 0}), None, None);
 
@@ -2830,6 +3013,7 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
         SessionTransport::Api,
         "apply_text_edits",
         &json!({"project": "agent:eval:demo", "changes": []}),
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     store.record_tool_call_finished(
         start,
@@ -2886,6 +3070,7 @@ fn legacy_session_events_without_observed_paths_restore_with_empty_evidence() {
         SessionTransport::Api,
         "read_file",
         &json!({"project": "demo", "path": "src/legacy.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     store.flush_persistence();
@@ -2928,6 +3113,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
             "context_before": 2,
             "context_after": 2
         }),
+        crate::tool_runtime::sessions::session_tool_contract("search_project_text"),
     );
     store.record_tool_call_finished(
         search,
@@ -2959,6 +3145,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
             "line": 1,
             "column": 1
         }),
+        crate::tool_runtime::sessions::session_tool_contract("hover"),
     );
     store.record_tool_call_finished(
         hover,
@@ -2985,6 +3172,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
             "query_present": true,
             "limit": 10
         }),
+        crate::tool_runtime::sessions::session_tool_contract("workspace_symbols"),
     );
     store.record_tool_call_finished(
         symbols,
@@ -3015,6 +3203,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
         SessionTransport::Api,
         "document_diagnostics",
         &json!({"project": "demo", "path": "src/diagnostics.rs", "limit": 10}),
+        crate::tool_runtime::sessions::session_tool_contract("document_diagnostics"),
     );
     store.record_tool_call_finished(
         diagnostics,
@@ -3074,6 +3263,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
             SessionTransport::Api,
             tool,
             &arguments,
+            crate::tool_runtime::sessions::session_tool_contract(tool),
         );
         store.record_tool_call_finished(start, true, &output, None, None);
     }
@@ -3234,6 +3424,7 @@ fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
                 "path": "src/lib.rs",
                 "query": "snapshot payload"
             }),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .is_some());
     let message = post_message(
@@ -3249,7 +3440,7 @@ fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
     let snapshot_session_id = session.session_id.clone();
     let delayed_store = store.clone();
     let delayed_write = std::thread::spawn(move || {
-        delayed_store.persist_after_mutation_with(|path, ledger| {
+        delayed_store.persist_after_mutation_with_for_test(|path, ledger| {
             let snapshot = ledger
                 .sessions
                 .iter()
@@ -3312,7 +3503,7 @@ fn concurrent_persistence_reloads_current_snapshot_before_write() {
 
     let delayed_store = store.clone();
     let delayed_write = std::thread::spawn(move || {
-        delayed_store.persist_after_mutation_with(|path, ledger| {
+        delayed_store.persist_after_mutation_with_for_test(|path, ledger| {
             old_snapshot_ready_tx.send(()).unwrap();
             allow_old_write_rx.recv().unwrap();
             write_ledger_atomic(path, ledger)
@@ -3376,10 +3567,14 @@ fn project_instructions_content_not_persisted_or_leaked_after_restore() {
                 SessionGuards::default(),
             )
             .with_project_instructions(Some(
-                ProjectInstructionsSnapshot::from_single_file(
-                    "AGENTS.md",
-                    secret_body.to_string(),
-                    1,
+                ProjectInstructionsSnapshot::from_candidates(
+                    vec![LoadedInstructionCandidate {
+                        path: "AGENTS.md".to_string(),
+                        content: secret_body.to_string(),
+                        total_lines: 1,
+                        full_sha256: None,
+                    }],
+                    true,
                 ),
             )),
         )
@@ -3559,10 +3754,16 @@ fn start_session_wrappers_funnel_to_single_create_entry() {
     assert!(via_read_only.guards.deny_write_tools);
     assert!(via_read_only.guards.deny_shell_tools);
     assert!(store
-        .guard_denial(&via_read_only.session_id, "write_project_file")
+        .guard_denial(
+            &via_read_only.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file")
+        )
         .is_some());
     assert!(store
-        .guard_denial(&via_start.session_id, "write_project_file")
+        .guard_denial(
+            &via_start.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file")
+        )
         .is_none());
 }
 
@@ -3580,6 +3781,7 @@ fn unknown_session_mutations_do_not_recreate_session() {
             SessionTransport::Api,
             "read_file",
             &json!({"project": "demo", "path": "a.rs"}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .is_none());
     assert!(!store.contains_session(missing));
@@ -3615,6 +3817,7 @@ fn evicted_session_is_not_reactivated_by_events_or_messages() {
             SessionTransport::Api,
             "read_file",
             &json!({"project": "demo", "path": "a.rs"}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .is_none());
     assert!(!store.contains_session(&first.session_id));
@@ -3828,26 +4031,41 @@ fn read_only_guards_block_write_and_shell_classifications() {
         SessionGuards::default(),
     );
     assert!(store
-        .guard_denial(&normal.session_id, "write_project_file")
+        .guard_denial(
+            &normal.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file")
+        )
         .is_none());
     assert!(store
-        .guard_denial(&normal.session_id, "run_shell")
+        .guard_denial(
+            &normal.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("run_shell")
+        )
         .is_none());
 
     let write_denial = store
-        .guard_denial(&read_only.session_id, "write_project_file")
+        .guard_denial(
+            &read_only.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
+        )
         .expect("write denied");
     assert_eq!(write_denial.guard, "deny_write_tools");
     assert_eq!(write_denial.mode, SessionMode::ReadOnly);
 
     let shell_denial = store
-        .guard_denial(&read_only.session_id, "run_shell")
+        .guard_denial(
+            &read_only.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("run_shell"),
+        )
         .expect("shell denied");
     assert_eq!(shell_denial.guard, "deny_shell_tools");
 
     // Reads remain allowed under read_only.
     assert!(store
-        .guard_denial(&read_only.session_id, "read_file")
+        .guard_denial(
+            &read_only.session_id,
+            crate::tool_runtime::sessions::session_tool_contract("read_file")
+        )
         .is_none());
 }
 
@@ -3868,6 +4086,7 @@ fn ledger_round_trip_preserves_session_state_events_and_messages() {
             SessionTransport::Api,
             "read_file",
             &json!({"project": "proj", "path": "src/lib.rs"}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .unwrap();
     store.record_tool_call_finished(Some(start), true, &json!({}), None, None);
@@ -4072,6 +4291,7 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
             &json!({"project": "proj", "path": "src/lib.rs"}),
             Some("proj".to_string()),
             metadata,
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         );
         store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     }
@@ -4261,6 +4481,7 @@ fn closed_session_coldifies_payload_and_queries_without_reheating() {
         SessionTransport::Api,
         "read_file",
         &json!({"project": "demo", "path": "src/lib.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(start, true, &json!({"content": "retained"}), None, None);
     assert!(store
@@ -4310,6 +4531,7 @@ fn closed_session_coldifies_payload_and_queries_without_reheating() {
         SessionTransport::Api,
         "session_summary",
         &json!({"session_id": session.session_id.clone()}),
+        crate::tool_runtime::sessions::session_tool_contract("session_summary"),
     );
     store.record_tool_call_finished(query_start, true, &json!({"success": true}), None, None);
     assert_eq!(
@@ -4388,6 +4610,7 @@ fn closed_cold_round_trip_preserves_evidence_and_active_stays_hot() {
         SessionTransport::Api,
         "read_file",
         &json!({"project": "proj", "path": "history.rs"}),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(
         start,
@@ -4537,29 +4760,57 @@ fn closed_session_denies_mutation_tools_allows_query() {
 
     // Write / shell blocked.
     let write_denial = store
-        .lifecycle_denial(&session.session_id, "write_project_file")
+        .lifecycle_denial(
+            &session.session_id,
+            "write_project_file",
+            crate::tool_runtime::sessions::session_tool_contract("write_project_file"),
+        )
         .expect("write denied on closed");
     assert_eq!(write_denial.lifecycle, SessionLifecycle::Closed);
     let shell_denial = store
-        .lifecycle_denial(&session.session_id, "run_shell")
+        .lifecycle_denial(
+            &session.session_id,
+            "run_shell",
+            crate::tool_runtime::sessions::session_tool_contract("run_shell"),
+        )
         .expect("shell denied on closed");
     assert_eq!(shell_denial.lifecycle, SessionLifecycle::Closed);
     assert!(store
-        .lifecycle_denial(&session.session_id, "post_session_message")
+        .lifecycle_denial(
+            &session.session_id,
+            "post_session_message",
+            crate::tool_runtime::sessions::session_tool_contract("post_session_message")
+        )
         .is_some());
     assert!(store
-        .lifecycle_denial(&session.session_id, "workspace_checkpoint_create")
+        .lifecycle_denial(
+            &session.session_id,
+            "workspace_checkpoint_create",
+            crate::tool_runtime::sessions::session_tool_contract("workspace_checkpoint_create")
+        )
         .is_some());
 
     // Query / pure read still allowed; close remains idempotent path.
     assert!(store
-        .lifecycle_denial(&session.session_id, "read_file")
+        .lifecycle_denial(
+            &session.session_id,
+            "read_file",
+            crate::tool_runtime::sessions::session_tool_contract("read_file")
+        )
         .is_none());
     assert!(store
-        .lifecycle_denial(&session.session_id, "session_summary")
+        .lifecycle_denial(
+            &session.session_id,
+            "session_summary",
+            crate::tool_runtime::sessions::session_tool_contract("session_summary")
+        )
         .is_none());
     assert!(store
-        .lifecycle_denial(&session.session_id, "close_session")
+        .lifecycle_denial(
+            &session.session_id,
+            "close_session",
+            crate::tool_runtime::sessions::session_tool_contract("close_session")
+        )
         .is_none());
 
     // Message board mutations fail with SessionClosed; list still works.
@@ -5133,6 +5384,7 @@ fn generic_session_events_do_not_advance_model_context_revision() {
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": "proj"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     assert!(store
         .record_tool_call_finished(
@@ -5186,6 +5438,7 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
                     ack_session_context_revision: SessionContextRevisionAck::Revision(1),
                     ..Default::default()
                 },
+                crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
             )
             .unwrap()
     };
@@ -5284,6 +5537,7 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
                 ack_session_context_revision: SessionContextRevisionAck::Revision(4),
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract("run_process"),
         )
         .unwrap();
     let intervening_start = store
@@ -5297,6 +5551,7 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
                 ack_session_context_revision: SessionContextRevisionAck::Revision(3),
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract("run_process"),
         )
         .unwrap();
     assert_eq!(future_start.pre_call_context_revision, 3);
@@ -5365,6 +5620,7 @@ fn simultaneous_no_checkpoint_results_leave_revision_unchanged() {
                     ack_session_context_revision: SessionContextRevisionAck::Revision(1),
                     ..Default::default()
                 },
+                crate::tool_runtime::sessions::session_tool_contract(tool_name),
             )
             .unwrap()
     };
@@ -5434,6 +5690,7 @@ fn concurrent_checkpoint_and_raw_result_advance_once() {
             &json!({"project": "proj"}),
             Some("proj".to_string()),
             ToolCallRecorderMetadata::default(),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         )
         .unwrap();
     let checkpoint_start = store
@@ -5447,6 +5704,7 @@ fn concurrent_checkpoint_and_raw_result_advance_once() {
                 ack_session_context_revision: SessionContextRevisionAck::Revision(1),
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract("run_process"),
         )
         .unwrap();
     assert_eq!(read_start.pre_call_context_revision, 1);

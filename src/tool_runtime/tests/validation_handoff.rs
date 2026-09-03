@@ -1214,6 +1214,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
             &job.job_id,
             &old_snapshot_job_ids,
             "cargo_check",
+            crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
             Some(project.clone()),
             &job.validation_target_id,
             None,
@@ -1527,6 +1528,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
             SessionTransport::Api,
             "read_file",
             &json!({"project": project, "path": format!("src/filler-{index}.rs")}),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         );
         runtime
             .sessions

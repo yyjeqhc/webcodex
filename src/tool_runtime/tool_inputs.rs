@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use webcodex_core::workflow_session_contract::{ExecutionShell, SessionMode};
+
 /// Serde default helper: `true`. Used by `ToolCall` variants whose `allow_patch`
 /// field defaults to true (matching the agent-side project TOML parser).
 pub fn default_true() -> bool {
@@ -35,24 +37,6 @@ impl ExecutionPurpose {
             Self::Diagnostic => "diagnostic",
             Self::Operation => "operation",
             Self::Other => "other",
-        }
-    }
-}
-
-/// Explicit command-language selection. Omission preserves the configured
-/// executor shell; callers can choose portable `sh` or `bash` deliberately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionShell {
-    Sh,
-    Bash,
-}
-
-impl ExecutionShell {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Sh => "sh",
-            Self::Bash => "bash",
         }
     }
 }
@@ -94,23 +78,6 @@ pub(crate) fn is_checkpoint_kind(value: &str) -> bool {
 
 pub(crate) fn is_checkpoint_validation_status(value: &str) -> bool {
     CHECKPOINT_VALIDATION_STATUS_VALUES.contains(&value)
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionMode {
-    #[default]
-    Normal,
-    ReadOnly,
-}
-
-impl SessionMode {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::ReadOnly => "read_only",
-        }
-    }
 }
 
 // The `apply_text_edits` wire types are shared verbatim with the agent binary,

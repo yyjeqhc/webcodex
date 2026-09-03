@@ -210,6 +210,7 @@ pub(in crate::tool_runtime::tests) fn seed_model_facing_recovery_events(
                 ack_session_context_revision: SessionContextRevisionAck::Revision(revision),
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract("run_process"),
         );
         let evidence = format!("event-{index:02}-{}", "x".repeat(760));
         let recorded = runtime
@@ -270,6 +271,7 @@ pub(in crate::tool_runtime::tests) fn seed_large_changed_path_recovery_events(
                 ack_session_context_revision: SessionContextRevisionAck::Revision(revision),
                 ..Default::default()
             },
+            crate::tool_runtime::sessions::session_tool_contract("delete_project_files"),
         );
         let recorded = runtime
             .sessions

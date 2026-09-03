@@ -68,7 +68,7 @@ pub(super) fn bound_summary_string(value: &str) -> String {
     bound_chars(value, MAX_SUMMARY_STRING_CHARS)
 }
 
-pub(crate) fn redact_and_bound_instruction(value: &str, max_chars: usize) -> String {
+pub fn redact_and_bound_instruction(value: &str, max_chars: usize) -> String {
     if looks_like_secret_string(value) {
         "[redacted]".to_string()
     } else {

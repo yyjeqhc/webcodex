@@ -19,14 +19,14 @@ use sha2::{Digest, Sha256};
 
 impl SessionStore {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn post_message(
+    pub fn post_message(
         &self,
         input: PostSessionMessageInput,
     ) -> Result<SessionMessage, SessionMessageError> {
         self.post_message_with_ack(input, false)
     }
 
-    pub(crate) fn post_message_with_ack(
+    pub fn post_message_with_ack(
         &self,
         input: PostSessionMessageInput,
         requires_ack: bool,
@@ -42,7 +42,7 @@ impl SessionStore {
         Ok(message)
     }
 
-    pub(crate) fn list_messages(
+    pub fn list_messages(
         &self,
         session_id: &str,
         filter: ListSessionMessagesFilter,
@@ -81,7 +81,7 @@ impl SessionStore {
     /// Session-store snapshot. The durable persistence barrier is completed
     /// before the semantic snapshot fence is returned so a post-restart retry
     /// can compare against the same durable assignment state.
-    pub(crate) fn get_assignment(
+    pub fn get_assignment(
         &self,
         session_id: &str,
         todo_id: &str,
@@ -97,7 +97,7 @@ impl SessionStore {
         Ok(snapshot_from_state(session_id, todo_id, state))
     }
 
-    pub(crate) fn observe_message_acks(
+    pub fn observe_message_acks(
         &self,
         session_id: &str,
         message_ids: &[String],
@@ -116,7 +116,7 @@ impl SessionStore {
         outcome
     }
 
-    pub(crate) fn ack_required_guidance(
+    pub fn ack_required_guidance(
         &self,
         session_id: &str,
         suppressed_ids: &[String],
@@ -152,7 +152,7 @@ impl SessionStore {
         .unwrap_or_default()
     }
 
-    pub(crate) fn withdraw_message(
+    pub fn withdraw_message(
         &self,
         session_id: &str,
         message_id: &str,
@@ -173,7 +173,7 @@ impl SessionStore {
         Ok(outcome)
     }
 
-    pub(crate) fn replace_message(
+    pub fn replace_message(
         &self,
         input: ReplaceSessionMessageInput,
     ) -> Result<ReplaceSessionMessageOutcome, SessionMessageError> {
@@ -193,7 +193,7 @@ impl SessionStore {
         Ok(outcome)
     }
 
-    pub(crate) fn resolve_message(
+    pub fn resolve_message(
         &self,
         session_id: &str,
         message_id: &str,
@@ -210,7 +210,7 @@ impl SessionStore {
         Ok(message)
     }
 
-    pub(crate) fn resolve_message_from_wrapper(
+    pub fn resolve_message_from_wrapper(
         &self,
         session_id: &str,
         message_id: &str,
@@ -233,7 +233,7 @@ impl SessionStore {
         Ok(message)
     }
 
-    pub(crate) fn complete_message(
+    pub fn complete_message(
         &self,
         input: CompleteSessionMessageInput,
     ) -> Result<CompleteSessionMessageOutcome, SessionMessageError> {
@@ -274,7 +274,7 @@ impl SessionStore {
         Ok(outcome)
     }
 
-    pub(crate) async fn observe_messages(
+    pub async fn observe_messages(
         &self,
         session_id: &str,
         after_observation_token: Option<&str>,
@@ -418,7 +418,7 @@ impl SessionStore {
             .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
-    pub(crate) fn discussion_summary(
+    pub fn discussion_summary(
         &self,
         session_id: &str,
         limit: Option<usize>,
@@ -432,7 +432,7 @@ impl SessionStore {
         .ok_or(SessionMessageError::UnknownSession)
     }
 
-    pub(crate) fn inbox_hint(&self, session_id: &str) -> Option<SessionInboxHint> {
+    pub fn inbox_hint(&self, session_id: &str) -> Option<SessionInboxHint> {
         self.with_record_for_query(session_id, |record, _| build_inbox_hint(record))
             .flatten()
     }

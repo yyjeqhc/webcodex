@@ -470,6 +470,7 @@ impl ToolRuntime {
                 }
             }
         }
+        let session_contract = super::sessions::session_tool_contract(&request.tool_name);
         let recording_session_project_mismatch = match context.session_id {
             Some(session_id) => {
                 self.recording_session_project_mismatch(
@@ -493,6 +494,7 @@ impl ToolRuntime {
                 &session_log_arguments_for_tool_request(&request.tool_name, &concrete_arguments),
                 Some(mismatch.request_project.clone()),
                 recorder_metadata.clone(),
+                session_contract,
             );
             let mut result = session_context::session_project_mismatch_result(
                 session_id,
@@ -552,6 +554,7 @@ impl ToolRuntime {
                     ),
                     None,
                     recorder_metadata.clone(),
+                    session_contract,
                 );
                 let recording = self.sessions.record_model_facing_tool_call_finished(
                     session_event,
@@ -612,6 +615,7 @@ impl ToolRuntime {
             &session_log_arguments,
             None,
             recorder_metadata.clone(),
+            session_contract,
         );
 
         if context.record_oauth_scope_denials {

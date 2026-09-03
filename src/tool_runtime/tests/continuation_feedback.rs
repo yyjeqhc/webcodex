@@ -359,6 +359,7 @@ fn attempt_does_not_recount_recorder_finish_when_business_finish_precedes_bounda
         &arguments,
         Some("test-project".to_string()),
         recorder,
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     let business_start = runtime.sessions.record_tool_call_started_with_metadata(
         Some(&session),
@@ -367,6 +368,7 @@ fn attempt_does_not_recount_recorder_finish_when_business_finish_precedes_bounda
         &arguments,
         Some("test-project".to_string()),
         business,
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     runtime.sessions.record_tool_call_finished(
         business_start,
@@ -2399,6 +2401,7 @@ fn record_validation_event(
         SessionTransport::Api,
         tool_name,
         &json!({"project": "test-project"}),
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     runtime.sessions.record_tool_call_finished(
         start,
@@ -2430,6 +2433,7 @@ fn record_write_for(runtime: &ToolRuntime, session_id: &str, project: &str, path
             "project": project,
             "changes": changes,
         }),
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     runtime.sessions.record_tool_call_finished(
         start,
@@ -2453,6 +2457,7 @@ fn record_exploration_event(
         SessionTransport::Api,
         tool_name,
         &arguments,
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     runtime.sessions.record_tool_call_finished(
         start,
@@ -2528,6 +2533,7 @@ fn record_validation_event_for(
         SessionTransport::Api,
         tool_name,
         &json!({"project": project}),
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     runtime.sessions.record_tool_call_finished(
         start,

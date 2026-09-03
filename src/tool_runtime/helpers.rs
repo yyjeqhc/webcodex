@@ -577,14 +577,7 @@ pub(crate) fn looks_like_command_timeout(
             .contains(&format!("command timed out after {} seconds", timeout_secs))
 }
 
-pub(crate) fn is_safe_job_id(job_id: &str) -> bool {
-    if job_id.is_empty() || job_id.len() > 80 || job_id.contains("..") {
-        return false;
-    }
-    job_id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-}
+pub(crate) use webcodex_core::workflow_session_contract::is_safe_job_id;
 
 pub(crate) const DEFAULT_JOB_LOG_TAIL_LINES: usize = 200;
 

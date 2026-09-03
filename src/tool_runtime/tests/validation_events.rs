@@ -1359,6 +1359,7 @@ fn generic_job_failure_identity_survives_restart_and_resolves_with_structured_su
         "job_generic_failed",
         &["job_generic_failed"],
         "run_process",
+        crate::tool_runtime::sessions::session_tool_contract("run_process"),
         Some("agent:eval:demo".to_string()),
         &target,
         None,
@@ -1457,6 +1458,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
         job_id,
         &retained,
         "cargo_check",
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         Some("agent:eval:demo".to_string()),
         target,
         None,
@@ -1510,6 +1512,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             job_id,
             &retained,
             "cargo_check",
+            crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
             Some("agent:eval:demo".to_string()),
             target,
             None,
@@ -1545,6 +1548,7 @@ fn validation_job_terminal_identity_survives_event_eviction_and_restart_without_
             job_id,
             &retained,
             "cargo_check",
+            crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
             Some("agent:eval:demo".to_string()),
             target,
             None,
@@ -1952,6 +1956,7 @@ fn materialized_run_script_terminal_preserves_recoverable_assertion_label() {
         "job_script_assertion",
         &["job_script_assertion"],
         "run_script",
+        crate::tool_runtime::sessions::session_tool_contract("run_script"),
         Some(project.to_string()),
         &identity,
         Some(assertion_name),
@@ -2623,6 +2628,7 @@ fn current_evidence_validation_started_before_content_change_then_pass_is_stale(
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     record_content_mutation(&store, &session.session_id, true);
     store.record_tool_call_finished(validation_start, true, &json!({"exit_code": 0}), None, None);
@@ -2647,6 +2653,7 @@ fn current_evidence_validation_started_before_content_change_then_fail_is_stale(
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     record_content_mutation(&store, &session.session_id, true);
     store.record_tool_call_finished(
@@ -2695,6 +2702,7 @@ fn current_evidence_validation_started_before_new_attempt_does_not_enter_new_att
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     record_task_instruction(&store, &session.session_id, "review current workspace");
     store.record_tool_call_finished(validation_start, true, &json!({"exit_code": 0}), None, None);
@@ -2722,6 +2730,7 @@ fn validation_job_terminal_inherits_public_failure_expectation() {
             "project": project,
             "result_expectation": "failure"
         }),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(
         start,
@@ -2749,6 +2758,7 @@ fn validation_job_terminal_inherits_public_failure_expectation() {
         job_id,
         &[job_id],
         "cargo_check",
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         Some(project.to_string()),
         target,
         None,
@@ -2802,6 +2812,7 @@ fn validation_job_terminal_inherits_expectation_beyond_default_summary_window() 
             "project": project,
             "result_expectation": "failure"
         }),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(
         start,
@@ -2842,6 +2853,7 @@ fn validation_job_terminal_inherits_expectation_beyond_default_summary_window() 
         job_id,
         &[job_id],
         "cargo_check",
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         Some(project.to_string()),
         target,
         None,
@@ -2948,6 +2960,7 @@ fn current_evidence_validation_job_started_before_content_change_is_stale() {
         SessionTransport::Api,
         "cargo_check",
         &json!({"project": "agent:eval:demo"}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
     );
     store.record_tool_call_finished(
         validation_start,
@@ -2962,6 +2975,7 @@ fn current_evidence_validation_job_started_before_content_change_is_stale() {
         job_id,
         &[job_id],
         "cargo_check",
+        crate::tool_runtime::sessions::session_tool_contract("cargo_check"),
         Some("agent:eval:demo".to_string()),
         "target:aaaaaaaaaaaaaaaaaaaaaaaa",
         None,
@@ -3264,6 +3278,7 @@ fn record_finished_tool(
         SessionTransport::Api,
         tool_name,
         &arguments,
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
     );
     let error = (!success).then_some("tool failed");
     store.record_tool_call_finished(start, success, &output, error, None);

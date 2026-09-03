@@ -1112,6 +1112,7 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
         &audited,
         Some(project.clone()),
         recorder_metadata,
+        crate::tool_runtime::sessions::session_tool_contract("run_process"),
     );
     runtime.sessions.record_tool_call_finished(
         validation_start,

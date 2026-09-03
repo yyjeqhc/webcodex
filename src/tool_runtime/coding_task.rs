@@ -1250,6 +1250,7 @@ impl ToolRuntime {
             show_changes_call.tool_name(),
             &show_changes_call.session_log_arguments(),
             Some(resolved.resolved_id.clone()),
+            super::sessions::session_tool_contract(show_changes_call.tool_name()),
         );
         let changes_result = self
             .show_changes(
@@ -1295,6 +1296,7 @@ impl ToolRuntime {
                 hygiene_call.tool_name(),
                 &hygiene_call.session_log_arguments(),
                 Some(resolved.resolved_id.clone()),
+                super::sessions::session_tool_contract(hygiene_call.tool_name()),
             );
             let result = self
                 .workspace_hygiene_check(

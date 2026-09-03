@@ -942,6 +942,7 @@ impl ToolRuntime {
         } else {
             None
         };
+        let session_contract = super::sessions::session_tool_contract(call.tool_name());
         let session_project_mismatch = session_id.as_deref().and_then(|session_id| {
             match (
                 self.sessions.session_project(session_id),
@@ -968,6 +969,7 @@ impl ToolRuntime {
                 &call.session_log_arguments(),
                 Some(mismatch.request_project.clone()),
                 recorder_metadata.clone(),
+                session_contract,
             );
             let mut result =
                 session_project_mismatch_result(session_id, call.tool_name(), mismatch);
@@ -1034,6 +1036,7 @@ impl ToolRuntime {
                     &call.session_log_arguments(),
                     None,
                     recorder_metadata.clone(),
+                    session_contract,
                 );
                 self.record_dispatch_session_result(
                     &mut result,
@@ -1052,7 +1055,10 @@ impl ToolRuntime {
         }
         if let Some(session_id) = session_id.as_deref() {
             // Lifecycle denial is orthogonal to mode/guards and wins first.
-            if let Some(denial) = self.sessions.lifecycle_denial(session_id, call.tool_name()) {
+            if let Some(denial) =
+                self.sessions
+                    .lifecycle_denial(session_id, call.tool_name(), session_contract)
+            {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     transport,
@@ -1060,6 +1066,7 @@ impl ToolRuntime {
                     &call.session_log_arguments(),
                     None,
                     recorder_metadata.clone(),
+                    session_contract,
                 );
                 let mut result =
                     session_lifecycle_denied_result(session_id, call.tool_name(), denial);
@@ -1088,7 +1095,7 @@ impl ToolRuntime {
                 .await;
                 return result;
             }
-            if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
+            if let Some(denial) = self.sessions.guard_denial(session_id, session_contract) {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     transport,
@@ -1096,6 +1103,7 @@ impl ToolRuntime {
                     &call.session_log_arguments(),
                     None,
                     recorder_metadata.clone(),
+                    session_contract,
                 );
                 let mut result = session_guard_denied_result(session_id, call.tool_name(), denial);
                 decorate_structured_execution_prestart_denial(
@@ -1127,6 +1135,7 @@ impl ToolRuntime {
                 &call.session_log_arguments(),
                 resolved_project,
                 recorder_metadata.clone(),
+                session_contract,
             )
         } else {
             None

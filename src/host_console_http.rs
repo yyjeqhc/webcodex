@@ -625,6 +625,7 @@ mod tests {
                 "path": "src/lib.rs",
                 "authorization": "Bearer SHOULD_NOT_LEAK"
             }),
+            crate::tool_runtime::sessions::session_tool_contract("read_file"),
         );
         sessions.record_tool_call_finished(
             start,

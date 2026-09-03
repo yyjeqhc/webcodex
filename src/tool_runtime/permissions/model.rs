@@ -4,8 +4,6 @@
 //! compatibility. Typed enums ([`AuthorityMode`], [`PermissionOutcome`]) are
 //! the internal model; string fields on the decision remain the serialized form.
 
-use serde::{Deserialize, Serialize};
-
 /// Bounded recent permission rows in session handoff summaries.
 pub(crate) const DEFAULT_PERMISSION_RECENT_LIMIT: usize = 20;
 
@@ -83,101 +81,24 @@ impl std::fmt::Display for AuthorityModeParseError {
 
 impl std::error::Error for AuthorityModeParseError {}
 
-/// Execution-eligibility outcome from the authority decision layer.
-///
-/// Distinct from HTTP/MCP protocol success. Wire form is stored on
-/// [`PermissionDecision::status`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PermissionOutcome {
-    AutoApproved,
-    Approved,
-    Denied,
-    /// Ledger / summary historical label for pending requests.
-    Pending,
-    HardDenied,
-}
+pub(crate) use webcodex_core::workflow_session_contract::{PermissionDecision, PermissionOutcome};
 
-impl PermissionOutcome {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::AutoApproved => "auto_approved",
-            Self::Approved => "approved",
-            Self::Denied => "denied",
-            // Summary counters historically match `requested` for pending.
-            Self::Pending => "requested",
-            Self::HardDenied => "hard_denied",
-        }
-    }
-
-    /// Whether this outcome authorizes tool mutation / execution.
-    ///
-    /// Centralized so call sites never ad-hoc match outcomes.
-    pub(crate) fn allows_execution(self) -> bool {
-        matches!(self, Self::AutoApproved | Self::Approved)
-    }
-
-    pub(crate) fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "auto_approved" => Some(Self::AutoApproved),
-            "approved" => Some(Self::Approved),
-            "denied" | "expired" => Some(Self::Denied),
-            "requested" | "pending" => Some(Self::Pending),
-            "hard_denied" => Some(Self::HardDenied),
-            _ => None,
-        }
-    }
-}
-
-/// Authority decision attached to permission-bearing tool results and session
-/// ledger events.
-///
-/// Field names and semantics are wire-stable for existing clients and handoffs.
-/// `policy` carries the resolved authority mode; `reason` carries the resolved
-/// rule (for auto-authorization: `trusted_agent_authority`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct PermissionDecision {
-    pub(crate) required: bool,
-    pub(crate) policy: String,
-    pub(crate) request_id: String,
-    /// Wire name for outcome (`auto_approved`, `denied`, …).
-    pub(crate) status: String,
-    pub(crate) reason: String,
-    pub(crate) risk: String,
-    pub(crate) tool_name: String,
-    pub(crate) project: Option<String>,
-}
-
-impl PermissionDecision {
-    pub(crate) fn outcome(&self) -> Option<PermissionOutcome> {
-        PermissionOutcome::parse(&self.status)
-    }
-
-    /// Whether this decision authorizes tool mutation / execution.
-    ///
-    /// Unknown or unparsable `status` values fail closed (do not execute).
-    pub(crate) fn allows_execution(&self) -> bool {
-        self.outcome()
-            .map(PermissionOutcome::allows_execution)
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn new(
-        policy: impl Into<String>,
-        outcome: PermissionOutcome,
-        reason: impl Into<String>,
-        risk: impl Into<String>,
-        tool_name: impl Into<String>,
-        project: Option<&str>,
-    ) -> Self {
-        Self {
-            required: true,
-            policy: policy.into(),
-            request_id: format!("wc_perm_{}", uuid::Uuid::new_v4().simple()),
-            status: outcome.as_str().to_string(),
-            reason: reason.into(),
-            risk: risk.into(),
-            tool_name: tool_name.into(),
-            project: project.map(str::to_string),
-        }
+pub(crate) fn new_permission_decision(
+    policy: impl Into<String>,
+    outcome: PermissionOutcome,
+    reason: impl Into<String>,
+    risk: impl Into<String>,
+    tool_name: impl Into<String>,
+    project: Option<&str>,
+) -> PermissionDecision {
+    PermissionDecision {
+        required: true,
+        policy: policy.into(),
+        request_id: format!("wc_perm_{}", uuid::Uuid::new_v4().simple()),
+        status: outcome.as_str().to_string(),
+        reason: reason.into(),
+        risk: risk.into(),
+        tool_name: tool_name.into(),
+        project: project.map(str::to_string),
     }
 }

@@ -2,17 +2,16 @@
 //!
 //! All durable session-map mutations flow through `SessionStoreInner` helpers.
 //! Callers outside this module use `SessionStore` methods only.
-use super::super::permissions::PermissionDecision;
-use super::super::tool_definition::{
-    runtime_tool_accepts_context_ack, runtime_tool_advances_context_checkpoint,
-};
-use super::super::tool_inputs::SessionMode;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
+use webcodex_core::validation_identity::{
+    assertion_validation_identity, is_validation_execution_identity,
+};
+use webcodex_core::workflow_session_contract::{is_safe_job_id, PermissionDecision, SessionMode};
 
 use super::assignment::{
     assignment_fence_fingerprint, assignment_fence_from_state, current_assignment_state,
@@ -20,7 +19,7 @@ use super::assignment::{
 };
 use super::console::{
     build_detail as build_console_detail, build_list_item as build_console_list_item,
-    normalize_console_activity_limit, normalize_console_session_limit,
+    normalize_console_activity_limit, normalize_console_session_limit, ConsoleValidationHooks,
     WorkflowSessionConsoleDetail, WorkflowSessionConsoleList,
 };
 use super::events::{
@@ -29,8 +28,7 @@ use super::events::{
     diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
     observed_input_paths_for_tool, observed_paths_for_successful_result,
     persistent_shell_event_evidence_for_tool_result, sanitize_tool_execution_state,
-    session_input_summary_for_tool, validation_output_summary_for_tool_result,
-    SessionToolClassification,
+    session_input_summary_for_tool, validation_output_summary_for_tool_result, SessionToolContract,
 };
 use super::model::{
     CodingSessionError, CodingSessionOutcome, CodingSessionRequest, ColdSessionRecord,
@@ -64,7 +62,7 @@ use super::util::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct SessionStore {
+pub struct SessionStore {
     /// Shared session map and LRU metadata.
     /// `pub(super)` so sibling modules can lock and call `SessionStoreInner`
     /// transition helpers without touching the maps directly.
@@ -77,7 +75,7 @@ pub(crate) struct SessionStore {
     /// Process-local wake signal only; durable observation truth remains in the
     /// persisted per-Session revision bookkeeping.
     pub(super) message_observation_notify: tokio::sync::watch::Sender<u64>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     fail_next_coding_continuity_precommit: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -173,7 +171,7 @@ impl LedgerWriterGuard {
     }
 
     /// Test/closeout barrier for every dirty mark observed at call time.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     fn flush(&self) {
         let generation = self
             .shared
@@ -310,11 +308,11 @@ impl Default for SessionStore {
 }
 
 impl SessionStore {
-    pub(crate) fn new(max_sessions: usize, max_events_per_session: usize) -> Self {
+    pub fn new(max_sessions: usize, max_events_per_session: usize) -> Self {
         Self::new_in_memory(max_sessions, max_events_per_session)
     }
 
-    pub(crate) fn new_in_memory(max_sessions: usize, max_events_per_session: usize) -> Self {
+    pub fn new_in_memory(max_sessions: usize, max_events_per_session: usize) -> Self {
         let (message_observation_notify, _) = tokio::sync::watch::channel(0_u64);
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
@@ -327,14 +325,14 @@ impl SessionStore {
             persistence_write_mutex: Arc::new(Mutex::new(())),
             writer: None,
             message_observation_notify,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "root-test-support"))]
             fail_next_coding_continuity_precommit: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
         }
     }
 
-    pub(crate) fn with_persistence(
+    pub fn with_persistence(
         path: impl Into<PathBuf>,
         max_sessions: usize,
         max_events_per_session: usize,
@@ -364,7 +362,7 @@ impl SessionStore {
             persistence_write_mutex,
             writer,
             message_observation_notify,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "root-test-support"))]
             fail_next_coding_continuity_precommit: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -374,14 +372,14 @@ impl SessionStore {
     /// Block until every pending ledger mutation has been written to disk.
     /// No-op for in-memory stores. Required before re-opening the ledger file
     /// from another `SessionStore` (background writes are otherwise deferred).
-    #[cfg(test)]
-    pub(crate) fn flush_persistence(&self) {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn flush_persistence(&self) {
         if let Some(writer) = &self.writer {
             writer.flush();
         }
     }
 
-    pub(crate) fn status(&self) -> SessionStoreStatus {
+    pub fn status(&self) -> SessionStoreStatus {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         let (persistence, restored_sessions, last_persist_error) = match &inner.persistence {
             Some(persistence) => (
@@ -401,8 +399,8 @@ impl SessionStore {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn active_session_count_for_test(&self, project: Option<&str>) -> usize {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn active_session_count_for_test(&self, project: Option<&str>) -> usize {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner
             .sessions
@@ -414,8 +412,8 @@ impl SessionStore {
             .count()
     }
 
-    #[cfg(test)]
-    pub(crate) fn hot_payload_entry_count_for_test(&self, session_id: &str) -> Option<usize> {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn hot_payload_entry_count_for_test(&self, session_id: &str) -> Option<usize> {
         self.inner
             .lock()
             .expect("session store mutex poisoned")
@@ -425,8 +423,8 @@ impl SessionStore {
             .map(|record| record.events.len() + record.messages.len())
     }
 
-    #[cfg(test)]
-    pub(crate) fn cold_payload_bytes_for_test(&self, session_id: &str) -> Option<usize> {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn cold_payload_bytes_for_test(&self, session_id: &str) -> Option<usize> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         match inner.sessions.get(session_id)? {
             StoredSession::Hot(_) => None,
@@ -436,12 +434,8 @@ impl SessionStore {
 
     /// Thin convenience wrapper — creation always goes through
     /// [`Self::start_session_with_options`].
-    #[cfg(test)]
-    pub(crate) fn start_session(
-        &self,
-        project: Option<String>,
-        title: Option<String>,
-    ) -> SessionSummary {
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn start_session(&self, project: Option<String>, title: Option<String>) -> SessionSummary {
         self.start_session_with_guards(
             project,
             title,
@@ -452,8 +446,8 @@ impl SessionStore {
 
     /// Thin convenience wrapper — creation always goes through
     /// [`Self::start_session_with_options`].
-    #[cfg(test)]
-    pub(crate) fn start_session_with_guards(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn start_session_with_guards(
         &self,
         project: Option<String>,
         title: Option<String>,
@@ -468,12 +462,12 @@ impl SessionStore {
     ///
     /// Stores session-creation inputs (including project instructions) on the
     /// `SessionRecord`. Convenience wrappers above all delegate here.
-    pub(crate) fn start_session_with_options(
+    pub fn start_session_with_options(
         &self,
         mut opts: SessionCreateOptions,
     ) -> Result<SessionSummary, String> {
         opts.execution_context = opts.execution_context.validated()?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "root-test-support"))]
         if opts.owner_authority_fingerprint.is_none() {
             // Direct store fixtures do not have an AuthContext. Give them an
             // explicit cfg(test)-only authority so production invariants never
@@ -534,7 +528,7 @@ impl SessionStore {
     /// Every fallible check happens before the in-memory commit. Once mutation
     /// begins, session creation or capability update and the instruction event
     /// are applied under the same store lock and enter one persistence generation.
-    pub(crate) fn ensure_coding_session(
+    pub fn ensure_coding_session(
         &self,
         request: CodingSessionRequest,
     ) -> Result<CodingSessionOutcome, CodingSessionError> {
@@ -596,10 +590,10 @@ impl SessionStore {
                     .get(session_id)
                     .expect("reusable session must exist")
                     .owner_authority_fingerprint();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "root-test-support"))]
                 let synthetic_test_fixture =
                     stored_fingerprint == super::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "root-test-support")))]
                 let synthetic_test_fixture = false;
                 if !synthetic_test_fixture
                     && stored_fingerprint != request.authority_fingerprint.as_str()
@@ -786,26 +780,26 @@ impl SessionStore {
         Ok(outcome)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     /// Inject a failure before any in-memory continuity mutation. This does
     /// not model background ledger persistence failure or rollback.
-    pub(crate) fn fail_next_coding_continuity_precommit_for_test(&self) {
+    pub fn fail_next_coding_continuity_precommit_for_test(&self) {
         self.fail_next_coding_continuity_precommit
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "root-test-support"))]
     fn take_coding_continuity_fault(&self) -> bool {
         self.fail_next_coding_continuity_precommit
             .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "root-test-support")))]
     fn take_coding_continuity_fault(&self) -> bool {
         false
     }
 
-    pub(crate) fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {
+    pub fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {
         self.with_record_for_query(session_id, |record, cold| {
             summarize_record(record, limit, cold)
         })
@@ -813,10 +807,11 @@ impl SessionStore {
 
     /// Bounded, read-only Workflow Session rows for one exact runtime project.
     /// The project is authoritative caller context, never request-controlled UI state.
-    pub(crate) fn console_list_for_project(
+    pub fn console_list_for_project(
         &self,
         project: &str,
         limit: Option<usize>,
+        validation: ConsoleValidationHooks,
     ) -> WorkflowSessionConsoleList {
         let limit = normalize_console_session_limit(limit);
         let (candidates, total) = {
@@ -838,7 +833,7 @@ impl SessionStore {
             .filter_map(|(session_id, _)| {
                 self.with_record_for_query(&session_id, |record, _| {
                     (record.project.as_deref() == Some(project))
-                        .then(|| build_console_list_item(record, project))
+                        .then(|| build_console_list_item(record, project, validation))
                 })
                 .flatten()
             })
@@ -853,11 +848,12 @@ impl SessionStore {
 
     /// Bounded, read-only human timeline for one exact project-scoped Session.
     /// Unknown and wrong-project ids intentionally collapse to the same `None`.
-    pub(crate) fn console_detail_for_project(
+    pub fn console_detail_for_project(
         &self,
         project: &str,
         session_id: &str,
         limit: Option<usize>,
+        validation: ConsoleValidationHooks,
     ) -> Option<WorkflowSessionConsoleDetail> {
         let allowed = {
             let inner = self.inner.lock().expect("session store mutex poisoned");
@@ -872,7 +868,7 @@ impl SessionStore {
         let limit = normalize_console_activity_limit(limit);
         self.with_record_for_query(session_id, |record, _| {
             (record.project.as_deref() == Some(project))
-                .then(|| build_console_detail(record, project, limit))
+                .then(|| build_console_detail(record, project, limit, validation))
         })
         .flatten()
     }
@@ -934,12 +930,12 @@ impl SessionStore {
         *stored = StoredSession::Cold(cold);
     }
 
-    pub(crate) fn contains_session(&self, session_id: &str) -> bool {
+    pub fn contains_session(&self, session_id: &str) -> bool {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.contains_session(session_id)
     }
 
-    pub(crate) fn context_revision(&self, session_id: &str) -> Option<u64> {
+    pub fn context_revision(&self, session_id: &str) -> Option<u64> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner
             .sessions
@@ -947,22 +943,19 @@ impl SessionStore {
             .map(StoredSession::context_revision)
     }
 
-    pub(crate) fn session_project(&self, session_id: &str) -> Option<Option<String>> {
+    pub fn session_project(&self, session_id: &str) -> Option<Option<String>> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_project(session_id)
     }
 
-    pub(crate) fn session_target_authority(
-        &self,
-        session_id: &str,
-    ) -> Option<(Option<String>, String)> {
+    pub fn session_target_authority(&self, session_id: &str) -> Option<(Option<String>, String)> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_target_authority(session_id)
     }
 
     /// Return inherited defaults only for an active Session whose registered
     /// project exactly matches the already-resolved request project.
-    pub(crate) fn execution_context_for_project(
+    pub fn execution_context_for_project(
         &self,
         session_id: &str,
         resolved_project: &str,
@@ -973,12 +966,12 @@ impl SessionStore {
             .then(|| record.execution_context.clone())
     }
 
-    pub(crate) fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
+    pub fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.guard_state(session_id)
     }
 
-    pub(crate) fn lifecycle_state(&self, session_id: &str) -> Option<SessionLifecycle> {
+    pub fn lifecycle_state(&self, session_id: &str) -> Option<SessionLifecycle> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.lifecycle_state(session_id)
     }
@@ -987,7 +980,7 @@ impl SessionStore {
     ///
     /// Never creates a session for an unknown id. Emits a single
     /// `session_closed` ledger event only on a real `Active → Closed` transition.
-    pub(crate) fn close_session(
+    pub fn close_session(
         &self,
         session_id: &str,
     ) -> Result<SessionCloseOutcome, SessionCloseError> {
@@ -1013,7 +1006,7 @@ impl SessionStore {
     /// Replace the complete execution context and append one safe metadata
     /// event together under the in-memory store lock. Persistent stores then
     /// queue the JSON ledger to the background writer. `{}` clears all execution defaults.
-    pub(crate) fn update_execution_context(
+    pub fn update_execution_context(
         &self,
         session_id: &str,
         execution_context: SessionExecutionContext,
@@ -1088,10 +1081,11 @@ impl SessionStore {
     /// session-local mutations (messages, checkpoint create/restore/delete).
     /// Query tools and pure reads remain allowed. `close_session` itself is
     /// never denied so repeated close stays idempotent.
-    pub(crate) fn lifecycle_denial(
+    pub fn lifecycle_denial(
         &self,
         session_id: &str,
         tool_name: &str,
+        contract: SessionToolContract,
     ) -> Option<SessionLifecycleDenial> {
         let lifecycle = self.lifecycle_state(session_id)?;
         if lifecycle.allows_mutation() {
@@ -1100,20 +1094,20 @@ impl SessionStore {
         if tool_name == "close_session" {
             return None;
         }
-        if lifecycle_blocks_tool(tool_name) {
+        if lifecycle_blocks_tool(tool_name, contract) {
             return Some(SessionLifecycleDenial { lifecycle });
         }
         None
     }
 
     /// Authoritative guard check used by dispatch/kernel before mutation.
-    pub(crate) fn guard_denial(
+    pub fn guard_denial(
         &self,
         session_id: &str,
-        tool_name: &str,
+        contract: SessionToolContract,
     ) -> Option<SessionGuardDenial> {
         let (mode, guards) = self.guard_state(session_id)?;
-        let classification = SessionToolClassification::for_tool(tool_name);
+        let classification = contract;
         if guards.deny_write_tools && classification.write_like {
             return Some(SessionGuardDenial {
                 mode,
@@ -1129,26 +1123,28 @@ impl SessionStore {
         None
     }
 
-    #[cfg(test)]
-    pub(crate) fn record_tool_call_started(
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn record_tool_call_started(
         &self,
         session_id: Option<&str>,
         transport: SessionTransport,
         tool_name: &str,
         arguments: &Value,
+        contract: SessionToolContract,
     ) -> Option<ToolCallStart> {
         self.record_tool_call_started_with_options(
-            session_id, transport, tool_name, arguments, None,
+            session_id, transport, tool_name, arguments, None, contract,
         )
     }
 
-    pub(crate) fn record_tool_call_started_with_options(
+    pub fn record_tool_call_started_with_options(
         &self,
         session_id: Option<&str>,
         transport: SessionTransport,
         tool_name: &str,
         arguments: &Value,
         resolved_project: Option<String>,
+        contract: SessionToolContract,
     ) -> Option<ToolCallStart> {
         self.record_tool_call_started_with_metadata(
             session_id,
@@ -1157,11 +1153,12 @@ impl SessionStore {
             arguments,
             resolved_project,
             ToolCallRecorderMetadata::from_arguments(arguments),
+            contract,
         )
     }
 
     /// Sole entry for appending a `tool_call_started` ledger event.
-    pub(crate) fn record_tool_call_started_with_metadata(
+    pub fn record_tool_call_started_with_metadata(
         &self,
         session_id: Option<&str>,
         transport: SessionTransport,
@@ -1169,6 +1166,7 @@ impl SessionStore {
         arguments: &Value,
         resolved_project: Option<String>,
         metadata: ToolCallRecorderMetadata,
+        contract: SessionToolContract,
     ) -> Option<ToolCallStart> {
         let session_id = session_id?.trim();
         if !is_valid_session_id(session_id) {
@@ -1179,14 +1177,14 @@ impl SessionStore {
         let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let project = extract_project(arguments);
         let call_id = format!("{CALL_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
-        let classification = SessionToolClassification::for_tool(tool_name);
+        let classification = contract;
         let risk_class = classification.risk_class.to_string();
-        let changed_paths = changed_paths_for_tool(tool_name, arguments);
-        let observed_paths = observed_input_paths_for_tool(tool_name, arguments);
+        let changed_paths = changed_paths_for_tool(contract, arguments);
+        let observed_paths = observed_input_paths_for_tool(tool_name, contract, arguments);
         let diff_review_like = diff_review_like_for_tool(tool_name, arguments);
         let input_summary = Some(session_input_summary_for_tool(tool_name, arguments));
         let expectation = metadata.expectation;
-        let ack_session_context_revision = if runtime_tool_accepts_context_ack(tool_name) {
+        let ack_session_context_revision = if contract.accepts_context_ack {
             metadata.ack_session_context_revision
         } else {
             SessionContextRevisionAck::Unsupported
@@ -1215,7 +1213,7 @@ impl SessionStore {
             permission: None,
             expectation: expectation.clone(),
             pre_call_context_revision,
-            advances_context_checkpoint: runtime_tool_advances_context_checkpoint(tool_name),
+            advances_context_checkpoint: contract.advances_context_checkpoint,
             ack_session_context_revision,
         };
         self.push_event(SessionEvent {
@@ -1279,7 +1277,7 @@ impl SessionStore {
         Some(start)
     }
 
-    pub(crate) fn record_permission_decision(
+    pub fn record_permission_decision(
         &self,
         start: &mut ToolCallStart,
         permission: PermissionDecision,
@@ -1294,7 +1292,7 @@ impl SessionStore {
     /// Attach the bounded outcome of automatic persistent-shell cleanup to the
     /// single `session_closed` system event. Phase one permits at most one
     /// active shell per Session, so this remains a scalar evidence record.
-    pub(crate) fn record_session_close_persistent_shell_evidence(
+    pub fn record_session_close_persistent_shell_evidence(
         &self,
         session_id: &str,
         shell_id: &str,
@@ -1449,7 +1447,7 @@ impl SessionStore {
     /// Append a finished ledger event that is not itself returned as a model-facing
     /// ToolResult (for example a pre-kernel parsing/scope failure or an internal
     /// nested operation). It deliberately does not advance model context continuity.
-    pub(crate) fn record_tool_call_finished(
+    pub fn record_tool_call_finished(
         &self,
         start: Option<ToolCallStart>,
         success: bool,
@@ -1466,7 +1464,7 @@ impl SessionStore {
 
     /// Append a finished model-facing ToolResult and atomically advance the
     /// Session-local context revision only for a ToolDefinition checkpoint.
-    pub(crate) fn record_model_facing_tool_call_finished(
+    pub fn record_model_facing_tool_call_finished(
         &self,
         start: Option<ToolCallStart>,
         success: bool,
@@ -1624,12 +1622,13 @@ impl SessionStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn record_validation_job_terminal(
+    pub fn record_validation_job_terminal(
         &self,
         session_id: &str,
         job_id: &str,
         retained_terminal_job_ids: &[&str],
         tool_name: &str,
+        contract: SessionToolContract,
         project: Option<String>,
         validation_target_id: &str,
         assertion_name: Option<&str>,
@@ -1643,25 +1642,21 @@ impl SessionStore {
     ) -> bool {
         let session_id = session_id.trim();
         let job_id = job_id.trim();
-        let valid_target =
-            super::super::tool_audit::is_validation_execution_identity(validation_target_id);
+        let valid_target = is_validation_execution_identity(validation_target_id);
         let assertion_name = assertion_name
             .and_then(|value| super::events::safe_model_facing_assertion_name(tool_name, value))
-            .filter(|value| {
-                super::super::tool_audit::assertion_validation_identity(value)
-                    == validation_target_id
-            });
+            .filter(|value| assertion_validation_identity(value) == validation_target_id);
         let Some(timestamp) = finished_at else {
             // Reconciliation must never substitute wall-clock read time for
             // authoritative execution activity.
             return false;
         };
         if !is_valid_session_id(session_id)
-            || !super::super::helpers::is_safe_job_id(job_id)
+            || !is_safe_job_id(job_id)
             || retained_terminal_job_ids.len() > MAX_MATERIALIZED_VALIDATION_JOB_IDS
-            || retained_terminal_job_ids.iter().any(|candidate| {
-                *candidate != candidate.trim() || !super::super::helpers::is_safe_job_id(candidate)
-            })
+            || retained_terminal_job_ids
+                .iter()
+                .any(|candidate| *candidate != candidate.trim() || !is_safe_job_id(candidate))
             || !retained_terminal_job_ids
                 .iter()
                 .any(|candidate| *candidate == job_id)
@@ -1738,7 +1733,7 @@ impl SessionStore {
             failure_kind.as_deref(),
             &expectation_output,
         );
-        let classification = SessionToolClassification::for_tool(tool_name);
+        let classification = contract;
         let mut input_summary = serde_json::json!({
             "execution_identity": validation_target_id,
         });
@@ -1921,7 +1916,7 @@ impl SessionStore {
     /// explicit Workflow Session is provenance only: this path grants no Run
     /// authority and intentionally stores no prompt, ACP session id, event body,
     /// reasoning, tool payload, credential, or idempotency key.
-    pub(crate) fn record_coding_agent_lifecycle_evidence(
+    pub fn record_coding_agent_lifecycle_evidence(
         &self,
         session_id: &str,
         project: &str,
@@ -2224,6 +2219,14 @@ impl SessionStore {
             }
         }
     }
+
+    #[cfg(feature = "root-test-support")]
+    pub fn persist_after_mutation_with_for_test(
+        &self,
+        write_ledger: impl FnOnce(&PathBuf, &PersistedSessionLedger) -> io::Result<()>,
+    ) {
+        self.persist_after_mutation_with(write_ledger);
+    }
 }
 
 /// Authoritative in-memory transitions for workflow session state.
@@ -2235,8 +2238,7 @@ impl SessionStore {
 /// Query and pure-read tools remain allowed. Message-board mutations and
 /// session-scoped checkpoint mutations are blocked even when metadata marks
 /// them read-only (they still change durable session/project evidence).
-fn lifecycle_blocks_tool(tool_name: &str) -> bool {
-    let classification = SessionToolClassification::for_tool(tool_name);
+fn lifecycle_blocks_tool(tool_name: &str, classification: SessionToolContract) -> bool {
     if classification.write_like || classification.shell_like {
         return true;
     }

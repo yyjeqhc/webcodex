@@ -273,7 +273,8 @@ impl ToolRuntime {
         project: &str,
         limit: Option<usize>,
     ) -> sessions::WorkflowSessionConsoleList {
-        self.sessions.console_list_for_project(project, limit)
+        self.sessions
+            .console_list_for_project(project, limit, sessions::console_validation_hooks())
     }
 
     pub(crate) fn workflow_session_console_detail(
@@ -282,8 +283,12 @@ impl ToolRuntime {
         session_id: &str,
         limit: Option<usize>,
     ) -> Option<sessions::WorkflowSessionConsoleDetail> {
-        self.sessions
-            .console_detail_for_project(project, session_id, limit)
+        self.sessions.console_detail_for_project(
+            project,
+            session_id,
+            limit,
+            sessions::console_validation_hooks(),
+        )
     }
 
     #[cfg(test)]

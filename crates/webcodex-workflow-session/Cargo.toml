@@ -1,0 +1,23 @@
+[package]
+name = "webcodex-workflow-session"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[features]
+root-test-support = []
+
+[dependencies]
+webcodex-core = { path = "../webcodex-core" }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread"] }

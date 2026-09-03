@@ -199,6 +199,7 @@ fn record_write(store: &SessionStore, session_id: &str, path: &str) {
                 }],
             }],
         }),
+        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
     );
     store.record_tool_call_finished(start, true, &json!({"changed": true}), None, None);
 }
@@ -212,6 +213,7 @@ fn record_read(store: &SessionStore, session_id: &str, path: &str) {
             "project": PROJECT,
             "path": path,
         }),
+        crate::tool_runtime::sessions::session_tool_contract("read_file"),
     );
     store.record_tool_call_finished(
         start,
@@ -251,6 +253,7 @@ fn record_test_validation(
         SessionTransport::Api,
         "cargo_test",
         &json!({"project": PROJECT}),
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     store.record_tool_call_finished(
         start,

@@ -46,6 +46,7 @@ fn record_run_process(
         &ledger_arguments,
         Some(project.to_string()),
         metadata,
+        crate::tool_runtime::sessions::session_tool_contract("run_process"),
     );
     let output = json!({
         "exit_code": if success { 0 } else { 1 },
@@ -447,6 +448,7 @@ fn generic_assertion_success_cannot_resolve_structured_failure_with_hidden_asser
         &call.session_log_arguments(),
         Some(project.to_string()),
         metadata,
+        crate::tool_runtime::sessions::session_tool_contract("cargo_test"),
     );
     store.record_tool_call_finished(
         start,

@@ -6,7 +6,7 @@ pub(crate) fn assert_shell_client_owner(
     client_id: &str,
     owner: Option<&str>,
 ) -> Result<(), String> {
-    if access.map(|access| access.admin).unwrap_or(false) {
+    if access.map(|access| access.owner_bypass).unwrap_or(false) {
         return Ok(());
     }
     let owner = owner
@@ -41,7 +41,7 @@ pub(crate) fn runner_visible_to_access(
 ) -> bool {
     match access {
         None => true,
-        Some(access) if access.admin => true,
+        Some(access) if access.global_visibility => true,
         Some(access) if !lightweight_group_matches(Some(access), client.auth_group.as_ref()) => {
             false
         }
@@ -81,7 +81,7 @@ pub(crate) fn job_visible_to_access(
     let Some(access) = access else {
         return true;
     };
-    if access.admin {
+    if access.global_visibility {
         return true;
     }
     if let Some(group) = job.auth_group.as_ref() {

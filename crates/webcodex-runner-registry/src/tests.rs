@@ -12,7 +12,8 @@ type ShellClientRegistry = RunnerRegistry;
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> RunnerAccess {
     RunnerAccess {
-        admin: is_bootstrap,
+        global_visibility: is_bootstrap,
+        owner_bypass: is_bootstrap,
         username: username.map(str::to_string),
         group: None,
     }
@@ -20,7 +21,8 @@ fn auth_context(username: Option<&str>, is_bootstrap: bool) -> RunnerAccess {
 
 fn shared_key_access(group: &str) -> RunnerAccess {
     RunnerAccess {
-        admin: false,
+        global_visibility: false,
+        owner_bypass: false,
         username: None,
         group: Some(RunnerAccessGroup::SharedKey(format!(
             "test-shared-key-hash:{group}"
@@ -34,7 +36,8 @@ fn agent_auth_context(
     _scopes: Vec<&str>,
 ) -> RunnerAccess {
     RunnerAccess {
-        admin: false,
+        global_visibility: false,
+        owner_bypass: false,
         username: Some(username.to_string()),
         group: None,
     }
@@ -267,6 +270,17 @@ fn runner_owner_access_projection_enforces_owner_boundary() {
 
     let alice = auth_context(Some("alice"), false);
     assert!(assert_shell_client_owner(Some(&alice), "client-1", Some("alice")).is_ok());
+
+    let non_bootstrap_admin = RunnerAccess {
+        global_visibility: true,
+        owner_bypass: false,
+        username: Some("alice".to_string()),
+        group: None,
+    };
+    let admin_mismatch =
+        assert_shell_client_owner(Some(&non_bootstrap_admin), "client-1", Some("bob")).unwrap_err();
+    assert!(admin_mismatch.contains("owned by bob"));
+    assert!(admin_mismatch.contains("belongs to alice"));
 
     let mismatch = assert_shell_client_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
     assert!(mismatch.contains("owned by bob"));

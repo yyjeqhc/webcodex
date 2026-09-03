@@ -3,7 +3,13 @@
 /// and transport admission remain root concerns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerAccess {
-    pub admin: bool,
+    /// May observe Runner/Job state across owner and lightweight-group
+    /// partitions. Root auth policy decides which authenticated callers receive
+    /// this global visibility.
+    pub global_visibility: bool,
+    /// May bypass the managed-Runner owner check. Root must reserve this for
+    /// bootstrap authority; ordinary admin-scoped callers remain owner-bound.
+    pub owner_bypass: bool,
     pub username: Option<String>,
     pub group: Option<RunnerAccessGroup>,
 }

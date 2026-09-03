@@ -208,6 +208,61 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
 }
 
 #[tokio::test]
+async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
+    let registry = ShellClientRegistry::default();
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: "bob-runner".to_string(),
+            agent_instance_id: "inst-bob".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: Some("bob".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: async_job_capabilities(),
+            policy: None,
+        })
+        .await
+        .unwrap();
+
+    let mut admin = auth_context(Some("alice"), false);
+    admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
+    let admin_access = runner_access_from_auth(Some(&admin)).unwrap();
+    assert!(admin_access.global_visibility);
+    assert!(!admin_access.owner_bypass);
+    assert_eq!(
+        registry
+            .list_clients_for_auth(Some(&admin_access))
+            .await
+            .into_iter()
+            .map(|client| client.client_id)
+            .collect::<Vec<_>>(),
+        vec!["bob-runner"]
+    );
+    let error = registry
+        .assert_client_access(Some(&admin_access), "bob-runner")
+        .await
+        .unwrap_err();
+    assert!(error.contains("owned by bob"), "{error}");
+    assert!(error.contains("belongs to alice"), "{error}");
+
+    let bootstrap = auth_context(None, true);
+    let bootstrap_access = runner_access_from_auth(Some(&bootstrap)).unwrap();
+    assert!(bootstrap_access.global_visibility);
+    assert!(bootstrap_access.owner_bypass);
+    assert!(registry
+        .assert_client_access(Some(&bootstrap_access), "bob-runner")
+        .await
+        .is_ok());
+}
+
+#[tokio::test]
 async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
     let registry = ShellClientRegistry::default();
     let alice = auth_context(Some("alice"), false);

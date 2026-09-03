@@ -5212,7 +5212,9 @@ fn simulate_transport_tail(stdout: &str, max_bytes: usize) -> String {
 /// the child status. Used by large-output regression tests where the command
 /// legitimately exceeds the pipe buffer.
 fn run_command_full_capture(cmd: &str, cwd: &Path, timeout_secs: u64) -> (i32, String, String) {
-    use std::io::{Read, Write};
+    use std::io::Read;
+    #[cfg(windows)]
+    use std::io::Write;
     use std::process::Command;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};

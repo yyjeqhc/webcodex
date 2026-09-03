@@ -3,6 +3,7 @@ use super::jobs::{
     command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
     request_preview, PendingRequestEnqueueError,
 };
+#[cfg(test)]
 use super::projects::ShellClientLookupError;
 use super::state::{
     CodingAgentDispatchFence, PendingShellRequest, ShellClientRegistryInner,
@@ -109,6 +110,7 @@ impl From<PendingRequestEnqueueError> for EnqueueLspError {
     }
 }
 
+#[cfg(test)]
 impl From<ShellClientLookupError> for EnqueueLspError {
     fn from(error: ShellClientLookupError) -> Self {
         match error {

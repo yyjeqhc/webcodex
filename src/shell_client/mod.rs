@@ -1,13 +1,8 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 #[cfg(test)]
 use crate::shell_protocol::{
-    AgentPolicySummary, ClaudeCodeProviderStatus, ShellAgentJobUpdateRequest,
-    ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView, ShellJobCodexMetadata,
-    ToolProvidersStatus, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_NAMES,
-    SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION, SHELL_CLIENT_CAPABILITY_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+    ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
+    ShellClientRegisterRequest,
 };
 use crate::shell_protocol::{
     ShellClientJobLogRequest, ShellClientJobLogResponse, ShellClientJobStatusRequest,
@@ -19,7 +14,6 @@ use crate::shell_protocol::{
 use salvo::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 #[cfg(test)]
 use tokio::sync::Notify;
 
@@ -42,10 +36,10 @@ pub(crate) use webcodex_runner_registry::{
     EnqueueLspError, RunnerFeature, RunnerFeatureSet, RunnerRegistry as ShellClientRegistry,
     ShellClientSemanticView, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
     CLIENT_ONLINE_WINDOW_SECS, COMMAND_PREVIEW_MAX_CHARS, DETACHED_IDEMPOTENCY_CONFLICT,
-    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, JOB_RECOVERY_GRACE_MAX_SECS, JOB_RECOVERY_GRACE_MIN_SECS,
-    JOB_RECOVERY_GRACE_SECS, RECOVERY_SWEEP_INTERVAL_SECS, TRANSPORT_POLLING, TRANSPORT_QUIC,
-    TRANSPORT_WEBSOCKET,
+    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, RECOVERY_SWEEP_INTERVAL_SECS,
 };
+#[cfg(test)]
+pub(crate) use webcodex_runner_registry::{TRANSPORT_POLLING, TRANSPORT_WEBSOCKET};
 
 fn sha256_hex(value: &str) -> String {
     use sha2::{Digest, Sha256};

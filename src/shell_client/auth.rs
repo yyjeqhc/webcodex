@@ -4,7 +4,8 @@ pub(crate) fn runner_access_from_auth(
     auth: Option<&crate::auth::AuthContext>,
 ) -> Option<RunnerAccess> {
     auth.map(|auth| RunnerAccess {
-        admin: auth.is_admin(),
+        global_visibility: auth.is_admin(),
+        owner_bypass: auth.is_bootstrap(),
         username: auth.username.clone(),
         group: match auth.kind {
             crate::auth::AuthKind::ProjectCredential | crate::auth::AuthKind::AgentToken => auth

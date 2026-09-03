@@ -1,9 +1,6 @@
 use super::*;
 use crate::shell_protocol::{
-    AgentProtocolGenerationNumber, ShellCommandExecutionState, AGENT_PROTOCOL_GENERATION_V2,
-    AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
+    AGENT_PROTOCOL_GENERATION_V2, AGENT_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
 };
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {

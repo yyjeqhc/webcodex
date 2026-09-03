@@ -4,14 +4,17 @@ use super::project_inventory::reconcile_dynamic_projection;
 use super::validation::validate_id;
 use super::validation::validate_project_summary;
 use super::{RunnerFeatureSet, RunnerRegistry};
+#[cfg(test)]
 use std::fmt;
 use webcodex_core::shell_protocol::ShellAgentProjectSummary;
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShellClientLookupError {
     UnknownClient { client_id: String },
 }
 
+#[cfg(test)]
 impl fmt::Display for ShellClientLookupError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -22,6 +25,7 @@ impl fmt::Display for ShellClientLookupError {
     }
 }
 
+#[cfg(test)]
 impl std::error::Error for ShellClientLookupError {}
 
 fn upsert_project_summary(

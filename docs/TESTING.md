@@ -63,16 +63,13 @@ The lanes above define test semantics; workflows decide when to run them.
 - Linux tooling runs in parallel with the Rust shards and retains
   release-verification tooling, Markdown-link validation, and npm package-smoke
   tooling; within the Linux heavy split, only this tooling lane installs Node
-  because those smoke scripts invoke Node/npm directly. macOS still owns release-surface
-  compilation on both published architectures. Pull requests run the complete
-  Runner + Computer suite on arm64 and a focused Intel native smoke covering the
-  Computer backend plus Runner detached/process/path behavior; pushes to `main`
-  retain the complete Runner + Computer suite on both architectures. The local-`sshd`
+  because those smoke scripts invoke Node/npm directly. macOS still owns release-surface compilation and the native
+  Runner suite on both published architectures, including detached ownership/restart recovery. The local-`sshd`
   SSH integration fixture remains Linux-only because it depends on Linux daemon
-  account/auth configuration. Windows still owns its native library, CLI, npm and
-  artifact-to-install coverage; its Runner lane keeps real process/lifecycle
-  namespaces serial while running the remaining Runner tests and Computer tests
-  with normal libtest parallelism via `scripts/ci_windows_runner_tests.ps1`.
+  account/auth configuration; Windows still owns its native library, CLI, Runner,
+  npm, and artifact-to-install coverage. The Windows Runner + Computer lane caps
+  libtest at two concurrent test functions so process startup remains bounded
+  without serializing the whole Runner suite.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
   Its Stage 1 runs the canonical release contract, the complete locked Rust
   workspace suite as package shards without test-name filters, frontend, E2E, and

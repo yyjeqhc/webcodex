@@ -853,16 +853,24 @@ fn durable_update_sequence_advances_and_duplicate_handoff_does_not() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
-    let request = make_payload_request("count_once", Vec::new());
-    let _ = handoff_detached_job(&store, request.clone()).unwrap();
-    let running = store.read(&request.job_id).unwrap();
+    // Keep the payload alive until this test explicitly stops it. The previous
+    // count_once fixture could finish before handoff_detached_job returned on a
+    // loaded runner, making the first observation terminal and turning the
+    // sequence assertion into a scheduler-speed assumption.
+    let request = make_payload_request("linger", Vec::new());
+    let running = handoff_and_wait_running(&store, &request);
     assert!(running.update_seq >= 3);
     let sequence = running.update_seq;
     let replay = handoff_detached_job(&store, request.clone()).unwrap();
     assert!(matches!(replay, DetachedHandoffOutcome::Accepted { .. }));
     assert_eq!(store.read(&request.job_id).unwrap().update_seq, sequence);
+    let stopped = store
+        .request_stop(&request.job_id, &running.execution_id)
+        .unwrap();
+    assert_eq!(stopped.update_seq, sequence + 1);
     let terminal = wait_for_terminal(&store, &request.job_id);
-    assert!(terminal.update_seq > sequence);
+    assert_eq!(terminal.terminal.as_ref().unwrap().status, "stopped");
+    assert!(terminal.update_seq > stopped.update_seq);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -306,12 +306,8 @@ impl DetachedJobStore {
     }
 
     pub(crate) fn read(&self, job_id: &str) -> Result<DetachedJobRecord, String> {
-        let record: DetachedJobRecord = read_json_bounded(
-            &self.state_path_for_job(job_id),
-            DETACHED_STATE_MAX_BYTES,
-            "detached Job state",
-        )?;
-        validate_record(&record)?;
+        let job_dir = self.job_dir(job_id);
+        let record = read_state_record_locked(&job_dir)?;
         if record.job_id != job_id {
             return Err("detached Job state job_id does not match its lookup identity".to_string());
         }
@@ -362,12 +358,7 @@ impl DetachedJobStore {
                     "detached Job state root exceeds {DETACHED_STATE_MAX_RECORDS} records"
                 ));
             }
-            let record: DetachedJobRecord = read_json_bounded(
-                &entry.path().join(STATE_FILE),
-                DETACHED_STATE_MAX_BYTES,
-                "detached Job state",
-            )?;
-            validate_record(&record)?;
+            let record = read_state_record_locked(&entry.path())?;
             if self.job_dir(&record.job_id) != entry.path() {
                 return Err(
                     "detached Job state directory does not match its job identity".to_string(),
@@ -519,12 +510,7 @@ impl DetachedJobStore {
                 );
             }
             let job_dir = entry.path();
-            let initial: DetachedJobRecord = read_json_bounded(
-                &job_dir.join(STATE_FILE),
-                DETACHED_STATE_MAX_BYTES,
-                "detached Job state",
-            )?;
-            validate_record(&initial)?;
+            let initial = read_state_record_locked(&job_dir)?;
             if self.job_dir(&initial.job_id) != job_dir {
                 return Err(
                     "detached Job reclamation state directory does not match durable job identity"
@@ -1461,6 +1447,22 @@ fn reject_symlink_or_non_dir(path: &Path, label: &str) -> Result<(), String> {
         return Err(format!("{label} must be a real directory, not a symlink"));
     }
     Ok(())
+}
+
+fn read_state_record_locked(job_dir: &Path) -> Result<DetachedJobRecord, String> {
+    reject_symlink_or_non_dir(job_dir, "detached Job directory")?;
+    // Durable updates replace STATE_FILE atomically, which intentionally changes
+    // its inode. Serialize pathname revalidation with those writers so a trusted
+    // atomic replacement cannot be mistaken for same-user path tampering. The
+    // O_NOFOLLOW + dev/inode checks in read_json_bounded remain authoritative.
+    let _guard = exclusive_lock(&job_dir.join(STATE_LOCK_FILE), true)?;
+    let record: DetachedJobRecord = read_json_bounded(
+        &job_dir.join(STATE_FILE),
+        DETACHED_STATE_MAX_BYTES,
+        "detached Job state",
+    )?;
+    validate_record(&record)?;
+    Ok(record)
 }
 
 fn read_json_bounded<T: for<'de> Deserialize<'de>>(

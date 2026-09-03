@@ -184,6 +184,9 @@ do not satisfy `failure` or `observe`. A matched negative/observation result is 
 separately as expected-result evidence: it does not turn a real validator/process
 failure into a validation pass and cannot resolve an earlier real validation failure
 with the same identity.
+For `cargo_fmt`, result expectations are available only with `check=true`; the mutating
+format mode never accepts them, so a formatting failure cannot be downgraded after a
+possibly partial workspace mutation.
 
 For predicate-style `run_process` commands, prefer `accepted_exit_codes` when the valid
 result set is known. For example, `git merge-base --is-ancestor` can use `[0, 1]` so

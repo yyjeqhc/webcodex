@@ -74,8 +74,22 @@ pub(crate) fn cargo_fmt_input_schema() -> Value {
                 "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120 }
             }
         }
+    }, {
+        "if": {
+            "required": ["check"],
+            "properties": { "check": { "const": true } }
+        },
+        "else": {
+            "properties": {
+                "result_expectation": { "type": "null" }
+            }
+        }
     }]);
-    with_optional_result_expectation(schema)
+    let mut schema = with_optional_result_expectation(schema);
+    schema["properties"][TOOL_RESULT_EXPECTATION_FIELD]["description"] = json!(
+        "Optional pre-execution validation-result expectation, available only with check=true. Mutating cargo fmt never accepts result_expectation. The real ToolResult and process outcome remain unchanged."
+    );
+    schema
 }
 
 pub(crate) fn cargo_check_input_schema() -> Value {

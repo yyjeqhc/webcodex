@@ -352,6 +352,15 @@ pub(crate) fn validate_model_facing_result_expectation(
             "invalid arguments for tool '{tool_name}': result expectation is not supported by this tool"
         ));
     }
+    if tool_name == "cargo_fmt"
+        && result_expectation.is_some()
+        && object.get("check").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(
+            "invalid arguments for tool 'cargo_fmt': result_expectation is supported only with check=true; mutating cargo fmt failures cannot be reclassified as expected observations"
+                .to_string(),
+        );
+    }
     if let Some(value) = result_expectation {
         let Some(value) = value.as_str() else {
             return Err(format!(

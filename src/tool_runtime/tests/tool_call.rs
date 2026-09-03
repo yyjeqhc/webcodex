@@ -160,6 +160,21 @@ fn from_tool_name_rejects_unsafe_result_expectation_combinations() {
             }),
         ),
         (
+            "cargo_fmt",
+            json!({
+                "project": "demo",
+                "result_expectation": "failure"
+            }),
+        ),
+        (
+            "cargo_fmt",
+            json!({
+                "project": "demo",
+                "check": false,
+                "result_expectation": "observe"
+            }),
+        ),
+        (
             "job_status",
             json!({
                 "job_id": "job-1",

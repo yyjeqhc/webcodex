@@ -360,6 +360,20 @@ fn cargo_fmt_conditional_timeout_schema_matches_tool_call_contract() {
         "project": "demo",
         "timeout_secs": 121
     })));
+    assert!(validates(&json!({
+        "project": "demo",
+        "check": true,
+        "result_expectation": "failure"
+    })));
+    assert!(!validates(&json!({
+        "project": "demo",
+        "check": false,
+        "result_expectation": "failure"
+    })));
+    assert!(!validates(&json!({
+        "project": "demo",
+        "result_expectation": "observe"
+    })));
 
     let parsed = ToolCall::from_tool_name(
         "cargo_fmt",

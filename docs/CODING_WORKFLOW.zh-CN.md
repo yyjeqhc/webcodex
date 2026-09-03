@@ -146,6 +146,9 @@ failure、guard/permission rejection、malformed output 与 `outcome_unknown` �
 或 `observe`。命中的负向/observation 结果会作为独立的 expected-result evidence 记录；它不会
 把真实 validator/process failure 改写为 validation pass，也不能 resolve 同 identity 的更早
 真实 validation failure。
+对于 `cargo_fmt`，只有 `check=true` 的只读检查模式接受 result expectation；会修改
+workspace 的 format 模式不接受该声明，因此可能发生部分文件修改的格式化失败不会被降级成
+expected observation。
 
 对于 exit code 本身就是业务结果的 `run_process` predicate，已知合法结果集合时优先使用
 `accepted_exit_codes`。例如 `git merge-base --is-ancestor` 可声明 `[0, 1]`，两个布尔答案都

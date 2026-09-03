@@ -2,9 +2,9 @@
 
 These are the always-on rules for ordinary repository work. Read only the linked sections needed for the current task. A deeper `AGENTS.md` governs its directory.
 
-## V1 active development
+## Active development
 
-V2 development is paused; V1 is the active product line and is not feature-frozen. Ordinary V1 work may add explicitly requested capabilities as well as correctness, reliability, and test improvements. Keep changes focused and do not weaken safety, credential, process-tree, transport, durability, or boundedness contracts.
+WebCodex is actively developed and is not feature-frozen. Ordinary work may add explicitly requested capabilities as well as correctness, reliability, and test improvements. Keep changes focused and do not weaken safety, credential, process-tree, transport, durability, or boundedness contracts.
 
 ## 1. Verify and preserve
 
@@ -24,7 +24,7 @@ V2 development is paused; V1 is the active product line and is not feature-froze
 - A feature that introduces a new externally reachable authority, credential audience, or replaceable runtime target creates a concrete present boundary. Model it explicitly when reusing an existing scope, identity, or lease would broaden existing credentials or allow stale requests to retarget; fewer concepts is not a reason to collapse distinct authority.
 - When two designs satisfy the current need, choose the one with fewer concepts, states, configuration paths, and maintenance costs.
 - For model-facing execution, prefer structured process/argv and durable Job/observation primitives over shell-text orchestration. Keep shell as an escape hatch; structured lifecycle state is the source of truth for retry safety.
-- Keep model-facing ToolSpec/OpenAPI operation descriptions concise and prefer 300 characters or fewer when semantics remain complete. Never delete necessary authority, retry, continuation, uncertainty, safety, or recovery semantics merely for brevity; the canonical tested hard ceiling is `MODEL_TOOL_DESCRIPTION_MAX_CHARS`.
+- Keep model-facing ToolSpec/OpenAPI operation descriptions accurate, self-contained, and reasonably concise. Do not compress descriptions merely to hit an arbitrary soft target; use up to `MODEL_TOOL_DESCRIPTION_MAX_CHARS` when needed to preserve selection, authority, effect, retry, continuation, uncertainty, safety, recovery, and other important model guidance. Shorter is better only when semantics remain equally precise.
 - Treat demonstrated host features such as MCP App orchestration as optional adapters. Core execution and Job semantics must remain protocol-, UI-, transport-, and OS-neutral.
 - Never assume a model-facing HTTP/MCP request has stable model-window or Workflow Session identity. Treat requests as stateless unless that exact adapter/protocol contract explicitly supplies a stable `ClientWindow`. Stateless MCP 2026 must not derive hidden continuity from `Mcp-Session-Id`, connection state, credentials, project identity, or prior requests. Transport/audit/session correlation ids are not Workflow Session, model-context-retention, or authority proofs by themselves; use explicit durable identifiers from their owning domain. Connector Tasks, Workflow Sessions, durable Agents/Conversations, and future Agent Tasks are distinct identities and must not be inferred from one another.
 

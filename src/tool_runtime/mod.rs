@@ -85,8 +85,9 @@ pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
 
 /// Hard repository ceiling for model-facing ToolSpec and OpenAPI operation descriptions.
-/// Prefer 300 characters or fewer when semantics remain complete; brevity must not
-/// remove required authority, retry, continuation, uncertainty, safety, or recovery semantics.
+/// Keep descriptions accurate, self-contained, and reasonably concise; use the full budget when
+/// needed to preserve selection, authority, effect, retry, continuation, uncertainty, safety, or
+/// recovery semantics.
 #[cfg(test)]
 pub(crate) const MODEL_TOOL_DESCRIPTION_MAX_CHARS: usize = 600;
 

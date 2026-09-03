@@ -13,7 +13,7 @@ mod oauth;
 mod operations;
 mod runtime;
 
-use crate::auth::scopes::OAuthRouteScopePolicy;
+use webcodex_core::authority::OAuthRouteScopePolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum RouteMethod {

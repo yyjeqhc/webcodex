@@ -3,7 +3,7 @@ use super::{
     route, AuditClass::*, OpenApiVisibility::*, RouteId::*, RouteMethod::*, RouteSpec,
     RouteSurface::*,
 };
-use crate::auth::scopes::{
+use webcodex_core::authority::{
     OAuthRouteScopePolicy::*, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
     SCOPE_RUNTIME_READ,
 };

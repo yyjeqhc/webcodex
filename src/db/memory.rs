@@ -6,16 +6,12 @@ use std::collections::BTreeSet;
 
 pub(crate) const MAX_MEMORIES_PER_PROJECT: usize = 256;
 pub(crate) const MAX_MEMORIES_GLOBAL: usize = 8_192;
-pub(crate) const MAX_MEMORY_KEY_CHARS: usize = 96;
-pub(crate) const MAX_MEMORY_SUMMARY_CHARS: usize = 512;
-pub(crate) const MAX_MEMORY_BODY_BYTES: usize = 8 * 1024;
-pub(crate) const MAX_MEMORY_TAGS: usize = 8;
-pub(crate) const MAX_MEMORY_TAG_CHARS: usize = 64;
-pub(crate) const MAX_MEMORY_QUERY_CHARS: usize = 200;
-pub(crate) const MAX_MEMORY_SEARCH_LIMIT: usize = 50;
-pub(crate) const MAX_MEMORY_BOOTSTRAP_BYTES: usize = 8 * 1024;
-pub(crate) const MAX_MEMORY_SEARCH_RESULT_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_MEMORY_SCOPE_LIST_LIMIT: usize = 100;
+pub(crate) use webcodex_core::memory_contract::{
+    MAX_MEMORY_BODY_BYTES, MAX_MEMORY_BOOTSTRAP_BYTES, MAX_MEMORY_KEY_CHARS,
+    MAX_MEMORY_QUERY_CHARS, MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT,
+    MAX_MEMORY_SEARCH_RESULT_BYTES, MAX_MEMORY_SUMMARY_CHARS, MAX_MEMORY_TAGS,
+    MAX_MEMORY_TAG_CHARS,
+};
 
 const MEMORY_ID_PREFIX: &str = "wc_mem_";
 const MEMORY_DEFINITION_HASH_PREFIX: &str = "wc_memdef_";

@@ -46,6 +46,7 @@ pub(crate) use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, MAX_ASSERTION_EVIDENCE_BYTES,
 };
+#[allow(unused_imports)]
 pub(crate) use self::memory::{
     canonicalize_memory_tags, memory_catalog_revision, valid_memory_catalog_revision,
     validate_memory_query, validate_memory_revision, validate_memory_scope_id,

@@ -1,11 +1,11 @@
 use super::ToolVisibility::ModelHidden;
 use super::{def, require_all_scopes, ToolDefinition, TOOL_CATEGORY_RUNTIME};
-use crate::auth::scopes::{MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{MemoryManage, Read},
     ADMIN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
 };
+use webcodex_core::authority::{MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES};
 
 /// Fixed Control-owned project Memory runtime contract. These tools remain
 /// globally hidden and are projected only by the capable Stateless MCP Full

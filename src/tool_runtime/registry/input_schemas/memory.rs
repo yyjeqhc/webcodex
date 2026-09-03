@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::db::{
+use webcodex_core::memory_contract::{
     MAX_MEMORY_BODY_BYTES, MAX_MEMORY_KEY_CHARS, MAX_MEMORY_QUERY_CHARS,
     MAX_MEMORY_SCOPE_LIST_LIMIT, MAX_MEMORY_SEARCH_LIMIT, MAX_MEMORY_SUMMARY_CHARS,
     MAX_MEMORY_TAGS, MAX_MEMORY_TAG_CHARS,

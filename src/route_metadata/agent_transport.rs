@@ -3,7 +3,7 @@ use super::{
     route, AuditClass::*, OpenApiVisibility::*, RouteId::*, RouteMethod::*, RouteSpec,
     RouteSurface::*,
 };
-use crate::auth::scopes::OAuthRouteScopePolicy::*;
+use webcodex_core::authority::OAuthRouteScopePolicy::*;
 
 pub(super) const ROUTES: &[RouteSpec] = &[
     route(

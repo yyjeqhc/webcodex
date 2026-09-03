@@ -3,12 +3,17 @@
 pub mod apply_edits_shared;
 pub mod apply_patch_shared;
 pub mod artifact_policy;
+pub mod authority;
 pub mod build_info;
 pub mod coding_agent;
+pub mod job_observation;
 pub mod lsp_bridge;
 pub mod mcp_gateway;
+pub mod memory_contract;
+pub mod project_listing;
 pub mod sensitive_paths;
 pub mod shell_protocol;
 pub mod skill_metadata;
 pub mod skill_store;
 pub mod validation_bridge;
+pub mod validation_evidence;

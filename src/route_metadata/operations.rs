@@ -3,7 +3,7 @@ use super::{
     route, AuditClass::*, OpenApiVisibility::*, RouteAuth, RouteId::*, RouteMethod::*, RouteSpec,
     RouteSurface::*,
 };
-use crate::auth::scopes::{OAuthRouteScopePolicy::*, SCOPE_ACCOUNT_MANAGE};
+use webcodex_core::authority::{OAuthRouteScopePolicy::*, SCOPE_ACCOUNT_MANAGE};
 
 pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[route(
     OpenApiDocument,

@@ -65,7 +65,7 @@ pub(crate) const CONTEXT_MATERIAL_SPECS: &[ContextMaterialSpec] = &[
         key: "memory.bootstrap",
         project_required: true,
         scope_policy: ContextMaterialScopePolicy::RequireAll(
-            crate::auth::scopes::MEMORY_READ_SCOPES,
+            webcodex_core::authority::MEMORY_READ_SCOPES,
         ),
         surface: ContextMaterialSurface::MemorySurface,
     },

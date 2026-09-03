@@ -8,100 +8,24 @@ use std::collections::HashSet;
 
 use super::context::AuthContext;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
-pub(crate) use crate::tool_runtime::metadata::ToolAuthorityPolicy as OAuthToolScopePolicy;
+pub(crate) use webcodex_core::authority::ToolAuthorityPolicy as OAuthToolScopePolicy;
 
 // ---------------------------------------------------------------------------
 // Scope constants
 // ---------------------------------------------------------------------------
 
-/// The set of scopes a Phase 2 personal API token may carry. Bootstrap auth is
-/// treated as having the `admin` scope (full access). Stored space-separated in
-/// the database; parsed into a list on read.
-pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
-pub const SCOPE_SESSION_COLLABORATE: &str = "session:collaborate";
-pub const SCOPE_PROJECT_READ: &str = "project:read";
-pub const SCOPE_PROJECT_WRITE: &str = "project:write";
-pub const SCOPE_MEMORY_READ: &str = "memory:read";
-pub const SCOPE_MEMORY_MANAGE: &str = "memory:manage";
-pub const SCOPE_COMMUNICATION_READ: &str = "communication:read";
-pub const SCOPE_COMMUNICATION_MANAGE: &str = "communication:manage";
-/// Canonical durable Agent and Conversation read authority. Communication
-/// identity remains independent from Project, Session, Runner, and filesystem authority.
-pub(crate) const COMMUNICATION_READ_SCOPES: &[&str] = &[SCOPE_COMMUNICATION_READ];
-/// Canonical durable Agent and Conversation mutation authority. Reading is
-/// required as an explicit companion scope so mutations can return durable state.
-pub(crate) const COMMUNICATION_MANAGE_SCOPES: &[&str] =
-    &[SCOPE_COMMUNICATION_READ, SCOPE_COMMUNICATION_MANAGE];
-/// Canonical project Memory read authority. Both dimensions are required;
-/// neither a project grant nor Memory authority alone is sufficient.
-pub(crate) const MEMORY_READ_SCOPES: &[&str] = &[SCOPE_PROJECT_READ, SCOPE_MEMORY_READ];
-/// Canonical project Memory mutation authority. PermissionEvaluator remains an
-/// independent consequential-effect gate after these credential scopes pass.
-pub(crate) const MEMORY_MANAGE_SCOPES: &[&str] = &[SCOPE_PROJECT_WRITE, SCOPE_MEMORY_MANAGE];
-pub const SCOPE_JOB_RUN: &str = "job:run";
-pub const SCOPE_JOB_DETACH: &str = "job:detach";
-pub const SCOPE_COMPUTER_READ: &str = "computer:read";
-pub const SCOPE_COMPUTER_CONTROL: &str = "computer:control";
-pub const SCOPE_COMPUTER_LAUNCH: &str = "computer:launch";
-pub const SCOPE_COMPUTER_DISPLAY_READ: &str = "computer:display_read";
-pub const SCOPE_COMPUTER_POINTER_CONTROL: &str = "computer:pointer_control";
-pub const SCOPE_COMPUTER_CLIPBOARD_READ: &str = "computer:clipboard_read";
-pub const SCOPE_COMPUTER_CLIPBOARD_WRITE: &str = "computer:clipboard_write";
-/// Explicit authority to discover and call Runner-owned local MCP providers
-/// through the built-in `/mcp` gateway. It is intentionally absent from legacy
-/// and lightweight default scope ceilings.
-pub const SCOPE_MCP_LOCAL: &str = "mcp:local";
-/// Explicit authority to start/observe/cancel delegated autonomous ACP coding
-/// agents. It is intentionally absent from all legacy/default shared-key scopes.
-pub const SCOPE_CODING_AGENT_RUN: &str = "coding_agent:run";
-pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
-pub const SCOPE_ADMIN: &str = "admin";
-
-/// Phase 3 agent transport scopes. Agent tokens may only carry `agent:*`
-/// scopes and may only be used on agent transport endpoints. They are rejected
-/// by all normal runtime/project/admin/user-token-management endpoints.
-pub const SCOPE_AGENT_POLL: &str = "agent:poll";
-pub const SCOPE_AGENT_RESULT: &str = "agent:result";
-pub const SCOPE_AGENT_JOB_UPDATE: &str = "agent:job_update";
-pub const SCOPE_ACCOUNT_MANAGE: &str = "account:manage";
-
-/// The complete set of agent transport scopes, in canonical order.
-pub const AGENT_SCOPES: &[&str] = &[
-    SCOPE_AGENT_REGISTER,
-    SCOPE_AGENT_POLL,
-    SCOPE_AGENT_RESULT,
-    SCOPE_AGENT_JOB_UPDATE,
-];
-
-/// All scopes recognized by this phase. Unknown scopes are rejected at token
-/// creation time so the stored scope string stays clean.
-pub(crate) const KNOWN_SCOPES: &[&str] = &[
-    SCOPE_COMPUTER_POINTER_CONTROL,
-    SCOPE_COMPUTER_CLIPBOARD_READ,
-    SCOPE_COMPUTER_CLIPBOARD_WRITE,
-    SCOPE_RUNTIME_READ,
+#[allow(unused_imports)]
+pub use webcodex_core::authority::{
+    AGENT_SCOPES, COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES, KNOWN_SCOPES,
+    MEMORY_MANAGE_SCOPES, MEMORY_READ_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN,
+    SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
+    SCOPE_CODING_AGENT_RUN, SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ,
+    SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL,
+    SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_LAUNCH, SCOPE_COMPUTER_POINTER_CONTROL,
+    SCOPE_COMPUTER_READ, SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_MCP_LOCAL, SCOPE_MEMORY_MANAGE,
+    SCOPE_MEMORY_READ, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
     SCOPE_SESSION_COLLABORATE,
-    SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE,
-    SCOPE_MEMORY_READ,
-    SCOPE_MEMORY_MANAGE,
-    SCOPE_COMMUNICATION_READ,
-    SCOPE_COMMUNICATION_MANAGE,
-    SCOPE_JOB_RUN,
-    SCOPE_JOB_DETACH,
-    SCOPE_COMPUTER_READ,
-    SCOPE_COMPUTER_CONTROL,
-    SCOPE_COMPUTER_LAUNCH,
-    SCOPE_COMPUTER_DISPLAY_READ,
-    SCOPE_MCP_LOCAL,
-    SCOPE_CODING_AGENT_RUN,
-    SCOPE_ACCOUNT_MANAGE,
-    SCOPE_AGENT_REGISTER,
-    SCOPE_AGENT_POLL,
-    SCOPE_AGENT_RESULT,
-    SCOPE_AGENT_JOB_UPDATE,
-    SCOPE_ADMIN,
-];
+};
 
 /// True when `scope` is one of the agent transport scopes.
 pub(crate) fn is_agent_scope(scope: &str) -> bool {
@@ -174,25 +98,8 @@ pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
 // with the existing policy registry. Enforcement is principal-neutral; OAuth
 // remains special only for delegated-scope issuance and wire error framing.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OAuthRouteScopePolicy {
-    Public,
-    FirstPartyOnly,
-    /// Explicit representation of the historical fail-closed behavior for an
-    /// authenticated route that only bootstrap could traverse because no
-    /// delegated route policy existed.
-    BootstrapOnly,
-    AgentSurface,
-    Require(&'static str),
-    BodyAware(OAuthBodyAwarePolicy),
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OAuthBodyAwarePolicy {
-    RuntimeToolCall,
-    McpToolCall,
-}
+#[allow(unused_imports)]
+pub(crate) use webcodex_core::authority::{OAuthBodyAwarePolicy, OAuthRouteScopePolicy};
 
 pub(crate) fn oauth_route_scope_policy_for_path_method(
     method: &str,

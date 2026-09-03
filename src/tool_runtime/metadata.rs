@@ -142,12 +142,7 @@ impl ToolPathHint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ToolAuthorityPolicy {
-    Require(&'static str),
-    RequireAll(&'static [&'static str]),
-    Unknown,
-}
+pub(crate) use webcodex_core::authority::ToolAuthorityPolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolMetadata {
@@ -166,22 +161,26 @@ pub(crate) struct ToolMetadata {
     pub(crate) shell_like: bool,
 }
 
-pub(crate) const RUNTIME_READ: &str = crate::auth::SCOPE_RUNTIME_READ;
-pub(crate) const SESSION_COLLABORATE: &str = crate::auth::SCOPE_SESSION_COLLABORATE;
-pub(crate) const COMMUNICATION_READ: &str = crate::auth::SCOPE_COMMUNICATION_READ;
-pub(crate) const COMMUNICATION_MANAGE: &str = crate::auth::SCOPE_COMMUNICATION_MANAGE;
-pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
-pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
-pub(crate) const ADMIN: &str = crate::auth::SCOPE_ADMIN;
-pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
-pub(crate) const CODING_AGENT_RUN: &str = crate::auth::SCOPE_CODING_AGENT_RUN;
-pub(crate) const COMPUTER_READ: &str = crate::auth::SCOPE_COMPUTER_READ;
-pub(crate) const COMPUTER_CONTROL: &str = crate::auth::SCOPE_COMPUTER_CONTROL;
-pub(crate) const COMPUTER_LAUNCH: &str = crate::auth::SCOPE_COMPUTER_LAUNCH;
-pub(crate) const COMPUTER_DISPLAY_READ: &str = crate::auth::SCOPE_COMPUTER_DISPLAY_READ;
-pub(crate) const COMPUTER_POINTER_CONTROL: &str = crate::auth::SCOPE_COMPUTER_POINTER_CONTROL;
-pub(crate) const COMPUTER_CLIPBOARD_READ: &str = crate::auth::SCOPE_COMPUTER_CLIPBOARD_READ;
-pub(crate) const COMPUTER_CLIPBOARD_WRITE: &str = crate::auth::SCOPE_COMPUTER_CLIPBOARD_WRITE;
+pub(crate) const RUNTIME_READ: &str = webcodex_core::authority::SCOPE_RUNTIME_READ;
+pub(crate) const SESSION_COLLABORATE: &str = webcodex_core::authority::SCOPE_SESSION_COLLABORATE;
+pub(crate) const COMMUNICATION_READ: &str = webcodex_core::authority::SCOPE_COMMUNICATION_READ;
+pub(crate) const COMMUNICATION_MANAGE: &str = webcodex_core::authority::SCOPE_COMMUNICATION_MANAGE;
+pub(crate) const PROJECT_READ: &str = webcodex_core::authority::SCOPE_PROJECT_READ;
+pub(crate) const PROJECT_WRITE: &str = webcodex_core::authority::SCOPE_PROJECT_WRITE;
+pub(crate) const ADMIN: &str = webcodex_core::authority::SCOPE_ADMIN;
+pub(crate) const JOB_RUN: &str = webcodex_core::authority::SCOPE_JOB_RUN;
+pub(crate) const CODING_AGENT_RUN: &str = webcodex_core::authority::SCOPE_CODING_AGENT_RUN;
+pub(crate) const COMPUTER_READ: &str = webcodex_core::authority::SCOPE_COMPUTER_READ;
+pub(crate) const COMPUTER_CONTROL: &str = webcodex_core::authority::SCOPE_COMPUTER_CONTROL;
+pub(crate) const COMPUTER_LAUNCH: &str = webcodex_core::authority::SCOPE_COMPUTER_LAUNCH;
+pub(crate) const COMPUTER_DISPLAY_READ: &str =
+    webcodex_core::authority::SCOPE_COMPUTER_DISPLAY_READ;
+pub(crate) const COMPUTER_POINTER_CONTROL: &str =
+    webcodex_core::authority::SCOPE_COMPUTER_POINTER_CONTROL;
+pub(crate) const COMPUTER_CLIPBOARD_READ: &str =
+    webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_READ;
+pub(crate) const COMPUTER_CLIPBOARD_WRITE: &str =
+    webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_WRITE;
 
 pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
 pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";

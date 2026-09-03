@@ -4,7 +4,6 @@ use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
 };
-use crate::auth::scopes::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read, WorkflowManage},
@@ -18,6 +17,7 @@ use crate::tool_runtime::registry::input_schemas::{
     reconcile_agent_task_coding_run_input_schema, start_agent_task_attempt_input_schema,
     start_agent_task_coding_run_input_schema,
 };
+use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(

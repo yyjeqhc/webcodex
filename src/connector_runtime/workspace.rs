@@ -190,21 +190,6 @@ impl WorkspaceManager {
         Ok(manager)
     }
 
-    /// Persistent Cargo target directory for one Runner-owned project/workspace.
-    ///
-    /// The target lives outside the checkout so reusable-slot resets cannot
-    /// delete it, but it is partitioned by Runner project identity so distinct
-    /// workspaces can compile concurrently without contending on Cargo's build
-    /// directory lock.
-    pub(crate) fn cargo_target_for_executor(&self, executor_ref: &str) -> Result<PathBuf, String> {
-        let (_, project_id) = parse_agent_executor_ref(executor_ref)?;
-        let state_root = self
-            .runs_root
-            .parent()
-            .ok_or_else(|| "connector runs root has no state parent".to_string())?;
-        Ok(state_root.join("cache/cargo-target").join(project_id))
-    }
-
     pub(crate) fn prepare(
         &self,
         context: &ConnectorContext,
@@ -2005,26 +1990,6 @@ mod tests {
         }
         let manager = WorkspaceManager::new(&context).unwrap();
         (temp, context, manager)
-    }
-
-    #[test]
-    fn cargo_targets_are_stable_and_partitioned_by_runner_project() {
-        let (_temp, _context, manager) = fixture();
-        let first = manager
-            .cargo_target_for_executor("agent:runner:wc-slot-write-01")
-            .unwrap();
-        let same = manager
-            .cargo_target_for_executor("agent:runner:wc-slot-write-01")
-            .unwrap();
-        let second = manager
-            .cargo_target_for_executor("agent:runner:wc-slot-write-02")
-            .unwrap();
-
-        assert_eq!(first, same);
-        assert_ne!(first, second);
-        assert!(first.ends_with("cache/cargo-target/wc-slot-write-01"));
-        assert!(second.ends_with("cache/cargo-target/wc-slot-write-02"));
-        assert!(!first.starts_with(Path::new(&manager.runs_root).join(WRITE_SLOT_NAME)));
     }
 
     fn task(context: &ConnectorContext, prepared: &PreparedWorkspace) -> ConnectorTaskSnapshot {

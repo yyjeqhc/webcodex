@@ -4684,7 +4684,7 @@ async fn host_devices_returns_the_agent_projection() {
 }
 
 #[tokio::test]
-async fn checks_run_steers_cargo_at_the_workspace_target_cache() {
+async fn checks_run_steers_cargo_at_the_shared_target_cache() {
     let fixture = fixture(1_000).await;
     let arguments = checks(&fixture, "shared-cache-1", &["check", "test"]);
     let connector = fixture.connector.clone();
@@ -4705,8 +4705,8 @@ async fn checks_run_steers_cargo_at_the_workspace_target_cache() {
             .map(|(_, value)| value.as_str())
             .unwrap_or_else(|| panic!("{} step missing CARGO_TARGET_DIR", step.name));
         assert!(
-            target.ends_with("cache/cargo-target/wc-slot-write-01"),
-            "workspace-partitioned cache path expected, got {target}"
+            target.ends_with("cache/cargo-target"),
+            "shared cache path expected, got {target}"
         );
     }
     // Unblock the slot.

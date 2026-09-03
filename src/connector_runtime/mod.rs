@@ -2035,34 +2035,18 @@ impl ConnectorRuntime {
             step.name == "test" && step.program == "go" && step.args == ["test", "-json", "./..."]
         });
         let mut validation_steps = resolved.steps.clone();
-        // Keep Cargo targets outside reusable worktrees because slot reset uses
-        // `git clean -ffdx`. Partition the persistent cache by Runner project
-        // identity so separate workspaces retain warm targets without sharing
-        // Cargo's writable build-directory lock.
-        if validation_steps.iter().any(|step| step.program == "cargo") {
-            let cargo_target = match self
-                .workspace
-                .cargo_target_for_executor(&task.execution_executor_ref)
-            {
-                Ok(target) => target,
-                Err(error) => {
-                    return ConnectorCallOutcome::error_for_task(
-                        409,
-                        "validation_workspace_invalid",
-                        self.sanitize_task_string(&task, &error),
-                        false,
-                        true,
-                        Some("Re-resolve the task workspace before running validation."),
-                        &task,
-                        Value::Null,
-                    )
-                }
-            };
+        // Steer cargo at the shared cache outside the slot: reset uses
+        // `git clean -ffdx`, which would otherwise wipe target/ and force a
+        // cold build on every task.
+        let shared_cargo_target = std::path::Path::new(&self.context.runs_root)
+            .parent()
+            .map(|state| state.join("cache/cargo-target"));
+        if let Some(shared_cargo_target) = shared_cargo_target {
             for step in &mut validation_steps {
                 if step.program == "cargo" {
                     step.env.push((
                         "CARGO_TARGET_DIR".to_string(),
-                        cargo_target.to_string_lossy().to_string(),
+                        shared_cargo_target.to_string_lossy().to_string(),
                     ));
                 }
             }

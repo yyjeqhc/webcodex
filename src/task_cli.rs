@@ -608,7 +608,7 @@ fn resource_summary(
     resources: &crate::connector_runtime::workspace::WorkspaceResourceStatus,
 ) -> String {
     format!(
-        "Resources: writable slot {}; reusable checkout {}; persistent Cargo target caches {}{}.",
+        "Resources: writable slot {}; reusable checkout {}; shared Cargo cache {}{}.",
         resources.slot_state,
         format_bytes(resources.checkout.bytes),
         format_bytes(resources.cargo_cache.bytes),

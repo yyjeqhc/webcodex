@@ -187,10 +187,12 @@ jobs:
             runner: macos-14
             host_arch: arm64
             rust_host: aarch64-apple-darwin
+            pr_runner_suite: full
           - platform: darwin-x64
             runner: macos-15-intel
             host_arch: x86_64
             rust_host: x86_64-apple-darwin
+            pr_runner_suite: native-smoke
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -209,12 +211,22 @@ jobs:
           test "$rust_host" = "$EXPECTED_RUST_HOST"
       - name: Check macOS release production surfaces
         run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner -p webcodex-computer
-      - name: Run native macOS Runner and Computer tests
+      - name: Run full native macOS Runner and Computer tests
+        if: github.event_name == 'push' || matrix.pr_runner_suite == 'full'
         run: cargo test --locked -p webcodex-runner -p webcodex-computer
+      - name: Run Intel macOS PR native smoke
+        if: github.event_name == 'pull_request' && matrix.pr_runner_suite == 'native-smoke'
+        run: |
+          cargo test --locked -p webcodex-computer
+          cargo test --locked -p webcodex-runner detached
+          cargo test --locked -p webcodex-runner macos
+          cargo test --locked -p webcodex-runner project_registration
+          cargo test --locked -p webcodex-runner external_tools
 
   # Keep Windows process-heavy suites isolated on separate hosted VMs. The
-  # webcodex-runner lane remains test-function-serial because its real
-  # PowerShell/process-tree fixtures can starve each other on hosted Windows.
+  # webcodex-runner lane partitions real PowerShell/process-tree fixtures away
+  # from the default-parallel logic tests so hosted Windows does not serialize
+  # hundreds of tests that do not compete for process startup resources.
   # Keep webcodex-computer in the same native lane so platform tests continue
   # running after the Computer runtime was split out of the Runner crate.
   # Core/library and packaging coverage can run independently in parallel.
@@ -256,12 +268,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-runner-ci
-      - name: Run Windows Runner and Computer tests
-        # The Runner suite starts many real PowerShell/process-tree fixtures. On
-        # hosted Windows, parallel test functions can starve process startup long
-        # enough to trip intentionally tight command timeouts. Serialize only
-        # the test functions; concurrency exercised inside each test is unchanged.
-        run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=1
+      - name: Run partitioned Windows Runner and Computer tests
+        shell: pwsh
+        run: ./scripts/ci_windows_runner_tests.ps1
 
   test-windows-package:
     needs: contract

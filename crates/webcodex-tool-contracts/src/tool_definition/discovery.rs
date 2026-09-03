@@ -170,7 +170,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Return compact runtime discovery. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
+            "Global runtime discovery; do not pass project. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. The returned tool may itself require project. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
             tool_manifest_input_schema,
         )),
         30,

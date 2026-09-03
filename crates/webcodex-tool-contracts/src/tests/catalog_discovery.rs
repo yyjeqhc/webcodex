@@ -231,6 +231,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",
+        "copy show_changes.head.commit",
         "review: start with show_changes for the bounded worktree overview",
         "if hunks truncate, continue/focus with git_diff_hunks",
         "handoff: use session_summary / session_handoff_summary",
@@ -248,7 +249,7 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         .iter()
         .find(|flow| flow.name == "discovery")
         .expect("discovery recommended flow");
-    for tool in ["runtime_status", "list_agents", "list_projects"] {
+    for tool in ["runtime_status", "list_runners", "list_projects"] {
         assert!(discovery.tools.contains(&tool), "discovery: {tool}");
     }
     assert!(discovery.summary.contains("exact Runner client_id"));
@@ -256,13 +257,15 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     for phrase in [
         "runtime_status(client_id=...)",
         "list_projects(client_id=...)",
-        "list_agents",
+        "list_runners",
     ] {
         assert!(
             discovery.manifest_purpose.contains(phrase),
             "discovery: {phrase}"
         );
     }
+    assert!(!discovery.tools.contains(&"list_agents"));
+    assert!(!discovery.manifest_purpose.contains("list_agents"));
 
     let persistent = TOOL_RECOMMENDED_FLOWS
         .iter()

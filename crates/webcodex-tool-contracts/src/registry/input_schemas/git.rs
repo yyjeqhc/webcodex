@@ -82,11 +82,11 @@ pub fn git_status_input_schema() -> Value {
 
 pub fn git_commit_paths_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
+        ("project", "string", "Runner-registered project id.", true),
         (
             "expected_head",
             "string",
-            "Exact current 40-hex HEAD required before staging or committing.",
+            "Exact current 40-hex HEAD fence; normally copy show_changes.head.commit immediately before committing.",
             true,
         ),
         (

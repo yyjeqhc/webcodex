@@ -278,10 +278,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "discovery",
         summary: "Discovery: if the user gives an exact Runner client_id, query runtime_status/list_projects for that Runner before treating it as absent from a fleet snapshot. Otherwise use bounded runtime/project discovery, then structured search; run_shell remains the diagnostic escape hatch.",
         manifest_purpose:
-            "Exact Runner targeting: with client_id use runtime_status(client_id=...) or list_projects(client_id=...); use list_agents only for broad fleet discovery, then inspect/search the resolved project.",
+            "Exact Runner targeting: with client_id use runtime_status(client_id=...) or list_projects(client_id=...); use list_runners only for broad fleet discovery, then inspect/search the resolved project.",
         tools: &[
             "runtime_status",
-            "list_agents",
+            "list_runners",
             "list_projects",
             "project_overview",
             "read_file",
@@ -382,9 +382,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "commit",
-        summary: "Commit: inspect git_status/show_changes, then use git_commit_paths with the exact current HEAD and explicit changed file paths. It rejects pre-existing staged state and never pushes; keep run_process for unusual Git operations outside this narrow contract.",
+        summary: "Commit: inspect git_status/show_changes, copy show_changes.head.commit into git_commit_paths.expected_head, and pass explicit changed file paths. It rejects pre-existing staged state and never pushes; keep run_process for unusual Git operations outside this narrow contract.",
         manifest_purpose:
-            "Safe exact-path commit route: inspect with git_status/show_changes, then call git_commit_paths with expected_head and explicit file paths; it requires project:write plus job:run because clean filters may execute, uses an isolated exact-tree commit, bypasses commit hooks, refuses unrelated staged state, and never pushes.",
+            "Commit route: inspect with show_changes, copy head.commit to expected_head, then call git_commit_paths with explicit paths. Requires project:write + job:run because clean filters may run; isolated exact-tree commit bypasses hooks, rejects staged state, never pushes.",
         tools: &["git_status", "show_changes", "git_commit_paths"],
     },
     ToolRecommendedFlow {

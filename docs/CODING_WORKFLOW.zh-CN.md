@@ -142,7 +142,7 @@ evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 v
 的 test-count 证明要求。
 
 对于日常的精确路径提交，优先使用受控的 `git_commit_paths`：传入当前精确 40 位
-`expected_head`、明确的变更文件路径和 commit message。它会拒绝已有 staged state、冲突、
+`show_changes.head.commit` 作为 `expected_head`，再传入明确的变更文件路径和 commit message。它会拒绝已有 staged state、冲突、
 过期 HEAD、目录、敏感路径以及没有变化的目标文件，并且永远不会 push。staging 使用隔离的
 临时 index，因此正常 Git clean filter 仍可能执行，所以该工具同时要求 `project:write` 与
 `job:run`。最终提交通过 exact-tree `commit-tree` 与原子的 `update-ref` HEAD fence 完成；为了

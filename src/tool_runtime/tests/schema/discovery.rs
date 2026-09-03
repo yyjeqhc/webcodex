@@ -1372,7 +1372,7 @@ async fn tool_manifest_exact_fleet_tool_surfaces_exact_runner_targeting_route() 
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
-            tool_name: Some("list_agents".to_string()),
+            tool_name: Some("list_runners".to_string()),
             category: None,
             intent: None,
             include_recommended_flows: true,
@@ -1389,8 +1389,9 @@ async fn tool_manifest_exact_fleet_tool_surfaces_exact_runner_targeting_route() 
     let purpose = flow["purpose"].as_str().expect("discovery purpose");
     assert!(purpose.contains("runtime_status(client_id=...)"));
     assert!(purpose.contains("list_projects(client_id=...)"));
-    assert!(purpose.contains("list_agents"));
-    assert_eq!(flow["tools"], json!(["list_agents"]));
+    assert!(purpose.contains("list_runners"));
+    assert!(!purpose.contains("list_agents"));
+    assert_eq!(flow["tools"], json!(["list_runners"]));
 }
 
 #[tokio::test]

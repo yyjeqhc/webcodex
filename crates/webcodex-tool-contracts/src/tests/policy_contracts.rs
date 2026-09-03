@@ -574,7 +574,7 @@ fn required_runner_capability_matches_metadata_risk_table() {
         (
             "git_commit_paths",
             ToolRisk::ProjectWrite,
-            AgentCapability::GitOrShell,
+            RunnerCapabilityRequirement::GitOrShell,
         ),
         (
             "discard_untracked",

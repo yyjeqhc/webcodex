@@ -155,22 +155,30 @@ pub(crate) async fn await_hidden_structured_job(
         guard.disarm();
         return Ok(terminal);
     }
-    let (execution_state, command_started) = match observation.job.status.as_str() {
-        "queued" | "agent_queued" | "started" => ("queued", false),
-        "running" => ("running", true),
-        "stop_requested" if promoted.started_at.is_some() => ("running", true),
-        "stop_requested" => ("queued", false),
-        // Recovery is a real retained Job contract, but it is not proof that
-        // the execution is presently running. Preserve uncertainty explicitly.
-        "recovering" => ("outcome_unknown", true),
-        _ => ("outcome_unknown", true),
-    };
+    let (execution_state, command_started) = continued_execution_state(
+        observation.job.status.as_str(),
+        observation.job.started_at.is_some(),
+    );
     guard.disarm();
     Ok(HiddenStructuredJobWait::Continued {
         observation,
         execution_state,
         command_started,
     })
+}
+
+fn continued_execution_state(status: &str, started: bool) -> (&'static str, bool) {
+    match status {
+        "queued" | "agent_queued" | "started" if started => ("running", true),
+        "queued" | "agent_queued" | "started" => ("queued", false),
+        "running" => ("running", true),
+        "stop_requested" if started => ("running", true),
+        "stop_requested" => ("queued", false),
+        // Recovery is a real retained Job contract, but it is not proof that
+        // the execution is presently running. Preserve uncertainty explicitly.
+        "recovering" => ("outcome_unknown", true),
+        _ => ("outcome_unknown", true),
+    }
 }
 
 async fn hidden_terminal_snapshot(
@@ -234,6 +242,38 @@ impl Drop for HiddenJobCleanupGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continued_execution_state_uses_the_fresh_observed_started_state() {
+        assert_eq!(
+            continued_execution_state("stop_requested", false),
+            ("queued", false)
+        );
+        assert_eq!(
+            continued_execution_state("stop_requested", true),
+            ("running", true)
+        );
+        assert_eq!(
+            continued_execution_state("agent_queued", false),
+            ("queued", false)
+        );
+        assert_eq!(
+            continued_execution_state("agent_queued", true),
+            ("running", true)
+        );
+        assert_eq!(
+            continued_execution_state("started", true),
+            ("running", true)
+        );
+        assert_eq!(
+            continued_execution_state("running", true),
+            ("running", true)
+        );
+        assert_eq!(
+            continued_execution_state("recovering", true),
+            ("outcome_unknown", true)
+        );
+    }
 
     #[test]
     fn structured_execution_budget_preserves_default_and_validates_explicit_sync_wait() {

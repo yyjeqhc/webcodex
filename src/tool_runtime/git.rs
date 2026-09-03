@@ -16,7 +16,7 @@ use super::helpers::{
     decode_git_quoted_path, shell_escape_simple, validate_limited_cleanup_paths,
     validate_project_relative_path,
 };
-use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
+use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::ToolRuntime;
 use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest};
@@ -4080,7 +4080,7 @@ impl ToolRuntime {
 
         match tokio::time::timeout(Duration::from_secs(64), rx).await {
             Ok(Ok(response)) => {
-                let lifecycle = agent_command_lifecycle(&response, 60);
+                let lifecycle = runner_command_lifecycle(&response, 60);
                 if lifecycle == ShellCommandExecutionState::NotStarted {
                     return ToolResult::err_with_output(
                         response

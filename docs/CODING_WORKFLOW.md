@@ -176,8 +176,8 @@ distinguishes truncated output, a partial harness summary, and the absence of a
 complete summary without weakening the fail-closed count proof.
 
 For routine exact-path commits, `git_commit_paths` is the guarded structured path:
-pass the exact current 40-hex `expected_head`, the explicit changed file paths, and
-the commit message. It refuses pre-existing staged state, conflicts, stale HEAD,
+copy the exact current 40-hex `show_changes.head.commit` into `expected_head`, then
+pass the explicit changed file paths and commit message. It refuses pre-existing staged state, conflicts, stale HEAD,
 directories, sensitive paths, and unchanged requested paths; it never pushes.
 Staging uses an isolated temporary index, so normal Git clean filters may run and
 the tool therefore requires both `project:write` and `job:run`. The final commit

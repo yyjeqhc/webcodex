@@ -1100,11 +1100,10 @@ impl ToolRuntime {
                 );
             }
         };
-        let queued = matches!(
+        let (execution_state, command_started) = validation_handoff_execution_state(
             latest_status.as_str(),
-            "queued" | "agent_queued" | "started"
+            observation.job.started_at.is_some(),
         );
-        let execution_state = if queued { "queued" } else { "running" };
         let detected_summary = crate::tool_runtime::jobs::detected_job_summary(
             Some(&handoff.command_summary),
             Some(&handoff.purpose),
@@ -1121,7 +1120,7 @@ impl ToolRuntime {
             "job_status": latest_status,
             "observation_token": observation_token,
             "promoted_to_job": true,
-            "command_started": !queued,
+            "command_started": command_started,
             "command_completed": false,
             "effective_timeout_secs": handoff.effective_timeout_secs,
             "sync_wait_secs": handoff.sync_wait_secs,
@@ -1676,6 +1675,40 @@ impl Drop for ValidationCleanupGuard {
                 clients.process_hidden_cleanup_intents().await;
             });
         }
+    }
+}
+
+fn validation_handoff_execution_state(status: &str, started: bool) -> (&'static str, bool) {
+    let pending_status = matches!(status, "queued" | "agent_queued" | "started");
+    let command_started = !pending_status || started;
+    (
+        if command_started { "running" } else { "queued" },
+        command_started,
+    )
+}
+
+#[cfg(test)]
+mod validation_handoff_projection_tests {
+    use super::validation_handoff_execution_state;
+
+    #[test]
+    fn fresh_started_evidence_prevents_false_queued_validation_handoff() {
+        assert_eq!(
+            validation_handoff_execution_state("agent_queued", false),
+            ("queued", false)
+        );
+        assert_eq!(
+            validation_handoff_execution_state("agent_queued", true),
+            ("running", true)
+        );
+        assert_eq!(
+            validation_handoff_execution_state("started", true),
+            ("running", true)
+        );
+        assert_eq!(
+            validation_handoff_execution_state("running", true),
+            ("running", true)
+        );
     }
 }
 

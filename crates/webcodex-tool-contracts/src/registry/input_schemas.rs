@@ -85,9 +85,9 @@ pub use files::{
     search_project_text_input_schema, search_project_texts_input_schema,
 };
 pub use git::{
-    git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
-    git_log_input_schema, git_review_summary_input_schema, git_status_input_schema,
-    show_changes_input_schema,
+    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
+    git_diff_summary_input_schema, git_log_input_schema, git_review_summary_input_schema,
+    git_status_input_schema, show_changes_input_schema,
 };
 pub use hygiene::workspace_hygiene_check_input_schema;
 pub use jobs::{

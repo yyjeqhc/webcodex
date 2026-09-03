@@ -15,6 +15,16 @@ impl ToolRuntime {
                 paths,
                 session_id: _,
             } => self.discard_untracked(project, paths).await,
+            ToolCall::GitCommitPaths {
+                project,
+                expected_head,
+                paths,
+                message,
+                session_id: _,
+            } => {
+                self.git_commit_paths(project, expected_head, paths, message)
+                    .await
+            }
             ToolCall::GitStatus {
                 project,
                 session_id: _,

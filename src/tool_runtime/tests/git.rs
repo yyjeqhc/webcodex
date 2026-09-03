@@ -37,6 +37,210 @@ async fn register_structured_git_agent_at_path(
     crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 
+async fn run_agent_git_commit_paths(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    expected_head: String,
+    paths: Vec<String>,
+    message: &str,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let message = message.to_string();
+        async move {
+            runtime
+                .git_commit_paths(project, expected_head, paths, message)
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_commit_paths must use a typed internal script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains("git update-ref"));
+    assert!(script.script.contains("git commit-tree"));
+    assert!(!script.script.contains("git push"));
+    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &request.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn git_commit_paths_commits_only_requested_paths_and_preserves_other_worktree_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(tmp.path().join("a.txt"), "base-a\n").unwrap();
+    fs::write(tmp.path().join("b.txt"), "base-b\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt b.txt");
+    git_test_command_ok(tmp.path(), "git commit -m base");
+    let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+    let base = stdout.trim().to_string();
+
+    fs::write(tmp.path().join("a.txt"), "committed-a\n").unwrap();
+    fs::write(tmp.path().join("b.txt"), "still-dirty-b\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "commit-paths", "repo", tmp.path()).await;
+    let result = run_agent_git_commit_paths(
+        &runtime,
+        "commit-paths",
+        project,
+        base.clone(),
+        vec!["a.txt".to_string()],
+        "commit exact a",
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["committed"], true);
+    assert_eq!(result.output["previous_head"], base);
+    assert_eq!(result.output["committed_paths"], json!(["a.txt"]));
+    assert_eq!(result.output["hook_policy"], "bypassed_exact_tree");
+
+    let new_head = result.output["new_head"].as_str().unwrap();
+    let (_, changed, _, _) = run_command_sync(
+        &format!("git diff --name-only {} {}", base, new_head),
+        tmp.path(),
+        30,
+    );
+    assert_eq!(changed.trim(), "a.txt");
+    let (_, staged, _, _) = run_command_sync("git diff --cached --name-only", tmp.path(), 30);
+    assert!(
+        staged.trim().is_empty(),
+        "real index must remain clean: {staged}"
+    );
+    let (_, status, _, _) = run_command_sync("git status --short", tmp.path(), 30);
+    assert_eq!(status.trim(), "M b.txt");
+}
+
+#[tokio::test]
+async fn git_commit_paths_rejects_existing_staged_state_without_advancing_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(tmp.path().join("a.txt"), "base-a\n").unwrap();
+    fs::write(tmp.path().join("b.txt"), "base-b\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt b.txt");
+    git_test_command_ok(tmp.path(), "git commit -m base");
+    let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+    let base = stdout.trim().to_string();
+    fs::write(tmp.path().join("a.txt"), "staged-a\n").unwrap();
+    fs::write(tmp.path().join("b.txt"), "requested-b\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "commit-staged-reject", "repo", tmp.path())
+            .await;
+    let result = run_agent_git_commit_paths(
+        &runtime,
+        "commit-staged-reject",
+        project,
+        base.clone(),
+        vec!["b.txt".to_string()],
+        "must reject staged",
+    )
+    .await;
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "existing_staged");
+    assert_eq!(result.output["state_changed"], false);
+    let (_, head, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+    assert_eq!(head.trim(), base);
+    let (_, staged, _, _) = run_command_sync("git diff --cached --name-only", tmp.path(), 30);
+    assert_eq!(staged.trim(), "a.txt");
+}
+
+#[tokio::test]
+async fn git_commit_paths_rejects_stale_expected_head_before_mutation() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(tmp.path().join("a.txt"), "base\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt");
+    git_test_command_ok(tmp.path(), "git commit -m base");
+    let (_, stdout, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+    let actual = stdout.trim().to_string();
+    fs::write(tmp.path().join("a.txt"), "dirty\n").unwrap();
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "commit-head-fence", "repo", tmp.path())
+            .await;
+    let stale = "f".repeat(40);
+    let result = run_agent_git_commit_paths(
+        &runtime,
+        "commit-head-fence",
+        project,
+        stale.clone(),
+        vec!["a.txt".to_string()],
+        "must not commit",
+    )
+    .await;
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "head_mismatch");
+    assert_eq!(result.output["expected_head"], stale);
+    assert_eq!(result.output["actual_head"], actual);
+    assert_eq!(result.output["state_changed"], false);
+    let (_, head, _, _) = run_command_sync("git rev-parse HEAD", tmp.path(), 30);
+    assert_eq!(head.trim(), actual);
+}
+
+#[test]
+fn git_commit_paths_audit_keeps_message_private_and_exact_head_bounded() {
+    let private_message = "PRIVATE_COMMIT_MESSAGE_MUST_NOT_PERSIST";
+    let expected_head = "a".repeat(40);
+    let arguments = json!({
+        "project": "agent:oe:webcodex",
+        "expected_head": expected_head,
+        "paths": ["src/tool_runtime/git.rs"],
+        "message": private_message,
+    });
+    let raw = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "git_commit_paths",
+        &arguments,
+    );
+    assert_eq!(raw["expected_head_valid"], true);
+    assert_eq!(raw["expected_head"], "a".repeat(40));
+    assert_eq!(raw["message_present"], true);
+    assert_eq!(raw["paths"], json!(["src/tool_runtime/git.rs"]));
+    assert!(!raw.to_string().contains(private_message));
+
+    let call = ToolCall::from_tool_name("git_commit_paths", arguments).unwrap();
+    let typed = call.session_log_arguments();
+    assert_eq!(typed["expected_head_valid"], true);
+    assert_eq!(typed["message_present"], true);
+    assert!(!typed.to_string().contains(private_message));
+}
+
+#[test]
+fn git_commit_marker_parser_keeps_mutation_evidence_strict() {
+    let expected = "a".repeat(40);
+    let new_head = "b".repeat(40);
+    let valid = parse_git_commit_marker(&format!(
+        "noise\n{GIT_COMMIT_RESULT_PREFIX} status=success previous={expected} new={new_head}\n"
+    ))
+    .unwrap();
+    assert_eq!(valid.status, "success");
+    assert_eq!(valid.previous_head.as_deref(), Some(expected.as_str()));
+    assert_eq!(valid.new_head.as_deref(), Some(new_head.as_str()));
+
+    let malformed = parse_git_commit_marker(&format!(
+        "{GIT_COMMIT_RESULT_PREFIX} status=success previous={expected} new=not-a-sha\n"
+    ))
+    .unwrap();
+    assert_eq!(malformed.status, "success");
+    assert!(malformed.new_head.is_none());
+}
+
 #[tokio::test]
 async fn git_restore_paths_restores_tracked_filename_containing_target() {
     let tmp = tempfile::tempdir().unwrap();

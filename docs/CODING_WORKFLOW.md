@@ -175,6 +175,17 @@ When a count assertion is unproven, `test_count_assertion.evidence_reason_code`
 distinguishes truncated output, a partial harness summary, and the absence of a
 complete summary without weakening the fail-closed count proof.
 
+For routine exact-path commits, `git_commit_paths` is the guarded structured path:
+pass the exact current 40-hex `expected_head`, the explicit changed file paths, and
+the commit message. It refuses pre-existing staged state, conflicts, stale HEAD,
+directories, sensitive paths, and unchanged requested paths; it never pushes.
+Staging uses an isolated temporary index, so normal Git clean filters may run and
+the tool therefore requires both `project:write` and `job:run`. The final commit
+uses an exact-tree `commit-tree` plus atomic `update-ref` fence; ordinary commit
+hooks are intentionally bypassed so they cannot add unrelated paths. If the
+dispatch result is uncertain, observe HEAD/status before deciding what to do and
+never blindly retry the commit.
+
 **Declare non-default execution outcomes before running them.** Supported execution and
 structured-validation tools accept `result_expectation` with three meanings: omitted
 (or `success`) keeps the normal fail-closed success requirement; `failure` is for a

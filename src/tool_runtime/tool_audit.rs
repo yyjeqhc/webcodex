@@ -1199,6 +1199,14 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
             copy_keys(obj, &mut out, &["paths"]);
         }
+        "git_commit_paths" => {
+            copy_keys(obj, &mut out, &["paths"]);
+            insert_exact_git_commit_audit(obj, &mut out, "expected_head");
+            out.insert(
+                "message_present".to_string(),
+                Value::Bool(obj.get("message").and_then(Value::as_str).is_some()),
+            );
+        }
         "git_review_summary" => {
             insert_exact_git_commit_audit(obj, &mut out, "base_commit");
             insert_exact_git_commit_audit(obj, &mut out, "head_commit");
@@ -4325,6 +4333,21 @@ impl ToolCall {
                 "project": project,
                 "paths": paths,
             }),
+            Self::GitCommitPaths {
+                project,
+                expected_head,
+                paths,
+                ..
+            } => {
+                let expected_head = normalized_exact_git_commit_for_audit(expected_head);
+                serde_json::json!({
+                    "project": project,
+                    "paths": paths,
+                    "expected_head_valid": expected_head.is_some(),
+                    "expected_head": expected_head,
+                    "message_present": true,
+                })
+            }
             Self::GitStatus { project, .. } | Self::GitDiffSummary { project, .. } => {
                 serde_json::json!({
                     "project": project,

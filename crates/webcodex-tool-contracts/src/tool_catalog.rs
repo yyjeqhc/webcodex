@@ -121,6 +121,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_GIT,
         tools: &[
+            "git_commit_paths",
             "git_status",
             "git_diff",
             "git_diff_summary",
@@ -378,6 +379,13 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "computer_list_windows",
             "computer_activate_window",
         ],
+    },
+    ToolRecommendedFlow {
+        name: "commit",
+        summary: "Commit: inspect git_status/show_changes, then use git_commit_paths with the exact current HEAD and explicit changed file paths. It rejects pre-existing staged state and never pushes; keep run_process for unusual Git operations outside this narrow contract.",
+        manifest_purpose:
+            "Safe exact-path commit route: inspect with git_status/show_changes, then call git_commit_paths with expected_head and explicit file paths; it requires project:write plus job:run because clean filters may execute, uses an isolated exact-tree commit, bypasses commit hooks, refuses unrelated staged state, and never pushes.",
+        tools: &["git_status", "show_changes", "git_commit_paths"],
     },
     ToolRecommendedFlow {
         name: "review",

@@ -80,6 +80,43 @@ pub fn git_status_input_schema() -> Value {
     )]))
 }
 
+pub fn git_commit_paths_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        (
+            "expected_head",
+            "string",
+            "Exact current 40-hex HEAD required before staging or committing.",
+            true,
+        ),
+        (
+            "paths",
+            "array",
+            "Exact project-relative file paths to commit. Directories, project root, sensitive paths, and unchanged paths are rejected.",
+            true,
+        ),
+        (
+            "message",
+            "string",
+            "Commit message. Bounded and never persisted in model-facing audit previews.",
+            true,
+        ),
+    ]));
+    schema["properties"]["expected_head"]["minLength"] = Value::from(40);
+    schema["properties"]["expected_head"]["maxLength"] = Value::from(40);
+    schema["properties"]["expected_head"]["pattern"] = Value::from("^[0-9A-Fa-f]{40}$");
+    schema["properties"]["paths"]["minItems"] = Value::from(1);
+    schema["properties"]["paths"]["maxItems"] = Value::from(32);
+    schema["properties"]["paths"]["items"] = json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+    });
+    schema["properties"]["message"]["minLength"] = Value::from(1);
+    schema["properties"]["message"]["maxLength"] = Value::from(1000);
+    schema
+}
+
 pub fn git_diff_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
         ("project", "string", "Configured project id.", true),

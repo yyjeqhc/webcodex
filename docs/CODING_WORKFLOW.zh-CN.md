@@ -141,6 +141,14 @@ evidence 能证明达到 minimum 时才通过；evidence 缺失或被截断时 v
 输出被截断、harness summary 不完整、或完全没有完整 summary；这些诊断不会放松 fail-closed
 的 test-count 证明要求。
 
+对于日常的精确路径提交，优先使用受控的 `git_commit_paths`：传入当前精确 40 位
+`expected_head`、明确的变更文件路径和 commit message。它会拒绝已有 staged state、冲突、
+过期 HEAD、目录、敏感路径以及没有变化的目标文件，并且永远不会 push。staging 使用隔离的
+临时 index，因此正常 Git clean filter 仍可能执行，所以该工具同时要求 `project:write` 与
+`job:run`。最终提交通过 exact-tree `commit-tree` 与原子的 `update-ref` HEAD fence 完成；为了
+保证 hook 不能偷偷加入无关文件，普通 commit hook 会被有意绕过。如果 dispatch 结果不确定，
+必须先重新观察 HEAD/status，不能盲目重试提交。
+
 **在执行前声明非默认结果。** 支持该契约的执行与 structured-validation 工具接受
 `result_expectation`：省略（或 `success`）保持默认的 fail-closed 成功要求；`failure` 用于
 负向测试，只有已完成且结果已知的业务失败才算命中预期；`observe` 用于只观察结果的探测，

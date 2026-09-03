@@ -130,6 +130,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
 
     for name in [
         "workspace_checkpoint_create",
+        "git_commit_paths",
         "artifact_upload_begin",
         "artifact_upload_chunk",
         "computer_save_snapshot",
@@ -162,6 +163,16 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
     assert_eq!(
         spec_named(&specs, "coding_agent_cancel").annotations["readOnlyHint"],
         false
+    );
+
+    let commit = lookup_tool_metadata("git_commit_paths").unwrap();
+    assert_eq!(commit.effect, ToolEffect::Mutate);
+    assert_eq!(commit.risk, ToolRisk::ProjectWrite);
+    assert_eq!(commit.approval, ToolApprovalPolicy::Standard);
+    assert_eq!(commit.idempotency, ToolIdempotency::NonIdempotent);
+    assert_eq!(
+        commit.authority,
+        ToolAuthorityPolicy::RequireAll(&[PROJECT_WRITE, JOB_RUN])
     );
     assert_eq!(
         spec_named(&specs, "coding_agent_cancel").annotations["idempotentHint"],

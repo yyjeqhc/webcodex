@@ -2,15 +2,17 @@ use super::RunnerCapabilityRequirement::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, change_summary_like, context_recovery_only, def, git_like, model_spec,
-    ToolDefinition, TOOL_CATEGORY_GIT,
+    require_all_scopes, ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_RUNNER,
+    ToolPathHint::{None as NoPath, PathList},
+    ToolRisk::{ProjectWrite, Read},
+    JOB_RUN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
-    git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
-    git_log_input_schema, git_review_summary_input_schema, git_status_input_schema,
-    show_changes_input_schema,
+    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
+    git_diff_summary_input_schema, git_log_input_schema, git_review_summary_input_schema,
+    git_status_input_schema, show_changes_input_schema,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
@@ -89,6 +91,28 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
 ];
 
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
+    require_all_scopes(git_like(model_spec(
+        def(
+            "git_commit_paths",
+            ModelVisible,
+            TOOL_CATEGORY_GIT,
+            Some(GitOrShell),
+            TOOL_PROVIDER_RUNNER,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Mutate,
+                risk: ProjectWrite,
+                approval: super::ToolApprovalPolicy::Standard,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(PROJECT_WRITE),
+            true,
+            PathList,
+            false,
+            false,
+        ),
+        "Commit exactly requested changed file paths with an atomic expected_head fence and isolated temporary index; normal Git clean filters may run under job:run authority, ordinary commit hooks are bypassed so they cannot add unrelated paths, and the tool never pushes.",
+        git_commit_paths_input_schema,
+    )), &[PROJECT_WRITE, JOB_RUN]),
     context_recovery_only(git_like(model_spec(
         def(
             "git_status",

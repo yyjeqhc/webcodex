@@ -724,6 +724,16 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Commit exactly requested changed paths behind an exact HEAD fence.
+    GitCommitPaths {
+        project: String,
+        expected_head: String,
+        paths: Vec<String>,
+        message: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Run `git status` on a project.
     GitStatus {
         project: String,
@@ -2493,6 +2503,7 @@ impl ToolCall {
             Self::DeleteProjectFiles { .. } => "delete_project_files",
             Self::GitRestorePaths { .. } => "git_restore_paths",
             Self::DiscardUntracked { .. } => "discard_untracked",
+            Self::GitCommitPaths { .. } => "git_commit_paths",
             Self::GitStatus { .. } => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
@@ -2615,6 +2626,7 @@ impl ToolCall {
             | Self::DeleteProjectFiles { session_id, .. }
             | Self::GitRestorePaths { session_id, .. }
             | Self::DiscardUntracked { session_id, .. }
+            | Self::GitCommitPaths { session_id, .. }
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
@@ -2748,6 +2760,7 @@ impl ToolCall {
             | Self::DeleteProjectFiles { project, .. }
             | Self::GitRestorePaths { project, .. }
             | Self::DiscardUntracked { project, .. }
+            | Self::GitCommitPaths { project, .. }
             | Self::GitStatus { project, .. }
             | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }

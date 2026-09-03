@@ -2020,6 +2020,7 @@ impl ToolRuntime {
 
             call @ (ToolCall::GitRestorePaths { .. }
             | ToolCall::DiscardUntracked { .. }
+            | ToolCall::GitCommitPaths { .. }
             | ToolCall::GitStatus { .. }
             | ToolCall::GitDiff { .. }
             | ToolCall::GitDiffHunks { .. }

@@ -2,13 +2,11 @@ use super::*;
 
 #[test]
 fn tool_specs_annotations_are_canonical_semantic_projections() {
-    use crate::tool_runtime::metadata::{
-        ToolApprovalPolicy, ToolEffect, ToolIdempotency, ToolRisk,
-    };
+    use crate::metadata::{ToolApprovalPolicy, ToolEffect, ToolIdempotency, ToolRisk};
 
     let specs = registered_tool_specs();
     for spec in &specs {
-        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(&spec.name)
+        let metadata = lookup_tool_metadata(&spec.name)
             .unwrap_or_else(|| panic!("{} missing metadata", spec.name));
         let annotations = spec
             .annotations
@@ -75,7 +73,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         ),
     ];
     for (name, effect, idempotency) in cases {
-        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+        let metadata = lookup_tool_metadata(name).unwrap();
         assert_eq!(metadata.effect, effect, "{name}");
         assert_eq!(metadata.idempotency, idempotency, "{name}");
         let annotations = &spec_named(&specs, name).annotations;
@@ -121,7 +119,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "complete_session_message",
         "cargo_fmt",
     ] {
-        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+        let metadata = lookup_tool_metadata(name).unwrap();
         assert!(metadata.destructive, "{name}");
         assert_eq!(
             spec_named(&specs, name).annotations["destructiveHint"],
@@ -142,7 +140,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "work_on_project",
         "cargo_check",
     ] {
-        let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+        let metadata = lookup_tool_metadata(name).unwrap();
         assert!(!metadata.destructive, "{name}");
         assert_eq!(
             spec_named(&specs, name).annotations["destructiveHint"],
@@ -151,15 +149,12 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         );
     }
 
-    let close = crate::tool_runtime::metadata::lookup_tool_metadata("close_session").unwrap();
+    let close = lookup_tool_metadata("close_session").unwrap();
     assert_eq!(close.approval, ToolApprovalPolicy::None);
     assert_eq!(close.risk, ToolRisk::SessionCollaborate);
-    assert!(
-        !crate::tool_runtime::tool_definition::runtime_tool_requires_permission("close_session")
-    );
+    assert!(!runtime_tool_requires_permission("close_session"));
 
-    let cancel =
-        crate::tool_runtime::metadata::lookup_tool_metadata("coding_agent_cancel").unwrap();
+    let cancel = lookup_tool_metadata("coding_agent_cancel").unwrap();
     assert_eq!(cancel.effect, ToolEffect::Mutate);
     assert_eq!(cancel.risk, ToolRisk::RunControl);
     assert_eq!(cancel.approval, ToolApprovalPolicy::InheritFromStart);
@@ -172,11 +167,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         spec_named(&specs, "coding_agent_cancel").annotations["idempotentHint"],
         true
     );
-    assert!(
-        !crate::tool_runtime::tool_definition::runtime_tool_requires_permission(
-            "coding_agent_cancel"
-        )
-    );
+    assert!(!runtime_tool_requires_permission("coding_agent_cancel"));
 
     assert_eq!(
         spec_named(&specs, "run_shell").annotations["openWorldHint"],

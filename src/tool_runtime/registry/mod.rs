@@ -14,6 +14,4 @@ pub(crate) use webcodex_tool_contracts::registry::{
 };
 
 #[cfg(test)]
-pub(crate) use webcodex_tool_contracts::registry::{
-    coding_workflow_diagnostic_output_schema_for_test, ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER,
-};
+pub(crate) use webcodex_tool_contracts::registry::coding_workflow_diagnostic_output_schema_for_test;

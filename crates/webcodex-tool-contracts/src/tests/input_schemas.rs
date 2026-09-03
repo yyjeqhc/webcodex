@@ -1,0 +1,409 @@
+use super::*;
+use webcodex_core::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES;
+
+macro_rules! assert_schema_fields {
+    (
+        $properties:expr,
+        $context:expr,
+        present: [$($present:expr),* $(,)?]
+        $(, absent: [$($absent:expr),* $(,)?])?
+        $(,)?
+    ) => {{
+        let properties = $properties;
+        let context = $context;
+        $(
+            assert!(
+                properties.contains_key($present),
+                "{context}: missing schema field {}",
+                $present
+            );
+        )*
+        $(
+            $(
+                assert!(
+                    !properties.contains_key($absent),
+                    "{context}: unexpected schema field {}",
+                    $absent
+                );
+            )*
+        )?
+    }};
+}
+
+#[test]
+fn tool_specs_names_are_unique() {
+    let specs = registered_tool_specs();
+    let mut names = specs
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    let mut deduped = names.clone();
+    deduped.dedup();
+    assert_eq!(names, deduped, "tool names must be unique");
+}
+
+#[test]
+fn tool_specs_names_are_snake_case() {
+    for spec in registered_tool_specs() {
+        assert!(!spec.name.contains('-'));
+        assert!(
+            spec.name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+            "tool '{}' should be snake_case",
+            spec.name
+        );
+    }
+}
+
+#[test]
+fn tool_specs_derive_contract_fields_from_name() {
+    for spec in registered_tool_specs() {
+        assert_eq!(
+            spec.output_schema,
+            output_schema_for_tool(&spec.name),
+            "{}",
+            spec.name
+        );
+        assert_eq!(
+            spec.annotations,
+            tool_annotations(&spec.name),
+            "{}",
+            spec.name
+        );
+    }
+}
+
+#[test]
+fn tool_specs_input_schemas_are_objects() {
+    for spec in registered_tool_specs() {
+        let schema = &spec.input_schema;
+        assert!(schema.is_object(), "{}", spec.name);
+        assert_eq!(schema["type"].as_str(), Some("object"), "{}", spec.name);
+        assert!(schema["properties"].is_object(), "{}", spec.name);
+        assert!(schema["required"].is_array(), "{}", spec.name);
+        assert_eq!(schema["additionalProperties"], false, "{}", spec.name);
+    }
+}
+
+#[test]
+fn search_project_text_schema_declares_bounded_advanced_inputs() {
+    let specs = registered_tool_specs();
+    let search = spec_named(&specs, "search_project_text");
+    let properties = search.input_schema["properties"].as_object().unwrap();
+
+    assert_schema_fields!(
+        properties,
+        "search_project_text input schema",
+        present: ["include_globs", "exclude_globs", "result_mode", "timeout_secs"]
+    );
+    for field in ["include_globs", "exclude_globs"] {
+        assert_eq!(properties[field]["type"], "array");
+        assert_eq!(properties[field]["maxItems"], 32);
+        assert_eq!(properties[field]["items"]["type"], "string");
+        assert_eq!(properties[field]["items"]["minLength"], 1);
+        assert_eq!(properties[field]["items"]["maxLength"], 256);
+    }
+    assert!(properties["timeout_secs"].get("minimum").is_none());
+    assert!(properties["timeout_secs"].get("maximum").is_none());
+    assert_eq!(properties["timeout_secs"]["type"], "integer");
+    assert_eq!(properties["timeout_secs"]["default"], 30);
+    assert!(properties["timeout_secs"]["description"]
+        .as_str()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .contains("clamp"));
+    assert_eq!(
+        properties["result_mode"]["enum"],
+        json!(["matches", "files_with_matches", "count"])
+    );
+}
+
+#[test]
+fn sync_validation_and_run_shell_timeout_schema_bounds() {
+    let specs = registered_tool_specs();
+    for (name, default) in [("cargo_check", 600), ("cargo_test", 1800)] {
+        let spec = spec_named(&specs, name);
+        let timeout = &spec.input_schema["properties"]["timeout_secs"];
+        assert_eq!(timeout["type"], "integer", "{name}");
+        assert_eq!(timeout["minimum"], 1, "{name}");
+        assert_eq!(timeout["maximum"], 3600, "{name}");
+        assert_eq!(timeout["default"], default, "{name}");
+        let desc = timeout["description"].as_str().unwrap_or("");
+        assert!(desc.contains("3600") && desc.to_ascii_lowercase().contains("job"));
+    }
+    let cargo_fmt = spec_named(&specs, "cargo_fmt");
+    let timeout = &cargo_fmt.input_schema["properties"]["timeout_secs"];
+    assert_eq!(timeout["type"], "integer");
+    assert_eq!(timeout["minimum"], 1);
+    assert_eq!(timeout["maximum"], 3600);
+    assert_eq!(timeout["default"], 120);
+    assert_eq!(
+        cargo_fmt.input_schema["allOf"][0]["then"]["properties"]["timeout_secs"]["maximum"],
+        3600
+    );
+    assert_eq!(
+        cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["timeout_secs"]["maximum"],
+        120
+    );
+
+    let run_shell = spec_named(&specs, "run_shell");
+    let timeout = &run_shell.input_schema["properties"]["timeout_secs"];
+    assert_eq!(timeout["type"], "integer");
+    assert_eq!(timeout["minimum"], 1);
+    assert_eq!(timeout["maximum"], 120);
+    assert_eq!(timeout["default"], 60);
+
+    let search = spec_named(&specs, "search_project_text");
+    assert!(search.input_schema["properties"]["timeout_secs"]
+        .get("maximum")
+        .is_none());
+}
+
+#[test]
+fn raw_shell_tools_expose_the_shared_authored_command_bound() {
+    let specs = registered_tool_specs();
+    for name in ["run_shell", "run_job", "session_shell_exec"] {
+        let spec = spec_named(&specs, name);
+        let command = &spec.input_schema["properties"]["command"];
+        assert_eq!(command["maxLength"], RAW_SHELL_COMMAND_MAX_BYTES, "{name}");
+        let description = command["description"].as_str().unwrap_or_default();
+        assert!(description.contains("16000") || description.contains("16,000"));
+    }
+}
+
+#[test]
+fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "run_process");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert_eq!(
+        spec.input_schema["required"],
+        json!(["project", "executable"])
+    );
+    assert_schema_fields!(
+        properties,
+        "run_process input schema",
+        present: ["project", "executable", "args", "cwd", "stdin", "timeout_secs", "purpose", "session_id"],
+        absent: ["shell", "env", "environment"]
+    );
+    assert_eq!(properties["executable"]["minLength"], 1);
+    assert_eq!(properties["executable"]["maxLength"], 1024);
+    assert_eq!(properties["args"]["type"], "array");
+    assert_eq!(properties["args"]["maxItems"], 256);
+    assert_eq!(properties["args"]["items"]["type"], "string");
+    assert_eq!(properties["args"]["items"]["maxLength"], 8192);
+    assert_eq!(properties["args"]["default"], json!([]));
+    assert_eq!(
+        properties["stdin"]["anyOf"],
+        json!([{"type": "string", "maxLength": 65_536}, {"type": "null"}])
+    );
+    assert_eq!(properties["cwd"]["maxLength"], 1024);
+    assert_eq!(properties["timeout_secs"]["minimum"], 1);
+    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
+    assert_eq!(properties["timeout_secs"]["default"], 60);
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+}
+
+#[test]
+fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "run_script");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert_eq!(
+        spec.input_schema["required"],
+        json!(["project", "language", "script"])
+    );
+    assert_schema_fields!(
+        properties,
+        "run_script input schema",
+        present: ["project", "language", "script", "args", "stdin", "cwd", "timeout_secs", "purpose", "session_id"],
+        absent: ["command", "executable", "interpreter", "interpreter_path", "interpreter_args", "shell", "env", "environment", "temp_file", "profile", "pty", "allow_cross_project_session"]
+    );
+    assert_eq!(
+        properties["language"]["enum"],
+        json!(["sh", "bash", "powershell"])
+    );
+    assert_eq!(properties["script"]["minLength"], 1);
+    assert_eq!(properties["script"]["maxLength"], 512 * 1024);
+    assert_eq!(properties["args"]["type"], "array");
+    assert_eq!(properties["args"]["maxItems"], 256);
+    assert_eq!(properties["args"]["items"]["type"], "string");
+    assert_eq!(properties["args"]["items"]["maxLength"], 8192);
+    assert_eq!(properties["args"]["default"], json!([]));
+    assert_eq!(
+        properties["stdin"]["anyOf"],
+        json!([{"type": "string", "maxLength": 65_536}, {"type": "null"}])
+    );
+    assert_eq!(properties["cwd"]["maxLength"], 1024);
+    assert_eq!(properties["timeout_secs"]["minimum"], 1);
+    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
+    assert_eq!(properties["timeout_secs"]["default"], 60);
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+}
+
+#[test]
+fn cargo_fmt_conditional_timeout_schema_matches_contract() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "cargo_fmt").input_schema;
+    let validates = |value: &Value| test_support::validate_schema_instance(value, schema).is_ok();
+
+    assert!(validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3601})
+    ));
+    assert!(validates(
+        &json!({"project": "demo", "check": false, "timeout_secs": 120})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": false, "timeout_secs": 121})
+    ));
+    assert!(!validates(&json!({"project": "demo", "timeout_secs": 121})));
+    assert!(validates(
+        &json!({"project": "demo", "check": true, "result_expectation": "failure"})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": false, "result_expectation": "failure"})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "result_expectation": "observe"})
+    ));
+}
+
+#[test]
+fn tool_specs_required_fields_match_declared_properties() {
+    for spec in registered_tool_specs() {
+        let properties = spec.input_schema["properties"].as_object().unwrap();
+        let required = spec.input_schema["required"].as_array().unwrap();
+        for field in required {
+            let field = field.as_str().unwrap();
+            assert!(properties.contains_key(field), "{}: {field}", spec.name);
+        }
+    }
+}
+
+#[test]
+fn tool_specs_output_schemas_are_objects() {
+    for spec in registered_tool_specs() {
+        let schema = &spec.output_schema;
+        assert_eq!(schema["type"].as_str(), Some("object"), "{}", spec.name);
+        assert!(schema["properties"].is_object(), "{}", spec.name);
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|value| value == "success")),
+            "{} output schema must require success",
+            spec.name
+        );
+    }
+}
+
+#[test]
+fn tool_specs_optional_fields_are_not_required() {
+    let specs = registered_tool_specs();
+    let run_shell = spec_named(&specs, "run_shell");
+    let required = required_fields(run_shell);
+    assert!(required.contains(&"project".to_string()));
+    assert!(required.contains(&"command".to_string()));
+    assert!(!required.contains(&"timeout_secs".to_string()));
+    assert!(!required.contains(&"cwd".to_string()));
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["minimum"],
+        1
+    );
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["maximum"],
+        120
+    );
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["default"],
+        60
+    );
+
+    let read_file = spec_named(&specs, "read_file");
+    let required = required_fields(read_file);
+    assert!(required.contains(&"project".to_string()));
+    assert!(required.contains(&"path".to_string()));
+    assert!(!required.contains(&"with_line_numbers".to_string()));
+
+    let read_files = spec_named(&specs, "read_files");
+    let required = required_fields(read_files);
+    assert!(required.contains(&"project".to_string()));
+    assert!(required.contains(&"items".to_string()));
+    assert!(!required.contains(&"with_line_numbers".to_string()));
+
+    let search = spec_named(&specs, "search_project_text");
+    let required = required_fields(search);
+    assert!(required.contains(&"project".to_string()));
+    assert!(required.contains(&"pattern".to_string()));
+    assert!(!required.contains(&"context_before".to_string()));
+    assert!(!required.contains(&"context_after".to_string()));
+}
+
+#[test]
+fn tool_specs_covers_expected_tool_set() {
+    let names = registered_tool_names();
+    for expected in [
+        "list_tools",
+        "list_projects",
+        "list_agents",
+        "runtime_status",
+        "create_agent_task",
+        "list_agent_tasks",
+        "read_agent_task",
+        "assign_agent_task",
+        "start_agent_task_attempt",
+        "start_agent_task_coding_run",
+        "reconcile_agent_task_coding_run",
+        "heartbeat_agent_task_attempt",
+        "complete_agent_task_attempt",
+        "run_process",
+        "run_script",
+        "run_shell",
+        "run_job",
+        "stop_job",
+        "job_status",
+        "job_log",
+        "read_file",
+        "read_files",
+        "git_status",
+        "git_diff",
+        "git_diff_summary",
+        "git_diff_hunks",
+        "git_log",
+        "show_changes",
+        "workspace_hygiene_check",
+        "workspace_checkpoint_create",
+        "workspace_checkpoint_list",
+        "workspace_checkpoint_show",
+        "workspace_checkpoint_restore",
+        "workspace_checkpoint_delete",
+        "apply_patch",
+        "apply_unified_diff",
+        "delete_project_files",
+        "git_restore_paths",
+        "discard_untracked",
+        "project_overview",
+        "list_project_tracked_files",
+        "search_project_text",
+        "list_jobs",
+        "write_project_file",
+        "save_project_artifact",
+        "read_project_artifact_metadata",
+        "read_project_artifact",
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+        "register_project",
+        "create_project",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "missing {expected}"
+        );
+    }
+}

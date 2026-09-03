@@ -56,92 +56,6 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 }
 
 #[test]
-fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
-    use crate::tool_runtime::metadata::lookup_tool_metadata;
-    use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, runtime_tool_agent_capability, runtime_tool_approval_policy,
-        runtime_tool_category, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-        runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
-        runtime_tool_requires_permission, runtime_tool_session_risk_class, tool_definitions,
-    };
-
-    for definition in tool_definitions() {
-        assert_eq!(
-            lookup_tool_definition(definition.name).map(|definition| definition.name),
-            Some(definition.name),
-            "{} must resolve through ToolDefinition before any policy fallback",
-            definition.name
-        );
-        assert_eq!(
-            lookup_tool_metadata(definition.name).copied(),
-            Some(definition.metadata()),
-            "{} lookup_tool_metadata must return ToolDefinition metadata",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_metadata(definition.name),
-            definition.metadata(),
-            "{} metadata policy helper must read the ToolDefinition metadata",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_session_risk_class(definition.name),
-            definition.session_risk_class(),
-            "{} session risk helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_is_read_like(definition.name),
-            definition.is_read_like(),
-            "{} read-like helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_is_write_like(definition.name),
-            definition.is_write_like(),
-            "{} write-like helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_is_shell_like(definition.name),
-            definition.is_shell_like(),
-            "{} shell-like helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_category(definition.name),
-            definition.category,
-            "{} category helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_requires_permission(definition.name),
-            definition.requires_permission(),
-            "{} permission helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_approval_policy(definition.name),
-            definition.metadata().approval,
-            "{} approval helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_permission_risk(definition.name),
-            definition.permission_risk(),
-            "{} permission risk helper must match ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_agent_capability(definition.name),
-            definition.agent_capability,
-            "{} agent capability helper must match ToolDefinition",
-            definition.name
-        );
-    }
-}
-
-#[test]
 fn tool_definition_metadata_fallback_facade_is_unknown_only() {
     use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
     use crate::tool_runtime::tool_definition::{
@@ -189,13 +103,6 @@ fn tool_definition_metadata_fallback_facade_is_unknown_only() {
         assert!(ToolCall::from_tool_name(name, json!({})).is_err(), "{name}");
         assert_model_facing_surfaces_do_not_list_name(name);
         assert_agent_capability_lookup_rejects_non_runtime_name(name);
-    }
-}
-
-#[test]
-fn tool_metadata_has_no_non_runtime_entries() {
-    for metadata in crate::tool_runtime::metadata::iter_tool_metadata() {
-        assert!(is_known_tool_name(metadata.name), "{}", metadata.name);
     }
 }
 

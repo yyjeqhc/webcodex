@@ -149,7 +149,7 @@ pub(crate) use registry::{
 pub(crate) use session_context::{add_session_hint, unknown_session_result};
 pub(crate) use session_shell::SessionShellRegistry;
 #[cfg(test)]
-pub(crate) use surface::{recommended_flows, registered_tool_categories};
+pub(crate) use surface::registered_tool_categories;
 
 pub(crate) fn tool_disabled_result(tool_name: &str, message: &'static str) -> ToolResult {
     let error_kind = format!("{tool_name}_disabled");

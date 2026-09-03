@@ -29,18 +29,15 @@ macro_rules! assert_schema_fields {
     }};
 }
 
-mod annotations;
 mod artifacts;
 mod consistency;
 mod definitions;
-mod descriptions;
 mod discovery;
 mod edits;
 mod flattened_args;
 mod migration;
 mod outputs;
 mod policy;
-mod sessions;
 mod specs;
 mod spot_checks;
 

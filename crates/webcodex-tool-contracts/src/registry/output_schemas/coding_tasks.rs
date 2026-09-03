@@ -417,6 +417,8 @@ fn startup_workflow_schema() -> Value {
                     "session_message_ack": {"type": "string", "maxLength": 720},
                     "session_message_resolution": {"type": "string", "maxLength": 480},
                     "context_sidecar": {"type": "string", "maxLength": 320},
+                    "runner_targeting": {"type": "string", "maxLength": 320},
+                    "persistent_shell": {"type": "string", "maxLength": 320},
                     "normal_closeout": {"type": "string", "maxLength": 480}
                 },
                 "required": [
@@ -425,6 +427,8 @@ fn startup_workflow_schema() -> Value {
                     "session_message_ack",
                     "session_message_resolution",
                     "context_sidecar",
+                    "runner_targeting",
+                    "persistent_shell",
                     "normal_closeout"
                 ],
                 "additionalProperties": false

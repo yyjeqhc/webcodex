@@ -275,10 +275,12 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
 pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "discovery",
-        summary: "Discovery: use search_project_text for bounded code search after list_projects/project_overview. Prefer run_process for native argv and run_script for typed scripts; run_shell with rg or git grep remains the diagnostic escape hatch.",
+        summary: "Discovery: if the user gives an exact Runner client_id, query runtime_status/list_projects for that Runner before treating it as absent from a fleet snapshot. Otherwise use bounded runtime/project discovery, then structured search; run_shell remains the diagnostic escape hatch.",
         manifest_purpose:
-            "Resolve the project, inspect bounded structure, then search code with search_project_text or search_project_texts.",
+            "Prefer exact Runner lookup when client_id is known; otherwise resolve bounded runtime/project context, inspect structure, then search code.",
         tools: &[
+            "runtime_status",
+            "list_agents",
             "list_projects",
             "project_overview",
             "read_file",
@@ -288,6 +290,19 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "run_process",
             "run_script",
             "run_shell",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "persistent_shell",
+        summary: "Persistent shell: for repeated commands in one Workflow Session, especially on a named SSH resource, open_session_shell once and reuse session_shell_exec. Keep run_process for isolated one-shot native commands; inspect status or close the shell when needed.",
+        manifest_purpose:
+            "Reuse one bounded Session shell for repeated local or named-SSH commands while keeping run_process for isolated one-shot native execution.",
+        tools: &[
+            "open_session_shell",
+            "session_shell_exec",
+            "session_shell_status",
+            "close_session_shell",
+            "run_process",
         ],
     },
     ToolRecommendedFlow {

@@ -47,5 +47,5 @@ pub const RECOVERY_TOOL_VALUES: [&str; 7] = [
 ];
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 5;
+pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 6;
 pub const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;

@@ -217,8 +217,11 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     }
     let joined_flows = flows.join("\n").to_lowercase();
     for phrase in [
-        "use search_project_text for bounded code search",
-        "run_shell with rg or git grep remains the diagnostic escape hatch",
+        "if the user gives an exact runner client_id",
+        "runtime_status/list_projects for that runner",
+        "persistent shell: for repeated commands in one workflow session",
+        "especially on a named ssh resource",
+        "keep run_process for isolated one-shot native commands",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
         "edit: prefer apply_patch for model-generated contextual",
@@ -237,6 +240,36 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             "recommended flows should mention {phrase}"
         );
     }
+}
+
+#[test]
+fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
+    let discovery = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "discovery")
+        .expect("discovery recommended flow");
+    for tool in ["runtime_status", "list_agents", "list_projects"] {
+        assert!(discovery.tools.contains(&tool), "discovery: {tool}");
+    }
+    assert!(discovery.summary.contains("exact Runner client_id"));
+    assert!(discovery.summary.contains("before treating it as absent"));
+
+    let persistent = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "persistent_shell")
+        .expect("persistent shell recommended flow");
+    assert_eq!(
+        persistent.tools.first().copied(),
+        Some("open_session_shell")
+    );
+    assert_eq!(persistent.tools.get(1).copied(), Some("session_shell_exec"));
+    assert!(persistent.tools.contains(&"session_shell_status"));
+    assert!(persistent.tools.contains(&"close_session_shell"));
+    assert!(persistent.tools.contains(&"run_process"));
+    assert!(persistent.summary.contains("named SSH resource"));
+    assert!(persistent
+        .summary
+        .contains("isolated one-shot native commands"));
 }
 
 #[test]

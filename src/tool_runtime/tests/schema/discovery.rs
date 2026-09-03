@@ -1332,6 +1332,32 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
 }
 
 #[tokio::test]
+async fn tool_manifest_exact_persistent_shell_tool_surfaces_its_reuse_flow() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("open_session_shell".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let flows = result.output["recommended_flows"]
+        .as_array()
+        .expect("exact persistent-shell recommended flows");
+    let flow = flows
+        .iter()
+        .find(|flow| flow["name"] == "persistent_shell")
+        .expect("persistent_shell flow");
+    assert!(flow["purpose"]
+        .as_str()
+        .is_some_and(|purpose| purpose.contains("repeated local or named-SSH commands")));
+    assert_eq!(flow["tools"], json!(["open_session_shell"]));
+}
+
+#[tokio::test]
 async fn tool_manifest_projects_canonical_semantic_contracts() {
     let runtime = test_runtime();
     for (tool_name, effect, risk, approval, idempotency, read_only) in [

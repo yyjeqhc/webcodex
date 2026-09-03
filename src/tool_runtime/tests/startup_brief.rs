@@ -110,7 +110,7 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 5);
+    assert_eq!(workflow["version"], 6);
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -161,6 +161,21 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(sidecar_guidance.contains("after the main tool"));
     assert!(sidecar_guidance.contains("never authorizes"));
     assert!(sidecar_guidance.contains("observation call before dependent mutation"));
+    let runner_targeting_guidance = workflow["model_protocol"]["runner_targeting"]
+        .as_str()
+        .expect("exact Runner targeting guidance");
+    assert!(runner_targeting_guidance.contains("exact Runner client_id"));
+    assert!(runner_targeting_guidance.contains("runtime_status(client_id=...)"));
+    assert!(runner_targeting_guidance.contains("list_projects(client_id=...)"));
+    assert!(runner_targeting_guidance.contains("before treating it as absent"));
+    let persistent_shell_guidance = workflow["model_protocol"]["persistent_shell"]
+        .as_str()
+        .expect("persistent shell guidance");
+    assert!(persistent_shell_guidance.contains("repeated commands in one Workflow Session"));
+    assert!(persistent_shell_guidance.contains("named SSH resource"));
+    assert!(persistent_shell_guidance.contains("open_session_shell"));
+    assert!(persistent_shell_guidance.contains("session_shell_exec"));
+    assert!(persistent_shell_guidance.contains("run_process"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

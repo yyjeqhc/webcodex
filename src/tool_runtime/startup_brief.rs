@@ -62,6 +62,8 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "session_message_ack": "When session_attention has open requires_ack guidance still in context, echo its id in ack_session_message_ids. This request-scoped model-context proof neither resolves messages nor grants authority or gates execution.",
             "session_message_resolution": "Resolve a handled non-todo by attaching session_message_resolution to the next ordinary call with recording_session_id; ACK-required guidance also needs ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",
             "context_sidecar": "context_request adds bounded context after the main tool and never authorizes its effect. Recover lost project.instructions on an observation call before dependent mutation.",
+            "runner_targeting": "When the user supplies an exact Runner client_id, query that Runner with runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent from a broad fleet snapshot.",
+            "persistent_shell": "For repeated commands in one Workflow Session, especially on a named SSH resource, prefer open_session_shell plus session_shell_exec. Keep run_process for isolated one-shot native commands.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
         },
         "roles": {

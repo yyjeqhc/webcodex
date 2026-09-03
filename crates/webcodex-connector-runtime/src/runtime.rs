@@ -1874,10 +1874,10 @@ impl ConnectorRuntime {
                     return ConnectorCallOutcome::error_for_task(
                         409,
                         "structured_validation_unavailable",
-                        "the selected local Agent does not support structured validation jobs",
+                        "the selected local Runner does not support structured validation jobs",
                         false,
                         true,
-                        Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
+                        Some("Upgrade and reconnect the WebCodex Runner, then retry checks_run."),
                         &task,
                         json!({
                             "required_capability":
@@ -1902,10 +1902,10 @@ impl ConnectorRuntime {
                         return ConnectorCallOutcome::error_for_task(
                             409,
                             "structured_go_test_json_unavailable",
-                            "the selected local Agent does not support machine-readable Go test validation",
+                            "the selected local Runner does not support machine-readable Go test validation",
                             false,
                             true,
-                            Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
+                            Some("Upgrade and reconnect the WebCodex Runner, then retry checks_run."),
                             &task,
                             json!({
                                 "required_capability":

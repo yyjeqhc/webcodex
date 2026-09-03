@@ -84,14 +84,9 @@ jobs:
             packages: "-p webcodex-runner"
           - shard: workspace-crates
             packages: >-
-              -p webcodex-admin
-              -p webcodex-computer
-              -p webcodex-runner-config
-              -p webcodex-core
-              -p webcodex-cli
-              -p webcodex-persistent-shell
-              -p webcodex-workspace
-              -p webcodex-process
+              --workspace
+              --exclude webcodex
+              --exclude webcodex-runner
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -352,5 +347,39 @@ jobs:
              [ "$PACKAGE_RESULT" != success ] || \
              [ "$ARM64_RESULT" != success ]; then
             echo "required Windows CI lane did not succeed" >&2
+            exit 1
+          fi
+
+  test-native:
+    needs: [contract, test-linux-arm64, test-macos, test-windows]
+    # Always publish one stable native-coverage result. Owner-authored PRs may
+    # still start cheaply, but skipped native lanes remain visibly unsatisfied
+    # until the PR opts into the heavy matrix with `run-ci`.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful native lanes
+        env:
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+          LINUX_ARM64_RESULT: ${{ needs.test-linux-arm64.result }}
+          MACOS_RESULT: ${{ needs.test-macos.result }}
+          WINDOWS_RESULT: ${{ needs.test-windows.result }}
+        run: |
+          echo "contract=$CONTRACT_RESULT linux_arm64=$LINUX_ARM64_RESULT macos=$MACOS_RESULT windows=$WINDOWS_RESULT"
+          if [ "$CONTRACT_RESULT" != success ]; then
+            echo "contract CI did not succeed" >&2
+            exit 1
+          fi
+          if [ "$LINUX_ARM64_RESULT" = skipped ] || \
+             [ "$MACOS_RESULT" = skipped ] || \
+             [ "$WINDOWS_RESULT" = skipped ]; then
+            echo "native CI was skipped; owner-authored PRs must add the run-ci label before merge" >&2
+            exit 1
+          fi
+          if [ "$LINUX_ARM64_RESULT" != success ] || \
+             [ "$MACOS_RESULT" != success ] || \
+             [ "$WINDOWS_RESULT" != success ]; then
+            echo "required native CI lane did not succeed" >&2
             exit 1
           fi

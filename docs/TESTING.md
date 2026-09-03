@@ -41,15 +41,23 @@ The lanes above define test semantics; workflows decide when to run them.
   Release readiness must not be the first place complete Linux package suites or
   release-tooling tests execute. The historical `test` job id remains the aggregate
   Linux status check and always evaluates `contract` plus both Linux lanes, failing
-  unless every required result is `success`. Native macOS and Windows lanes still
-  retain the existing main/external-PR/owner-`run-ci` policy so routine owner PRs do
-  not automatically consume the full cross-platform matrix. This is CI orchestration,
-  not a claim that the repository now has perfectly pure fast/integration/platform suites.
+  unless every required result is `success`. Native macOS and Windows lanes plus
+  Linux arm64 retain the existing main/external-PR/owner-`run-ci` policy so routine
+  owner PRs do not automatically consume the full cross-platform matrix. The
+  always-evaluated `test-native` aggregate fails when those native lanes are skipped
+  instead of treating missing platform evidence as success; it provides one stable
+  check for branch protection once an owner PR opts into `run-ci`. This is CI
+  orchestration, not a claim that the repository now has perfectly pure
+  fast/integration/platform suites.
 - Linux Rust execution is package-sharded without test-name filters: the server
   package `webcodex`, the integration-rich Runner package `webcodex-runner`, and
   the remaining workspace crates run as three complete package groups in
-  parallel. Each workspace package appears in exactly one group, so sharding is
-  an execution optimization rather than a semantic coverage reduction. Package
+  parallel. The remainder shard uses the workspace selector
+  `--workspace --exclude webcodex --exclude webcodex-runner`, so newly added
+  workspace members enter CI automatically rather than depending on a
+  hand-maintained package list. Each
+  workspace package therefore executes in exactly one Linux Rust group; sharding
+  is an execution optimization rather than a semantic coverage reduction. Package
   boundaries do not imply that every test inside a shard has the same cost or
   integration characteristics.
 - Linux tooling runs in parallel with the Rust shards and retains

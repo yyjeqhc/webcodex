@@ -2,7 +2,10 @@ use crate::auth::{
     AuthContext, AuthKind, ProjectCredentialVerifier, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
+use crate::Database;
+use serde_json::json;
 use std::path::Path;
+use std::sync::Arc;
 
 pub(crate) const PROJECT_GRANT_ID: &str = "wc_pgrant_1111111111111111";
 const PROJECT_CREDENTIAL: &str =
@@ -67,4 +70,50 @@ pub(crate) fn init_repo(project: &Path) {
         "-qm",
         "initial",
     ]);
+}
+
+#[tokio::test]
+async fn root_wrapper_preserves_unknown_capability_before_authentication() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    init_repo(&project);
+    let state = temp.path().join("state");
+    let tools = Arc::new(crate::tool_runtime::ToolRuntime::new_for_tests_with_shell_clients(
+        Arc::new(crate::shell_client::ShellClientRegistry::default()),
+    ));
+    let runtime = super::ConnectorRuntime::new(
+        tools,
+        Arc::new(Database::open(&temp.path().join("connector.db")).unwrap()),
+        super::ConnectorContext {
+            project_id: "wc_proj_1234567890".into(),
+            project_name: "project".into(),
+            workspace_id: "wc_ws_1234567890".into(),
+            executor_project: "agent:hosted:project".into(),
+            executor_root: project.to_string_lossy().into_owned(),
+            runs_root: state.join("runs").to_string_lossy().into_owned(),
+            results_root: state.join("results").to_string_lossy().into_owned(),
+            project_registry_dir: state
+                .join("agent/project-registry")
+                .to_string_lossy()
+                .into_owned(),
+            profile: "personal".into(),
+            project_grant_id: PROJECT_GRANT_ID.into(),
+        },
+        credential(),
+    )
+    .unwrap();
+
+    let outcome = runtime
+        .call_for_window(
+            "missing_capability",
+            json!({}),
+            None,
+            super::ConnectorTransport::Mcp,
+            None,
+        )
+        .await;
+
+    assert_eq!(outcome.http_status, 400);
+    assert!(outcome.protocol_error);
+    assert_eq!(outcome.body["error"]["code"], "unknown_capability");
 }

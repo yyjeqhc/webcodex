@@ -364,6 +364,17 @@ impl ConnectorRuntime {
         window: Option<&ClientWindow>,
         defer_execution_guidance: bool,
     ) -> ConnectorCallOutcome {
+        // Preserve the pre-extraction protocol boundary: capability admission
+        // happens before authentication. Delegate the error construction to
+        // the domain runtime so the root adapter does not duplicate its
+        // canonical capability list or error payload.
+        if webcodex_connector_runtime::surface::capability_spec(capability).is_none() {
+            return ConnectorCallOutcome::from_domain(
+                self.inner
+                    .call_for_window(capability, arguments, None, transport.domain(), None)
+                    .await,
+            );
+        }
         let Some(auth) = auth else {
             return ConnectorCallOutcome::error(
                 401,

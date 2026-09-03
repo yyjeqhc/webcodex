@@ -1027,7 +1027,36 @@ fn parse_search_matches_is_bounded_and_strips_dot_slash() {
     assert_eq!(matches[0]["preview"], "fn main() {}");
     assert_eq!(matches[0]["context_before"], json!([]));
     assert_eq!(matches[0]["context_after"], json!([]));
+    assert_eq!(
+        matches[0]["read_hint"],
+        json!({"path": "src/main.rs", "start_line": 1, "limit": 80})
+    );
     assert_eq!(matches[1]["path"], "src/lib.rs");
+    assert_eq!(
+        matches[1]["read_hint"],
+        json!({"path": "src/lib.rs", "start_line": 1, "limit": 80})
+    );
+}
+
+#[test]
+fn search_match_read_hint_is_deterministic_and_centers_later_matches() {
+    let stdout =
+        "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/lib.rs:42:needle\nsrc/lib.rs:120:later\n";
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(10),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+    let matches = result.output["matches"].as_array().unwrap();
+    assert_eq!(
+        matches[0]["read_hint"],
+        json!({"path": "src/lib.rs", "start_line": 22, "limit": 80})
+    );
+    assert_eq!(
+        matches[1]["read_hint"],
+        json!({"path": "src/lib.rs", "start_line": 100, "limit": 80})
+    );
 }
 
 #[test]

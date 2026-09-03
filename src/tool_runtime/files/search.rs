@@ -799,6 +799,24 @@ struct SearchContextLine {
     text: String,
 }
 
+const SEARCH_READ_HINT_CONTEXT_BEFORE: u64 = 20;
+const SEARCH_READ_HINT_LIMIT: u64 = 80;
+
+#[derive(Debug, Serialize)]
+struct SearchReadHint {
+    path: String,
+    start_line: u64,
+    limit: u64,
+}
+
+fn search_read_hint(path: &str, line: u64) -> SearchReadHint {
+    SearchReadHint {
+        path: path.to_string(),
+        start_line: line.saturating_sub(SEARCH_READ_HINT_CONTEXT_BEFORE).max(1),
+        limit: SEARCH_READ_HINT_LIMIT,
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct SearchMatch {
     path: String,
@@ -806,6 +824,7 @@ struct SearchMatch {
     preview: String,
     context_before: Vec<SearchContextLine>,
     context_after: Vec<SearchContextLine>,
+    read_hint: SearchReadHint,
 }
 
 #[derive(Debug, Serialize)]
@@ -1190,6 +1209,7 @@ fn search_matches_from_records(
             preview: record.text.clone(),
             context_before,
             context_after,
+            read_hint: search_read_hint(&record.path, record.line),
         });
     }
     (matches, truncated)

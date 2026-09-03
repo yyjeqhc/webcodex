@@ -615,7 +615,12 @@ mod tests {
                     "line": match_index + 1,
                     "preview": format!("m{match_index:03}-{}", "界".repeat(preview_bytes / 3)),
                     "context_before": [],
-                    "context_after": []
+                    "context_after": [],
+                    "read_hint": {
+                        "path": format!("src/{index}-{match_index:03}.rs"),
+                        "start_line": 1,
+                        "limit": 80
+                    }
                 })
             })
             .collect::<Vec<_>>();
@@ -712,7 +717,12 @@ mod tests {
                         "line": 1,
                         "preview": text,
                         "context_before": [],
-                        "context_after": []
+                        "context_after": [],
+                        "read_hint": {
+                            "path": format!("src/{index}.rs"),
+                            "start_line": 1,
+                            "limit": 80
+                        }
                     }],
                     "truncated": false,
                     "truncation_reason": null

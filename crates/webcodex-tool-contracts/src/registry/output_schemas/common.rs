@@ -231,9 +231,31 @@ pub fn search_context_line_schema() -> Value {
 
 pub fn search_match_schema() -> Value {
     let context_lines = array_schema(search_context_line_schema(), "Context lines.");
+    let read_hint = json!({
+        "type": "object",
+        "description": "Ready-to-use read_file/read_files item for bounded expansion around this match. Reuse the same project; this hint performs no read and contains no additional file content.",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Same trusted project-relative file path as the match."
+            },
+            "start_line": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Deterministic 1-based expansion start, up to 20 lines before the match."
+            },
+            "limit": {
+                "type": "integer",
+                "const": 80,
+                "description": "Deterministic bounded line count for read_file/read_files expansion."
+            }
+        },
+        "required": ["path", "start_line", "limit"],
+        "additionalProperties": false
+    });
     json!({
         "type": "object",
-        "description": "Search match with path, 1-based line, preview, and bounded context lines.",
+        "description": "Search match with path, 1-based line, preview, bounded context lines, and deterministic search-to-read continuation metadata.",
         "properties": {
             "path": {
                 "type": "string",
@@ -249,8 +271,9 @@ pub fn search_match_schema() -> Value {
             },
             "context_before": context_lines.clone(),
             "context_after": context_lines,
+            "read_hint": read_hint,
         },
-        "required": ["path", "line", "preview", "context_before", "context_after"],
+        "required": ["path", "line", "preview", "context_before", "context_after", "read_hint"],
         "additionalProperties": true
     })
 }

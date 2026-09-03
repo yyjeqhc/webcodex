@@ -706,6 +706,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
                 error: None,
                 command_execution_state: None,
                 validation_progress: None,
+                activity: None,
                 finished: false,
             },
             "conn-a",
@@ -748,6 +749,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: true,
         })
         .await

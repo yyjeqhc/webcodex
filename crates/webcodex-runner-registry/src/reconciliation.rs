@@ -8,10 +8,10 @@ use super::{job_recovery_grace_secs, RunnerRegistry};
 use crate::RunnerAccessGroup;
 use std::collections::HashSet;
 use webcodex_core::runner_protocol::{
-    RunnerProjectSummary, ShellCommandExecutionState, ShellJobInventory, ShellJobSnapshot,
-    ShellJobStreamSnapshot, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS,
-    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    RunnerProjectSummary, ShellCommandExecutionState, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobInventory, ShellJobSnapshot, ShellJobStreamSnapshot,
+    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 
 const MAX_CONTEXT_FIELD_CHARS: usize = 1_024;
@@ -315,6 +315,67 @@ fn validate_snapshot(
             return Err("job inventory validation_progress does not match status".to_string());
         }
     }
+    if let Some(activity) = snapshot.activity {
+        if !activity.is_canonical()
+            || !matches!(snapshot.status.as_str(), "running" | "stop_requested")
+        {
+            return Err("job inventory activity is invalid for status".to_string());
+        }
+        match activity.source {
+            ShellJobActivitySource::RunnerExecution => {
+                if !snapshot.context.validation_steps.is_empty()
+                    || activity.phase != ShellJobActivityPhase::ProcessRunning
+                {
+                    return Err(
+                        "job inventory activity is inconsistent with execution kind".to_string()
+                    );
+                }
+            }
+            ShellJobActivitySource::ValidationPlan => {
+                let expected = match snapshot
+                    .validation_progress
+                    .as_ref()
+                    .and_then(|progress| progress.current_step.as_deref())
+                {
+                    Some("format") => Some(ShellJobActivityPhase::ValidationFormat),
+                    Some("check") => Some(ShellJobActivityPhase::ValidationCheck),
+                    Some("test") => Some(ShellJobActivityPhase::ValidationTest),
+                    _ => None,
+                };
+                if expected != Some(activity.phase) {
+                    return Err(
+                        "job inventory activity is inconsistent with validation progress"
+                            .to_string(),
+                    );
+                }
+            }
+            ShellJobActivitySource::CargoOutput => {
+                let Some(progress) = snapshot.validation_progress.as_ref() else {
+                    return Err(
+                        "job inventory Cargo activity requires validation progress".to_string()
+                    );
+                };
+                if progress.current_step.is_none() || snapshot.context.validation_steps.is_empty() {
+                    return Err(
+                        "job inventory Cargo activity requires an active validation step"
+                            .to_string(),
+                    );
+                }
+                if let Some(validation) = snapshot.context.validation.as_ref() {
+                    if validation
+                        .steps
+                        .get(progress.completed)
+                        .is_none_or(|step| step.program != "cargo" || !step.is_canonical())
+                    {
+                        return Err(
+                            "job inventory Cargo activity is inconsistent with validation metadata"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
     Ok(active)
 }
 
@@ -600,6 +661,7 @@ fn record_from_snapshot(
         validation_steps: context.validation_steps.clone(),
         validation: context.validation.clone(),
         validation_progress: snapshot.validation_progress.clone(),
+        activity: snapshot.activity,
         visibility: super::state::ShellJobVisibility::Public,
         last_update_seq: snapshot.update_seq,
         recovery_state: Some("reconciled".to_string()),
@@ -632,6 +694,7 @@ fn apply_snapshot(
     job.command_execution_state = snapshot.command_execution_state;
     job.structured_execution = snapshot.context.structured_execution.clone();
     job.validation_progress = snapshot.validation_progress.clone();
+    job.activity = snapshot.activity;
     job.validation = snapshot.context.validation.clone();
     replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
     replace_log_from_snapshot(&mut job.stderr, &snapshot.stderr);

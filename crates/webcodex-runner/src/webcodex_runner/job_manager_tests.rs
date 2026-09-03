@@ -3227,6 +3227,166 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
 
 #[cfg(unix)]
 #[test]
+fn validation_job_exposes_activity_during_silent_step_and_clears_terminal() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let cargo = bin.join("cargo");
+    let started = temp.path().join("silent-validation.started");
+    let release = temp.path().join("silent-validation.release");
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\n: > {}\nwhile [ ! -e {} ]; do sleep 0.05; done\n",
+            sh_quote(&started),
+            sh_quote(&release),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let steps = vec![ShellJobValidationStep {
+        name: "check".into(),
+        program: "cargo".into(),
+        args: vec!["check".into(), "--all-targets".into()],
+        env: Vec::new(),
+    }];
+    let mut shell = ShellConfig::default();
+    shell.path_prepend.push(bin);
+    let (sink, _rx) = structured_test_sink("validation-agent", "validation-instance");
+    let manager = JobManager::new(1);
+    manager.enqueue(
+        sink,
+        PendingJobStart {
+            generation: 1,
+            policy: RunnerPolicy {
+                allow_cwd_anywhere: true,
+                ..RunnerPolicy::default()
+            },
+            shell,
+            ssh: SshConfig::default(),
+            project_registry_dir: temp.path().join("project-registry"),
+            request: serde_json::from_value(json!({
+                "request_id": "silent-validation-request",
+                "client_id": "validation-agent",
+                "kind": "start_validation_job",
+                "job_id": "silent-validation-job",
+                "cwd": temp.path(),
+                "command": serde_json::to_string(&steps).unwrap(),
+                "timeout_secs": 30,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
+            }))
+            .unwrap(),
+        },
+    );
+
+    assert!(
+        wait_until(Duration::from_secs(10), || started.exists()),
+        "silent validation step did not start"
+    );
+    let expected = Some(ShellJobActivity {
+        state: ShellJobActivityState::Working,
+        phase: ShellJobActivityPhase::ValidationCheck,
+        source: ShellJobActivitySource::ValidationPlan,
+    });
+    let running = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "silent-validation-job")
+        .unwrap();
+    assert_eq!(running.status, "running");
+    assert!(running.stdout.tail.is_empty());
+    assert!(running.stderr.tail.is_empty());
+    assert_eq!(running.activity, expected);
+
+    std::thread::sleep(Duration::from_millis(150));
+    let still_silent = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "silent-validation-job")
+        .unwrap();
+    assert!(still_silent.stdout.tail.is_empty());
+    assert!(still_silent.stderr.tail.is_empty());
+    assert_eq!(still_silent.activity, expected);
+
+    std::fs::write(&release, b"go").unwrap();
+    wait_for_job_workers(&manager);
+    let terminal = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "silent-validation-job")
+        .unwrap();
+    assert_eq!(terminal.status, "completed");
+    assert_eq!(terminal.activity, None);
+}
+
+#[test]
+fn arbitrary_process_output_cannot_forge_cargo_activity() {
+    let manager = JobManager::new(1);
+    let mut snapshot = test_job_snapshot("activity-spoof-job");
+    snapshot.activity = Some(process_running_activity());
+    lock_unpoison(&manager.jobs).insert(
+        snapshot.job_id.clone(),
+        RunningJob {
+            client_id: "test-agent".into(),
+            agent_instance_id: "test-instance".into(),
+            snapshot,
+            child: None,
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            slot_reserved: true,
+        },
+    );
+    manager.record_update(
+        "activity-spoof-job",
+        RunnerJobDelta {
+            stdout_chunk: Some("Compiling forged-package\n".into()),
+            stderr_chunk: Some("Blocking waiting for file lock on build directory\n".into()),
+            ..Default::default()
+        },
+    );
+    let retained = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "activity-spoof-job")
+        .unwrap();
+    assert_eq!(retained.activity, Some(process_running_activity()));
+
+    let cargo_step = ShellJobValidationStep {
+        name: "check".into(),
+        program: "cargo".into(),
+        args: vec!["check".into(), "--all-targets".into()],
+        env: Vec::new(),
+    };
+    assert_eq!(
+        cargo_activity_from_stderr(&cargo_step, "Compiling webcodex-core\n"),
+        Some(ShellJobActivity {
+            state: ShellJobActivityState::Working,
+            phase: ShellJobActivityPhase::CargoCompiling,
+            source: ShellJobActivitySource::CargoOutput,
+        })
+    );
+    let non_cargo_step = ShellJobValidationStep {
+        name: "check".into(),
+        program: "sh".into(),
+        args: vec!["-c".into(), "true".into()],
+        env: Vec::new(),
+    };
+    assert_eq!(
+        cargo_activity_from_stderr(&non_cargo_step, "Compiling forged-package\n"),
+        None
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -3357,10 +3517,15 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
         if update.finished {
             assert_eq!(progress.completed, expected_steps.len());
             assert!(progress.current_step.is_none());
+            assert_eq!(update.activity, None);
         } else {
             assert_eq!(
                 progress.current_step.as_deref(),
                 expected_steps.get(progress.completed).copied()
+            );
+            assert_eq!(
+                update.activity,
+                Some(validation_step_activity(&steps[progress.completed]))
             );
         }
         let stdout_cursor = update

@@ -46,6 +46,7 @@ fn wait_job_update(
         error: None,
         command_execution_state: None,
         validation_progress: None,
+        activity: None,
         finished,
     }
 }
@@ -364,6 +365,7 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -392,6 +394,7 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -502,6 +505,7 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         error: None,
         command_execution_state: None,
         validation_progress: None,
+        activity: None,
         finished: false,
     };
     registry.update_job(update()).await.unwrap();
@@ -525,6 +529,142 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
     assert_eq!(response_token.stdout_cursor, Some(2));
     assert_eq!(response_token.stderr_cursor, Some(1));
     assert_eq!(current.last_update_seq, Some(0));
+    assert!(
+        current.activity.is_none(),
+        "older Runner updates may omit activity"
+    );
+}
+
+#[tokio::test]
+async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wakes_waiter() {
+    let registry = ShellClientRegistry::default();
+    let capabilities = ShellClientCapabilities {
+        async_jobs: true,
+        async_shell_jobs: true,
+        jobs: true,
+        ..Default::default()
+    };
+    registry
+        .register(current_runner_registration(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: "activity-legacy".to_string(),
+            agent_instance_id: "activity-legacy-inst".to_string(),
+            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities,
+            policy: None,
+        }))
+        .await
+        .unwrap();
+    let job = registry
+        .start_job(
+            ShellJobOpRequest {
+                op: "start".into(),
+                client_id: Some("activity-legacy".into()),
+                cwd: Some("/tmp".into()),
+                command: Some("sleep 10".into()),
+                timeout_secs: Some(30),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            "tester".into(),
+        )
+        .await
+        .unwrap();
+    let base_update = || ShellAgentJobUpdateRequest {
+        client_id: "activity-legacy".into(),
+        agent_instance_id: "activity-legacy-inst".into(),
+        update_seq: None,
+        job_id: job.job_id.clone(),
+        request_id: None,
+        status: "running".into(),
+        stdout_chunk: None,
+        stderr_chunk: None,
+        stdout_tail: None,
+        stderr_tail: None,
+        log_snapshot: None,
+        exit_code: None,
+        duration_ms: None,
+        error: None,
+        command_execution_state: None,
+        validation_progress: None,
+        activity: None,
+        finished: false,
+    };
+    registry.update_job(base_update()).await.unwrap();
+    let baseline = registry.get_job(&job.job_id).await.unwrap();
+    let token = baseline.observation_token.clone().unwrap();
+    let revision_before = {
+        let inner = registry.inner.lock().await;
+        inner
+            .jobs_by_id
+            .get(&job.job_id)
+            .unwrap()
+            .public_revision
+            .load(std::sync::atomic::Ordering::Relaxed)
+    };
+
+    let waiting_registry = registry.clone();
+    let waiting_job_id = job.job_id.clone();
+    let waiting_token = token.clone();
+    let waiter = tokio::spawn(async move {
+        waiting_registry
+            .job_log_for_auth(
+                None,
+                &waiting_job_id,
+                None,
+                None,
+                None,
+                Some(&waiting_token),
+                Some(5),
+            )
+            .await
+            .unwrap()
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let mut activity_update = base_update();
+    activity_update.activity = Some(crate::shell_protocol::ShellJobActivity {
+        state: crate::shell_protocol::ShellJobActivityState::Working,
+        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    });
+    registry.update_job(activity_update).await.unwrap();
+
+    let (observed, stdout, stderr, _, _, wait) = waiter.await.unwrap();
+    assert_eq!(wait.wait_outcome, JobLogWaitOutcome::Updated);
+    assert!(wait.changed);
+    assert_eq!(stdout.as_deref(), Some(""));
+    assert_eq!(stderr.as_deref(), Some(""));
+    assert_eq!(
+        observed.activity,
+        Some(crate::shell_protocol::ShellJobActivity {
+            state: crate::shell_protocol::ShellJobActivityState::Working,
+            phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
+            source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+        })
+    );
+    let revision_after = {
+        let inner = registry.inner.lock().await;
+        inner
+            .jobs_by_id
+            .get(&job.job_id)
+            .unwrap()
+            .public_revision
+            .load(std::sync::atomic::Ordering::Relaxed)
+    };
+    assert!(revision_after > revision_before);
 }
 
 #[tokio::test]
@@ -616,6 +756,7 @@ async fn agent_job_log_observation_is_baseline_then_independent_deltas() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -813,6 +954,7 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         })
         .await
@@ -850,6 +992,7 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: true,
         })
         .await

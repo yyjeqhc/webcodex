@@ -602,6 +602,7 @@ async fn complete_project_job(
                 current_step: None,
                 failed_step: None,
             }),
+            activity: None,
             finished: true,
         })
         .await

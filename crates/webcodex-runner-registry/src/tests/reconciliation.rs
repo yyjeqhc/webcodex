@@ -190,6 +190,7 @@ fn snapshot_from_request(
         stdout,
         stderr: ShellJobStreamSnapshot::default(),
         validation_progress: None,
+        activity: None,
     }
 }
 
@@ -218,6 +219,7 @@ fn update(
         error: None,
         command_execution_state: None,
         validation_progress: None,
+        activity: None,
         finished,
     }
 }
@@ -277,6 +279,16 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
                              completed: usize,
                              current_step: Option<&str>,
                              finished: bool| {
+        let activity = current_step.map(|step| crate::runner_protocol::ShellJobActivity {
+            state: crate::runner_protocol::ShellJobActivityState::Working,
+            phase: match step {
+                "format" => crate::runner_protocol::ShellJobActivityPhase::ValidationFormat,
+                "check" => crate::runner_protocol::ShellJobActivityPhase::ValidationCheck,
+                "test" => crate::runner_protocol::ShellJobActivityPhase::ValidationTest,
+                other => panic!("unexpected validation step: {other}"),
+            },
+            source: crate::runner_protocol::ShellJobActivitySource::ValidationPlan,
+        });
         RunnerJobUpdateRequest {
             client_id: CLIENT_ID.to_string(),
             runner_instance_id: INSTANCE_A.to_string(),
@@ -298,6 +310,7 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
                 current_step: current_step.map(str::to_string),
                 failed_step: None,
             }),
+            activity,
             finished,
         }
     };
@@ -306,15 +319,38 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
         validation_update(2, "running", 0, Some("format"), false),
         validation_update(37, "running", 1, Some("check"), false),
         validation_update(81, "running", 2, Some("test"), false),
-        validation_update(144, "completed", 3, None, true),
     ] {
         registry.update_job(update).await.unwrap();
     }
+    let before_stale = registry.get_job(&job.job_id).await.unwrap();
+    assert_eq!(before_stale.last_update_seq, Some(81));
+    assert_eq!(
+        before_stale.activity,
+        Some(crate::runner_protocol::ShellJobActivity {
+            state: crate::runner_protocol::ShellJobActivityState::Working,
+            phase: crate::runner_protocol::ShellJobActivityPhase::ValidationTest,
+            source: crate::runner_protocol::ShellJobActivitySource::ValidationPlan,
+        })
+    );
+
+    registry
+        .update_job(validation_update(37, "running", 1, Some("check"), false))
+        .await
+        .unwrap();
+    let after_stale = registry.get_job(&job.job_id).await.unwrap();
+    assert_eq!(after_stale.last_update_seq, Some(81));
+    assert_eq!(after_stale.activity, before_stale.activity);
+
+    registry
+        .update_job(validation_update(144, "completed", 3, None, true))
+        .await
+        .unwrap();
 
     let completed = registry.get_job(&job.job_id).await.unwrap();
     assert_eq!(completed.status, "completed");
     assert_eq!(completed.exit_code, Some(0));
     assert_eq!(completed.last_update_seq, Some(144));
+    assert_eq!(completed.activity, None);
     assert_eq!(
         completed.validation_progress,
         Some(ShellJobValidationProgress {
@@ -393,6 +429,12 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
         current_step: Some("test".to_string()),
         failed_step: None,
     });
+    snapshot.activity = Some(crate::runner_protocol::ShellJobActivity {
+        state: crate::runner_protocol::ShellJobActivityState::Working,
+        phase: crate::runner_protocol::ShellJobActivityPhase::ValidationTest,
+        source: crate::runner_protocol::ShellJobActivitySource::ValidationPlan,
+    });
+    let expected_activity = snapshot.activity;
     let inventory: ShellJobInventory = serde_json::from_value(
         serde_json::to_value(ShellJobInventory {
             active_complete: true,
@@ -411,6 +453,7 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
         Some(target)
     );
     assert_eq!(restored.status, "running");
+    assert_eq!(restored.activity, expected_activity);
     assert!(restored.recovered_after_server_restart);
 }
 
@@ -2111,6 +2154,7 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
         stdout: ShellJobStreamSnapshot::default(),
         stderr: ShellJobStreamSnapshot::default(),
         validation_progress: None,
+        activity: None,
     }
 }
 

@@ -25,11 +25,11 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 use webcodex_core::runner_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
-    RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobContext,
-    ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
-    ShellJobValidationMetadata, ShellJobValidationStep, ShellProcessArgv, ShellRunRequest,
-    ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
+    RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobActivity,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobContext, ShellJobInfo, ShellJobOpRequest,
+    ShellJobStructuredExecutionMetadata, ShellJobValidationMetadata, ShellJobValidationStep,
+    ShellProcessArgv, ShellRunRequest, ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
+    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 
@@ -288,6 +288,7 @@ struct JobPublicMutationSignature {
     duration_ms: Option<u64>,
     command_execution_state: Option<ShellCommandExecutionState>,
     validation_progress: Option<webcodex_core::runner_protocol::ShellJobValidationProgress>,
+    activity: Option<ShellJobActivity>,
     recovered_after_server_restart: bool,
     reconciled_at: Option<i64>,
 }
@@ -307,6 +308,7 @@ fn public_mutation_signature(job: &ShellJobRecord) -> JobPublicMutationSignature
         duration_ms: job.duration_ms,
         command_execution_state: job.command_execution_state,
         validation_progress: job.validation_progress.clone(),
+        activity: job.activity,
         recovered_after_server_restart: job.recovered_after_server_restart,
         reconciled_at: job.reconciled_at,
     }
@@ -395,6 +397,73 @@ fn validate_validation_progress(
     } else {
         invalid_progress("validation_progress_invalid")
     }
+}
+
+fn validation_activity_phase(step: &str) -> Option<ShellJobActivityPhase> {
+    match step {
+        "format" => Some(ShellJobActivityPhase::ValidationFormat),
+        "check" => Some(ShellJobActivityPhase::ValidationCheck),
+        "test" => Some(ShellJobActivityPhase::ValidationTest),
+        _ => None,
+    }
+}
+
+fn validate_job_activity(
+    job: &ShellJobRecord,
+    update: &ShellAgentJobUpdateRequest,
+) -> Result<(), ValidationProtocolError> {
+    let Some(activity) = update.activity else {
+        // Activity was added as an optional protocol field. Older Runners may
+        // omit it without changing canonical Job lifecycle semantics.
+        return Ok(());
+    };
+    let status = update.status.trim();
+    if !activity.is_canonical() || !matches!(status, "running" | "stop_requested") {
+        return invalid_progress("job_activity_invalid");
+    }
+    match activity.source {
+        ShellJobActivitySource::RunnerExecution => {
+            if !job.validation_steps.is_empty()
+                || activity.phase != ShellJobActivityPhase::ProcessRunning
+            {
+                return invalid_progress("job_activity_invalid");
+            }
+        }
+        ShellJobActivitySource::ValidationPlan => {
+            let Some(current_step) = update
+                .validation_progress
+                .as_ref()
+                .and_then(|progress| progress.current_step.as_deref())
+            else {
+                return invalid_progress("job_activity_invalid");
+            };
+            if validation_activity_phase(current_step) != Some(activity.phase) {
+                return invalid_progress("job_activity_invalid");
+            }
+        }
+        ShellJobActivitySource::CargoOutput => {
+            let Some(progress) = update.validation_progress.as_ref() else {
+                return invalid_progress("job_activity_invalid");
+            };
+            if progress.current_step.is_none() || job.validation_steps.is_empty() {
+                return invalid_progress("job_activity_invalid");
+            }
+            // First-class validation metadata retains exact canonical argv, so
+            // verify Cargo provenance when that stronger evidence is available.
+            // Multi-step checks_run plans retain only step names server-side;
+            // there the trusted Runner remains the bounded provenance boundary.
+            if let Some(validation) = job.validation.as_ref() {
+                if validation
+                    .steps
+                    .get(progress.completed)
+                    .is_none_or(|step| step.program != "cargo" || !step.is_canonical())
+                {
+                    return invalid_progress("job_activity_invalid");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_command_execution_state(
@@ -1025,6 +1094,7 @@ impl RunnerRegistry {
             validation_steps: validation_step_names,
             validation,
             validation_progress: None,
+            activity: None,
             last_update_seq: 0,
             visibility: metadata.visibility,
 
@@ -1982,6 +2052,7 @@ impl RunnerRegistry {
             );
             if let Err(error) = validate_validation_progress(job, &body)
                 .and_then(|_| validate_command_execution_state(job, &body))
+                .and_then(|_| validate_job_activity(job, &body))
             {
                 let terminal_now = now_ts();
                 job.status = "failed".to_string();
@@ -1990,6 +2061,7 @@ impl RunnerRegistry {
                 job.exit_code = body.exit_code;
                 job.duration_ms = body.duration_ms;
                 job.error = Some(format!("executor protocol violation: {}", error.0));
+                job.activity = None;
                 if job.structured_execution.is_some() {
                     job.command_execution_state = Some(if job.started_at.is_some() {
                         ShellCommandExecutionState::OutcomeUnknown
@@ -2011,6 +2083,9 @@ impl RunnerRegistry {
                 }
                 if body.validation_progress.is_some() {
                     job.validation_progress = body.validation_progress.clone();
+                }
+                if body.activity.is_some() {
+                    job.activity = body.activity;
                 }
                 if job.started_at.is_none()
                     && body.command_execution_state != Some(ShellCommandExecutionState::NotStarted)
@@ -2037,6 +2112,7 @@ impl RunnerRegistry {
                     job.duration_ms = body.duration_ms;
                     job.error = body.error;
                     job.command_execution_state = body.command_execution_state;
+                    job.activity = None;
                     job.recovery_state = job.reconciled_at.map(|_| "reconciled".to_string());
                     job.recovering_since = None;
                     job.recovery_original_status = None;
@@ -2053,6 +2129,7 @@ impl RunnerRegistry {
                     };
                     observe_job_terminal(job, terminal_now);
                     job.ended_at = Some(terminal_now);
+                    job.activity = None;
                     request_id_to_remove = job.request_id.clone();
                 }
                 if was_recovering {

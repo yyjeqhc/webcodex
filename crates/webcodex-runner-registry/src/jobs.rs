@@ -320,6 +320,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         codex: job.codex.clone(),
         result,
         validation_progress: job.validation_progress.clone(),
+        activity: job.activity,
         validation: job.validation.clone(),
         recovery_state: job.recovery_state.clone(),
         recovered_after_server_restart: job.recovered_after_server_restart,
@@ -576,6 +577,9 @@ pub(super) fn begin_job_recovery(job: &mut ShellJobRecord, now: i64, reason_code
     job.recovery_state = Some("recovering".to_string());
     job.recovery_reason_code = Some(reason_code.to_string());
     job.ended_at = None;
+    // Once the Runner connection is lost, the previous activity may be stale.
+    // Reconciliation restores current activity from authoritative inventory.
+    job.activity = None;
     notify_job_update(job);
 }
 
@@ -584,6 +588,7 @@ pub(super) fn mark_job_lost(job: &mut ShellJobRecord, now: i64, reason_code: &st
         return;
     }
     job.status = "lost".to_string();
+    job.activity = None;
     observe_job_terminal(job, now);
     if job.ended_at.is_none() {
         job.ended_at = Some(now);

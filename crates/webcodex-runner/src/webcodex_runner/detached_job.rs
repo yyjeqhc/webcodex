@@ -28,7 +28,8 @@ use std::sync::mpsc;
 use std::time::Instant;
 use uuid::Uuid;
 use webcodex_core::runner_protocol::{
-    validate_process_argv, ShellCommandExecutionState, ShellJobContext, ShellJobSnapshot,
+    validate_process_argv, ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
+    ShellJobActivitySource, ShellJobActivityState, ShellJobContext, ShellJobSnapshot,
     ShellJobStreamSnapshot, ShellProcessArgv, JOB_INVENTORY_MAX_JOBS,
     JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, PROCESS_CWD_MAX_BYTES,
     PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
@@ -1356,6 +1357,11 @@ pub(crate) fn snapshot_from_detached_record(
         Some(_) => None,
         None => None,
     };
+    let activity = matches!(status, "running" | "stop_requested").then_some(ShellJobActivity {
+        state: ShellJobActivityState::Working,
+        phase: ShellJobActivityPhase::ProcessRunning,
+        source: ShellJobActivitySource::RunnerExecution,
+    });
     let stream = |output: &DetachedOutputState| ShellJobStreamSnapshot {
         tail: output.tail.clone(),
         first_retained_line: output.first_retained_line,
@@ -1381,6 +1387,7 @@ pub(crate) fn snapshot_from_detached_record(
         stdout: stream(&record.stdout),
         stderr: stream(&record.stderr),
         validation_progress: None,
+        activity,
     })
 }
 

@@ -182,6 +182,7 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
         error: None,
         command_execution_state: None,
         validation_progress: None,
+        activity: None,
         finished: false,
     };
 

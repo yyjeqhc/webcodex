@@ -1862,6 +1862,8 @@ pub struct RunnerJobUpdateRequest {
     /// plan. Project stdout/stderr never populates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_progress: Option<ShellJobValidationProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<ShellJobActivity>,
     #[serde(default)]
     pub finished: bool,
 }
@@ -2290,6 +2292,80 @@ pub struct ShellJobValidationProgress {
     pub failed_step: Option<String>,
 }
 
+/// Bounded Runner-owned observation of what an active Job is currently doing.
+/// Activity is advisory execution telemetry only: it never replaces canonical
+/// Job status, proves completion, or grants retry/continuation authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellJobActivityState {
+    Working,
+    Waiting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellJobActivityPhase {
+    ProcessRunning,
+    ValidationFormat,
+    ValidationCheck,
+    ValidationTest,
+    CargoWaitingForBuildLock,
+    CargoCompiling,
+    CargoChecking,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellJobActivitySource {
+    RunnerExecution,
+    ValidationPlan,
+    CargoOutput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShellJobActivity {
+    pub state: ShellJobActivityState,
+    pub phase: ShellJobActivityPhase,
+    pub source: ShellJobActivitySource,
+}
+
+impl ShellJobActivity {
+    /// Closed field-combination validation for protocol/reconciliation callers.
+    /// Provenance narrows interpretation but remains observation-only.
+    pub fn is_canonical(self) -> bool {
+        use ShellJobActivityPhase as Phase;
+        use ShellJobActivitySource as Source;
+        use ShellJobActivityState as State;
+
+        matches!(
+            (self.state, self.phase, self.source),
+            (
+                State::Working,
+                Phase::ProcessRunning,
+                Source::RunnerExecution
+            ) | (
+                State::Working,
+                Phase::ValidationFormat,
+                Source::ValidationPlan
+            ) | (
+                State::Working,
+                Phase::ValidationCheck,
+                Source::ValidationPlan
+            ) | (
+                State::Working,
+                Phase::ValidationTest,
+                Source::ValidationPlan
+            ) | (
+                State::Waiting,
+                Phase::CargoWaitingForBuildLock,
+                Source::CargoOutput
+            ) | (State::Working, Phase::CargoCompiling, Source::CargoOutput)
+                | (State::Working, Phase::CargoChecking, Source::CargoOutput)
+        )
+    }
+}
+
 /// Stable structured-validation identity retained for Job handoff, status,
 /// terminal projection, and server restart reconciliation. This is internal
 /// protocol metadata; it is not a model input and never contains shell text.
@@ -2536,6 +2612,8 @@ pub struct ShellJobSnapshot {
     pub stderr: ShellJobStreamSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_progress: Option<ShellJobValidationProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<ShellJobActivity>,
 }
 
 /// Register-time inventory. Terminal records are deliberately partial history,
@@ -2616,6 +2694,8 @@ pub struct ShellJobInfo {
     pub result: Option<RunnerJobResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation_progress: Option<ShellJobValidationProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<ShellJobActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation: Option<ShellJobValidationMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3640,6 +3720,7 @@ mod envelope_tests {
                 },
                 stderr: ShellJobStreamSnapshot::default(),
                 validation_progress: None,
+                activity: None,
             }],
         }
     }
@@ -4238,6 +4319,7 @@ mod envelope_tests {
                 error: None,
                 command_execution_state: None,
                 validation_progress: None,
+                activity: None,
                 finished: false,
             },
         };
@@ -4261,12 +4343,15 @@ mod envelope_tests {
         }))
         .unwrap();
         assert_eq!(update.command_execution_state, None);
+        assert_eq!(update.activity, None);
 
         let inventory = reconciliation_inventory();
         let encoded = serde_json::to_value(&inventory).unwrap();
         assert!(encoded["jobs"][0].get("command_execution_state").is_none());
+        assert!(encoded["jobs"][0].get("activity").is_none());
         let decoded: ShellJobInventory = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded.jobs[0].command_execution_state, None);
+        assert_eq!(decoded.jobs[0].activity, None);
     }
 
     #[test]
@@ -4543,6 +4628,7 @@ mod envelope_tests {
             error: None,
             command_execution_state: None,
             validation_progress: None,
+            activity: None,
             finished: false,
         };
         let json = serde_json::to_string(&job).unwrap();
@@ -4690,6 +4776,43 @@ mod envelope_tests {
         );
         assert!(decoded.capabilities.shell);
         assert_eq!(token.as_deref(), Some("wc_agent_secret"));
+    }
+}
+
+#[cfg(test)]
+mod job_activity_contract_tests {
+    use super::*;
+
+    #[test]
+    fn job_activity_is_closed_bounded_structured_data() {
+        let activity: ShellJobActivity = serde_json::from_value(serde_json::json!({
+            "state": "working",
+            "phase": "validation_check",
+            "source": "validation_plan"
+        }))
+        .unwrap();
+        assert!(activity.is_canonical());
+
+        for invalid in [
+            serde_json::json!({
+                "state": "working",
+                "phase": "linking",
+                "source": "validation_plan"
+            }),
+            serde_json::json!({
+                "state": "working",
+                "phase": "validation_check",
+                "source": "arbitrary_stdout"
+            }),
+            serde_json::json!({
+                "state": "working",
+                "phase": "validation_check",
+                "source": "validation_plan",
+                "command": "Bearer secret must never fit here"
+            }),
+        ] {
+            assert!(serde_json::from_value::<ShellJobActivity>(invalid).is_err());
+        }
     }
 }
 

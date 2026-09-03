@@ -1,4 +1,7 @@
-use super::auth::{assert_shell_client_access, shell_job_visible_to_auth};
+use super::access_control::{
+    assert_runner_access as assert_shell_client_access,
+    job_visible_to_access as shell_job_visible_to_auth,
+};
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
     job_view, notify_job_update, observe_job_terminal, process_preview, refresh_job_status_locked,
@@ -12,10 +15,16 @@ use super::requests::{
 use super::state::{DetachedIdempotencyIntent, ShellJobRecord, ShellJobVisibility};
 use super::validation::{validate_agent_instance_id, validate_id, validate_run_request};
 use super::{
-    now_ts, RunnerFeature, ShellClientRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
+    now_ts, RunnerFeature, RunnerRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
     DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
-use crate::shell_protocol::{
+use crate::DetachedInitiatorIdentity;
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::sync::atomic::Ordering;
+use tokio::sync::Notify;
+use uuid::Uuid;
+use webcodex_core::shell_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
     ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellCommandExecutionState,
     ShellJobContext, ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
@@ -24,12 +33,6 @@ use crate::shell_protocol::{
     PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
-use sha2::{Digest, Sha256};
-use std::collections::HashSet;
-use std::sync::atomic::Ordering;
-use tokio::sync::Notify;
-use uuid::Uuid;
-use webcodex_runner_registry::DetachedInitiatorIdentity;
 
 #[derive(Clone, Copy)]
 struct ValidationProtocolError(&'static str);
@@ -37,7 +40,7 @@ struct ValidationProtocolError(&'static str);
 /// Outcome of a bounded `job_log`/`job_tail` wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub(crate) enum JobLogWaitOutcome {
+pub enum JobLogWaitOutcome {
     /// No wait was performed, or a returnable new state already existed at
     /// call time (a job advanced past `after_observation_token`).
     Immediate,
@@ -51,7 +54,7 @@ pub(crate) enum JobLogWaitOutcome {
 }
 
 impl JobLogWaitOutcome {
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Immediate => "immediate",
             Self::Updated => "updated",
@@ -63,14 +66,14 @@ impl JobLogWaitOutcome {
 
 /// Wait metadata returned by a bounded `job_log`/`job_tail` call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JobLogWait {
-    pub(crate) wait_outcome: JobLogWaitOutcome,
-    pub(crate) waited_ms: u64,
+pub struct JobLogWait {
+    pub wait_outcome: JobLogWaitOutcome,
+    pub waited_ms: u64,
     /// Whether the job changed relative to the supplied `after_observation_token`.
     /// Always false when no `after_observation_token` was provided.
-    pub(crate) changed: bool,
+    pub changed: bool,
     /// Whether the job is terminal per the canonical job terminal definition.
-    pub(crate) terminal: bool,
+    pub terminal: bool,
 }
 
 impl Default for JobLogWait {
@@ -89,18 +92,18 @@ impl Default for JobLogWait {
 /// is consumed only by validation/summary projection; it is never repeated as
 /// model-facing output when the delta is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ShellJobLogObservation {
-    pub(crate) wait: JobLogWait,
-    pub(crate) log_delta_status: crate::job_observation::JobLogDeltaStatus,
-    pub(crate) stdout_delta_reset: bool,
-    pub(crate) stderr_delta_reset: bool,
-    pub(crate) stdout_truncated: bool,
-    pub(crate) stderr_truncated: bool,
-    pub(crate) stdout_returned_lines: usize,
-    pub(crate) stderr_returned_lines: usize,
-    pub(crate) analysis_stdout: String,
-    pub(crate) analysis_stderr: String,
-    pub(crate) analysis_truncated: bool,
+pub struct ShellJobLogObservation {
+    pub wait: JobLogWait,
+    pub log_delta_status: webcodex_core::job_observation::JobLogDeltaStatus,
+    pub stdout_delta_reset: bool,
+    pub stderr_delta_reset: bool,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub stdout_returned_lines: usize,
+    pub stderr_returned_lines: usize,
+    pub analysis_stdout: String,
+    pub analysis_stderr: String,
+    pub analysis_truncated: bool,
 }
 
 impl std::ops::Deref for ShellJobLogObservation {
@@ -115,7 +118,7 @@ impl Default for ShellJobLogObservation {
     fn default() -> Self {
         Self {
             wait: JobLogWait::default(),
-            log_delta_status: crate::job_observation::JobLogDeltaStatus::Baseline,
+            log_delta_status: webcodex_core::job_observation::JobLogDeltaStatus::Baseline,
             stdout_delta_reset: false,
             stderr_delta_reset: false,
             stdout_truncated: false,
@@ -131,7 +134,7 @@ impl Default for ShellJobLogObservation {
 
 fn frozen_shell_job_log_projection(
     job: &ShellJobRecord,
-    after: Option<&crate::job_observation::JobObservationToken>,
+    after: Option<&webcodex_core::job_observation::JobObservationToken>,
     since_stdout_line: Option<usize>,
     since_stderr_line: Option<usize>,
     tail_lines: Option<usize>,
@@ -165,7 +168,7 @@ fn frozen_shell_job_log_projection(
         let (stderr, next_stderr_line, _, stderr_truncated) =
             select_log_lines(&job.stderr, since_stderr_line, tail_lines);
         let mut view = job_view(job);
-        view.observation_token = crate::job_observation::JobObservationToken::new_legacy(
+        view.observation_token = webcodex_core::job_observation::JobObservationToken::new_legacy(
             job.job_id.clone(),
             job.observation_epoch.to_string(),
             job.public_revision.load(Ordering::Relaxed),
@@ -174,7 +177,7 @@ fn frozen_shell_job_log_projection(
         .map(|token| token.encode());
         let observation = ShellJobLogObservation {
             wait,
-            log_delta_status: crate::job_observation::JobLogDeltaStatus::Baseline,
+            log_delta_status: webcodex_core::job_observation::JobLogDeltaStatus::Baseline,
             stdout_delta_reset: false,
             stderr_delta_reset: false,
             stdout_truncated,
@@ -197,28 +200,28 @@ fn frozen_shell_job_log_projection(
 
     let epoch_matches = after.is_none_or(|token| token.epoch == job.observation_epoch.as_ref());
     let base_mode = match after {
-        None => crate::job_observation::JobLogSelectionMode::Baseline,
+        None => webcodex_core::job_observation::JobLogSelectionMode::Baseline,
         Some(token) if token.is_legacy() || !epoch_matches => {
-            crate::job_observation::JobLogSelectionMode::Reset
+            webcodex_core::job_observation::JobLogSelectionMode::Reset
         }
-        Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+        Some(token) => webcodex_core::job_observation::JobLogSelectionMode::Delta {
             cursor: token
                 .stdout_cursor
                 .expect("cursor-aware token has stdout cursor"),
         },
     };
     let stderr_mode = match after {
-        None => crate::job_observation::JobLogSelectionMode::Baseline,
+        None => webcodex_core::job_observation::JobLogSelectionMode::Baseline,
         Some(token) if token.is_legacy() || !epoch_matches => {
-            crate::job_observation::JobLogSelectionMode::Reset
+            webcodex_core::job_observation::JobLogSelectionMode::Reset
         }
-        Some(token) => crate::job_observation::JobLogSelectionMode::Delta {
+        Some(token) => webcodex_core::job_observation::JobLogSelectionMode::Delta {
             cursor: token
                 .stderr_cursor
                 .expect("cursor-aware token has stderr cursor"),
         },
     };
-    let stdout = crate::job_observation::project_log_stream(
+    let stdout = webcodex_core::job_observation::project_log_stream(
         &job.stdout.tail,
         job.stdout.first_retained_line,
         job.stdout.next_line,
@@ -227,7 +230,7 @@ fn frozen_shell_job_log_projection(
         base_mode,
         true,
     );
-    let stderr = crate::job_observation::project_log_stream(
+    let stderr = webcodex_core::job_observation::project_log_stream(
         &job.stderr.tail,
         job.stderr.first_retained_line,
         job.stderr.next_line,
@@ -237,7 +240,7 @@ fn frozen_shell_job_log_projection(
         true,
     );
     let mut view = job_view(job);
-    view.observation_token = crate::job_observation::JobObservationToken::new(
+    view.observation_token = webcodex_core::job_observation::JobObservationToken::new(
         job.job_id.clone(),
         job.observation_epoch.to_string(),
         job.public_revision.load(Ordering::Relaxed),
@@ -248,7 +251,7 @@ fn frozen_shell_job_log_projection(
     .map(|token| token.encode());
     let observation = ShellJobLogObservation {
         wait,
-        log_delta_status: crate::job_observation::combined_delta_status(
+        log_delta_status: webcodex_core::job_observation::combined_delta_status(
             base_mode, &stdout, &stderr,
         ),
         stdout_delta_reset: stdout.delta_reset,
@@ -285,7 +288,7 @@ struct JobPublicMutationSignature {
     exit_code: Option<i32>,
     duration_ms: Option<u64>,
     command_execution_state: Option<ShellCommandExecutionState>,
-    validation_progress: Option<crate::shell_protocol::ShellJobValidationProgress>,
+    validation_progress: Option<webcodex_core::shell_protocol::ShellJobValidationProgress>,
     recovered_after_server_restart: bool,
     reconciled_at: Option<i64>,
 }
@@ -429,28 +432,28 @@ fn validate_command_execution_state(
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ShellJobStartMetadata {
-    pub(crate) project_id: Option<String>,
-    pub(crate) session_id: Option<String>,
-    pub(crate) ssh_resource: Option<String>,
-    pub(crate) project_cwd: Option<String>,
-    pub(crate) purpose: Option<String>,
-    pub(crate) shell: Option<String>,
-    pub(crate) validation_steps: Vec<ShellJobValidationStep>,
-    pub(crate) validation: Option<ShellJobValidationMetadata>,
-    pub(crate) visibility: ShellJobVisibility,
-    pub(crate) validation_identity: Option<String>,
-    pub(crate) validation_tool: Option<String>,
-    pub(crate) assertion_name: Option<String>,
-    pub(crate) structured_execution: Option<StructuredJobExecution>,
-    pub(crate) stdin: Option<String>,
+pub struct ShellJobStartMetadata {
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+    pub ssh_resource: Option<String>,
+    pub project_cwd: Option<String>,
+    pub purpose: Option<String>,
+    pub shell: Option<String>,
+    pub validation_steps: Vec<ShellJobValidationStep>,
+    pub validation: Option<ShellJobValidationMetadata>,
+    pub visibility: ShellJobVisibility,
+    pub validation_identity: Option<String>,
+    pub validation_tool: Option<String>,
+    pub assertion_name: Option<String>,
+    pub structured_execution: Option<StructuredJobExecution>,
+    pub stdin: Option<String>,
     /// Detached-only caller replay key. Consumed to derive the logical Job
     /// identity; never copied into Runner protocol, durable state, or audit.
-    pub(crate) detached_idempotency_key: Option<String>,
+    pub detached_idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum StructuredJobExecution {
+pub enum StructuredJobExecution {
     Process(ShellProcessArgv),
     DetachedProcess(ShellProcessArgv),
     Script(ShellScriptPayload),
@@ -516,7 +519,7 @@ fn detached_job_id_for_key(
     Ok(format!("detached_{:x}", hasher.finalize()))
 }
 
-impl ShellClientRegistry {
+impl RunnerRegistry {
     pub async fn start_job(
         &self,
         body: ShellJobOpRequest,
@@ -546,12 +549,12 @@ impl ShellClientRegistry {
         .await
     }
 
-    pub(crate) async fn start_job_with_metadata_for_access(
+    pub async fn start_job_with_metadata_for_access(
         &self,
         body: ShellJobOpRequest,
         requested_by: String,
         metadata: ShellJobStartMetadata,
-        access: Option<&webcodex_runner_registry::RunnerAccess>,
+        access: Option<&crate::RunnerAccess>,
         detached_initiator: Option<&DetachedInitiatorIdentity>,
     ) -> Result<ShellJobInfo, String> {
         let client_id = body
@@ -918,7 +921,7 @@ impl ShellClientRegistry {
         }
         if validation_steps
             .iter()
-            .any(crate::shell_protocol::ShellJobValidationStep::is_structured_go_test_json)
+            .any(webcodex_core::shell_protocol::ShellJobValidationStep::is_structured_go_test_json)
             && !client
                 .runner_features
                 .supports(RunnerFeature::StructuredGoTestJson)
@@ -1057,7 +1060,7 @@ impl ShellClientRegistry {
         ids
     }
 
-    pub(crate) async fn promote_hidden_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
+    pub async fn promote_hidden_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
         let mut inner = self.inner.lock().await;
         refresh_job_status_locked(&mut inner, job_id);
         let job = inner
@@ -1083,9 +1086,9 @@ impl ShellClientRegistry {
         Ok(job_view(job))
     }
 
-    pub(crate) async fn get_hidden_job_for_auth(
+    pub async fn get_hidden_job_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
@@ -1101,9 +1104,9 @@ impl ShellClientRegistry {
         Ok(job_view(job))
     }
 
-    pub(crate) async fn hidden_job_log_for_auth(
+    pub async fn hidden_job_log_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
         tail_lines: Option<usize>,
     ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
@@ -1132,18 +1135,14 @@ impl ShellClientRegistry {
     /// to call from a future's Drop implementation and is deliberately
     /// separate from stop delivery: the periodic registry lifecycle retries
     /// any intent whose immediate asynchronous processor is delayed.
-    pub(crate) fn record_hidden_cleanup_intent(
-        &self,
-        job_id: String,
-        auth: Option<webcodex_runner_registry::RunnerAccess>,
-    ) {
+    pub fn record_hidden_cleanup_intent(&self, job_id: String, auth: Option<crate::RunnerAccess>) {
         self.cleanup_intents
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(job_id, auth);
     }
 
-    pub(crate) async fn process_hidden_cleanup_intents(&self) {
+    pub async fn process_hidden_cleanup_intents(&self) {
         let intents = {
             let mut intents = self
                 .cleanup_intents
@@ -1181,7 +1180,7 @@ impl ShellClientRegistry {
 
     pub(crate) async fn cancel_hidden_job_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
     ) -> Result<bool, String> {
         validate_id(job_id, "job_id")?;
@@ -1296,7 +1295,7 @@ impl ShellClientRegistry {
     /// evidence without changing fresh-Server conservative recovery. This is
     /// shared by typed process/script execution, structured validation, and
     /// long `run_shell`; all of them use `HiddenUntilHandoff` before projection.
-    pub(crate) async fn remove_projected_hidden_terminal_job_record(&self, job_id: &str) -> bool {
+    pub async fn remove_projected_hidden_terminal_job_record(&self, job_id: &str) -> bool {
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return false;
@@ -1345,7 +1344,7 @@ impl ShellClientRegistry {
         true
     }
 
-    pub(crate) async fn remove_projected_hidden_structured_job_record(&self, job_id: &str) -> bool {
+    pub async fn remove_projected_hidden_structured_job_record(&self, job_id: &str) -> bool {
         self.remove_projected_hidden_terminal_job_record(job_id)
             .await
     }
@@ -1354,9 +1353,9 @@ impl ShellClientRegistry {
         self.get_job_for_auth(None, job_id).await
     }
 
-    pub(crate) async fn get_job_for_auth(
+    pub async fn get_job_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
@@ -1377,9 +1376,9 @@ impl ShellClientRegistry {
         self.list_jobs_for_auth(None, limit).await
     }
 
-    pub(crate) async fn list_jobs_for_auth(
+    pub async fn list_jobs_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         limit: Option<usize>,
     ) -> Vec<ShellJobInfo> {
         self.visible_job_records_for_auth(auth)
@@ -1395,9 +1394,9 @@ impl ShellClientRegistry {
     /// runtime counts must not silently drop an older active Job behind newer
     /// records. Authorization and public-visibility filtering are identical
     /// to `list_jobs_for_auth`.
-    pub(crate) async fn list_all_jobs_for_auth(
+    pub async fn list_all_jobs_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
     ) -> Vec<ShellJobInfo> {
         self.visible_job_records_for_auth(auth)
             .await
@@ -1408,7 +1407,7 @@ impl ShellClientRegistry {
 
     async fn visible_job_records_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
     ) -> Vec<ShellJobRecord> {
         let mut inner = self.inner.lock().await;
         let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
@@ -1429,9 +1428,9 @@ impl ShellClientRegistry {
     /// Count active jobs for one exact runtime project without applying the
     /// display-list pagination limit. Local-only jobs do not carry an agent
     /// runtime project id and are intentionally excluded.
-    pub(crate) async fn count_active_jobs_for_project(
+    pub async fn count_active_jobs_for_project(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         runtime_project_id: &str,
     ) -> usize {
         let mut inner = self.inner.lock().await;
@@ -1445,15 +1444,15 @@ impl ShellClientRegistry {
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
+            .filter(|job| crate::job_status_is_active(&job.status))
             .count()
     }
 
     /// Atomically fence new job starts and count all currently active jobs for
     /// a runtime project. The fence remains until `end_project_unregister`.
-    pub(crate) async fn begin_project_unregister(
+    pub async fn begin_project_unregister(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         runtime_project_id: &str,
     ) -> Result<usize, String> {
         let mut inner = self.inner.lock().await;
@@ -1466,7 +1465,7 @@ impl ShellClientRegistry {
             .values()
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| webcodex_runner_registry::job_status_is_active(&job.status))
+            .filter(|job| crate::job_status_is_active(&job.status))
             .count();
         if active == 0 {
             *inner
@@ -1477,7 +1476,7 @@ impl ShellClientRegistry {
         Ok(active)
     }
 
-    pub(crate) async fn end_project_unregister(&self, runtime_project_id: &str) {
+    pub async fn end_project_unregister(&self, runtime_project_id: &str) {
         let mut inner = self.inner.lock().await;
         if let Some(count) = inner.unregistering_projects.get_mut(runtime_project_id) {
             *count -= 1;
@@ -1543,9 +1542,9 @@ impl ShellClientRegistry {
 
     /// Read bounded stdout/stderr for a job, optionally waiting once for the
     /// opaque observation token to change or for the job to become terminal.
-    pub(crate) async fn job_log_for_auth(
+    pub async fn job_log_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
         since_stdout_line: Option<usize>,
         since_stderr_line: Option<usize>,
@@ -1566,7 +1565,7 @@ impl ShellClientRegistry {
         validate_id(job_id, "job_id")?;
         let after = after_observation_token
             .map(|value| {
-                crate::job_observation::JobObservationToken::parse_bound(value, job_id)
+                webcodex_core::job_observation::JobObservationToken::parse_bound(value, job_id)
                     .map_err(|error| error.to_string())
             })
             .transpose()?;
@@ -1715,9 +1714,9 @@ impl ShellClientRegistry {
         self.stop_job_for_auth(None, job_id, requested_by).await
     }
 
-    pub(crate) async fn stop_job_for_auth(
+    pub async fn stop_job_for_auth(
         &self,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         job_id: &str,
         requested_by: String,
     ) -> Result<ShellJobInfo, String> {
@@ -1822,7 +1821,7 @@ impl ShellClientRegistry {
     /// late update is not dropped just because the transport connection was
     /// replaced. A late update arriving on a stale same-instance connection,
     /// however, must not refresh the new connection's `last_seen` liveness.
-    pub(crate) async fn update_job_for_connection(
+    pub async fn update_job_for_connection(
         &self,
         body: ShellAgentJobUpdateRequest,
         connection_id: &str,

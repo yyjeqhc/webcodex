@@ -1,4 +1,5 @@
-use crate::shell_protocol::{
+use sha2::{Digest, Sha256};
+use webcodex_core::shell_protocol::{
     validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
     AgentConfigReloadStatus, ProviderCallSummary, ShellAgentProjectSummary, ShellFileOpRequest,
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
@@ -6,7 +7,6 @@ use crate::shell_protocol::{
     PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
     STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
-use sha2::{Digest, Sha256};
 
 const MAX_CLIENT_ID_LEN: usize = 80;
 const MAX_CLIENT_FIELD_LEN: usize = 200;
@@ -730,8 +730,8 @@ fn validate_sha256(value: &Option<String>) -> Result<(), String> {
 #[cfg(test)]
 mod provider_status_tests {
     use super::*;
-    use crate::shell_protocol::ClaudeCodeProviderStatus;
     use std::collections::BTreeMap;
+    use webcodex_core::shell_protocol::ClaudeCodeProviderStatus;
 
     fn provider_status() -> ToolProvidersStatus {
         ToolProvidersStatus {

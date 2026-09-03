@@ -1,4 +1,4 @@
-use crate::shell_protocol::{AgentProtocolGenerationNumber, AGENT_PROTOCOL_GENERATION_V2};
+use webcodex_core::shell_protocol::{AgentProtocolGenerationNumber, AGENT_PROTOCOL_GENERATION_V2};
 
 /// Canonical protocol generation captured once at registration ingress.
 /// Transport is an independent ingress fact and project inventory is always paged.

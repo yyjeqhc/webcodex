@@ -6,15 +6,15 @@ use super::state::{
     ShellClientRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility,
 };
 use super::validation::validate_id;
-use super::{job_recovery_grace_secs, ShellClientRegistry};
-use crate::shell_protocol::{
+use super::{job_recovery_grace_secs, RunnerRegistry};
+use crate::RunnerAccessGroup;
+use std::collections::HashSet;
+use webcodex_core::shell_protocol::{
     ShellAgentProjectSummary, ShellCommandExecutionState, ShellJobInventory, ShellJobSnapshot,
     ShellJobStreamSnapshot, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS,
     JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
     JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
-use std::collections::HashSet;
-use webcodex_runner_registry::RunnerAccessGroup;
 
 const MAX_CONTEXT_FIELD_CHARS: usize = 1_024;
 const MAX_SNAPSHOT_ERROR_CHARS: usize = 4_096;
@@ -669,7 +669,7 @@ fn prune_projected_structured_terminal_suppressions_locked(
     }
 }
 
-impl ShellClientRegistry {
+impl RunnerRegistry {
     fn prune_expired_terminal_jobs_locked(
         &self,
         inner: &mut ShellClientRegistryInner,
@@ -846,9 +846,9 @@ pub(super) fn expire_recovering_jobs_locked(
 /// otherwise leave it in `recovering` forever. Pure in-memory: holds the
 /// registry mutex only for bounded HashMap work (capped by
 /// [`RECOVERY_SWEEP_PASS_CAP`]) and never awaits under it.
-pub(crate) async fn recovery_timeout_sweep(registry: &ShellClientRegistry) {
+pub async fn recovery_timeout_sweep(registry: &RunnerRegistry) {
     registry.process_hidden_cleanup_intents().await;
-    let now = crate::shell_client::now_ts();
+    let now = crate::registry::now_ts();
     let mut inner = registry.inner.lock().await;
     registry.prune_expired_shared_key_clients_locked(&mut inner, now);
     prune_projected_structured_terminal_suppressions_locked(&mut inner, now);

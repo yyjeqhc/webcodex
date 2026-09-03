@@ -3,14 +3,14 @@ use super::{
     now_ts, RunnerFeature, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES,
     MAX_QUEUED_REQUESTS_PER_CLIENT,
 };
-use crate::shell_protocol::{
+use std::collections::VecDeque;
+use std::fmt;
+use webcodex_core::shell_protocol::{
     ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest,
     ShellCommandExecutionState, ShellJobInfo, ShellJobStreamSnapshot,
 };
-use std::collections::VecDeque;
-use std::fmt;
 
-pub(crate) const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
+pub const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PendingRequestEnqueueError {
@@ -44,7 +44,7 @@ impl From<PendingRequestEnqueueError> for String {
     }
 }
 
-pub(crate) fn command_preview(command: &str) -> String {
+pub fn command_preview(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or_default().trim();
     if webcodex_core::sensitive_text::secret_like_value(first_line) {
         "[redacted]".to_string()
@@ -61,10 +61,7 @@ pub(crate) fn command_preview(command: &str) -> String {
 
 /// Bounded human-readable process summary. Argument boundaries are used only
 /// for display; this string is never executable input or a retry source.
-pub(crate) fn process_preview<'a>(
-    executable: &'a str,
-    args: impl IntoIterator<Item = &'a str>,
-) -> String {
+pub fn process_preview<'a>(executable: &'a str, args: impl IntoIterator<Item = &'a str>) -> String {
     let mut summary = String::new();
     let mut truncated = false;
     let push = |summary: &mut String, character: char| {
@@ -133,7 +130,7 @@ pub(crate) fn process_preview<'a>(
 
 /// Bounded, body-free script summary used for activity and Session evidence.
 /// It is presentation metadata only and can never be replayed as execution.
-pub(crate) fn script_preview(language: &str, script_bytes: usize, arg_count: usize) -> String {
+pub fn script_preview(language: &str, script_bytes: usize, arg_count: usize) -> String {
     format!("{language} script ({script_bytes} bytes, {arg_count} args)")
 }
 
@@ -331,7 +328,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         // General lifecycle views do not project log bodies, so they retain a
         // cursor-less legacy token. `job_log_for_auth` replaces this with a
         // cursor-aware v2 token for its frozen returned log snapshot.
-        observation_token: crate::job_observation::JobObservationToken::new_legacy(
+        observation_token: webcodex_core::job_observation::JobObservationToken::new_legacy(
             job.job_id.clone(),
             job.observation_epoch.to_string(),
             job.public_revision

@@ -1,4 +1,4 @@
-use crate::shell_protocol::{self as wire, ShellClientCapabilities};
+use webcodex_core::shell_protocol::{self as wire, ShellClientCapabilities};
 
 /// Canonical Server-side identity for one Runner-advertised wire capability.
 ///
@@ -7,7 +7,7 @@ use crate::shell_protocol::{self as wire, ShellClientCapabilities};
 /// [`RunnerFeatureSet`] only through the accepted registration's explicit wire
 /// capability snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum RunnerFeature {
+pub enum RunnerFeature {
     Shell,
     FileRead,
     FileWrite,
@@ -132,7 +132,7 @@ impl RunnerFeature {
         &ALL_RUNNER_FEATURES
     }
 
-    pub(crate) const fn as_wire_name(self) -> &'static str {
+    pub const fn as_wire_name(self) -> &'static str {
         match self {
             Self::Shell => wire::SHELL_CLIENT_CAPABILITY_SHELL,
             Self::FileRead => wire::SHELL_CLIENT_CAPABILITY_FILE_READ,
@@ -433,7 +433,7 @@ impl RunnerFeature {
 /// semantics cannot acquire features independently from accepted registration
 /// semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RunnerFeatureSet {
+pub struct RunnerFeatureSet {
     capabilities: ShellClientCapabilities,
 }
 
@@ -469,15 +469,15 @@ impl RunnerFeatureSet {
         }
     }
 
-    pub(crate) fn supports(&self, feature: RunnerFeature) -> bool {
+    pub fn supports(&self, feature: RunnerFeature) -> bool {
         feature.advertised_by(&self.capabilities)
     }
 
-    pub(crate) fn supports_wire_name(&self, capability: &str) -> bool {
+    pub fn supports_wire_name(&self, capability: &str) -> bool {
         RunnerFeature::from_wire_name(capability).is_some_and(|feature| self.supports(feature))
     }
 
-    pub(crate) fn wire_capabilities(&self) -> &ShellClientCapabilities {
+    pub fn wire_capabilities(&self) -> &ShellClientCapabilities {
         &self.capabilities
     }
 }

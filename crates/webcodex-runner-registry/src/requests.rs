@@ -1,4 +1,4 @@
-use super::auth::assert_shell_client_access;
+use super::access_control::assert_runner_access as assert_shell_client_access;
 use super::jobs::{
     command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
     request_preview, PendingRequestEnqueueError,
@@ -12,13 +12,20 @@ use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
     validate_script_enqueue_request,
 };
-use super::{now_ts, RunnerFeature, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
-use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
-use crate::mcp_gateway::{
+use super::{now_ts, RunnerFeature, RunnerRegistry, CLIENT_ONLINE_WINDOW_SECS};
+use std::fmt;
+use tokio::sync::oneshot;
+use uuid::Uuid;
+use webcodex_core::coding_agent::{
+    validate_request as validate_coding_agent_request, CodingAgentDispatchState,
+    CodingAgentRequest, CodingAgentResponse,
+};
+use webcodex_core::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
+use webcodex_core::mcp_gateway::{
     validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
     McpGatewayResponse,
 };
-use crate::shell_protocol::{
+use webcodex_core::shell_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
     ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
@@ -34,17 +41,10 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
-use std::fmt;
-use tokio::sync::oneshot;
-use uuid::Uuid;
-use webcodex_core::coding_agent::{
-    validate_request as validate_coding_agent_request, CodingAgentDispatchState,
-    CodingAgentRequest, CodingAgentResponse,
-};
 use webcodex_core::skill_store::SkillStoreRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EnqueueLspError {
+pub enum EnqueueLspError {
     InvalidRequest {
         message: String,
     },
@@ -130,7 +130,7 @@ pub(super) fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: 
 }
 
 pub(super) fn enqueue_pending_request_locked(
-    telemetry: &dyn webcodex_runner_registry::RunnerRegistryTelemetry,
+    telemetry: &dyn crate::RunnerRegistryTelemetry,
     inner: &mut ShellClientRegistryInner,
     client_id: &str,
     request_id: String,
@@ -322,7 +322,7 @@ fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool,
     (requires_occurrence, requires_line_scope)
 }
 
-impl ShellClientRegistry {
+impl RunnerRegistry {
     pub async fn enqueue_file_op(
         &self,
         body: ShellFileOpRequest,
@@ -352,7 +352,7 @@ impl ShellClientRegistry {
     /// `/api/shell/file` callers cannot reach these ops through
     /// `enqueue_file_op`; ToolRuntime calls this internal method only after the
     /// authoritative model-surface/project gates have resolved.
-    pub(crate) async fn enqueue_skill_file_op(
+    pub async fn enqueue_skill_file_op(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
@@ -421,7 +421,7 @@ impl ShellClientRegistry {
     /// selector. The capability check and pending admission are intentionally
     /// performed under the same registry lock: an older or replacement Runner
     /// must never receive a selector it could silently ignore.
-    pub(crate) async fn enqueue_apply_text_edits_with_occurrence(
+    pub async fn enqueue_apply_text_edits_with_occurrence(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
@@ -494,7 +494,7 @@ impl ShellClientRegistry {
     /// same payload also uses occurrence) is checked under the same registry
     /// lock as pending admission so an older/replacement Runner can never
     /// receive a safety fence it could silently ignore.
-    pub(crate) async fn enqueue_apply_text_edits_with_line_scope(
+    pub async fn enqueue_apply_text_edits_with_line_scope(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
@@ -577,7 +577,7 @@ impl ShellClientRegistry {
     /// Runner advertises both apply_patch and the current 0.4 match-metadata
     /// success contract. Capability admission and queue insertion share one
     /// registry lock so an older/replacement Runner cannot receive the mutation.
-    pub(crate) async fn enqueue_apply_patch(
+    pub async fn enqueue_apply_patch(
         &self,
         body: ShellFileOpRequest,
         strict_matching: bool,
@@ -666,13 +666,13 @@ impl ShellClientRegistry {
     /// Target ownership and file_write are rechecked under the same registry
     /// lock as pending admission so a concurrent Runner replacement cannot
     /// receive a write it no longer advertises.
-    pub(crate) async fn enqueue_computer_snapshot_artifact(
+    pub async fn enqueue_computer_snapshot_artifact(
         &self,
         body: ShellFileOpRequest,
         expected_project_id: &str,
         expected_project_cwd: &str,
         requested_by: String,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "save_project_artifact" {
@@ -765,11 +765,11 @@ impl ShellClientRegistry {
     /// Enqueue the export-only large-file metadata read. The generation-2
     /// baseline checks and admission share the registry lock so request dispatch
     /// cannot outlive the exact accepted Runner capability snapshot.
-    pub(crate) async fn enqueue_artifact_export_metadata(
+    pub async fn enqueue_artifact_export_metadata(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "read_project_artifact_metadata" {
@@ -853,11 +853,11 @@ impl ShellClientRegistry {
     /// Enqueue the internal artifact-export segment read. The generation-2
     /// baseline checks and pending admission share the registry lock. A baseline
     /// miss is an invariant failure and never selects a second read implementation.
-    pub(crate) async fn enqueue_artifact_export_chunk(
+    pub async fn enqueue_artifact_export_chunk(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "read_project_artifact_export_chunk" {
@@ -933,7 +933,7 @@ impl ShellClientRegistry {
     /// generation-2 `structured_file_delete` baseline check and pending-request
     /// admission happen under the same registry lock. A baseline miss queues
     /// nothing and is reported as an invariant failure; there is no shell fallback.
-    pub(crate) async fn enqueue_structured_file_delete(
+    pub async fn enqueue_structured_file_delete(
         &self,
         body: ShellFileOpRequest,
         requested_by: String,
@@ -1012,7 +1012,7 @@ impl ShellClientRegistry {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn enqueue_process(
+    pub async fn enqueue_process(
         &self,
         client_id: String,
         cwd: Option<String>,
@@ -1087,7 +1087,7 @@ impl ShellClientRegistry {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn enqueue_script(
+    pub async fn enqueue_script(
         &self,
         client_id: String,
         cwd: Option<String>,
@@ -1166,7 +1166,7 @@ impl ShellClientRegistry {
     /// selects the language and request kind, arguments are unavailable, and
     /// enqueue retains an atomic generation-2 baseline invariant check.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn enqueue_internal_posix_script(
+    pub async fn enqueue_internal_posix_script(
         &self,
         client_id: String,
         cwd: Option<String>,
@@ -1175,9 +1175,9 @@ impl ShellClientRegistry {
         wait_timeout_secs: u64,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        crate::shell_protocol::validate_raw_shell_wire_command(&script)?;
+        webcodex_core::shell_protocol::validate_raw_shell_wire_command(&script)?;
         let script = ShellScriptPayload {
-            language: crate::shell_protocol::ShellScriptLanguage::Sh,
+            language: webcodex_core::shell_protocol::ShellScriptLanguage::Sh,
             script,
             args: Vec::new(),
         };
@@ -1247,7 +1247,7 @@ impl ShellClientRegistry {
 
     /// Internal Session execution context for a named Runner-local SSH
     /// resource. Public shell endpoints do not accept this field directly.
-    pub(crate) async fn enqueue_run_with_ssh(
+    pub async fn enqueue_run_with_ssh(
         &self,
         body: ShellRunRequest,
         requested_by: String,
@@ -1351,7 +1351,7 @@ impl ShellClientRegistry {
     /// been dropped by the caller. A closed waiter proves there is no remaining
     /// observer for the response, so retaining the queue/registry entry can only
     /// consume bounded pending-request capacity until a late result or disconnect.
-    pub(crate) async fn cancel_abandoned_sync_requests(&self) -> usize {
+    pub async fn cancel_abandoned_sync_requests(&self) -> usize {
         let mut inner = self.inner.lock().await;
         let abandoned = inner
             .pending_by_id
@@ -1387,7 +1387,7 @@ impl ShellClientRegistry {
     /// between an undispatched request and one whose registry record was
     /// already consumed. A missing record cannot prove that execution did not
     /// start, so lifecycle-sensitive callers must treat `None` conservatively.
-    pub(crate) async fn cancel_request_dispatch_state(&self, request_id: &str) -> Option<bool> {
+    pub async fn cancel_request_dispatch_state(&self, request_id: &str) -> Option<bool> {
         let mut inner = self.inner.lock().await;
         inner.persistent_waiters.remove(request_id);
         inner.mcp_gateway_waiters.remove(request_id);
@@ -1399,12 +1399,12 @@ impl ShellClientRegistry {
     /// Enqueue one closed Runner-global Skill store operation for one exact
     /// live Runner process. Read and management capabilities are independent;
     /// the exact process lease and capability are revalidated again at dequeue.
-    pub(crate) async fn enqueue_skill_store(
+    pub async fn enqueue_skill_store(
         &self,
         client_id: &str,
         expected_agent_instance_id: &str,
         operation: SkillStoreRequest,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         let management = operation.requires_management_capability();
@@ -1496,12 +1496,12 @@ impl ShellClientRegistry {
     /// instance. Authorization and lease identity are rechecked atomically at
     /// admission, so discovery is never authoritative and a stale bridge id
     /// cannot silently route to a replacement Runner.
-    pub(crate) async fn enqueue_mcp_gateway(
+    pub async fn enqueue_mcp_gateway(
         &self,
         client_id: &str,
         expected_agent_instance_id: &str,
         operation: McpGatewayRequest,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<McpGatewayResponse>), String> {
         validate_mcp_gateway_request(&operation)
@@ -1589,14 +1589,14 @@ impl ShellClientRegistry {
     /// Enqueue one closed CodingAgentRun operation for one exact Runner/provider
     /// process lease. The caller supplies only WebCodex typed Run semantics; raw
     /// ACP method/params never enter this registry.
-    pub(crate) async fn enqueue_coding_agent(
+    pub async fn enqueue_coding_agent(
         &self,
         client_id: &str,
         expected_agent_instance_id: &str,
         expected_provider_id: &str,
         expected_provider_instance_id: &str,
         operation: CodingAgentRequest,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<CodingAgentResponse>), String> {
         validate_coding_agent_request(&operation)
@@ -1699,7 +1699,7 @@ impl ShellClientRegistry {
     /// local persistent shells. SSH persistent shells require
     /// `persistent_shell` plus the additive `ssh_persistent_shell` capability;
     /// `ssh_shell` remains the separate one-shot/background SSH capability.
-    pub(crate) async fn enqueue_persistent_shell(
+    pub async fn enqueue_persistent_shell(
         &self,
         client_id: String,
         request: PersistentShellRequest,
@@ -1910,7 +1910,7 @@ impl ShellClientRegistry {
         kind: &'static str,
         payload: String,
         requested_by: String,
-        auth: Option<&webcodex_runner_registry::RunnerAccess>,
+        auth: Option<&crate::RunnerAccess>,
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;

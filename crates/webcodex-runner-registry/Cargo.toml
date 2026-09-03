@@ -6,4 +6,11 @@ edition.workspace = true
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
+webcodex-workflow-session = { path = "../webcodex-workflow-session" }
+chrono = "0.4"
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
 

@@ -23,228 +23,35 @@ use tokio::sync::Mutex;
 #[cfg(test)]
 use tokio::sync::Notify;
 
-mod agents;
 mod auth;
-mod capabilities;
 mod handlers;
-mod job_updates;
-mod jobs;
-mod polling;
-mod project_inventory;
-mod projects;
-mod protocol;
-mod reconciliation;
 #[cfg(test)]
 mod reconciliation_tests;
-mod requests;
-mod state;
 mod telemetry;
-mod validation;
 
-#[cfg(test)]
-pub(crate) use auth::assert_shell_client_owner;
 pub(crate) use auth::{
     detached_initiator_identity_from_auth, effective_register_owner, enforce_agent_transport,
     enforce_register_owner, requested_by_from_auth, require_agent_transport_scope,
     runner_access_from_auth,
 };
-#[cfg(test)]
-pub(crate) use capabilities::RunnerFeatureInference;
-pub(crate) use capabilities::{RunnerFeature, RunnerFeatureSet};
 pub use handlers::{
     shell_agent_job_update, shell_agent_persistent_shell_result, shell_agent_poll,
     shell_agent_register, shell_agent_result,
 };
-#[cfg(test)]
-pub(crate) use job_updates::JobLogWaitOutcome;
-pub(crate) use job_updates::{ShellJobStartMetadata, StructuredJobExecution};
-pub(crate) use jobs::{
-    command_preview, process_preview, script_preview, COMMAND_PREVIEW_MAX_CHARS,
-};
-#[cfg(test)]
-pub(crate) use projects::ShellClientLookupError;
-pub(crate) use protocol::AcceptedRunnerProtocol;
-pub(crate) use reconciliation::recovery_timeout_sweep;
-pub(crate) use requests::EnqueueLspError;
-use state::ShellClientRegistryInner;
-pub(crate) use state::{ShellClientSemanticView, ShellJobVisibility};
 pub(crate) use telemetry::registry_with_tool_request_trace;
-use validation::sha256_hex;
-#[cfg(test)]
-use validation::{validate_file_request, validate_run_request, MAX_RUN_STDIN_BYTES};
+pub(crate) use webcodex_runner_registry::{
+    command_preview, process_preview, recovery_timeout_sweep, script_preview, AgentTransport,
+    EnqueueLspError, RunnerFeature, RunnerFeatureSet, RunnerRegistry as ShellClientRegistry,
+    ShellClientSemanticView, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
+    CLIENT_ONLINE_WINDOW_SECS, COMMAND_PREVIEW_MAX_CHARS, DETACHED_IDEMPOTENCY_CONFLICT,
+    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX, JOB_RECOVERY_GRACE_MAX_SECS, JOB_RECOVERY_GRACE_MIN_SECS,
+    JOB_RECOVERY_GRACE_SECS, RECOVERY_SWEEP_INTERVAL_SECS, TRANSPORT_POLLING, TRANSPORT_QUIC,
+    TRANSPORT_WEBSOCKET,
+};
 
-const MAX_OUTPUT_BYTES: usize = 256 * 1024;
-pub(crate) const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
-pub(crate) const MAX_SHARED_KEY_RUNNERS_PER_GROUP: usize = 16;
-pub(crate) const MAX_SHARED_KEY_RUNNERS_GLOBAL: usize = 1024;
-pub(crate) const SHARED_KEY_OFFLINE_TTL_SECS: i64 = 24 * 60 * 60;
-pub(crate) const DETACHED_IDEMPOTENCY_CONFLICT: &str = "detached_idempotency_conflict";
-pub(crate) const DETACHED_IDEMPOTENCY_RECOVERY_PREFIX: &str =
-    "detached_idempotency_recovery_required:";
-/// Same-process runners have this long to re-register and submit their
-/// complete active inventory before a recovering job becomes terminal lost.
-/// This is the documented production default; tests and operators may lower it
-/// via `WEBCODEX_JOB_RECOVERY_GRACE_SECS` (clamped to
-/// [`JOB_RECOVERY_GRACE_MIN_SECS`]..=[`JOB_RECOVERY_GRACE_MAX_SECS`]). The
-/// resolved value is read once per process via [`job_recovery_grace_secs`].
-pub(crate) const JOB_RECOVERY_GRACE_SECS: i64 = 120;
-/// Lower bound for the resolved recovery grace. Anything shorter risks
-/// mistaking a briefly-flapping transport for a permanently-gone runner, so
-/// the override is refused below this floor even in tests.
-pub(crate) const JOB_RECOVERY_GRACE_MIN_SECS: i64 = 5;
-/// Upper bound for the resolved recovery grace. Prevents a misconfigured
-/// operator from effectively disabling the deadline forever.
-pub(crate) const JOB_RECOVERY_GRACE_MAX_SECS: i64 = 3600;
-
-/// Period of the in-process recovery-timeout sweep, in seconds. Not
-/// configurable: the grace window (`WEBCODEX_JOB_RECOVERY_GRACE_SECS`) is the
-/// operator-facing deadline control, and this interval only bounds how long
-/// after the deadline a job waits before being transitioned to `lost` (at most
-/// one interval). `MissedTickBehavior::Delay` prevents burst catch-up.
-pub(crate) const RECOVERY_SWEEP_INTERVAL_SECS: u64 = 30;
-
-/// Clamp a raw recovery-grace value to the safe `[min, max]` window. Pure so it
-/// can be unit-tested without mutating the process env or the resolved cache.
-pub(crate) fn clamp_grace(raw: i64) -> i64 {
-    raw.clamp(JOB_RECOVERY_GRACE_MIN_SECS, JOB_RECOVERY_GRACE_MAX_SECS)
-}
-
-/// Resolve the recovery grace once per process. Reads
-/// `WEBCODEX_JOB_RECOVERY_GRACE_SECS`, clamps it to
-/// [`JOB_RECOVERY_GRACE_MIN_SECS`]-[`JOB_RECOVERY_GRACE_MAX_SECS`], and falls
-/// back to [`JOB_RECOVERY_GRACE_SECS`] when unset or unparseable. Production
-/// never mutates the env after startup, so the first read is cached; tests do
-/// not rely on this cached value for deadline logic — they manipulate a job's
-/// `recovering_since` directly and compute expectations from the documented
-/// default, matching the existing test idiom and avoiding env-mutation races.
-pub(crate) fn job_recovery_grace_secs() -> i64 {
-    static JOB_RECOVERY_GRACE: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    *JOB_RECOVERY_GRACE.get_or_init(|| {
-        std::env::var("WEBCODEX_JOB_RECOVERY_GRACE_SECS")
-            .ok()
-            .and_then(|raw| raw.trim().parse::<i64>().ok())
-            .map(clamp_grace)
-            .unwrap_or(JOB_RECOVERY_GRACE_SECS)
-    })
-}
-const MAX_RETIRED_INSTANCES_PER_CLIENT: usize = 16;
-/// Maximum number of pending requests queued for a single agent client.
-/// Bounds memory when an agent is slow or disconnected: once a client's
-/// queue reaches this depth, new enqueues are rejected with a structured
-/// error instead of growing unboundedly. The WebSocket outbound channel
-/// (`OUTGOING_CHANNEL_CAPACITY` in `agent_ws.rs`) is smaller than this, so a
-/// slow WebSocket agent fills its outbound channel first and the request
-/// pump applies natural backpressure; this cap is the hard ceiling that
-/// protects the registry when even that backpressure cannot drain (e.g. a
-/// dead socket the OS has not yet reported as closed).
-const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
-
-/// Transport label for polling agents (HTTP `/api/shell/agent/poll`).
-pub const TRANSPORT_POLLING: &str = "polling";
-/// Transport label for agents connected over the WebSocket endpoint.
-pub const TRANSPORT_WEBSOCKET: &str = "websocket";
-/// Transport label for agents connected over the custom QUIC stream transport.
-/// Reported in `ShellClientView.transport` and surfaced by `runtime_status` /
-/// `listAgents`. New deployments should generally use `transport = "auto"`
-/// with `[quic]` configured so QUIC is attempted before fallback transports.
-pub const TRANSPORT_QUIC: &str = "quic";
-
-/// Canonical Server-side transport authority for one registered Runner.
-///
-/// This value comes from the actual polling/WebSocket/QUIC ingress path and is
-/// deliberately independent from the canonical protocol generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AgentTransport {
-    Polling,
-    WebSocket,
-    Quic,
-}
-
-impl AgentTransport {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Polling => TRANSPORT_POLLING,
-            Self::WebSocket => TRANSPORT_WEBSOCKET,
-            Self::Quic => TRANSPORT_QUIC,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SharedKeyRegistrationLimits {
-    per_group: usize,
-    global: usize,
-    offline_ttl_secs: i64,
-}
-
-impl Default for SharedKeyRegistrationLimits {
-    fn default() -> Self {
-        Self {
-            per_group: MAX_SHARED_KEY_RUNNERS_PER_GROUP,
-            global: MAX_SHARED_KEY_RUNNERS_GLOBAL,
-            offline_ttl_secs: SHARED_KEY_OFFLINE_TTL_SECS,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ShellClientRegistry {
-    inner: Arc<Mutex<ShellClientRegistryInner>>,
-    observation_epoch: Arc<str>,
-    shared_key_limits: SharedKeyRegistrationLimits,
-    telemetry: Arc<dyn webcodex_runner_registry::RunnerRegistryTelemetry>,
-    /// Cancellation intents recorded synchronously by Drop guards before any
-    /// asynchronous stop delivery. The periodic registry lifecycle drains this
-    /// map, so cleanup does not depend on one detached task getting polled.
-    cleanup_intents: Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, Option<webcodex_runner_registry::RunnerAccess>>,
-        >,
-    >,
-}
-
-impl Default for ShellClientRegistry {
-    fn default() -> Self {
-        Self::with_telemetry(Arc::new(
-            webcodex_runner_registry::NoopRunnerRegistryTelemetry,
-        ))
-    }
-}
-
-impl ShellClientRegistry {
-    pub fn with_telemetry(
-        telemetry: Arc<dyn webcodex_runner_registry::RunnerRegistryTelemetry>,
-    ) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(ShellClientRegistryInner::default())),
-            observation_epoch: Arc::from(crate::job_observation::new_epoch()),
-            shared_key_limits: SharedKeyRegistrationLimits::default(),
-            telemetry,
-            cleanup_intents: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        }
-    }
-}
-
-#[cfg(test)]
-impl ShellClientRegistry {
-    pub(crate) fn with_shared_key_limits_for_test(
-        per_group: usize,
-        global: usize,
-        offline_ttl_secs: i64,
-    ) -> Self {
-        Self {
-            shared_key_limits: SharedKeyRegistrationLimits {
-                per_group,
-                global,
-                offline_ttl_secs,
-            },
-            ..Self::default()
-        }
-    }
-}
-
-fn now_ts() -> i64 {
-    chrono::Utc::now().timestamp()
+fn sha256_hex(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
 fn get_registry(depot: &Depot) -> Option<Arc<ShellClientRegistry>> {

@@ -1,13 +1,13 @@
 use super::state::{ProjectInventoryStaging, ProjectInventoryState, ShellClientRecord};
 use super::validation::{sha256_hex, validate_agent_instance_id, validate_project_summary_batch};
-use super::{now_ts, ShellClientRegistry};
-use crate::shell_protocol::{
+use super::{now_ts, RunnerRegistry};
+use std::collections::{HashSet, VecDeque};
+use webcodex_core::shell_protocol::{
     ShellProjectInventoryPage, ShellProjectInventoryStatus, PROJECT_INVENTORY_GENERATION_MAX_BYTES,
     PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS, PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES,
     PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
     PROJECT_INVENTORY_STAGING_TTL_SECS,
 };
-use std::collections::{HashSet, VecDeque};
 
 const MAX_RETIRED_PROJECT_GENERATIONS: usize = 16;
 
@@ -170,8 +170,8 @@ fn fail_current_staging(client: &mut ShellClientRecord, code: &str, now: i64) {
     clear_staging(client, Some(code), now);
 }
 
-impl ShellClientRegistry {
-    pub(crate) async fn apply_project_inventory_page(
+impl RunnerRegistry {
+    pub async fn apply_project_inventory_page(
         &self,
         client_id: &str,
         agent_instance_id: &str,
@@ -181,7 +181,7 @@ impl ShellClientRegistry {
             .await
     }
 
-    pub(crate) async fn apply_project_inventory_page_for_connection(
+    pub async fn apply_project_inventory_page_for_connection(
         &self,
         client_id: &str,
         agent_instance_id: &str,

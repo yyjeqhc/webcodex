@@ -1,12 +1,6 @@
-use super::{AcceptedRunnerProtocol, AgentTransport, RunnerFeature, RunnerFeatureSet};
-use crate::mcp_gateway::McpGatewayResponse;
-use crate::shell_protocol::{
-    AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
-    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientView, ShellCommandExecutionState,
-    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
-    ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
-    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
-};
+use super::{AgentTransport, RunnerFeature, RunnerFeatureSet};
+use crate::protocol::AcceptedRunnerProtocol;
+use crate::RunnerAccessGroup;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -14,7 +8,14 @@ use tokio::sync::{oneshot, watch, Notify};
 use webcodex_core::coding_agent::{
     CodingAgentProvider, CodingAgentResponse, CodingAgentRunInventory,
 };
-use webcodex_runner_registry::RunnerAccessGroup;
+use webcodex_core::mcp_gateway::McpGatewayResponse;
+use webcodex_core::shell_protocol::{
+    AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
+    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientView, ShellCommandExecutionState,
+    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
+    ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct ProjectInventoryStaging {
@@ -115,13 +116,13 @@ pub(super) struct ShellClientRecord {
 /// feature decisions use the canonical set cloned from the same registry lock.
 /// This type is never serialized or exposed through the wire protocol.
 #[derive(Debug, Clone)]
-pub(crate) struct ShellClientSemanticView {
-    pub(crate) view: ShellClientView,
+pub struct ShellClientSemanticView {
+    pub view: ShellClientView,
     pub(super) runner_features: RunnerFeatureSet,
 }
 
 impl ShellClientSemanticView {
-    pub(crate) fn supports(&self, feature: RunnerFeature) -> bool {
+    pub fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
     }
 
@@ -238,7 +239,7 @@ pub(super) struct CodingAgentDispatchFence {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum ShellJobVisibility {
+pub enum ShellJobVisibility {
     #[default]
     Public,
     HiddenUntilHandoff,
@@ -304,7 +305,7 @@ pub(super) struct ShellJobRecord {
     pub(super) structured_execution: Option<ShellJobStructuredExecutionMetadata>,
     pub(super) codex: Option<ShellJobCodexMetadata>,
     pub(super) validation_steps: Vec<String>,
-    pub(super) validation: Option<crate::shell_protocol::ShellJobValidationMetadata>,
+    pub(super) validation: Option<webcodex_core::shell_protocol::ShellJobValidationMetadata>,
     pub(super) validation_progress: Option<ShellJobValidationProgress>,
     pub(super) visibility: ShellJobVisibility,
     pub(super) last_update_seq: u64,

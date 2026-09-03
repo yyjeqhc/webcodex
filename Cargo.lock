@@ -5287,7 +5287,14 @@ dependencies = [
 name = "webcodex-runner-registry"
 version = "0.3.9"
 dependencies = [
+ "chrono",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "uuid",
  "webcodex-core",
+ "webcodex-workflow-session",
 ]
 
 [[package]]

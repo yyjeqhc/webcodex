@@ -253,6 +253,16 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     }
     assert!(discovery.summary.contains("exact Runner client_id"));
     assert!(discovery.summary.contains("before treating it as absent"));
+    for phrase in [
+        "runtime_status(client_id=...)",
+        "list_projects(client_id=...)",
+        "list_agents",
+    ] {
+        assert!(
+            discovery.manifest_purpose.contains(phrase),
+            "discovery: {phrase}"
+        );
+    }
 
     let persistent = TOOL_RECOMMENDED_FLOWS
         .iter()
@@ -270,6 +280,18 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     assert!(persistent
         .summary
         .contains("isolated one-shot native commands"));
+    for tool in [
+        "open_session_shell",
+        "session_shell_exec",
+        "session_shell_status",
+        "close_session_shell",
+        "run_process",
+    ] {
+        assert!(
+            persistent.manifest_purpose.contains(tool),
+            "persistent_shell: {tool}"
+        );
+    }
 }
 
 #[test]

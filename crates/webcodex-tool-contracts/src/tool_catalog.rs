@@ -277,7 +277,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "discovery",
         summary: "Discovery: if the user gives an exact Runner client_id, query runtime_status/list_projects for that Runner before treating it as absent from a fleet snapshot. Otherwise use bounded runtime/project discovery, then structured search; run_shell remains the diagnostic escape hatch.",
         manifest_purpose:
-            "Prefer exact Runner lookup when client_id is known; otherwise resolve bounded runtime/project context, inspect structure, then search code.",
+            "Exact Runner targeting: with client_id use runtime_status(client_id=...) or list_projects(client_id=...); use list_agents only for broad fleet discovery, then inspect/search the resolved project.",
         tools: &[
             "runtime_status",
             "list_agents",
@@ -296,7 +296,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "persistent_shell",
         summary: "Persistent shell: for repeated commands in one Workflow Session, especially on a named SSH resource, open_session_shell once and reuse session_shell_exec. Keep run_process for isolated one-shot native commands; inspect status or close the shell when needed.",
         manifest_purpose:
-            "Reuse one bounded Session shell for repeated local or named-SSH commands while keeping run_process for isolated one-shot native execution.",
+            "Persistent shell route: open_session_shell once, reuse session_shell_exec for repeated local or named-SSH commands, inspect with session_shell_status, close with close_session_shell; keep run_process for isolated one-shot native execution.",
         tools: &[
             "open_session_shell",
             "session_shell_exec",

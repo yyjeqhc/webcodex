@@ -190,7 +190,7 @@ pub(crate) fn detected_job_summary_with_activity(
 #[cfg(test)]
 mod detected_summary_tests {
     use super::{detected_job_summary, detected_job_summary_with_activity};
-    use crate::shell_protocol::{
+    use crate::runner_protocol::{
         ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
     };
 

@@ -11,9 +11,9 @@ use webcodex_core::coding_agent::{
 use webcodex_core::mcp_gateway::McpGatewayResponse;
 use webcodex_core::runner_protocol::{
     PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
-    RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState,
-    ShellJobActivity, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
-    ShellJobValidationProgress, ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
+    RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState, ShellJobActivity,
+    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
+    ShellProcessArgv, ShellProjectInventoryStatus, ShellRunResponse,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
 

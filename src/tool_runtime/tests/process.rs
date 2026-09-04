@@ -4,8 +4,8 @@ use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
-    ShellJobActivitySource, ShellJobActivityState,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobActivityState,
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;

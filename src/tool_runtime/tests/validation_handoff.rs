@@ -12,8 +12,8 @@ use super::support::*;
 use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
-    ShellJobActivitySource, ShellJobActivityState, ShellJobOpRequest, ShellJobValidationMetadata,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobActivityState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationProgress, ShellJobValidationStep, JOB_INVENTORY_MAX_TERMINAL_JOBS,
 };
 use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};

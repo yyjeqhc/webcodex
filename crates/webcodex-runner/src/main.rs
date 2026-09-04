@@ -27,15 +27,14 @@ use runner_protocol::{
     validation_infrastructure_failure_code, RunnerCapabilities, RunnerJobUpdateRequest,
     RunnerPolicySummary, RunnerPollPayload, RunnerPollRequest, RunnerPollResponse,
     RunnerProjectSummary, RunnerRegisterRequest, RunnerRegisterResponse, RunnerRequest,
-    ShellCommandExecutionState, ShellJobActivity,
-    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState, ShellJobContext,
-    ShellJobInventory, ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot,
-    ShellJobValidationProgress, ShellJobValidationStep, ShellProfileSummaryEntry,
-    ShellProfilesSummary, ShellProjectInventoryPage, ShellProjectInventoryStatus,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobActivityState, ShellJobContext, ShellJobInventory, ShellJobLogSnapshot,
+    ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress, ShellJobValidationStep,
+    ShellProfileSummaryEntry, ShellProfilesSummary, ShellProjectInventoryPage,
+    ShellProjectInventoryStatus, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
-    RUNNER_PROTOCOL_GENERATION_V2, VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
-    VALIDATION_TOOL_UNAVAILABLE_CODE,
+    RUNNER_PROTOCOL_GENERATION_V2, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 
 #[cfg(test)]

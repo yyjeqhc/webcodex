@@ -26,11 +26,11 @@ use uuid::Uuid;
 use webcodex_core::runner_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
     RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobActivity,
-    ShellJobActivityPhase, ShellJobActivitySource, ShellJobContext, ShellJobInfo, ShellJobOpRequest,
-    ShellJobStructuredExecutionMetadata, ShellJobValidationMetadata, ShellJobValidationStep,
-    ShellProcessArgv, ShellRunRequest, ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
-    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
-    STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobContext, ShellJobInfo,
+    ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationMetadata,
+    ShellJobValidationStep, ShellProcessArgv, ShellRunRequest, ShellScriptPayload,
+    DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 
 #[derive(Clone, Copy)]
@@ -410,7 +410,7 @@ fn validation_activity_phase(step: &str) -> Option<ShellJobActivityPhase> {
 
 fn validate_job_activity(
     job: &ShellJobRecord,
-    update: &ShellAgentJobUpdateRequest,
+    update: &RunnerJobUpdateRequest,
 ) -> Result<(), ValidationProtocolError> {
     let Some(activity) = update.activity else {
         // Activity was added as an optional protocol field. Older Runners may

@@ -8,8 +8,8 @@ use super::{job_recovery_grace_secs, RunnerRegistry};
 use crate::RunnerAccessGroup;
 use std::collections::HashSet;
 use webcodex_core::runner_protocol::{
-    RunnerProjectSummary, ShellCommandExecutionState, ShellJobActivityPhase, ShellJobActivitySource,
-    ShellJobInventory, ShellJobSnapshot, ShellJobStreamSnapshot,
+    RunnerProjectSummary, ShellCommandExecutionState, ShellJobActivityPhase,
+    ShellJobActivitySource, ShellJobInventory, ShellJobSnapshot, ShellJobStreamSnapshot,
     JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };

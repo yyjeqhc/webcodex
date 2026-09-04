@@ -3338,7 +3338,7 @@ fn arbitrary_process_output_cannot_forge_cargo_activity() {
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -3409,7 +3409,7 @@ fn cargo_activity_returns_to_validation_plan_after_fine_phase_ends() {
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -3513,7 +3513,7 @@ fn activity_only_delivery_coalesces_without_consuming_required_semantic_queue() 
         snapshot.job_id.clone(),
         RunningJob {
             client_id: "test-agent".into(),
-            agent_instance_id: "test-instance".into(),
+            runner_instance_id: "test-instance".into(),
             snapshot,
             child: None,
             stop_requested: Arc::new(AtomicBool::new(false)),
@@ -3521,11 +3521,11 @@ fn activity_only_delivery_coalesces_without_consuming_required_semantic_queue() 
         },
     );
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tx.try_send(AgentEnvelope::Ping { ts: 11 }).unwrap();
+    tx.try_send(RunnerEnvelope::Ping { ts: 11 }).unwrap();
     manager.install_sink(RunnerSink::WebSocket {
         tx,
         client_id: "test-agent".into(),
-        agent_instance_id: "test-instance".into(),
+        runner_instance_id: "test-instance".into(),
     });
 
     let compiling = ShellJobActivity {
@@ -3650,7 +3650,7 @@ fn activity_only_delivery_coalesces_without_consuming_required_semantic_queue() 
     assert_eq!(terminal.status, "completed");
     assert_eq!(terminal.activity, None);
 
-    assert!(matches!(rx.try_recv(), Ok(AgentEnvelope::Ping { ts: 11 })));
+    assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Ping { ts: 11 })));
     let updates = collect_job_updates(&mut rx, Duration::from_secs(5));
     assert_eq!(updates.len(), 2, "{updates:?}");
     assert_eq!(

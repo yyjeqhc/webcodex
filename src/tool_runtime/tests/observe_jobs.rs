@@ -4,8 +4,7 @@ use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerRequest, ShellJobActivity,
-    ShellJobActivityPhase,
-    ShellJobActivitySource, ShellJobActivityState,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
 use serde_json::json;
 use std::time::{Duration, Instant};

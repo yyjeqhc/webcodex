@@ -412,10 +412,10 @@ async fn job_log_wait_recovery_transition_between_calls_is_immediate() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
     let mut running = wait_job_update("inst-wait", &job.job_id, 1, "running", None, false);
-    running.activity = Some(crate::shell_protocol::ShellJobActivity {
-        state: crate::shell_protocol::ShellJobActivityState::Working,
-        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
-        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    running.activity = Some(crate::runner_protocol::ShellJobActivity {
+        state: crate::runner_protocol::ShellJobActivityState::Working,
+        phase: crate::runner_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::runner_protocol::ShellJobActivitySource::RunnerExecution,
     });
     registry.update_job(running).await.unwrap();
     let token = registry
@@ -534,15 +534,15 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
 
 #[tokio::test]
 async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wakes_waiter() {
-    let registry = ShellClientRegistry::default();
-    let capabilities = ShellClientCapabilities {
+    let registry = RunnerRegistry::default();
+    let capabilities = RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
         jobs: true,
         ..Default::default()
     };
     registry
-        .register(current_runner_registration(ShellClientRegisterRequest {
+        .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -550,8 +550,8 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
             coding_agent_providers: None,
             coding_agent_inventory: None,
             client_id: "activity-legacy".to_string(),
-            agent_instance_id: "activity-legacy-inst".to_string(),
-            agent_protocol_generation: crate::shell_protocol::AGENT_PROTOCOL_GENERATION_V2,
+            runner_instance_id: "activity-legacy-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
@@ -580,9 +580,9 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
         )
         .await
         .unwrap();
-    let base_update = || ShellAgentJobUpdateRequest {
+    let base_update = || RunnerJobUpdateRequest {
         client_id: "activity-legacy".into(),
-        agent_instance_id: "activity-legacy-inst".into(),
+        runner_instance_id: "activity-legacy-inst".into(),
         update_seq: None,
         job_id: job.job_id.clone(),
         request_id: None,
@@ -632,10 +632,10 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
     });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let mut activity_update = base_update();
-    activity_update.activity = Some(crate::shell_protocol::ShellJobActivity {
-        state: crate::shell_protocol::ShellJobActivityState::Working,
-        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
-        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    activity_update.activity = Some(crate::runner_protocol::ShellJobActivity {
+        state: crate::runner_protocol::ShellJobActivityState::Working,
+        phase: crate::runner_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::runner_protocol::ShellJobActivitySource::RunnerExecution,
     });
     registry.update_job(activity_update).await.unwrap();
 
@@ -646,10 +646,10 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
     assert_eq!(stderr.as_deref(), Some(""));
     assert_eq!(
         observed.activity,
-        Some(crate::shell_protocol::ShellJobActivity {
-            state: crate::shell_protocol::ShellJobActivityState::Working,
-            phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
-            source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+        Some(crate::runner_protocol::ShellJobActivity {
+            state: crate::runner_protocol::ShellJobActivityState::Working,
+            phase: crate::runner_protocol::ShellJobActivityPhase::ProcessRunning,
+            source: crate::runner_protocol::ShellJobActivitySource::RunnerExecution,
         })
     );
     let revision_after = {
@@ -666,13 +666,13 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
 
 #[tokio::test]
 async fn noncanonical_activity_fails_job_closed_without_retaining_activity() {
-    let registry = ShellClientRegistry::default();
+    let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
     let mut update = wait_job_update("inst-wait", &job.job_id, 1, "running", None, false);
-    update.activity = Some(crate::shell_protocol::ShellJobActivity {
-        state: crate::shell_protocol::ShellJobActivityState::Waiting,
-        phase: crate::shell_protocol::ShellJobActivityPhase::ProcessRunning,
-        source: crate::shell_protocol::ShellJobActivitySource::RunnerExecution,
+    update.activity = Some(crate::runner_protocol::ShellJobActivity {
+        state: crate::runner_protocol::ShellJobActivityState::Waiting,
+        phase: crate::runner_protocol::ShellJobActivityPhase::ProcessRunning,
+        source: crate::runner_protocol::ShellJobActivitySource::RunnerExecution,
     });
 
     let failed = registry.update_job(update).await.unwrap();

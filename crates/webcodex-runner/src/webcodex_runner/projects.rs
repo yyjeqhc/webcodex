@@ -1703,7 +1703,6 @@ fn matching_existing_project(
 fn validate_recovered_create_side_effects(
     path: &Path,
     template: &str,
-    description: Option<&str>,
     git_init: bool,
 ) -> Result<(), &'static str> {
     if !path.is_dir() {
@@ -1715,9 +1714,6 @@ fn validate_recovered_create_side_effects(
     if template == "basic"
         && (!path.join("README.md").is_file() || !path.join(".gitignore").is_file())
     {
-        return Err("project_already_exists");
-    }
-    if template == "empty" && description.is_some() && !path.join("README.md").is_file() {
         return Err("project_already_exists");
     }
     Ok(())
@@ -2000,12 +1996,9 @@ pub(crate) fn handle_project_op(
             allow_patch,
         ) {
             Ok(Some(project)) => {
-                if let Err(code) = validate_recovered_create_side_effects(
-                    &path_buf,
-                    &template,
-                    description.as_deref(),
-                    git_init,
-                ) {
+                if let Err(code) =
+                    validate_recovered_create_side_effects(&path_buf, &template, git_init)
+                {
                     return project_error_cmd(start, code);
                 }
                 return ok_cmd(
@@ -2079,18 +2072,9 @@ pub(crate) fn handle_project_op(
             created_paths.cleanup();
             return err_cmd(start, format!("failed to write .gitignore: {}", e));
         }
-    } else if template == "empty" {
-        // For empty template, optionally create README.md if description is provided.
-        if let Some(ref desc) = description {
-            let readme = format!("# {}\n\n{}\n", name, desc);
-            let readme_path = path_buf.join("README.md");
-            if let Err(e) = write_created_file(&readme_path, readme.as_bytes(), &mut created_paths)
-            {
-                created_paths.cleanup();
-                return err_cmd(start, format!("failed to write README.md: {}", e));
-            }
-        }
     }
+    // `empty` itself generates no project files. Description stays registration
+    // metadata; `git_init` remains a separate explicit filesystem side effect.
 
     // git init.
     let mut git_initialized = false;

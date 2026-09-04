@@ -1784,9 +1784,9 @@ fn schemas() -> Value {
                 "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
                 "name": {"type": "string", "description": "Human-readable project name."},
                 "path": {"type": "string", "description": "Absolute directory path on the Runner host."},
-                "description": {"type": "string", "description": "Optional project description."},
+                "description": {"type": "string", "description": "Optional project registration description. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content."},
                 "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
-                "template": {"type": "string", "description": "Template: 'empty' (default) or 'basic'."},
+                "template": {"type": "string", "description": "Template: 'empty' (default; generates no project files) or 'basic' (generates README.md and .gitignore). git_init is a separate explicit side effect."},
                 "git_init": {"type": "boolean", "description": "Initialize git in the new directory (default false)."},
                 "allow_existing_empty": {"type": "boolean", "description": "Allow registering an existing empty directory (default false)."},
                 "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}

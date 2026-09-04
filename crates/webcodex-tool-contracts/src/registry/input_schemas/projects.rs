@@ -75,7 +75,7 @@ pub fn create_project_input_schema() -> Value {
         (
             "description",
             "string",
-            "Optional project description.",
+            "Optional project registration description. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content.",
             false,
         ),
         (
@@ -87,7 +87,7 @@ pub fn create_project_input_schema() -> Value {
         (
             "template",
             "string",
-            "Template: 'empty' (default) or 'basic'.",
+            "Template: 'empty' (default; generates no project files) or 'basic' (generates README.md and .gitignore). git_init is a separate explicit side effect.",
             false,
         ),
         (

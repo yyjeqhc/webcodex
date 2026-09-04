@@ -109,6 +109,34 @@ fn create_project_created_config_and_overwritten_semantics_are_accurate() {
 }
 
 #[test]
+fn create_project_empty_template_with_description_creates_no_project_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_dir = tmp.path().join("empty-with-description");
+    let project_registry_dir = tmp.path().join("project-registry");
+    let policy = project_policy(tmp.path());
+    let req = project_request(
+        "create_project",
+        serde_json::json!({
+            "id": "empty-with-description",
+            "name": "Empty With Description",
+            "path": project_dir.to_string_lossy(),
+            "description": "Registration metadata only",
+            "template": "empty"
+        }),
+    );
+
+    let value = project_ok(handle_project_op(&policy, &project_registry_dir, &req));
+    assert_eq!(value["created_directory"], true);
+    assert!(project_dir.is_dir());
+    assert!(std::fs::read_dir(&project_dir).unwrap().next().is_none());
+
+    let recovered = project_ok(handle_project_op(&policy, &project_registry_dir, &req));
+    assert_eq!(recovered["recovered"], true);
+    assert_eq!(recovered["changed"], false);
+    assert!(std::fs::read_dir(&project_dir).unwrap().next().is_none());
+}
+
+#[test]
 fn create_project_cleanup_removes_only_files_created_on_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("existing-empty");

@@ -337,7 +337,7 @@ pub(crate) fn runner_init_usage() -> &'static str {
        --owner USER               Owner username\n\
        --display-name NAME        Human-readable Runner name\n\
        --transport NAME           websocket (default), polling, quic, or auto\n\
-       --poll-interval-ms N       Polling interval, default 1000\n\
+       --poll-interval-ms N       Minimum idle polling interval; default 1000, max 30000 for polling/auto\n\
        --project-registry-dir PATH  Runner project registry directory [default: profile project-registry]\n\
        --projects-dir PATH        Deprecated legacy alias for --project-registry-dir\n\
        --allowed-root PATH        Allowed project/root path; repeatable\n\

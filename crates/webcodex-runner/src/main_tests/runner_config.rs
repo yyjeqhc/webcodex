@@ -112,6 +112,45 @@ websocket_connect_timeout_secs = 0
 }
 
 #[test]
+fn runner_config_bounds_polling_idle_floor_but_not_unused_websocket_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("agent.toml");
+
+    for transport in [TRANSPORT_POLLING, TRANSPORT_AUTO] {
+        std::fs::write(
+            &path,
+            format!(
+                "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\ntransport = \"{transport}\"\npoll_interval_ms = {}\nproject_registry_dir = \"project-registry\"\n[policy]\nallow_cwd_anywhere = true\n",
+                webcodex_runner_config::MAX_POLL_INTERVAL_MS + 1
+            ),
+        )
+        .unwrap();
+        let error = load_config(&path).unwrap_err();
+        assert!(error.contains("must be <= 30000"), "{transport}: {error}");
+
+        std::fs::write(
+            &path,
+            format!(
+                "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\ntransport = \"{transport}\"\npoll_interval_ms = {}\nproject_registry_dir = \"project-registry\"\n[policy]\nallow_cwd_anywhere = true\n",
+                webcodex_runner_config::MAX_POLL_INTERVAL_MS
+            ),
+        )
+        .unwrap();
+        load_config(&path).unwrap();
+    }
+
+    std::fs::write(
+        &path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\ntransport = \"websocket\"\npoll_interval_ms = {}\nproject_registry_dir = \"project-registry\"\n[policy]\nallow_cwd_anywhere = true\n",
+            webcodex_runner_config::MAX_POLL_INTERVAL_MS + 1
+        ),
+    )
+    .unwrap();
+    load_config(&path).unwrap();
+}
+
+#[test]
 fn runner_config_rejects_relative_temporary_projects_root() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");

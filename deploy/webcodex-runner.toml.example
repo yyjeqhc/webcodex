@@ -8,6 +8,8 @@ client_id = "example-agent"
 display_name = "Example Agent"
 owner = "example-user"
 transport = "auto"
+# Minimum idle polling interval used by polling/auto fallback. Empty polls may
+# back off above this value; values above 30000 are rejected.
 poll_interval_ms = 1000
 project_registry_dir = "/etc/webcodex/clients/workstation/project-registry"
 

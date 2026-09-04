@@ -20,6 +20,10 @@ pub mod paths;
 /// Default Runner project registry selected for a new system-level install.
 pub const DEFAULT_INIT_PROJECT_REGISTRY_DIR: &str = "/etc/webcodex/project-registry";
 pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
+/// Largest idle polling floor allowed when polling can be selected. The Server
+/// currently considers a Runner offline after 60 seconds without a keepalive;
+/// 30 seconds leaves one full interval of scheduling/network slack.
+pub const MAX_POLL_INTERVAL_MS: u64 = 30_000;
 pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 /// Config value selecting the polling transport (HTTP `/api/shell/agent/poll`).
@@ -110,6 +114,13 @@ pub fn validate_runner_init_options(opts: &RunnerInitOptions) -> Result<(), Stri
         TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC | TRANSPORT_AUTO
     ) {
         return Err("--transport must be websocket, polling, quic, or auto".to_string());
+    }
+    if matches!(opts.transport.as_str(), TRANSPORT_POLLING | TRANSPORT_AUTO)
+        && opts.poll_interval_ms > MAX_POLL_INTERVAL_MS
+    {
+        return Err(format!(
+            "--poll-interval-ms must be <= {MAX_POLL_INTERVAL_MS} when polling may be used"
+        ));
     }
     if opts.project_registry_dir.as_os_str().is_empty() {
         return Err("--project-registry-dir cannot be empty".to_string());
@@ -496,5 +507,22 @@ mod tests {
             assert!(!content.contains("structured_go_test_tool"));
             assert!(!content.contains("job_state_reconciliation"));
         }
+    }
+
+    #[test]
+    fn polling_capable_init_rejects_interval_beyond_online_window_slack() {
+        for transport in [TRANSPORT_POLLING, TRANSPORT_AUTO] {
+            let mut opts = init_opts(PathBuf::from("-"));
+            opts.transport = transport.to_string();
+            opts.poll_interval_ms = MAX_POLL_INTERVAL_MS + 1;
+            let error = validate_runner_init_options(&opts).unwrap_err();
+            assert!(error.contains("must be <= 30000"), "{transport}: {error}");
+            opts.poll_interval_ms = MAX_POLL_INTERVAL_MS;
+            validate_runner_init_options(&opts).unwrap();
+        }
+
+        let mut websocket = init_opts(PathBuf::from("-"));
+        websocket.poll_interval_ms = MAX_POLL_INTERVAL_MS + 1;
+        validate_runner_init_options(&websocket).unwrap();
     }
 }

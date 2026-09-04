@@ -4,8 +4,8 @@ use super::mcp_gateway::McpGatewayManager;
 use super::shutdown::lock_unpoison;
 use crate::runner_config::{
     effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
-    DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC,
-    TRANSPORT_WEBSOCKET,
+    DEFAULT_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING,
+    TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
 };
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerConfigReloadStatus, RunnerHostContext, RUNNER_JOB_CONCURRENCY_MAX,
@@ -64,6 +64,8 @@ pub(crate) struct RunnerConfig {
     /// former path shape, reports the deprecation, and clears this inert field.
     #[serde(default, rename = "temporary_projects_root")]
     pub(crate) deprecated_temporary_projects_root: Option<PathBuf>,
+    /// Minimum delay after an empty polling response. Repeated idle polls back
+    /// off through the built-in schedule while never going below this value.
     #[serde(default = "default_poll_interval_ms")]
     pub(crate) poll_interval_ms: u64,
     #[serde(default)]
@@ -1168,6 +1170,19 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
         {
             return Err("transport must be websocket, polling, quic, or auto".to_string());
         }
+    }
+    let effective_transport = cfg
+        .transport
+        .as_deref()
+        .map(str::trim)
+        .filter(|transport| !transport.is_empty())
+        .unwrap_or(TRANSPORT_WEBSOCKET);
+    if matches!(effective_transport, TRANSPORT_POLLING | TRANSPORT_AUTO)
+        && cfg.poll_interval_ms > MAX_POLL_INTERVAL_MS
+    {
+        return Err(format!(
+            "poll_interval_ms must be <= {MAX_POLL_INTERVAL_MS} when polling may be used"
+        ));
     }
     // When allowed_roots is missing/empty, default to [$HOME] so a
     // minimal Runner config without an explicit policy.allowed_roots still works

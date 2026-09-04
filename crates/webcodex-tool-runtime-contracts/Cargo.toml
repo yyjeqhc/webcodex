@@ -1,0 +1,13 @@
+[package]
+name = "webcodex-tool-runtime-contracts"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+webcodex-core = { path = "../webcodex-core" }
+webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }
+webcodex-workflow-session = { path = "../webcodex-workflow-session" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

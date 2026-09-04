@@ -265,16 +265,6 @@ pub(crate) fn search_agent_timeout_budget(effective_timeout_secs: u64) -> (u64, 
     (command_timeout, wait_timeout, outer_timeout)
 }
 
-impl SearchResultMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Matches => "matches",
-            Self::FilesWithMatches => "files_with_matches",
-            Self::Count => "count",
-        }
-    }
-}
-
 fn validate_search_globs(
     field: &'static str,
     globs: Vec<String>,

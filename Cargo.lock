@@ -5142,6 +5142,7 @@ dependencies = [
  "webcodex-runner-registry",
  "webcodex-store",
  "webcodex-tool-contracts",
+ "webcodex-tool-runtime-contracts",
  "webcodex-workflow-session",
  "webcodex-workspace",
  "windows-sys 0.61.2",
@@ -5344,6 +5345,18 @@ dependencies = [
  "serde",
  "serde_json",
  "webcodex-core",
+]
+
+[[package]]
+name = "webcodex-tool-runtime-contracts"
+version = "0.3.9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "webcodex-core",
+ "webcodex-tool-contracts",
+ "webcodex-workflow-session",
 ]
 
 [[package]]

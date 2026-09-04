@@ -1,6 +1,6 @@
 # Deterministic committed-range review summary
 
-`git_review_summary` is a read-only review primitive for committed Git ranges. It produces a bounded deterministic map that helps a reviewer choose the next `git_diff_hunks` or `read_file` targets. It does not review code with an LLM, judge correctness, approve a change, or mutate/fetch the repository.
+`git_review_summary` is a read-only review primitive for committed Git ranges. It produces a bounded deterministic map that helps a reviewer choose the next `git_diff_hunks` or `read_files` targets. It does not review code with an LLM, judge correctness, approve a change, or mutate/fetch the repository.
 
 ## Exact range
 
@@ -49,7 +49,7 @@ Binary files and Gitlinks are metadata-only for symbol inspection. Secret-like a
 For a branch or PR whose exact commits are already local:
 
 1. Call `git_review_summary` with exact base/head object IDs.
-2. Use its subsystem/signal/file map to select a small set of `git_diff_hunks` and `read_file` targets.
+2. Use its subsystem/signal/file map to select a small set of `git_diff_hunks` and `read_files` targets.
 3. Perform the actual correctness/security review from those source-level observations.
 
 Use `show_changes` instead for the current dirty worktree. `git_review_summary` is deliberately not injected into normal `finish_coding_task` output.

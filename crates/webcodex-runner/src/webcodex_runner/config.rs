@@ -1,6 +1,7 @@
 use super::coding_agent::CodingAgentManager;
 use super::external_tools::ExternalToolRouter;
 use super::mcp_gateway::McpGatewayManager;
+use super::plugin::PluginManager;
 use super::shutdown::lock_unpoison;
 use crate::runner_config::{
     effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
@@ -98,6 +99,11 @@ pub(crate) struct RunnerConfig {
     /// built-in MCP gateway. The public config section is `[mcp]`.
     #[serde(default, rename = "mcp")]
     pub(crate) mcp_gateway: McpGatewayConfig,
+    /// Runner-local native stdio Tool Plugins. Startup admission is frozen for
+    /// this Runner process; explicit plugin reloads use the same section only
+    /// for the dynamic overlay.
+    #[serde(default)]
+    pub(crate) plugins: PluginConfig,
     /// Startup/restart-owned ACP coding-agent providers. This is independent
     /// from MCP tool providers and never accepts caller-controlled executable/env.
     #[serde(default)]
@@ -194,6 +200,44 @@ impl Default for McpGatewayConfig {
     fn default() -> Self {
         Self {
             request_timeout_secs: default_mcp_gateway_request_timeout_secs(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+pub(crate) const PLUGIN_MAX_CWD_BYTES: usize = 4_096;
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct PluginConfig {
+    #[serde(default = "default_plugin_request_timeout_secs")]
+    pub(crate) request_timeout_secs: u64,
+    #[serde(default)]
+    pub(crate) providers: Vec<PluginProviderConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct PluginProviderConfig {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+    #[serde(default)]
+    pub(crate) cwd: Option<String>,
+    #[serde(default)]
+    pub(crate) profile: Option<String>,
+    #[serde(default)]
+    pub(crate) timeout_secs: Option<u64>,
+}
+
+fn default_plugin_request_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: default_plugin_request_timeout_secs(),
             providers: Vec::new(),
         }
     }
@@ -466,11 +510,10 @@ impl HotRunnerConfig {
 pub(crate) struct ReloadableRunnerConfig {
     startup: RunnerConfig,
     mcp_gateway: Arc<McpGatewayManager>,
+    plugins: Arc<PluginManager>,
     coding_agents: Option<Arc<CodingAgentManager>>,
-    /// Config file path used by `reload()`. Config reload is a Unix feature
-    /// (Windows marks reload as unsupported and never stores the path), but
-    /// the reload logic is exercised by cross-platform tests.
-    #[cfg(any(unix, test))]
+    /// Runner-owned config path. General hot reload remains Unix-only, while
+    /// native Plugin dynamic reload is explicitly cross-platform.
     path: PathBuf,
     current: RwLock<Arc<HotRunnerConfig>>,
     external_routers: Mutex<Vec<Weak<ExternalToolRouter>>>,
@@ -484,8 +527,6 @@ impl ReloadableRunnerConfig {
             status.last_reload_result = "unsupported".to_string();
             status.last_reload_error_code = Some("reload_unsupported".to_string());
         }
-        #[cfg(not(any(unix, test)))]
-        let _ = &path;
         let current = Arc::new(HotRunnerConfig::new(1, &startup, status));
         let external_routers = vec![Arc::downgrade(&current.external_tools)];
         let coding_agents = if startup.acp.agents.is_empty() {
@@ -501,9 +542,9 @@ impl ReloadableRunnerConfig {
         };
         Self {
             mcp_gateway: Arc::new(McpGatewayManager::new(&startup.mcp_gateway)),
+            plugins: Arc::new(PluginManager::new(&startup, path.clone())),
             coding_agents,
             startup,
-            #[cfg(any(unix, test))]
             path,
             current: RwLock::new(current),
             external_routers: Mutex::new(external_routers),
@@ -522,6 +563,7 @@ impl ReloadableRunnerConfig {
     pub(crate) fn begin_shutdown(&self) {
         self.stopping.store(true, Ordering::SeqCst);
         self.mcp_gateway.shutdown();
+        self.plugins.shutdown();
         if let Some(manager) = &self.coding_agents {
             manager.stop_accepting();
         }
@@ -533,6 +575,10 @@ impl ReloadableRunnerConfig {
 
     pub(crate) fn mcp_gateway(&self) -> &McpGatewayManager {
         &self.mcp_gateway
+    }
+
+    pub(crate) fn plugins(&self) -> &PluginManager {
+        &self.plugins
     }
 
     pub(crate) fn coding_agents(&self) -> Option<&Arc<CodingAgentManager>> {
@@ -702,6 +748,7 @@ pub(crate) fn restart_required_fields(
         max_concurrent_jobs,
         acp,
         mcp_gateway,
+        plugins,
         owner,
         poll_interval_ms,
         project_registry_dir,
@@ -1225,6 +1272,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
         }
     }
     validate_mcp_gateway_config(&cfg.mcp_gateway)?;
+    validate_plugin_config(&cfg.plugins, &cfg.shell)?;
     validate_acp_config(&cfg.acp)?;
     Ok(cfg)
 }
@@ -1486,6 +1534,77 @@ fn validate_mcp_gateway_config(config: &McpGatewayConfig) -> Result<(), String> 
                 ));
             }
             destinations.push(destination);
+        }
+    }
+    Ok(())
+}
+
+fn validate_plugin_config(config: &PluginConfig, shell: &ShellConfig) -> Result<(), String> {
+    use std::collections::HashSet;
+    use webcodex_core::plugin::{
+        validate_provider_id, validate_provider_name, PLUGIN_MAX_PROVIDERS,
+    };
+
+    if !(1..=120).contains(&config.request_timeout_secs) {
+        return Err("plugins.request_timeout_secs must be between 1 and 120".to_string());
+    }
+    if config.providers.len() > PLUGIN_MAX_PROVIDERS {
+        return Err(format!(
+            "plugins.providers may contain at most {PLUGIN_MAX_PROVIDERS} entries"
+        ));
+    }
+    let mut ids = HashSet::new();
+    for provider in &config.providers {
+        validate_provider_id(&provider.id)
+            .map_err(|error| format!("plugin provider id is invalid: {error}"))?;
+        validate_provider_name(&provider.name)
+            .map_err(|error| format!("plugin provider name is invalid: {error}"))?;
+        if !ids.insert(provider.id.as_str()) {
+            return Err(format!("duplicate plugin provider id '{}'", provider.id));
+        }
+        if provider.command.trim().is_empty() || provider.command.contains('\0') {
+            return Err(format!(
+                "plugins provider '{}' command must be a non-empty native executable",
+                provider.id
+            ));
+        }
+        if provider.args.len() > 64
+            || provider
+                .args
+                .iter()
+                .any(|arg| arg.len() > 4_096 || arg.contains('\0'))
+            || provider.args.iter().map(String::len).sum::<usize>() > 16 * 1024
+        {
+            return Err(format!(
+                "plugins provider '{}' args exceed bounds",
+                provider.id
+            ));
+        }
+        if provider.cwd.as_ref().is_some_and(|cwd| {
+            cwd.trim().is_empty()
+                || cwd.len() > PLUGIN_MAX_CWD_BYTES
+                || cwd.contains('\0')
+                || !Path::new(cwd).is_absolute()
+        }) {
+            return Err(format!(
+                "plugins provider '{}' cwd must be an absolute path of at most {PLUGIN_MAX_CWD_BYTES} bytes",
+                provider.id
+            ));
+        }
+        if let Some(profile) = provider.profile.as_deref() {
+            if profile.trim().is_empty() || !shell.profiles.contains_key(profile) {
+                return Err(format!(
+                    "plugins provider '{}' profile '{}' is not configured in shell.profiles",
+                    provider.id, profile
+                ));
+            }
+        }
+        let timeout = provider.timeout_secs.unwrap_or(config.request_timeout_secs);
+        if !(1..=120).contains(&timeout) {
+            return Err(format!(
+                "plugins provider '{}' timeout_secs must be between 1 and 120",
+                provider.id
+            ));
         }
     }
     Ok(())

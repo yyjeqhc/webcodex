@@ -89,6 +89,7 @@ fn test_config(project_registry_dir: PathBuf) -> RunnerConfig {
         quic: None,
         tool_providers: Default::default(),
         mcp_gateway: Default::default(),
+        plugins: Default::default(),
         acp: Default::default(),
     }
 }

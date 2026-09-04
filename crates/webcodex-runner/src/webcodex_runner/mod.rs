@@ -15,6 +15,7 @@ pub(crate) mod output;
 pub(crate) mod output_text;
 pub(crate) mod patches;
 pub(crate) mod persistent_shell;
+pub(crate) mod plugin;
 pub(crate) mod projects;
 // Remote persistent shells always run POSIX sh/bash on the SSH target. Their
 // local child ownership is platform-specific: Unix uses a private process group,

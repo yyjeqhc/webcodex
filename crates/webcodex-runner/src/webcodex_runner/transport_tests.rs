@@ -46,6 +46,7 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
         ssh: Default::default(),
         tool_providers: Default::default(),
         mcp_gateway: Default::default(),
+        plugins: Default::default(),
         acp: Default::default(),
     }
 }

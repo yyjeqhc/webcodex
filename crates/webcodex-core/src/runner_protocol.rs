@@ -997,10 +997,10 @@ pub struct RunnerRegisterRequest {
     /// Stable per-process identity for the registering Runner. Generated once
     /// by `webcodex-runner` at startup and reused for the whole process
     /// lifetime (including WebSocket reconnects). The server treats this as
-    /// the active Runner lease identity: a second Runner process with the same
-    /// `client_id` but a different `agent_instance_id` is rejected while the
-    /// first is online, and a stale/replaced instance can no longer poll or
-    /// submit results. It is not a secret.
+    /// the active Runner lease identity: a successful registration with a new
+    /// `agent_instance_id` explicitly takes over `client_id`, while the
+    /// replaced instance can no longer poll, submit results, or reclaim the
+    /// lease. It is not a secret.
     #[serde(rename = "agent_instance_id")]
     pub runner_instance_id: String,
     /// Canonical Runner protocol generation. This is registration identity, not a
@@ -1245,6 +1245,23 @@ pub struct RunnerRegisterResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<RunnerView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Best-effort graceful lifecycle notice for the HTTP polling transport. It is
+/// instance-scoped so a delayed shutdown from a replaced process cannot mark a
+/// newer Runner instance offline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerOfflineRequest {
+    pub client_id: String,
+    #[serde(rename = "agent_instance_id")]
+    pub runner_instance_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RunnerOfflineResponse {
+    pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

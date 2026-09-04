@@ -544,9 +544,9 @@ pub(super) fn offline_last_seen(now: i64) -> i64 {
 }
 
 /// Verify that `client_id` exists and that `agent_instance_id` matches the
-/// instance that currently holds the lease for it. A stale/replaced instance
-/// (e.g. a second process that was rejected, or the previous process after a
-/// stale replacement) is rejected so it can no longer poll or submit results.
+/// instance that currently holds the lease for it. A replaced instance (the
+/// previous process after an explicit registration takeover) is rejected so it
+/// can no longer poll or submit results.
 /// Callers must already hold `inner`.
 pub(super) fn assert_active_instance_locked(
     inner: &RunnerRegistryInner,

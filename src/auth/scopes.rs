@@ -267,6 +267,7 @@ mod tests {
         for (method, path) in [
             ("POST", "/api/pairing/enroll"),
             ("POST", "/api/shell/agent/register"),
+            ("POST", "/api/shell/agent/offline"),
             ("POST", "/api/shell/agent/poll"),
             ("POST", "/api/shell/agent/result"),
             ("POST", "/api/shell/agent/persistent_shell_result"),

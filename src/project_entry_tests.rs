@@ -365,6 +365,10 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                     Router::with_path("shell/agent/register")
                         .post(crate::runner_http::runner_register),
                 )
+                .push(
+                    Router::with_path("shell/agent/offline")
+                        .post(crate::runner_http::runner_offline),
+                )
                 .push(Router::with_path("shell/agent/poll").post(crate::runner_http::runner_poll))
                 .push(
                     Router::with_path("shell/agent/result").post(crate::runner_http::runner_result),
@@ -414,7 +418,7 @@ async fn post_connector(
     (status, body)
 }
 
-fn runner_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value); 4] {
+fn runner_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value); 5] {
     [
         (
             "/api/shell/agent/register",
@@ -424,6 +428,13 @@ fn runner_transport_cases(client_id: &str) -> [(&'static str, serde_json::Value)
                 "agent_protocol_generation": 2,
                 "capabilities": crate::test_support::current_runner_capabilities(RunnerCapabilities::default()),
                 "owner": "local-owner"
+            }),
+        ),
+        (
+            "/api/shell/agent/offline",
+            serde_json::json!({
+                "client_id": client_id,
+                "agent_instance_id": PROJECT_AGENT_INSTANCE
             }),
         ),
         (

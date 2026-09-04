@@ -79,3 +79,65 @@ async fn polling_http_register_accepts_generation_two() {
         Some("pending")
     );
 }
+
+#[tokio::test]
+async fn polling_http_offline_releases_only_the_matching_active_instance() {
+    use salvo::test::{ResponseExt, TestClient};
+    use salvo::Service;
+
+    let registry = Arc::new(RunnerRegistry::default());
+    registry
+        .register(runner_registration("polling-offline", "inst-a", Vec::new()))
+        .await
+        .unwrap();
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(registry.clone()))
+            .hoop(affix_state::inject(auth_context(None, true)))
+            .push(Router::with_path("api/shell/agent/offline").post(runner_offline)),
+    );
+
+    let mut response = TestClient::post("http://localhost/api/shell/agent/offline")
+        .json(&json!({
+            "client_id": "polling-offline",
+            "agent_instance_id": "inst-a"
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(
+        response.status_code.unwrap_or(StatusCode::OK),
+        StatusCode::OK
+    );
+    assert_eq!(
+        response.take_json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    assert!(
+        !registry
+            .get_runner_view("polling-offline")
+            .await
+            .unwrap()
+            .connected
+    );
+
+    let replacement = registry
+        .register(runner_registration("polling-offline", "inst-b", Vec::new()))
+        .await
+        .unwrap();
+    assert!(replacement.connected);
+    let mut stale = TestClient::post("http://localhost/api/shell/agent/offline")
+        .json(&json!({
+            "client_id": "polling-offline",
+            "agent_instance_id": "inst-a"
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(stale.status_code.unwrap_or(StatusCode::OK), StatusCode::OK);
+    assert_eq!(
+        stale.take_json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    let current = registry.get_runner_view("polling-offline").await.unwrap();
+    assert_eq!(current.runner_instance_id, "inst-b");
+    assert!(current.connected);
+}

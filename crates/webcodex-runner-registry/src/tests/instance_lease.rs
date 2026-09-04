@@ -23,12 +23,12 @@ async fn lease_same_instance_reregister_accepts() {
 }
 
 #[tokio::test]
-async fn lease_different_online_instance_rejected() {
+async fn lease_different_online_instance_takes_over_immediately_and_retires_old_instance() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
-    // A second process with the same client_id but a different instance
-    // must be rejected while the first is online.
-    let err = registry
+    // A deliberate new process registration is stronger evidence than the
+    // passive last_seen grace: it takes over immediately even while A is fresh.
+    let view = registry
         .register(current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
@@ -47,25 +47,27 @@ async fn lease_different_online_instance_rejected() {
             policy: None,
         }))
         .await
+        .unwrap();
+    assert_eq!(view.runner_instance_id, "inst-b");
+    assert!(view.connected);
+
+    // Once replaced, A cannot use a fresh registration to steal the lease back.
+    let err = registry
+        .register(runner_registration("oe", "inst-a", Vec::new()))
+        .await
         .unwrap_err();
-    assert_eq!(
-        err, "agent client oe is already online with a different instance",
-        "rolling Runner recovery matches this historical error exactly"
-    );
-    // The active instance is unchanged.
-    let view = registry.get_runner_view("oe").await.unwrap();
-    assert_eq!(view.runner_instance_id, "inst-a");
+    assert!(err.contains("instance was replaced and cannot reclaim the lease"));
 }
 
 #[tokio::test]
-async fn lease_stale_replaced_by_different_instance_accepts() {
+async fn lease_different_instance_takeover_refreshes_stale_liveness() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
     // Age the first instance past the online window so it reads as stale.
     registry
         .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
         .await;
-    // A different instance may now take over the lease.
+    // Explicit takeover also replaces a passively stale lease and refreshes liveness.
     let _ = register_with_instance(&registry, "oe", "inst-b").await;
     let view = registry.get_runner_view("oe").await.unwrap();
     assert_eq!(view.runner_instance_id, "inst-b");
@@ -76,10 +78,8 @@ async fn lease_stale_replaced_by_different_instance_accepts() {
 async fn lease_stale_instance_poll_rejected() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-a").await;
-    // Replace with a newer instance after aging out.
-    registry
-        .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
-        .await;
+    // Explicit registration replaces A immediately; A is stale by lease identity,
+    // not because a wall-clock liveness timeout elapsed.
     register_with_instance(&registry, "oe", "inst-b").await;
 
     // The stale instance A can no longer poll.
@@ -133,12 +133,9 @@ async fn lease_stale_instance_result_rejected() {
         .unwrap()
         .unwrap();
 
-    // Replace instance A with B after aging out. The dispatched synchronous
-    // request is owned by the replaced Runner process, so it is failed and
-    // drained at replacement with `request_dispatched` preserved.
-    registry
-        .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
-        .await;
+    // Replace instance A with B immediately. The dispatched synchronous request
+    // is owned by the replaced Runner process, so it is failed and drained at
+    // replacement with `request_dispatched` preserved.
     register_with_instance(&registry, "oe", "inst-b").await;
 
     // The stale instance A cannot submit the result.
@@ -221,11 +218,8 @@ async fn lease_stale_instance_job_update_rejected() {
         .await
         .unwrap();
 
-    // Replace instance A with B after aging out. The replacement must
-    // terminate A's job to `lost` at registration time.
-    registry
-        .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
-        .await;
+    // Replace instance A with B immediately. The replacement must terminate
+    // A's job to `lost` at registration time.
     register_with_instance(&registry, "oe", "inst-b").await;
 
     let lost = registry.get_job(&job.job_id).await.unwrap();

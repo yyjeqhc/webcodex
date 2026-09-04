@@ -17,6 +17,16 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        RunnerOffline,
+        Post,
+        "/api/shell/agent/offline",
+        AgentSurface,
+        RunnerTransport,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         RunnerPoll,
         Post,
         "/api/shell/agent/poll",

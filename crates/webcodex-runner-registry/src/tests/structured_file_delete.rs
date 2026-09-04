@@ -213,12 +213,9 @@ async fn instance_replacement_drains_sync_requests_before_installing_new_lease()
         .await
         .expect("capable instance should accept the structured delete request");
 
-    // Age out instance A so a different instance may take over the lease.
-    registry
-        .set_last_seen_for_test("replace-drain", chrono::Utc::now().timestamp() - 120)
-        .await;
-    // Replacement instance B satisfies the same generation-2 baseline; the
-    // lease transition itself drains the old synchronous request.
+    // Replacement instance B satisfies the same generation-2 baseline. Its
+    // successful registration is the lease transition and immediately drains
+    // the old synchronous request; passive last_seen freshness is not a lock.
     register_structured_delete_instance(&registry, "replace-drain", "inst-b")
         .await
         .unwrap();

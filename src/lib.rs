@@ -77,9 +77,9 @@ pub use db::{Database, RotateResult};
 pub use models::{ActionEventRecord, ActionSessionRecord};
 pub(crate) use openapi::openapi_json;
 pub(crate) use runner_http::{
-    runner_job_update, runner_persistent_shell_result, runner_poll, runner_register, runner_result,
-    shell_file_op, shell_job, shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list,
-    shell_run, RunnerRegistry,
+    runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
+    runner_register, runner_result, shell_file_op, shell_job, shell_job_log, shell_job_status,
+    shell_job_stop, shell_jobs_list, shell_run, RunnerRegistry,
 };
 pub use startup::{
     is_project_command, run_project_command, run_regular_server_tunnel, CliCommandOutput,
@@ -546,6 +546,10 @@ only for local/trusted-network demos."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::RunnerRegister))
                 .post(runner_register),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::RunnerOffline))
+                .post(runner_offline),
         )
         .push(Router::with_path(route_metadata::api_path(RouteId::RunnerPoll)).post(runner_poll))
         .push(

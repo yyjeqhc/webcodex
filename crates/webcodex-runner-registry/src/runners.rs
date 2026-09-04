@@ -435,22 +435,11 @@ impl RunnerRegistry {
                 "same runner instance cannot change MCP gateway provider inventory".to_string(),
             );
         }
-        // Enforce the Runner instance lease. `client_id` is the unique active
-        // wire identity: at most one Runner process may be online for it at a
-        // time.
-        if let Some(existing) = inner.runners.get(&client_id) {
-            let online = now_ts().saturating_sub(existing.last_seen) <= RUNNER_ONLINE_WINDOW_SECS;
-            let same_instance = existing.runner_instance_id == runner_instance_id;
-            if online && !same_instance {
-                // Rolling compatibility fence: webcodex-runner classifies this
-                // complete historical prose string exactly during registration recovery.
-                return Err(format!(
-                    "agent client {} is already online with a different instance",
-                    client_id
-                ));
-            }
-        }
-
+        // A successful different-instance registration is an explicit lease
+        // takeover. `last_seen` remains a passive liveness grace for temporary
+        // network gaps; it must not turn a deliberate process restart into a
+        // 60-second registration lock. The replacement path below retires the
+        // old instance before the new lease becomes authoritative.
         let replaced_instance = inner
             .runners
             .get(&client_id)
@@ -913,12 +902,34 @@ impl RunnerRegistry {
         Ok(())
     }
 
-    /// Reconcile state after an Runner transport disconnects or sends a
+    /// Reconcile state after a Runner transport disconnects or sends a
     /// graceful offline notice.
     #[cfg(any(test, feature = "root-test-support"))]
     pub async fn reconcile_disconnect(&self, client_id: &str, runner_instance_id: &str) {
-        self.reconcile_disconnect_checked(client_id, runner_instance_id, None)
+        let _ = self
+            .reconcile_disconnect_checked(client_id, runner_instance_id, None, None)
             .await;
+    }
+
+    /// Apply a graceful polling shutdown only when this exact process still
+    /// owns the active polling lease. A delayed notice from a replaced process,
+    /// or from an old polling request after the same instance moved to a
+    /// streaming connection, is an idempotent no-op.
+    pub async fn reconcile_polling_disconnect(
+        &self,
+        client_id: &str,
+        runner_instance_id: &str,
+    ) -> Result<bool, String> {
+        validate_id(client_id, "client_id")?;
+        validate_runner_instance_id(runner_instance_id)?;
+        Ok(self
+            .reconcile_disconnect_checked(
+                client_id,
+                runner_instance_id,
+                None,
+                Some(RunnerTransport::Polling),
+            )
+            .await)
     }
 
     pub async fn reconcile_disconnect_for_connection(
@@ -927,7 +938,8 @@ impl RunnerRegistry {
         runner_instance_id: &str,
         connection_id: &str,
     ) {
-        self.reconcile_disconnect_checked(client_id, runner_instance_id, Some(connection_id))
+        let _ = self
+            .reconcile_disconnect_checked(client_id, runner_instance_id, Some(connection_id), None)
             .await;
     }
 
@@ -936,7 +948,8 @@ impl RunnerRegistry {
         client_id: &str,
         runner_instance_id: &str,
         connection_id: Option<&str>,
-    ) {
+        expected_transport: Option<RunnerTransport>,
+    ) -> bool {
         let mut inner = self.inner.lock().await;
         let is_active = inner
             .runners
@@ -946,10 +959,13 @@ impl RunnerRegistry {
                     && connection_id
                         .map(|id| runner.connection_id.as_deref() == Some(id))
                         .unwrap_or(true)
+                    && expected_transport
+                        .map(|transport| runner.transport == transport)
+                        .unwrap_or(true)
             })
             .unwrap_or(false);
         if !is_active {
-            return;
+            return false;
         }
         if inner
             .notifiers
@@ -1051,6 +1067,7 @@ impl RunnerRegistry {
             client_id,
             "runner went offline: transport disconnected before returning a result",
         );
+        true
     }
 
     #[cfg(any(test, feature = "root-test-support"))]

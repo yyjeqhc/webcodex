@@ -3700,6 +3700,52 @@ fn polling_register_and_ordinary_poll_both_omit_inline_projects() {
 }
 
 #[test]
+fn polling_graceful_shutdown_sends_instance_scoped_offline_notice() {
+    let poll_seen = Arc::new(AtomicBool::new(false));
+    let offline_seen = Arc::new(AtomicBool::new(false));
+    let seen_poll = Arc::clone(&poll_seen);
+    let seen_offline = Arc::clone(&offline_seen);
+    let server = start_concurrent_polling_server(Arc::new(move |path, body| match path {
+        "/api/shell/agent/register" => register_inventory_support_response(),
+        "/api/shell/agent/poll" => {
+            seen_poll.store(true, Ordering::SeqCst);
+            ConcurrentHttpResponse::json(r#"{"success":true,"request":null,"error":null}"#)
+        }
+        "/api/shell/agent/offline" => {
+            let value: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(value["client_id"], "oe");
+            assert_eq!(value["agent_instance_id"], "inst-offline");
+            seen_offline.store(true, Ordering::SeqCst);
+            ConcurrentHttpResponse::json(r#"{"success":true,"error":null}"#)
+        }
+        other => panic!("unexpected polling shutdown request: {other}"),
+    }));
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = polling_runner_config(
+        server.server_url.clone(),
+        tmp.path().join("project-registry"),
+    );
+    let runtime = test_runtime(&cfg);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let handle = spawn_polling_runner(cfg, runtime, false, "inst-offline", Arc::clone(&shutdown));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !poll_seen.load(Ordering::SeqCst) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        poll_seen.load(Ordering::SeqCst),
+        "polling Runner never became active"
+    );
+    shutdown.store(true, Ordering::SeqCst);
+    handle
+        .finish(Duration::from_secs(5), "polling graceful offline")
+        .unwrap();
+    assert!(offline_seen.load(Ordering::SeqCst));
+    server.finish();
+}
+
+#[test]
 fn project_inventory_pager_honors_count_byte_and_ack_boundaries() {
     for count in [64usize, 65, 100, 256, 1024] {
         let projects = (0..count)

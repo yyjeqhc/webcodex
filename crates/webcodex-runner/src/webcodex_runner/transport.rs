@@ -21,9 +21,9 @@ use crate::runner_config::{
 use crate::runner_protocol::{
     read_quic_frame, write_quic_frame, write_quic_register_frame, QuicFrameError,
     QuicRegisterFrame, RunnerEnvelope, RunnerJobUpdateRequest, RunnerJobUpdateResponse,
-    RunnerPersistentShellResultRequest, RunnerPersistentShellResultResponse, RunnerProjectSummary,
-    RunnerResultPayload, RunnerResultRequest, RunnerResultResponse, ShellJobInventory,
-    ShellProjectInventoryPage, ShellProjectInventoryStatus,
+    RunnerOfflineRequest, RunnerPersistentShellResultRequest, RunnerPersistentShellResultResponse,
+    RunnerProjectSummary, RunnerResultPayload, RunnerResultRequest, RunnerResultResponse,
+    ShellJobInventory, ShellProjectInventoryPage, ShellProjectInventoryStatus,
     PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
 use crate::{
@@ -86,6 +86,9 @@ const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 /// A blocking polling request must return early enough to leave useful time
 /// for the process-wide cleanup budget.
 const POLLING_HTTP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Graceful polling shutdown is best effort and must not turn Ctrl-C into a
+/// multi-second network wait when the network is already degraded.
+const POLLING_OFFLINE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Reload listener polls its stop flag every 100ms, so one second is ample
 /// while still preserving most of the global budget for child processes.
 const CONFIG_RELOAD_JOIN_BUDGET: Duration = Duration::from_secs(1);
@@ -114,10 +117,11 @@ const POLLING_IDLE_BACKOFF_STEPS: [Duration; 3] = [
 /// project-registry and Git metadata changes remain discoverable without attaching
 /// the full inventory to every poll.
 const POLLING_PROJECT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
-/// The current server contract keeps an active polling instance online for
-/// 60 seconds. Permit one lease window plus scheduling slack during deployment
-/// replacement, but do not let a real duplicate runner retry forever.
+/// Older Servers may keep an active polling instance leased for 60 seconds.
+/// Preserve a bounded compatibility wait when such a Server returns the legacy
+/// exact lease-conflict error; current Servers use explicit registration takeover.
 const POLLING_LEASE_CONFLICT_MAX_WAIT: Duration = Duration::from_secs(75);
+const RUNNER_OFFLINE_PATH: &str = "/api/shell/agent/offline";
 /// Result submission endpoint used by the polling transport sink.
 const RUNNER_RESULT_PATH: &str = "/api/shell/agent/result";
 const RUNNER_PERSISTENT_SHELL_RESULT_PATH: &str = "/api/shell/agent/persistent_shell_result";
@@ -473,9 +477,50 @@ fn install_shutdown_listener(
         .map_err(|_| "failed to start process shutdown signal listener".to_string())
 }
 
-fn complete_polling_shutdown(runtime: &RunnerRuntimeState) -> Result<(), String> {
+fn send_polling_offline_best_effort(client: &Client, cfg: &RunnerConfig, runner_instance_id: &str) {
+    let url = format!(
+        "{}{}",
+        cfg.server_url.trim_end_matches('/'),
+        RUNNER_OFFLINE_PATH
+    );
+    let mut request = client.post(url).timeout(POLLING_OFFLINE_TIMEOUT);
+    if !cfg.token.trim().is_empty() {
+        request = request.bearer_auth(cfg.token.trim());
+    }
+    let body = RunnerOfflineRequest {
+        client_id: cfg.client_id.clone(),
+        runner_instance_id: runner_instance_id.to_string(),
+    };
+    match request.json(&body).send() {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => tracing::debug!(
+            status = %response.status(),
+            "webcodex-runner polling offline notice was not accepted"
+        ),
+        Err(error) => tracing::debug!(
+            error = %concise_log_error(&error.to_string(), &cfg.token),
+            "webcodex-runner polling offline notice failed"
+        ),
+    }
+}
+
+fn complete_polling_shutdown(
+    client: &Client,
+    cfg: &RunnerConfig,
+    runner_instance_id: &str,
+    registered: bool,
+    runtime: &RunnerRuntimeState,
+) -> Result<(), String> {
     runtime.request_shutdown_signal();
     runtime.shutdown();
+    // Publish offline only after local workers have drained/stopped. Sending it
+    // earlier would let a final polling result or Job update refresh last_seen
+    // after the Server had already marked the Runner offline. A replacement
+    // process never waits for this cleanup because registration takeover is
+    // immediate and the delayed notice is instance-scoped.
+    if registered {
+        send_polling_offline_best_effort(client, cfg, runner_instance_id);
+    }
     Ok(())
 }
 
@@ -2133,6 +2178,10 @@ fn handle_poll_failure(
 }
 
 fn complete_polling_after_shutdown(
+    client: &Client,
+    cfg: &RunnerConfig,
+    runner_instance_id: &str,
+    registered: bool,
     runtime: &RunnerRuntimeState,
     polling_dispatches: &mut PollingDispatchSupervisor,
     project_cache: &mut RunnerProjectCache,
@@ -2147,7 +2196,7 @@ fn complete_polling_after_shutdown(
             return Err(error.into_message());
         }
     }
-    complete_polling_shutdown(runtime)
+    complete_polling_shutdown(client, cfg, runner_instance_id, registered, runtime)
 }
 
 fn run_polling_runner_with_shutdown(
@@ -2178,6 +2227,10 @@ fn run_polling_runner_with_shutdown(
     loop {
         if shutdown.load(Ordering::SeqCst) {
             return complete_polling_after_shutdown(
+                &client,
+                &cfg,
+                runner_instance_id,
+                registered,
                 runtime,
                 &mut polling_dispatches,
                 &mut project_cache,
@@ -2197,6 +2250,10 @@ fn run_polling_runner_with_shutdown(
                 PollFailureDirective::Continue => continue,
                 PollFailureDirective::Shutdown => {
                     return complete_polling_after_shutdown(
+                        &client,
+                        &cfg,
+                        runner_instance_id,
+                        registered,
                         runtime,
                         &mut polling_dispatches,
                         &mut project_cache,
@@ -2257,6 +2314,10 @@ fn run_polling_runner_with_shutdown(
                         );
                         if sleep_or_shutdown(delay, shutdown.as_ref()) {
                             return complete_polling_after_shutdown(
+                                &client,
+                                &cfg,
+                                runner_instance_id,
+                                registered,
                                 runtime,
                                 &mut polling_dispatches,
                                 &mut project_cache,
@@ -2282,6 +2343,10 @@ fn run_polling_runner_with_shutdown(
                         );
                         if sleep_or_shutdown(delay, shutdown.as_ref()) {
                             return complete_polling_after_shutdown(
+                                &client,
+                                &cfg,
+                                runner_instance_id,
+                                registered,
                                 runtime,
                                 &mut polling_dispatches,
                                 &mut project_cache,
@@ -2309,6 +2374,10 @@ fn run_polling_runner_with_shutdown(
                     PollFailureDirective::Continue => continue,
                     PollFailureDirective::Shutdown => {
                         return complete_polling_after_shutdown(
+                            &client,
+                            &cfg,
+                            runner_instance_id,
+                            registered,
                             runtime,
                             &mut polling_dispatches,
                             &mut project_cache,
@@ -2319,6 +2388,10 @@ fn run_polling_runner_with_shutdown(
         }
         if shutdown.load(Ordering::SeqCst) {
             return complete_polling_after_shutdown(
+                &client,
+                &cfg,
+                runner_instance_id,
+                registered,
                 runtime,
                 &mut polling_dispatches,
                 &mut project_cache,
@@ -2436,17 +2509,31 @@ fn run_polling_runner_with_shutdown(
                             shutdown.as_ref(),
                         ) {
                             return complete_polling_after_shutdown(
+                                &client,
+                                &cfg,
+                                runner_instance_id,
+                                registered,
                                 runtime,
                                 &mut polling_dispatches,
                                 &mut project_cache,
                             );
                         }
                     }
-                    return Ok(());
+                    return complete_polling_shutdown(
+                        &client,
+                        &cfg,
+                        runner_instance_id,
+                        registered,
+                        runtime,
+                    );
                 }
                 if let Some(delay) = polling_idle_delay(&mut idle_backoff, ran_request) {
                     if sleep_or_shutdown(delay, shutdown.as_ref()) {
                         return complete_polling_after_shutdown(
+                            &client,
+                            &cfg,
+                            runner_instance_id,
+                            registered,
                             runtime,
                             &mut polling_dispatches,
                             &mut project_cache,
@@ -2467,6 +2554,10 @@ fn run_polling_runner_with_shutdown(
                 PollFailureDirective::Continue => {}
                 PollFailureDirective::Shutdown => {
                     return complete_polling_after_shutdown(
+                        &client,
+                        &cfg,
+                        runner_instance_id,
+                        registered,
                         runtime,
                         &mut polling_dispatches,
                         &mut project_cache,

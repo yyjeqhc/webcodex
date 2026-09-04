@@ -3,9 +3,10 @@ use super::{
     require_runner_transport_scope, runner_access_from_auth,
 };
 use crate::runner_protocol::{
-    RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerPersistentShellResultRequest,
-    RunnerPersistentShellResultResponse, RunnerPollPayload, RunnerPollResponse,
-    RunnerRegisterRequest, RunnerRegisterResponse, RunnerResultPayload, RunnerResultResponse,
+    RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerOfflineRequest, RunnerOfflineResponse,
+    RunnerPersistentShellResultRequest, RunnerPersistentShellResultResponse, RunnerPollPayload,
+    RunnerPollResponse, RunnerRegisterRequest, RunnerRegisterResponse, RunnerResultPayload,
+    RunnerResultResponse,
 };
 use salvo::prelude::*;
 
@@ -70,6 +71,75 @@ pub async fn runner_register(req: &mut Request, depot: &mut Depot, res: &mut Res
             res.render(Json(RunnerRegisterResponse {
                 success: false,
                 client: None,
+                error: Some(e),
+            }));
+        }
+    }
+}
+
+#[handler]
+pub async fn runner_offline(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(registry) = get_registry(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(RunnerOfflineResponse {
+            success: false,
+            error: Some("Runner registry not configured".to_string()),
+        }));
+        return;
+    };
+    let body: RunnerOfflineRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(RunnerOfflineResponse {
+                success: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if let Err(e) = require_runner_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(RunnerOfflineResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = enforce_runner_transport(auth.as_ref(), &body.client_id) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(RunnerOfflineResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
+    let access = runner_access_from_auth(auth.as_ref());
+    if let Err(e) = registry
+        .assert_runner_access(access.as_ref(), &body.client_id)
+        .await
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(RunnerOfflineResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
+    match registry
+        .reconcile_polling_disconnect(&body.client_id, &body.runner_instance_id)
+        .await
+    {
+        Ok(_) => res.render(Json(RunnerOfflineResponse {
+            success: true,
+            error: None,
+        })),
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(RunnerOfflineResponse {
+                success: false,
                 error: Some(e),
             }));
         }

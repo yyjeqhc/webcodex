@@ -25,7 +25,8 @@ pub(crate) use auth::{
     runner_access_from_auth,
 };
 pub use handlers::{
-    runner_job_update, runner_persistent_shell_result, runner_poll, runner_register, runner_result,
+    runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
+    runner_register, runner_result,
 };
 pub(crate) use telemetry::registry_with_tool_request_trace;
 pub(crate) use webcodex_runner_registry::{

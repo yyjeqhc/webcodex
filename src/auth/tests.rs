@@ -58,9 +58,10 @@ fn user_token_auth_context_does_not_get_agent_kind() {
 }
 
 #[test]
-fn is_runner_transport_path_allows_only_the_six_exact_paths() {
-    // The six Runner transport endpoints an agent token may call.
+fn is_runner_transport_path_allows_only_the_seven_exact_paths() {
+    // The seven Runner transport endpoints an agent token may call.
     assert!(is_runner_transport_path("/api/shell/agent/register"));
+    assert!(is_runner_transport_path("/api/shell/agent/offline"));
     assert!(is_runner_transport_path("/api/shell/agent/poll"));
     assert!(is_runner_transport_path("/api/shell/agent/result"));
     assert!(is_runner_transport_path(
@@ -1204,6 +1205,7 @@ fn enforce_token_surface_matrix() {
     oauth2.kind = AuthKind::OAuth2Token;
     let runner_transport = [
         "/api/shell/agent/register",
+        "/api/shell/agent/offline",
         "/api/shell/agent/poll",
         "/api/shell/agent/result",
         "/api/shell/agent/persistent_shell_result",

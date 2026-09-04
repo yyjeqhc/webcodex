@@ -178,3 +178,26 @@ async fn reconcile_disconnect_releases_active_lease_immediately() {
         "new instance should register without waiting 60 seconds"
     );
 }
+
+#[tokio::test]
+async fn polling_offline_is_instance_scoped_and_stale_notice_cannot_drop_takeover() {
+    let registry = RunnerRegistry::default();
+    register_with_instance(&registry, "oe", "inst-a").await;
+
+    assert!(registry
+        .reconcile_polling_disconnect("oe", "inst-a")
+        .await
+        .unwrap());
+    assert!(!registry.get_runner_view("oe").await.unwrap().connected);
+
+    let replacement = register_with_instance(&registry, "oe", "inst-b").await;
+    assert!(replacement.connected);
+
+    assert!(!registry
+        .reconcile_polling_disconnect("oe", "inst-a")
+        .await
+        .unwrap());
+    let current = registry.get_runner_view("oe").await.unwrap();
+    assert_eq!(current.runner_instance_id, "inst-b");
+    assert!(current.connected);
+}

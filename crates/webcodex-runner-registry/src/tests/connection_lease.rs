@@ -74,6 +74,26 @@ async fn streaming_registration_commits_transport_connection_and_notifier_togeth
 }
 
 #[tokio::test]
+async fn delayed_polling_offline_cannot_disconnect_same_instance_streaming_reconnect() {
+    let registry = RunnerRegistry::default();
+    register_with_instance(&registry, "oe", "inst-x").await;
+
+    let streaming = register_with_connection(&registry, "oe", "inst-x", "conn-b").await;
+    assert_eq!(streaming.transport, TRANSPORT_WEBSOCKET);
+    assert!(streaming.connected);
+
+    assert!(!registry
+        .reconcile_polling_disconnect("oe", "inst-x")
+        .await
+        .unwrap());
+    let current = registry.get_runner_view("oe").await.unwrap();
+    assert_eq!(current.runner_instance_id, "inst-x");
+    assert_eq!(current.transport, TRANSPORT_WEBSOCKET);
+    assert!(current.connected);
+    assert_eq!(current.disconnected_at, None);
+}
+
+#[tokio::test]
 async fn streaming_registration_rejects_polling_transport_authority() {
     let registry = RunnerRegistry::default();
     let error = registry

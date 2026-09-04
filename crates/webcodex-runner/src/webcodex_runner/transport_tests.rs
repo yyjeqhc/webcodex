@@ -948,6 +948,10 @@ fn result_success_response() -> ConcurrentHttpResponse {
     ConcurrentHttpResponse::json(r#"{"success":true}"#)
 }
 
+fn polling_offline_success_response() -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(r#"{"success":true,"error":null}"#)
+}
+
 #[cfg(unix)]
 fn job_update_success_response() -> ConcurrentHttpResponse {
     ConcurrentHttpResponse::json(r#"{"success":true,"job":null,"error":null}"#)
@@ -1245,6 +1249,7 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
                 }
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected polling test endpoint: {other}"),
         })
     };
@@ -1356,6 +1361,7 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
                 }
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected polling bound endpoint: {other}"),
         })
     };
@@ -1476,6 +1482,7 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
                 }
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected Job-behind-ordinary endpoint: {other}"),
         })
     };
@@ -1541,6 +1548,7 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
                 result_count.fetch_add(1, Ordering::SeqCst);
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected polling --once endpoint: {other}"),
         })
     };
@@ -1615,6 +1623,7 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
                 }
                 job_update_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected polling --once Job endpoint: {other}"),
         })
     };
@@ -1684,6 +1693,7 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
                     .push(serde_json::from_str(body).unwrap());
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected active-shutdown endpoint: {other}"),
         })
     };
@@ -1798,6 +1808,7 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
                 project_result_seen.store(true, Ordering::SeqCst);
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected project-cache endpoint: {other}"),
         })
     };
@@ -1919,6 +1930,7 @@ fn polling_persistent_shell_exec_remains_responsive_to_close() {
                 }
                 result_success_response()
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected persistent-shell polling endpoint: {other}"),
         })
     };
@@ -4426,6 +4438,7 @@ fn polling_once_startup_with_100_projects_registers_liveness_then_completes_page
                     synced,
                 ))
             }
+            "/api/shell/agent/offline" => polling_offline_success_response(),
             other => panic!("unexpected project-inventory polling endpoint: {other}"),
         })
     };

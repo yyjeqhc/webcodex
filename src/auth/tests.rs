@@ -300,6 +300,7 @@ fn gate_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
                 .push(Router::with_path("agent-tokens/register_hash").post(echo_ok))
                 .push(Router::with_path("agent-tokens/list").post(echo_ok))
                 .push(Router::with_path("shell/agent/register").post(echo_ok))
+                .push(Router::with_path("shell/agent/offline").post(echo_ok))
                 .push(Router::with_path("shell/agent/poll").post(echo_ok))
                 .push(Router::with_path("shell/agent/result").post(echo_ok))
                 .push(Router::with_path("shell/agent/persistent_shell_result").post(echo_ok))

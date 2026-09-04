@@ -1239,11 +1239,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ws_duplicate_different_instance_is_rejected() {
-        // A WebSocket Runner with client_id=oe, instance=A is online. A second
-        // WebSocket registration with client_id=oe, instance=B must be rejected
-        // (the server sends an error and closes the second socket). The first
-        // connection stays online.
+    async fn ws_different_instance_takes_over_and_closes_replaced_connection() {
+        // A deliberate registration from a new Runner process is stronger than
+        // the passive last_seen grace. Instance B takes over immediately and the
+        // replaced WebSocket A is actively terminated.
         let registry = Arc::new(RunnerRegistry::default());
         let addr = start_server(registry.clone()).await;
         let url = format!("ws://{}/api/agents/ws", addr);
@@ -1267,7 +1266,7 @@ mod tests {
         assert_eq!(view.runner_instance_id, "inst-a");
         assert!(view.connected);
 
-        // Second session: instance B, same client_id, while A is online.
+        // Second session: instance B, same client_id, while A is still fresh.
         let (mut ws_b, _resp) = connect_async(url).await.unwrap();
         ws_b.send(TungsteniteMessage::Text(
             register_envelope_with_instance("ws-dup", "inst-b")
@@ -1277,30 +1276,27 @@ mod tests {
         ))
         .await
         .unwrap();
-        let resp = recv_envelope(&mut ws_b).await;
-        match resp {
-            RunnerEnvelope::Error { message, .. } => {
-                assert!(message.contains("already online"), "error was: {message}");
-                assert!(
-                    message.contains("different instance"),
-                    "error was: {message}"
-                );
-            }
-            RunnerEnvelope::Registered {
-                success: false,
-                error,
-                ..
-            } => {
-                let error = error.expect("error message");
-                assert!(error.contains("already online"), "error was: {error}");
-            }
-            other => panic!("expected error/rejected, got {:?}", other),
-        }
+        assert!(matches!(
+            recv_envelope(&mut ws_b).await,
+            RunnerEnvelope::Registered { success: true, .. }
+        ));
 
-        // The active instance is still A.
+        // B owns the lease immediately; no 60-second last_seen expiry is part
+        // of replacement authority.
         let view = registry.get_runner_view("ws-dup").await.unwrap();
-        assert_eq!(view.runner_instance_id, "inst-a");
+        assert_eq!(view.runner_instance_id, "inst-b");
         assert!(view.connected);
+
+        let stale_exit = tokio::time::timeout(Duration::from_millis(500), ws_a.next())
+            .await
+            .expect("replaced WebSocket A must terminate promptly");
+        assert!(
+            matches!(
+                stale_exit,
+                None | Some(Ok(TungsteniteMessage::Close(_))) | Some(Err(_))
+            ),
+            "replaced WebSocket A must close instead of remaining authoritative"
+        );
     }
 
     #[tokio::test]

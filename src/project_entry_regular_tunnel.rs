@@ -193,9 +193,12 @@ fn read_user_token(path: &Path) -> Result<String, ProductError> {
         .ok_or_else(|| {
             tunnel_auth_error("the WebCodex user token file is unreadable or not protected")
         })?;
-    if value.starts_with("wc_agent_") {
+    if !value
+        .strip_prefix("wc_pat_")
+        .is_some_and(|suffix| !suffix.is_empty())
+    {
         return Err(tunnel_auth_error(
-            "the selected credential is a Runner transport token, not a WebCodex user API credential",
+            "the selected credential is not a WebCodex user API token",
         ));
     }
     Ok(value)
@@ -229,35 +232,66 @@ mod tests {
     fn authorization_file_is_private_distinct_and_cleaned_up() {
         let temp = tempfile::tempdir().unwrap();
         let token_file = temp.path().join("webcodex-user-token");
-        super::super::setup_service::write_new_private(&token_file, b"wc_pat_test_secret\n")
-            .unwrap();
+        let user_pat = "wc_pat_test_secret";
+        super::super::setup_service::write_new_private(
+            &token_file,
+            format!("{user_pat}\n").as_bytes(),
+        )
+        .unwrap();
         let session = RegularTunnelSession::create(&token_file).unwrap();
         let session_dir = session.directory.clone();
         let authorization_file = session.write_authorization_file(&token_file).unwrap();
         assert_eq!(
             std::fs::read_to_string(&authorization_file).unwrap(),
-            "Bearer wc_pat_test_secret"
+            format!("Bearer {user_pat}")
         );
         assert_ne!(authorization_file, token_file);
+        assert_eq!(
+            std::fs::read_to_string(&token_file).unwrap(),
+            format!("{user_pat}\n")
+        );
         drop(session);
         assert!(!session_dir.exists());
+        assert!(!authorization_file.exists());
         assert!(token_file.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&token_file).unwrap(),
+            format!("{user_pat}\n")
+        );
     }
 
     #[test]
-    fn authorization_file_rejects_runner_transport_token_without_echoing_it() {
+    fn authorization_file_rejects_non_user_pat_credentials_without_echoing_them() {
         let temp = tempfile::tempdir().unwrap();
-        let token_file = temp.path().join("webcodex-user-token");
-        let secret = "wc_agent_do_not_echo_regular_tunnel_0123456789";
-        super::super::setup_service::write_new_private(
-            &token_file,
-            format!("{secret}\n").as_bytes(),
-        )
-        .unwrap();
-        let session = RegularTunnelSession::create(&token_file).unwrap();
-        let error = session.write_authorization_file(&token_file).unwrap_err();
-        assert_eq!(error.code, "tunnel_auth_invalid");
-        assert!(error.message.contains("Runner transport token"));
-        assert!(!error.message.contains(secret));
+        for (index, secret) in [
+            "wc_agent_do_not_echo_regular_tunnel_0123456789",
+            "wc_boot_do_not_echo_regular_tunnel_0123456789",
+            "wc_acct_do_not_echo_regular_tunnel_0123456789",
+            "wc_oat_do_not_echo_regular_tunnel_0123456789",
+            "arbitrary-do-not-echo-regular-tunnel-secret",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let token_file = temp.path().join(format!("webcodex-user-token-{index}"));
+            super::super::setup_service::write_new_private(
+                &token_file,
+                format!("{secret}\n").as_bytes(),
+            )
+            .unwrap();
+            let session = RegularTunnelSession::create(&token_file).unwrap();
+            let session_dir = session.directory.clone();
+            let error = session.write_authorization_file(&token_file).unwrap_err();
+            assert_eq!(error.code, "tunnel_auth_invalid");
+            assert_eq!(
+                error.message,
+                "the selected credential is not a WebCodex user API token"
+            );
+            let encoded = serde_json::to_string(&error).unwrap();
+            assert!(!encoded.contains(secret));
+            assert!(token_file.is_file());
+            drop(session);
+            assert!(!session_dir.exists());
+        }
     }
 }

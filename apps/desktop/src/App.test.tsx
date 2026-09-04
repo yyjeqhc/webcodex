@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopState } from "./models/topology";
 import { LocaleProvider } from "./i18n/locale";
@@ -236,6 +236,89 @@ describe("semantic Desktop UI", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "安全隧道已建立，连接信息需要处理" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动安全隧道" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止安全隧道" })).toBeInTheDocument();
+  });
+
+  it("revokes stale connected state from background tunnel ownership observation without manual refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const connectedTunnel: DesktopState = {
+        ...readyState,
+        topology: {
+          ...readyState.topology!,
+          exposure: { kind: "open_ai_tunnel" },
+        },
+        readiness: {
+          ...readyState.readiness,
+          exposure: "remote_ready",
+          ready_for_chatgpt: true,
+          summary: "Ready to use with ChatGPT",
+          summary_kind: "ready_for_chat_gpt",
+          next_action: null,
+          next_action_kind: null,
+        },
+        regular_tunnel: {
+          provider: "openai",
+          status: "ready",
+          clipboard_state: "copied",
+          clipboard_contains: "tunnel_id",
+          ready_for_chatgpt: true,
+        },
+      };
+      const failedTunnel: DesktopState = {
+        ...connectedTunnel,
+        readiness: {
+          ...connectedTunnel.readiness,
+          exposure: "error",
+          ready_for_chatgpt: false,
+          summary: "ChatGPT connection is not verified",
+          summary_kind: "connection_unverified",
+          next_action: "Restart the secure tunnel.",
+          next_action_kind: "restart_secure_tunnel",
+        },
+        regular_tunnel: {
+          ...connectedTunnel.regular_tunnel!,
+          status: "error",
+          ready_for_chatgpt: false,
+        },
+      };
+
+      api.getState
+        .mockResolvedValueOnce(connectedTunnel)
+        .mockResolvedValueOnce(failedTunnel);
+      api.refresh.mockResolvedValue(connectedTunnel);
+      const view = renderApp();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const readyStatus = screen.getByRole("status");
+      expect(readyStatus).toHaveTextContent("可以使用");
+      expect(screen.getByText("ChatGPT 已就绪")).toBeInTheDocument();
+      expect(api.getState).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500);
+      });
+
+      expect(api.getState).toHaveBeenCalledTimes(2);
+      expect(api.refresh).toHaveBeenCalledTimes(1);
+      const failedStatus = screen.getByRole("status");
+      expect(failedStatus).toHaveTextContent("ChatGPT 连接尚未验证");
+      expect(failedStatus).toHaveTextContent("重新启动安全隧道。");
+      expect(screen.queryByText("ChatGPT 已就绪")).not.toBeInTheDocument();
+      expect(screen.getByText("ChatGPT 连接未完成")).toBeInTheDocument();
+
+      view.unmount();
+      const callsAfterUnmount = api.getState.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(api.getState).toHaveBeenCalledTimes(callsAfterUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps regular tunnel controls off a remote Server connection page", async () => {

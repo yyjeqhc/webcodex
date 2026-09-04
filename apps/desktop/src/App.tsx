@@ -12,6 +12,8 @@ import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presenta
 
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
+const REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS = 1_500;
+
 export default function App() {
   const { locale, setLocale, t } = useLocale();
   const [state, setState] = useState<DesktopState | null>(null);
@@ -19,6 +21,7 @@ export default function App() {
   const [navigation, setNavigation] = useState<Navigation>("home");
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const hasRegularTunnel = Boolean(state?.regular_tunnel);
 
   const load = useCallback(async () => {
     const initial = await desktopApi.getState();
@@ -29,6 +32,37 @@ export default function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!hasRegularTunnel) return;
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const scheduleObservation = () => {
+      timeoutId = window.setTimeout(() => {
+        void (async () => {
+          try {
+            const next = await desktopApi.getState();
+            if (!cancelled) {
+              setState((current) => (current?.regular_tunnel ? next : current));
+            }
+          } catch {
+            // Ownership observation is best-effort. A transient invoke failure
+            // must not create an error storm or a second concurrent observer.
+          } finally {
+            if (!cancelled) scheduleObservation();
+          }
+        })();
+      }, REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS);
+    };
+
+    scheduleObservation();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [hasRegularTunnel]);
 
   useEffect(() => {
     if (navigation === "activity") {

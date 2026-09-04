@@ -22,6 +22,15 @@ fn structured_execution_output(
             "job_id": job_id,
             "job_status": job_status,
             "observation_token": if promoted_to_job { Some("observation") } else { None },
+            "activity": if promoted_to_job {
+                Some(serde_json::json!({
+                    "state": "working",
+                    "phase": "process_running",
+                    "source": "runner_execution"
+                }))
+            } else {
+                None
+            },
             "effective_timeout_secs": 60,
             "sync_wait_secs": 10,
             "async_handoff_available": true
@@ -51,8 +60,10 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
                 "recovery_tool": "list_jobs",
                 "error": "unknown job"
             }],
-            "wake_reason": "item_error",
-            "waited_ms": 0,
+            "wait": {
+                "outcome": "item_error",
+                "waited_ms": 0
+            },
             "changed_count": 0,
             "terminal_count": 0,
             "output_truncated": false,

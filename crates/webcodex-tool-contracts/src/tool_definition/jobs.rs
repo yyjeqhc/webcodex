@@ -320,7 +320,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Observe 1 to 8 existing Jobs with bounded baseline/delta logs and isolated item errors. Optionally performs one shared wait for the batch and returns when any relevant Job changes; final items are non-waiting snapshots. Return each opaque observation token unchanged on follow-up. This tool only observes: it never launches, retries, stops, or subscribes to Jobs.",
+            "Observe 1 to 8 existing Jobs with bounded log deltas and isolated errors. Optionally wait once for any change; final items are snapshots. Return opaque tokens unchanged. Never launches, retries, stops, or subscribes.",
             observe_jobs_input_schema,
         ),
         80,

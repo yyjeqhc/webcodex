@@ -27,6 +27,10 @@ def archive_filename(version: str, platform: str) -> str:
     return f"webcodex-v{version}-{platform}.tar.gz"
 
 
+def desktop_filename(version: str) -> str:
+    return f"webcodex-desktop-v{version}-win32-x64-setup.exe"
+
+
 def expected_members(platform: str) -> set[str]:
     suffix = ".exe" if platform in {"win32-x64", "win32-arm64"} else ""
     return {f"{name}{suffix}" for name in BINARIES}
@@ -104,6 +108,13 @@ def main() -> int:
             "url": f"https://github.com/{args.repo}/releases/download/v{version}/{filename}",
             "sha256": digest,
         }
+
+    desktop_name = desktop_filename(version)
+    desktop_path = args.artifact_dir / desktop_name
+    if not desktop_path.is_file() or desktop_path.stat().st_size <= 0:
+        raise SystemExit(f"missing or empty Desktop installer: {desktop_path}")
+    desktop_digest = sha256(desktop_path)
+    checksum_lines.append(f"{desktop_digest}  {desktop_name}")
 
     manifest = {
         "version": version,

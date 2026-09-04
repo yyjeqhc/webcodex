@@ -16,8 +16,22 @@ class ReleaseDoctorTests(unittest.TestCase):
         detail = doctor._platform_contract(Path.cwd())
         self.assertIn("darwin-x64", detail)
         self.assertIn("win32-arm64", detail)
+        self.assertIn("Desktop win32-x64", detail)
         workflow = doctor._workflow_contract(Path.cwd())
         self.assertIn("authoritative build", workflow)
+
+    def test_version_contract_rejects_desktop_mismatch(self) -> None:
+        versions = {
+            "cargo": VERSION,
+            "npm": VERSION,
+            "desktop_package": "0.3.9",
+            "desktop_cargo": VERSION,
+            "desktop_tauri": VERSION,
+        }
+        with mock.patch.object(publication, "_package_versions", return_value=versions), self.assertRaisesRegex(
+            doctor.DoctorError, "desktop_package=0.3.9"
+        ):
+            doctor._version_contract(Path.cwd(), VERSION)
 
     def test_doctor_aggregates_read_only_preflight_and_ci_proof(self) -> None:
         ci = {
@@ -28,6 +42,7 @@ class ReleaseDoctorTests(unittest.TestCase):
         with (
             mock.patch.object(doctor, "_require_tools", return_value="tools ok"),
             mock.patch.object(doctor, "_platform_contract", return_value="platforms ok"),
+            mock.patch.object(doctor, "_version_contract", return_value="versions ok"),
             mock.patch.object(doctor, "_workflow_contract", return_value="workflows ok"),
             mock.patch.object(doctor, "_compile_verifiers", return_value="python ok"),
             mock.patch.object(doctor, "_actionlint", return_value="actionlint ok"),
@@ -54,6 +69,7 @@ class ReleaseDoctorTests(unittest.TestCase):
         with (
             mock.patch.object(doctor, "_require_tools", side_effect=doctor.DoctorError("missing gh")),
             mock.patch.object(doctor, "_platform_contract", return_value="platforms ok"),
+            mock.patch.object(doctor, "_version_contract", return_value="versions ok"),
             mock.patch.object(doctor, "_workflow_contract", return_value="workflows ok"),
             mock.patch.object(doctor, "_compile_verifiers", return_value="python ok"),
             mock.patch.object(doctor, "_actionlint", return_value="optional"),

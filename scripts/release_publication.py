@@ -103,17 +103,39 @@ def _require_exact_clean_root(root: Path, source_sha: str) -> None:
         raise PublicationError("release source worktree is not clean")
 
 
-def _package_versions(root: Path) -> tuple[str, str]:
+def _package_versions(root: Path) -> dict[str, str]:
     try:
         cargo = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
         cargo_version = cargo["workspace"]["package"]["version"]
         npm = json.loads((root / "npm/webcodex/package.json").read_text(encoding="utf-8"))
         npm_version = npm["version"]
+        desktop_package = json.loads((root / "apps/desktop/package.json").read_text(encoding="utf-8"))
+        desktop_package_version = desktop_package["version"]
+        desktop_cargo = tomllib.loads((root / "apps/desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+        desktop_cargo_version = desktop_cargo["package"]["version"]
+        desktop_tauri = json.loads((root / "apps/desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+        desktop_tauri_version = desktop_tauri["version"]
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise PublicationError("could not read Cargo/npm release versions") from exc
-    if not isinstance(cargo_version, str) or not isinstance(npm_version, str):
-        raise PublicationError("Cargo/npm release versions are invalid")
-    return cargo_version, npm_version
+        raise PublicationError("could not read canonical release versions") from exc
+    versions = {
+        "cargo": cargo_version,
+        "npm": npm_version,
+        "desktop_package": desktop_package_version,
+        "desktop_cargo": desktop_cargo_version,
+        "desktop_tauri": desktop_tauri_version,
+    }
+    if any(not isinstance(value, str) for value in versions.values()):
+        raise PublicationError("canonical release versions are invalid")
+    return versions
+
+
+def _require_package_versions(root: Path, requested: str, *, context: str) -> dict[str, str]:
+    versions = _package_versions(root)
+    mismatches = {name: value for name, value in versions.items() if value != requested}
+    if mismatches:
+        detail = " ".join(f"{name}={value}" for name, value in versions.items())
+        raise PublicationError(f"{context} version mismatch: requested={requested} {detail}")
+    return versions
 
 
 def _github_optional_json(client: collector.GitHubClient, suffix: str) -> dict | None:
@@ -366,11 +388,7 @@ def reclaim_prepublication_tag(
     remote_main = _remote_main_source(source_root)
     if head != remote_main:
         raise PublicationError(f"release recovery source is not exact remote main: head={head} main={remote_main}")
-    cargo_version, npm_version = _package_versions(source_root)
-    if cargo_version != release_version or npm_version != release_version:
-        raise PublicationError(
-            f"release recovery version mismatch: requested={release_version} cargo={cargo_version} npm={npm_version}"
-        )
+    _require_package_versions(source_root, release_version, context="release recovery")
 
     remote_identity = _remote_annotated_tag_identity(source_root, tag)
     if remote_identity is None:
@@ -452,11 +470,7 @@ def preflight_release(
     source = collector.normalize_source_sha(source_sha)
     source_root = root.absolute()
     _require_exact_clean_root(source_root, source)
-    cargo_version, npm_version = _package_versions(source_root)
-    if cargo_version != release_version or npm_version != release_version:
-        raise PublicationError(
-            f"release version mismatch: requested={release_version} cargo={cargo_version} npm={npm_version}"
-        )
+    _require_package_versions(source_root, release_version, context="release")
 
     client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
     main_sha = _github_main_sha(client)
@@ -989,6 +1003,14 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
 
     expected_files = {"SHA256SUMS"}
     expected_files.update(f"{summary['archive_stem']}-{platform}.tar.gz" for platform in collector.PLATFORMS)
+    desktop_artifacts = summary.get("desktop_artifacts")
+    if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(collector.DESKTOP_PLATFORMS):
+        raise PublicationError("retained bundle Desktop artifact summary is invalid")
+    for platform in collector.DESKTOP_PLATFORMS:
+        item = desktop_artifacts.get(platform)
+        if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+            raise PublicationError(f"retained bundle Desktop artifact is invalid: {platform}")
+        expected_files.add(item["filename"])
     by_name: dict[str, dict] = {}
     for asset in assets:
         if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):

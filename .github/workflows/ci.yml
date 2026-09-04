@@ -34,7 +34,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            apps/desktop/package-lock.json
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
       - name: Check frontend contracts
@@ -42,6 +44,13 @@ jobs:
           npm --prefix frontend run typecheck
           npm --prefix frontend test
           npm --prefix frontend run check:dist
+      - name: Install Desktop frontend dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Check Desktop frontend contracts
+        run: |
+          npm --prefix apps/desktop run typecheck
+          npm --prefix apps/desktop test
+          npm --prefix apps/desktop run build
       - name: Verify workspace boundaries
         run: |
           bash scripts/workspace_boundary_check.sh --self-test
@@ -290,6 +299,101 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm_install_windows_smoke.ps1
 
+  test-windows-desktop:
+    needs: contract
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-desktop-ci
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install Desktop dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Check Desktop frontend
+        run: |
+          npm --prefix apps/desktop run typecheck
+          npm --prefix apps/desktop test
+          npm --prefix apps/desktop run build
+      - name: Check Desktop Rust
+        shell: pwsh
+        run: |
+          cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+          if ($LASTEXITCODE -ne 0) { throw "Desktop cargo check failed" }
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Desktop cargo test failed" }
+      - name: Build exact local WebCodex runtime
+        id: runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $source = (git rev-parse HEAD).Trim()
+          $short = (git rev-parse --short=12 HEAD).Trim()
+          $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
+          $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
+          $env:WEBCODEX_BUILT_AT = "$builtAt"
+          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "WebCodex runtime build failed" }
+          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+            $binary = Join-Path "target\release" "$name.exe"
+            $actual = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
+            $expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"
+            if ($actual -ne $expected) { throw "Unexpected $name identity: $actual" }
+          }
+          "source=$source" >> $env:GITHUB_OUTPUT
+          "short=$short" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "built_at=$builtAt" >> $env:GITHUB_OUTPUT
+      - name: Stage exact runtime for Desktop bundle
+        id: desktop_bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stage = Join-Path $env:GITHUB_WORKSPACE "target\desktop-ci-bundle"
+          & .\scripts\prepare_desktop_bundle.ps1 `
+            -BinDir "target\release" `
+            -Version "${{ steps.runtime.outputs.version }}" `
+            -SourceSha "${{ steps.runtime.outputs.source }}" `
+            -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
+            -OutputDir $stage
+          if ($LASTEXITCODE -ne 0) { throw "Desktop bundle staging failed" }
+          "config=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_OUTPUT
+      - name: Build unsigned NSIS installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:CARGO_TARGET_DIR = Join-Path $env:GITHUB_WORKSPACE "target\desktop-ci-tauri"
+          npm --prefix apps/desktop exec tauri -- build --bundles nsis --config "${{ steps.desktop_bundle.outputs.config }}" --ci --no-sign
+          if ($LASTEXITCODE -ne 0) { throw "Tauri NSIS build failed" }
+          $bundleDir = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
+          $built = @(Get-ChildItem -LiteralPath $bundleDir -Filter "*-setup.exe" -File)
+          if ($built.Count -ne 1) { throw "Expected exactly one NSIS installer, found $($built.Count)" }
+          New-Item -ItemType Directory -Force -Path "target\desktop-ci-dist" | Out-Null
+          $installer = Join-Path "target\desktop-ci-dist" "webcodex-desktop-ci-${{ steps.runtime.outputs.short }}-v${{ steps.runtime.outputs.version }}-win32-x64-setup.exe"
+          Copy-Item -LiteralPath $built[0].FullName -Destination $installer
+          "DESKTOP_CI_INSTALLER=$([System.IO.Path]::GetFullPath($installer))" >> $env:GITHUB_ENV
+      - name: Smoke newly-built Desktop installer
+        shell: pwsh
+        run: |
+          & .\scripts\desktop_install_windows_smoke.ps1 `
+            -Installer $env:DESKTOP_CI_INSTALLER `
+            -Version "${{ steps.runtime.outputs.version }}" `
+            -SourceSha "${{ steps.runtime.outputs.source }}" `
+            -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}")
+          if ($LASTEXITCODE -ne 0) { throw "Desktop installer smoke failed" }
+
   # The x64 Windows lanes above exercise full process/package behavior. Keep one
   # native ARM64 compile gate on exact main so the release workflow is not the
   # first place target-specific Windows code is compiled.
@@ -317,7 +421,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE" }
 
   test-windows:
-    needs: [contract, test-windows-core, test-windows-runner, test-windows-package, test-windows-arm64]
+    needs: [contract, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop, test-windows-arm64]
     # Preserve the historical required Windows status while moving the expensive
     # work into parallel VMs. Eligible heavy runs inspect every lane even after a
     # failure so branch protection cannot see a false-success aggregate.
@@ -337,13 +441,15 @@ jobs:
           CORE_RESULT: ${{ needs.test-windows-core.result }}
           RUNNER_RESULT: ${{ needs.test-windows-runner.result }}
           PACKAGE_RESULT: ${{ needs.test-windows-package.result }}
+          DESKTOP_RESULT: ${{ needs.test-windows-desktop.result }}
           ARM64_RESULT: ${{ needs.test-windows-arm64.result }}
         run: |
-          echo "contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT arm64=$ARM64_RESULT"
+          echo "contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
           if [ "$CONTRACT_RESULT" != success ] || \
              [ "$CORE_RESULT" != success ] || \
              [ "$RUNNER_RESULT" != success ] || \
              [ "$PACKAGE_RESULT" != success ] || \
+             [ "$DESKTOP_RESULT" != success ] || \
              [ "$ARM64_RESULT" != success ]; then
             echo "required Windows CI lane did not succeed" >&2
             exit 1

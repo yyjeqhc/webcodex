@@ -103,11 +103,25 @@ jobs:
             exit 1
           fi
 
-          package_version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
-          if [ "$build_kind" = release ] && [ "$package_version" != "$version" ]; then
-            echo "Tag/package version mismatch: tag=$version package=$package_version" >&2
-            exit 1
-          fi
+          package_version="$(
+            python3 - "$build_kind" "$version" <<'PY'
+          import sys
+          from pathlib import Path
+
+          from scripts import release_publication
+
+          build_kind, requested = sys.argv[1:]
+          versions = release_publication._package_versions(Path.cwd())
+          unique = set(versions.values())
+          if len(unique) != 1:
+              detail = " ".join(f"{name}={value}" for name, value in versions.items())
+              raise SystemExit(f"Canonical release versions disagree: {detail}")
+          current = versions["npm"]
+          if build_kind == "release" and current != requested:
+              raise SystemExit(f"Tag/source version mismatch: tag={requested} source={current}")
+          print(current)
+          PY
+          )"
           if [ "$build_kind" = verification ]; then
             version="$package_version"
           fi
@@ -447,6 +461,7 @@ jobs:
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       RUST_TARGET: ${{ matrix.rust_target }}
+      INPUT_TAG: ${{ inputs.tag }}
       EXPECTED_PROCESSOR_ARCHITECTURE: ${{ matrix.processor_architecture }}
       EXPECTED_PE_MACHINE: ${{ matrix.pe_machine }}
     steps:
@@ -544,6 +559,66 @@ jobs:
             throw "native Windows npm smoke failed with exit code $LASTEXITCODE"
           }
 
+      - name: Install Desktop dependencies
+        if: matrix.platform == 'win32-x64'
+        run: npm ci --prefix apps/desktop
+
+      - name: Stage exact Windows x64 runtime for Desktop
+        if: matrix.platform == 'win32-x64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
+          $stage = Join-Path $env:GITHUB_WORKSPACE "target\desktop-release-bundle"
+          & .\scripts\prepare_desktop_bundle.ps1 `
+            -BinDir $binDir `
+            -Version $env:VERSION `
+            -SourceSha $env:SOURCE_SHA `
+            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT) `
+            -OutputDir $stage
+          if ($LASTEXITCODE -ne 0) { throw "Desktop runtime staging failed" }
+
+          $shortSource = $env:SOURCE_SHA.Substring(0, 12)
+          if ($env:BUILD_KIND -eq "release") {
+            $installerName = "webcodex-desktop-v$env:VERSION-win32-x64-setup.exe"
+          } else {
+            $installerName = "webcodex-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-win32-x64-setup.exe"
+          }
+          "DESKTOP_TAURI_CONFIG=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_ENV
+          "DESKTOP_TAURI_TARGET=$(Join-Path $env:GITHUB_WORKSPACE 'target\desktop-release-tauri')" >> $env:GITHUB_ENV
+          "DESKTOP_INSTALLER_NAME=$installerName" >> $env:GITHUB_ENV
+
+      - name: Build unsigned Windows x64 Desktop NSIS candidate
+        if: matrix.platform == 'win32-x64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:CARGO_TARGET_DIR = $env:DESKTOP_TAURI_TARGET
+          npm --prefix apps/desktop exec tauri -- build --bundles nsis --config $env:DESKTOP_TAURI_CONFIG --ci --no-sign -- --locked
+          if ($LASTEXITCODE -ne 0) { throw "Tauri NSIS build failed" }
+          $bundleDir = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
+          $built = @(Get-ChildItem -LiteralPath $bundleDir -Filter "*-setup.exe" -File)
+          if ($built.Count -ne 1) { throw "Expected exactly one NSIS candidate, found $($built.Count)" }
+          $installer = Join-Path "dist" $env:DESKTOP_INSTALLER_NAME
+          Copy-Item -LiteralPath $built[0].FullName -Destination $installer
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText(
+            "$installer.sha256",
+            "$hash  $env:DESKTOP_INSTALLER_NAME`n",
+            [System.Text.Encoding]::ASCII
+          )
+
+      - name: Smoke Windows x64 Desktop NSIS candidate
+        if: matrix.platform == 'win32-x64'
+        shell: pwsh
+        run: |
+          & .\scripts\desktop_install_windows_smoke.ps1 `
+            -Installer (Join-Path "dist" $env:DESKTOP_INSTALLER_NAME) `
+            -Version $env:VERSION `
+            -SourceSha $env:SOURCE_SHA `
+            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT)
+          if ($LASTEXITCODE -ne 0) { throw "Desktop installer smoke failed" }
+
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4
         with:
@@ -551,6 +626,18 @@ jobs:
           path: |
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Windows x64 Desktop candidate
+        if: matrix.platform == 'win32-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.archive_stem }}-desktop-win32-x64
+          path: |
+            dist/webcodex-desktop-*-win32-x64-setup.exe
+            dist/webcodex-desktop-*-win32-x64-setup.exe.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -585,6 +672,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          short_source="${SOURCE_SHA:0:12}"
+          if [ "$BUILD_KIND" = release ]; then
+            desktop_filename="webcodex-desktop-v$VERSION-win32-x64-setup.exe"
+          else
+            desktop_filename="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-x64-setup.exe"
+          fi
+          export DESKTOP_FILENAME="$desktop_filename"
           expected=(
             "$ARCHIVE_STEM-linux-x64.tar.gz"
             "$ARCHIVE_STEM-linux-x64.tar.gz.sha256"
@@ -600,6 +694,8 @@ jobs:
             "$ARCHIVE_STEM-win32-x64.tar.gz.sha256"
             "$ARCHIVE_STEM-win32-arm64.tar.gz"
             "$ARCHIVE_STEM-win32-arm64.tar.gz.sha256"
+            "$desktop_filename"
+            "$desktop_filename.sha256"
           )
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
           if find candidate-input -mindepth 1 ! -type f -print -quit | grep -q .; then
@@ -617,11 +713,13 @@ jobs:
           for platform in "${platforms[@]}"; do
             (cd candidate-input && sha256sum -c "$ARCHIVE_STEM-$platform.tar.gz.sha256")
           done
+          (cd candidate-input && sha256sum -c "$desktop_filename.sha256")
 
           mkdir release-bundle
           for platform in "${platforms[@]}"; do
             cp "candidate-input/$ARCHIVE_STEM-$platform.tar.gz" release-bundle/
           done
+          cp "candidate-input/$desktop_filename" release-bundle/
           cp candidate-input/linux-x64-elf.txt candidate-input/linux-arm64-elf.txt release-bundle/
 
           if [ "$BUILD_KIND" = release ]; then
@@ -634,6 +732,7 @@ jobs:
             for platform in "${platforms[@]}"; do
               cat "candidate-input/$ARCHIVE_STEM-$platform.tar.gz.sha256" >> release-bundle/SHA256SUMS
             done
+            cat "candidate-input/$desktop_filename.sha256" >> release-bundle/SHA256SUMS
           fi
 
           python3 - <<'PY'
@@ -650,6 +749,8 @@ jobs:
               filename = f"{stem}-{platform}.tar.gz"
               digest = hashlib.sha256((source / filename).read_bytes()).hexdigest()
               artifacts[platform] = {"filename": filename, "sha256": digest}
+          desktop_filename = os.environ["DESKTOP_FILENAME"]
+          desktop_digest = hashlib.sha256((source / desktop_filename).read_bytes()).hexdigest()
           payload = {
               "tag": os.environ["INPUT_TAG"],
               "version": os.environ["VERSION"],
@@ -659,6 +760,9 @@ jobs:
               "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "archive_stem": stem,
               "artifacts": artifacts,
+              "desktop_artifacts": {
+                  "win32-x64": {"filename": desktop_filename, "sha256": desktop_digest},
+              },
           }
           Path("release-bundle/release-build.json").write_text(
               json.dumps(payload, indent=2) + "\n", encoding="utf-8"

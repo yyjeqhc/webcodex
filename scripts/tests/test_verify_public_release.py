@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import verify_public_release as verifier
 
@@ -219,6 +220,90 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(len(verifier.parse_sha256sums(text, version)), len(verifier.PLATFORMS))
         with self.assertRaises(verifier.VerificationError):
             verifier.parse_sha256sums(text + text.splitlines()[0] + "\n", version)
+
+
+class DesktopReleaseTests(unittest.TestCase):
+    @staticmethod
+    def _release(version: str, *, include_desktop: bool) -> dict:
+        names = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
+        names.append("SHA256SUMS")
+        if include_desktop:
+            names.append(verifier.canonical_desktop_name(version))
+        return {
+            "tag_name": f"v{version}",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {
+                    "name": name,
+                    "state": "uploaded",
+                    "browser_download_url": (
+                        verifier.expected_desktop_url(version)
+                        if name == verifier.canonical_desktop_name(version)
+                        else f"https://example.invalid/{name}"
+                    ),
+                }
+                for name in names
+            ],
+        }
+
+    def test_historical_0_3_9_does_not_require_desktop(self) -> None:
+        version = "0.3.9"
+        self.assertFalse(verifier.desktop_required(version))
+        verifier.validate_github_assets(self._release(version, include_desktop=False), version)
+
+    def test_0_4_0_requires_desktop_asset(self) -> None:
+        version = "0.4.0"
+        self.assertTrue(verifier.desktop_required(version))
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_github_assets(self._release(version, include_desktop=False), version)
+        validated = verifier.validate_github_assets(self._release(version, include_desktop=True), version)
+        self.assertIn(verifier.canonical_desktop_name(version), validated)
+
+    def test_desktop_semver_gate_is_not_lexicographic(self) -> None:
+        self.assertTrue(verifier.desktop_required("0.10.0"))
+        self.assertFalse(verifier.desktop_required("0.4.0-rc.1"))
+        self.assertTrue(verifier.desktop_required("1.0.0"))
+
+    def test_0_4_sha256sums_requires_desktop(self) -> None:
+        version = "0.4.0"
+        archive_lines = [
+            f"{'a' * 64}  {verifier.canonical_archive_name(version, platform)}"
+            for platform in verifier.PLATFORMS
+        ]
+        with self.assertRaises(verifier.VerificationError):
+            verifier.parse_sha256sums("\n".join(archive_lines) + "\n", version)
+        desktop_name = verifier.canonical_desktop_name(version)
+        parsed = verifier.parse_sha256sums(
+            "\n".join([*archive_lines, f"{'b' * 64}  {desktop_name}"]) + "\n",
+            version,
+        )
+        self.assertEqual(parsed[desktop_name], "b" * 64)
+
+    def test_desktop_public_digest_mismatch_is_rejected(self) -> None:
+        version = "0.4.0"
+        name = verifier.canonical_desktop_name(version)
+        asset = {
+            "name": name,
+            "browser_download_url": verifier.expected_desktop_url(version),
+            "digest": "sha256:" + "a" * 64,
+        }
+        sums = {name: "a" * 64}
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            verifier,
+            "download_file",
+            return_value=(123, "a" * 64),
+        ):
+            size, digest = verifier.verify_desktop_asset(version, asset, sums, Path(temp), 5)
+            self.assertEqual((size, digest), (123, "a" * 64))
+
+        asset["digest"] = "sha256:" + "b" * 64
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            verifier,
+            "download_file",
+            return_value=(123, "a" * 64),
+        ), self.assertRaises(verifier.VerificationError):
+            verifier.verify_desktop_asset(version, asset, sums, Path(temp), 5)
 
 
 class BinaryInspectionTests(unittest.TestCase):

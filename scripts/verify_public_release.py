@@ -22,6 +22,7 @@ REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+DESKTOP_FIRST_VERSION = "0.4.0"
 SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
 SERVER_IMAGE_METADATA = "webcodex-server-image.json"
 SERVER_BOOTSTRAP_ASSET = "webcodex-server-bootstrap.sh"
@@ -44,6 +45,7 @@ SERVER_IMAGE_BASE_METADATA_KEYS = frozenset(
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
+MAX_DESKTOP_INSTALLER_BYTES = 128 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_MEMBER_BYTES = 96 * 1024 * 1024
 MAX_DYNAMIC_BYTES = 1024 * 1024
@@ -86,11 +88,55 @@ def canonical_archive_name(version: str, platform: str) -> str:
     return f"webcodex-v{version}-{platform}.tar.gz"
 
 
+def canonical_desktop_name(version: str) -> str:
+    return f"webcodex-desktop-v{version}-win32-x64-setup.exe"
+
+
 def expected_artifact_url(version: str, platform: str) -> str:
     return (
         f"https://github.com/{REPO}/releases/download/v{version}/"
         f"{canonical_archive_name(version, platform)}"
     )
+
+
+def expected_desktop_url(version: str) -> str:
+    return f"https://github.com/{REPO}/releases/download/v{version}/{canonical_desktop_name(version)}"
+
+
+def _semver_parts(value: str) -> tuple[tuple[int, int, int], tuple[str, ...] | None]:
+    normalized = normalize_version(value)
+    core_and_pre = normalized.split("+", 1)[0]
+    core, separator, prerelease = core_and_pre.partition("-")
+    major, minor, patch = (int(part) for part in core.split("."))
+    return (major, minor, patch), tuple(prerelease.split(".")) if separator else None
+
+
+def _compare_semver(left: str, right: str) -> int:
+    left_core, left_pre = _semver_parts(left)
+    right_core, right_pre = _semver_parts(right)
+    if left_core != right_core:
+        return -1 if left_core < right_core else 1
+    if left_pre is None or right_pre is None:
+        if left_pre is right_pre:
+            return 0
+        return 1 if left_pre is None else -1
+    for left_id, right_id in zip(left_pre, right_pre):
+        if left_id == right_id:
+            continue
+        left_numeric = left_id.isdigit()
+        right_numeric = right_id.isdigit()
+        if left_numeric and right_numeric:
+            return -1 if int(left_id) < int(right_id) else 1
+        if left_numeric != right_numeric:
+            return -1 if left_numeric else 1
+        return -1 if left_id < right_id else 1
+    if len(left_pre) == len(right_pre):
+        return 0
+    return -1 if len(left_pre) < len(right_pre) else 1
+
+
+def desktop_required(version: str) -> bool:
+    return _compare_semver(version, DESKTOP_FIRST_VERSION) >= 0
 
 
 def expected_binary_names(platform: str) -> set[str]:
@@ -259,6 +305,8 @@ def validate_public_manifest(manifest: dict, version: str) -> dict[str, dict[str
 
 def parse_sha256sums(text: str, version: str) -> dict[str, str]:
     expected_names = {canonical_archive_name(version, platform) for platform in PLATFORMS}
+    if desktop_required(version):
+        expected_names.add(canonical_desktop_name(version))
     result: dict[str, str] = {}
     for raw_line in text.splitlines():
         if not raw_line:
@@ -272,7 +320,7 @@ def parse_sha256sums(text: str, version: str) -> dict[str, str]:
         result[name] = digest
     if set(result) != expected_names:
         raise VerificationError(
-            f"SHA256SUMS must contain exactly the six release archives: {sorted(result)}"
+            f"SHA256SUMS has an unexpected downloadable release artifact set: {sorted(result)}"
         )
     return result
 
@@ -371,6 +419,8 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
         raise VerificationError("GitHub Release is missing, draft/prerelease, or attached to the wrong tag")
     required = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     required.add("SHA256SUMS")
+    if desktop_required(version):
+        required.add(canonical_desktop_name(version))
     server_assets = {SERVER_IMAGE_METADATA, *SERVER_DEPLOYMENT_ASSETS}
     assets = release.get("assets")
     if not isinstance(assets, list):
@@ -636,6 +686,34 @@ def _asset_digest(asset: dict) -> str | None:
     return digest
 
 
+def verify_desktop_asset(
+    version: str,
+    asset: dict,
+    sums: dict[str, str],
+    root: Path,
+    timeout: float,
+) -> tuple[int, str]:
+    desktop_name = canonical_desktop_name(version)
+    desktop_url = asset.get("browser_download_url")
+    if desktop_url != expected_desktop_url(version):
+        raise VerificationError(f"unexpected GitHub Desktop asset URL: {desktop_url!r}")
+    if desktop_name not in sums:
+        raise VerificationError("SHA256SUMS is missing the Windows Desktop installer")
+    desktop_path = root / desktop_name
+    desktop_size, desktop_digest = download_file(
+        desktop_url,
+        desktop_path,
+        MAX_DESKTOP_INSTALLER_BYTES,
+        timeout,
+    )
+    if desktop_size <= 0 or desktop_digest != sums[desktop_name]:
+        raise VerificationError("Windows Desktop installer SHA-256 disagreement")
+    github_desktop_digest = _asset_digest(asset)
+    if github_desktop_digest is not None and desktop_digest != github_desktop_digest:
+        raise VerificationError("GitHub Desktop installer digest mismatch")
+    return desktop_size, desktop_digest
+
+
 def verify_public_release(version: str, timeout: float) -> None:
     encoded_package = urllib.parse.quote(PACKAGE, safe="@")
     npm_url = f"https://registry.npmjs.org/{encoded_package}/{version}"
@@ -671,6 +749,17 @@ def verify_public_release(version: str, timeout: float) -> None:
         except UnicodeDecodeError as exc:
             raise VerificationError("SHA256SUMS is not ASCII") from exc
         sums = parse_sha256sums(sums_text, version)
+
+        if desktop_required(version):
+            desktop_name = canonical_desktop_name(version)
+            desktop_size, desktop_digest = verify_desktop_asset(
+                version,
+                assets[desktop_name],
+                sums,
+                root,
+                timeout,
+            )
+            print(f"desktop_win32_x64 sha256={desktop_digest} bytes={desktop_size}")
 
         image_identity = None
         image_asset = assets.get(SERVER_IMAGE_METADATA)

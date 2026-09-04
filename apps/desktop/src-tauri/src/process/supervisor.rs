@@ -58,6 +58,7 @@ pub struct ProcessSnapshot {
 
 struct ManagedProcess {
     child: Child,
+    owned_tree: platform::OwnedProcessTree,
     phase: ProcessPhase,
     exit_code: Option<i32>,
     logs: Arc<Mutex<VecDeque<String>>>,
@@ -97,6 +98,14 @@ impl ProcessSupervisor {
                 "Stop the existing Desktop-owned process first.",
             ));
         }
+        #[cfg(target_os = "macos")]
+        if self.processes.contains_key(&kind) {
+            // refresh() may have reaped a root that exited while one of its
+            // descendants is still alive. Preserve the recorded process-group
+            // authority until that terminal generation is fully reclaimed.
+            self.stop(kind).await;
+        }
+        #[cfg(not(target_os = "macos"))]
         self.processes.remove(&kind);
 
         if matches!(kind, ProcessKind::QuickShare | ProcessKind::RegularTunnel) {
@@ -114,7 +123,24 @@ impl ProcessSupervisor {
             )
             .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
         })?;
-        let pid = child.id();
+        let pid = child.id().ok_or_else(|| {
+            let _ = child.start_kill();
+            DesktopError::new(
+                "process_start_failed",
+                format!("Could not establish ownership for the {kind:?} process"),
+                "Retry the operation.",
+            )
+        })?;
+        let owned_tree = platform::OwnedProcessTree::from_spawned_root(pid).ok_or_else(|| {
+            let _ = child.start_kill();
+            DesktopError::new(
+                "process_start_failed",
+                format!(
+                    "Could not establish a safe process-tree identity for the {kind:?} process"
+                ),
+                "Retry the operation.",
+            )
+        })?;
         let stdout = child.stdout.take().ok_or_else(|| {
             DesktopError::new(
                 "process_start_failed",
@@ -150,16 +176,13 @@ impl ProcessSupervisor {
             ActivityEventKind::ProcessStarted,
             kind.source(),
             ActivityLevel::Info,
-            format!(
-                "Desktop started the process{}",
-                pid.map(|value| format!(" (PID {value})"))
-                    .unwrap_or_default()
-            ),
+            format!("Desktop started the process (PID {pid})"),
         );
         self.processes.insert(
             kind,
             ManagedProcess {
                 child,
+                owned_tree,
                 phase: ProcessPhase::Starting,
                 exit_code: None,
                 logs,
@@ -252,23 +275,32 @@ impl ProcessSupervisor {
                 ActivityLevel::Info,
                 "Stopping the Desktop-owned process",
             );
-            let pid = process.child.id();
-            let graceful = if matches!(kind, ProcessKind::QuickShare | ProcessKind::RegularTunnel) {
-                drop(process.child.stdin.take());
-                matches!(
-                    tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, process.child.wait()).await,
-                    Ok(Ok(_))
-                )
-            } else {
-                false
-            };
-            if !graceful {
-                if let Some(pid) = pid {
-                    let _ = platform::force_stop_owned_tree(pid).await;
-                }
-                let _ = process.child.start_kill();
-                let _ = tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, process.child.wait()).await;
+            let mut graceful =
+                if matches!(kind, ProcessKind::QuickShare | ProcessKind::RegularTunnel) {
+                    drop(process.child.stdin.take());
+                    matches!(
+                        tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, process.child.wait()).await,
+                        Ok(Ok(_))
+                    )
+                } else {
+                    false
+                };
+            #[cfg(target_os = "macos")]
+            if graceful && platform::owned_tree_is_running(process.owned_tree) {
+                // EOF can let the root exit before a descendant. Exact ownership
+                // is complete only when the process group itself is gone.
+                graceful = false;
             }
+            if !graceful {
+                stop_owned_tree(&mut process.child, process.owned_tree).await;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if platform::owned_tree_is_running(process.owned_tree) {
+            // A root may already be terminal when stop() is called while one of
+            // its descendants is still alive. The recorded process-group identity
+            // remains the authority for that cleanup.
+            stop_owned_tree(&mut process.child, process.owned_tree).await;
         }
         finish_drain_task(process.stdout_task).await;
         finish_drain_task(process.stderr_task).await;
@@ -290,6 +322,43 @@ impl ProcessSupervisor {
             self.stop(kind).await;
         }
     }
+}
+
+async fn stop_owned_tree(child: &mut Child, tree: platform::OwnedProcessTree) {
+    let _ = platform::terminate_owned_tree(tree).await;
+    if !wait_for_owned_tree_stop(child, tree).await {
+        let _ = platform::force_stop_owned_tree(tree).await;
+        let _ = child.start_kill();
+        let _ = wait_for_owned_tree_stop(child, tree).await;
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn wait_for_owned_tree_stop(child: &mut Child, tree: platform::OwnedProcessTree) -> bool {
+    let deadline = tokio::time::Instant::now() + GRACEFUL_STOP_TIMEOUT;
+    loop {
+        let _ = child.try_wait();
+        if !platform::owned_tree_is_running(tree) {
+            return true;
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::cmp::min(
+            std::time::Duration::from_millis(25),
+            deadline - now,
+        ))
+        .await;
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn wait_for_owned_tree_stop(child: &mut Child, _tree: platform::OwnedProcessTree) -> bool {
+    matches!(
+        tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, child.wait()).await,
+        Ok(Ok(_))
+    )
 }
 
 async fn finish_drain_task(mut task: JoinHandle<()>) {

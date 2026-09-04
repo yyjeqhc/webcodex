@@ -3990,6 +3990,7 @@ dependencies = [
 name = "webcodex-desktop"
 version = "0.3.9"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "tauri",

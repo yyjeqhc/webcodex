@@ -23,3 +23,6 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 url = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+

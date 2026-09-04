@@ -9,6 +9,7 @@ pub const FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES: usize = 256 * 1024;
 pub const FILE_READ_DEFAULT_LIMIT: usize = 2000;
 pub const FILE_READ_MAX_LIMIT: usize = 2000;
 pub const GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES: usize = 512;
+pub const DEFAULT_OBSERVE_JOBS_TAIL_LINES: usize = 40;
 pub const STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS: u64 = 60;
 
 pub const MAX_SKILL_LIST_LIMIT: usize = 64;
@@ -49,3 +50,48 @@ pub const RECOVERY_TOOL_VALUES: [&str; 7] = [
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
 pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 6;
 pub const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
+
+/// Validate a Runner project path without applying host-local filesystem semantics.
+/// The Server may route to an agent on another OS, so both POSIX and Windows
+/// absolute-path shapes are accepted; the Runner remains authoritative for
+/// existence, policy, and canonicalization.
+pub fn validate_project_op_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if path.contains('\0') {
+        return Err("path must not contain NUL".to_string());
+    }
+    let bytes = path.as_bytes();
+    let posix_absolute = path.starts_with('/');
+    let windows_drive_absolute = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let windows_unc_or_verbatim_absolute = path.starts_with("\\\\");
+    if !(posix_absolute || windows_drive_absolute || windows_unc_or_verbatim_absolute) {
+        return Err("path must be an absolute path".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_project_op_path;
+
+    #[test]
+    fn project_op_path_accepts_cross_platform_absolute_shapes_and_rejects_invalid() {
+        for valid in [
+            "/root/git/repo",
+            r"C:\repo",
+            "c:/repo",
+            r"\\?\C:\repo",
+            r"\\server\share\repo",
+        ] {
+            assert!(validate_project_op_path(valid).is_ok(), "{valid:?}");
+        }
+        for invalid in ["", "relative/path", r"C:repo", r"\repo", "nul\0path"] {
+            assert!(validate_project_op_path(invalid).is_err(), "{invalid:?}");
+        }
+    }
+}

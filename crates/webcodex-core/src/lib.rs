@@ -4,6 +4,7 @@ pub mod activity_contract;
 pub mod apply_edits_shared;
 pub mod apply_patch_shared;
 pub mod artifact_policy;
+pub mod audit_preview;
 pub mod authority;
 pub mod build_info;
 pub mod coding_agent;

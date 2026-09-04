@@ -11,7 +11,6 @@ use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 pub(crate) const MAX_OBSERVE_JOBS_ITEMS: usize = 8;
-pub(crate) const DEFAULT_OBSERVE_JOBS_TAIL_LINES: usize = 40;
 pub(crate) const MAX_OBSERVE_JOBS_TAIL_LINES: usize = 200;
 const MAX_OBSERVE_JOBS_ERROR_CHARS: usize = 512;
 

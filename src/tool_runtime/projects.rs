@@ -857,30 +857,7 @@ fn validate_project_op_description(desc: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate the project `path` field server-side: non-empty, absolute, no NUL.
-/// The Server may route to an agent on a different OS, so this check must accept
-/// both POSIX and Windows absolute-path shapes without applying host-local path
-/// semantics. The agent remains authoritative for existence, policy (including
-/// current UNC support), and canonicalization.
-pub(super) fn validate_project_op_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("path cannot be empty".to_string());
-    }
-    if path.contains('\0') {
-        return Err("path must not contain NUL".to_string());
-    }
-    let bytes = path.as_bytes();
-    let posix_absolute = path.starts_with('/');
-    let windows_drive_absolute = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/');
-    let windows_unc_or_verbatim_absolute = path.starts_with("\\\\");
-    if !(posix_absolute || windows_drive_absolute || windows_unc_or_verbatim_absolute) {
-        return Err("path must be an absolute path".to_string());
-    }
-    Ok(())
-}
+pub(super) use webcodex_core::runtime_contract::validate_project_op_path;
 
 /// Truncate a string for inclusion in an error message (bounded).
 fn truncate_for_error(s: &str) -> String {

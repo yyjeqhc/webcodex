@@ -4,23 +4,28 @@
 //! name, and the project/session accessors used by dispatch guards and audit
 //! logging.
 
-use super::sessions::{
-    strip_tool_call_expectation_metadata, validate_model_facing_assertion_name,
-    validate_model_facing_result_expectation, SessionExecutionContext, SessionMessageKind,
-    SessionMessagePriority, SessionMessageStatus, ToolCallRecorderMetadata,
-};
-use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
     default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
     ExecutionShell, SessionMode,
 };
-use crate::lsp_bridge::{
-    CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
-};
-use crate::runner_protocol::ShellScriptLanguage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
+use webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN;
+use webcodex_core::lsp_bridge::{
+    CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
+};
+use webcodex_core::runner_protocol::ShellScriptLanguage;
+use webcodex_core::runtime_contract::{
+    validate_project_op_path, DEFAULT_OBSERVE_JOBS_TAIL_LINES,
+    GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES,
+};
+use webcodex_tool_contracts::{lookup_tool_definition, model_visible_tool_names_csv};
+use webcodex_workflow_session::{
+    strip_tool_call_expectation_metadata, validate_model_facing_assertion_name,
+    validate_model_facing_result_expectation, SessionExecutionContext, SessionMessageKind,
+    SessionMessagePriority, SessionMessageStatus, ToolCallRecorderMetadata,
+};
 
 pub(crate) const TOOL_CALL_TOOL_FIELD: &str = "tool";
 pub(crate) const TOOL_CALL_PARAMS_FIELD: &str = "params";
@@ -126,7 +131,7 @@ where
     let token = Option::<String>::deserialize(deserializer)?;
     if token
         .as_ref()
-        .is_some_and(|token| token.len() > crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN)
+        .is_some_and(|token| token.len() > MAX_JOB_OBSERVATION_TOKEN_LEN)
     {
         return Err(serde::de::Error::custom(
             "after_observation_token must not exceed 192 bytes",
@@ -144,7 +149,7 @@ where
     let token = Option::<String>::deserialize(deserializer)?;
     if token
         .as_ref()
-        .is_some_and(|token| token.len() > super::git::GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES)
+        .is_some_and(|token| token.len() > GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES)
     {
         return Err(serde::de::Error::custom(
             "continuation exceeds the git_diff_hunks size bound",
@@ -216,7 +221,7 @@ where
 }
 
 fn default_observe_jobs_tail_lines() -> usize {
-    super::observe_jobs::DEFAULT_OBSERVE_JOBS_TAIL_LINES
+    DEFAULT_OBSERVE_JOBS_TAIL_LINES
 }
 
 fn default_call_hierarchy_depth() -> usize {
@@ -2093,7 +2098,7 @@ fn validate_coding_project_source_shape(tool_name: &str, arguments: &Value) -> R
         }
     }
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
-        if let Err(error) = super::projects::validate_project_op_path(path) {
+        if let Err(error) = validate_project_op_path(path) {
             return Err(format!("invalid arguments for tool '{tool_name}': {error}"));
         }
     }

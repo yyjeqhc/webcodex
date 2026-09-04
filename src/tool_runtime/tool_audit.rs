@@ -1,9 +1,17 @@
 //! Audit-safe argument summaries for runtime tool calls.
 
+#[cfg(test)]
+use super::tool_call::ComputerSnapshotRegion;
 use super::tool_call::ToolCall;
 use super::tool_inputs::{is_checkpoint_kind, is_checkpoint_validation_status};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use webcodex_core::audit_preview::{command_preview, process_preview};
+use webcodex_core::runner_protocol::{
+    normalize_cargo_value, normalize_go_test_packages, normalize_rust_test_filter,
+    CARGO_TEST_MIN_TESTS_MAX,
+};
+use webcodex_workflow_session::SessionExecutionContext;
 
 pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments: &Value) -> Value {
     let Some(obj) = arguments.as_object() else {
@@ -32,7 +40,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             if let Some(executable) = obj.get("executable").and_then(Value::as_str) {
                 out.insert(
                     "process_summary".to_string(),
-                    Value::String(crate::runner_http::process_preview(
+                    Value::String(process_preview(
                         executable,
                         args.into_iter().flatten().filter_map(Value::as_str),
                     )),
@@ -221,7 +229,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             if let Some(command) = obj.get("command").and_then(Value::as_str) {
                 out.insert(
                     "command_summary".to_string(),
-                    Value::String(crate::runner_http::command_preview(command)),
+                    Value::String(command_preview(command)),
                 );
             }
         }
@@ -461,9 +469,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             let context = obj
                 .get("execution_context")
                 .cloned()
-                .and_then(|value| {
-                    serde_json::from_value::<super::sessions::SessionExecutionContext>(value).ok()
-                })
+                .and_then(|value| serde_json::from_value::<SessionExecutionContext>(value).ok())
                 .map(|context| context.audit_summary())
                 .unwrap_or(Value::Null);
             out.insert("execution_context".to_string(), context);
@@ -495,9 +501,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             let context = obj
                 .get("execution_context")
                 .cloned()
-                .and_then(|value| {
-                    serde_json::from_value::<super::sessions::SessionExecutionContext>(value).ok()
-                })
+                .and_then(|value| serde_json::from_value::<SessionExecutionContext>(value).ok())
                 .map(|context| context.audit_summary())
                 .unwrap_or(Value::Null);
             out.insert("execution_context".to_string(), context);
@@ -521,7 +525,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             if let Some(instruction) = obj.get("instruction").and_then(Value::as_str) {
                 out.insert(
                     "instruction_summary".to_string(),
-                    Value::String(crate::runner_http::command_preview(instruction)),
+                    Value::String(command_preview(instruction)),
                 );
                 out.insert("instruction_present".to_string(), Value::Bool(true));
             }
@@ -2204,9 +2208,7 @@ pub(crate) fn structured_validation_target_identity(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let min_tests = obj.get("min_tests").and_then(Value::as_u64);
-            if min_tests.is_some_and(|minimum| {
-                !(1..=crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX).contains(&minimum)
-            }) {
+            if min_tests.is_some_and(|minimum| !(1..=CARGO_TEST_MIN_TESTS_MAX).contains(&minimum)) {
                 return None;
             }
             let minimum_tests = match (require_tests, min_tests) {
@@ -2363,11 +2365,11 @@ fn canonical_cargo_validation_target(
                 index += 1;
             }
             let package = match package {
-                Some(value) => crate::runner_protocol::normalize_cargo_value(&value).ok()?,
+                Some(value) => normalize_cargo_value(&value).ok()?,
                 None => None,
             };
             let features = match features {
-                Some(value) => crate::runner_protocol::normalize_cargo_value(&value).ok()?,
+                Some(value) => normalize_cargo_value(&value).ok()?,
                 None => None,
             };
             input.insert("package".to_string(), serde_json::json!(package));
@@ -2380,9 +2382,7 @@ fn canonical_cargo_validation_target(
             );
             if is_test {
                 let filter = match filter {
-                    Some(value) => {
-                        crate::runner_protocol::normalize_rust_test_filter(&value).ok()?
-                    }
+                    Some(value) => normalize_rust_test_filter(&value).ok()?,
                     None => None,
                 };
                 input.insert("filter".to_string(), serde_json::json!(filter));
@@ -2511,7 +2511,7 @@ fn normalized_cargo_target_value(value: Option<&Value>) -> Option<Option<String>
     if value.is_null() {
         return Some(None);
     }
-    crate::runner_protocol::normalize_cargo_value(value.as_str()?).ok()
+    normalize_cargo_value(value.as_str()?).ok()
 }
 
 fn normalized_rust_test_target_filter(value: Option<&Value>) -> Option<Option<String>> {
@@ -2521,7 +2521,7 @@ fn normalized_rust_test_target_filter(value: Option<&Value>) -> Option<Option<St
     if value.is_null() {
         return Some(None);
     }
-    crate::runner_protocol::normalize_rust_test_filter(value.as_str()?).ok()
+    normalize_rust_test_filter(value.as_str()?).ok()
 }
 
 fn normalized_go_test_target_packages(value: Option<&Value>) -> Option<Vec<String>> {
@@ -2538,7 +2538,7 @@ fn normalized_go_test_target_packages(value: Option<&Value>) -> Option<Vec<Strin
         ),
         Some(_) => return None,
     };
-    crate::runner_protocol::normalize_go_test_packages(packages.as_deref()).ok()
+    normalize_go_test_packages(packages.as_deref()).ok()
 }
 
 #[cfg(test)]
@@ -3844,7 +3844,7 @@ mod computer_privacy_tests {
             path: "artifacts/ui.jpg".to_string(),
             client_id: "source-mac".to_string(),
             surface_id: "surface_safe".to_string(),
-            region: Some(crate::tool_runtime::tool_call::ComputerSnapshotRegion {
+            region: Some(ComputerSnapshotRegion {
                 x: 111,
                 y: 222,
                 width: 333,
@@ -3992,7 +3992,7 @@ impl ToolCall {
                     "executable_present": true,
                     "arg_count": args.len(),
                     "stdin_present": stdin.is_some(),
-                    "process_summary": crate::runner_http::process_preview(
+                    "process_summary": process_preview(
                         executable,
                         args.iter().map(String::as_str),
                     ),
@@ -4089,7 +4089,7 @@ impl ToolCall {
             } => serde_json::json!({
                 "project": project,
                 "command_present": true,
-                "command_summary": crate::runner_http::command_preview(command),
+                "command_summary": command_preview(command),
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
                 "purpose": purpose,
@@ -4106,7 +4106,7 @@ impl ToolCall {
             } => serde_json::json!({
                 "project": project,
                 "command_present": true,
-                "command_summary": crate::runner_http::command_preview(command),
+                "command_summary": command_preview(command),
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
                 "purpose": purpose,
@@ -4135,7 +4135,7 @@ impl ToolCall {
                 "session_id": session_id,
                 "shell_id": shell_id,
                 "command_present": true,
-                "command_summary": crate::runner_http::command_preview(command),
+                "command_summary": command_preview(command),
                 "timeout_secs": timeout_secs,
                 "purpose": purpose,
             }),
@@ -5503,7 +5503,7 @@ impl ToolCall {
                 "deny_shell_tools": deny_shell_tools,
                 "execution_context": execution_context
                     .as_ref()
-                    .map(super::sessions::SessionExecutionContext::audit_summary),
+                    .map(SessionExecutionContext::audit_summary),
             }),
             Self::WorkOnProject {
                 project,
@@ -5518,7 +5518,7 @@ impl ToolCall {
                 "client_id": client_id,
                 "path_source_requested": path.is_some(),
                 "instruction_present": true,
-                "instruction_summary": crate::runner_http::command_preview(instruction),
+                "instruction_summary": command_preview(instruction),
                 "include_project_instructions": include_project_instructions,
                 "include_workflow_guidance": include_workflow_guidance,
                 "session_id": session_id,

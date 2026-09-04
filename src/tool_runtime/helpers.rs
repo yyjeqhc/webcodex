@@ -199,6 +199,19 @@ pub(crate) fn project_relative_runner_cwd(
     proj: &crate::projects::ProjectConfig,
     resolved: &str,
 ) -> Result<String, String> {
+    if let Some(root) = parse_windows_runner_absolute_path(&proj.path)? {
+        let Some(resolved) = parse_windows_runner_absolute_path(resolved)? else {
+            return Err("cwd is outside project directory".to_string());
+        };
+        let relative = windows_runner_descendant_tail(&root, &resolved)
+            .ok_or_else(|| "cwd is outside project directory".to_string())?;
+        return if relative.is_empty() {
+            Ok(".".to_string())
+        } else {
+            Ok(relative.join("/"))
+        };
+    }
+
     let root = proj.root();
     let resolved = Path::new(resolved);
     let relative = resolved
@@ -221,6 +234,10 @@ pub(crate) fn resolve_runner_cwd(
     proj: &crate::projects::ProjectConfig,
     cwd: Option<&str>,
 ) -> Result<String, String> {
+    if let Some(root) = parse_windows_runner_absolute_path(&proj.path)? {
+        return resolve_windows_runner_cwd(&root, cwd);
+    }
+
     let root = proj.root();
     let requested = match cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
         Some(cwd) => {
@@ -247,6 +264,122 @@ pub(crate) fn resolve_runner_cwd(
         return Err("cwd is outside project directory".to_string());
     }
     Ok(requested.to_string_lossy().to_string())
+}
+
+/// Pure lexical model of a Runner-owned Windows local-disk path.
+///
+/// The Server may be running on Unix while the owning Runner is on Windows, so
+/// `std::path` on the Server cannot classify or join these paths. This model is
+/// deliberately narrower than Windows filesystem semantics: it recognizes only
+/// rooted local drive paths (plain or `\\?\` verbatim disk form), rejects parent
+/// traversal, and leaves existence/symlink/allowed_roots truth to the Runner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsRunnerPath {
+    verbatim: bool,
+    drive: char,
+    components: Vec<String>,
+}
+
+fn parse_windows_runner_absolute_path(path: &str) -> Result<Option<WindowsRunnerPath>, String> {
+    let (verbatim, path) = match path.strip_prefix(r"\\?\") {
+        Some(path) => (true, path),
+        None => (false, path),
+    };
+    let bytes = path.as_bytes();
+    if bytes.len() < 3
+        || !bytes[0].is_ascii_alphabetic()
+        || bytes[1] != b':'
+        || !matches!(bytes[2], b'\\' | b'/')
+    {
+        return Ok(None);
+    }
+
+    let components = windows_runner_relative_components(&path[3..])?;
+    Ok(Some(WindowsRunnerPath {
+        verbatim,
+        drive: (bytes[0] as char).to_ascii_uppercase(),
+        components,
+    }))
+}
+
+fn windows_runner_relative_components(path: &str) -> Result<Vec<String>, String> {
+    if path.contains('\0') {
+        return Err("cwd cannot contain NUL bytes".to_string());
+    }
+    let mut components = Vec::new();
+    for component in path.split(|character| matches!(character, '\\' | '/')) {
+        match component {
+            "" | "." => {}
+            ".." => return Err("cwd cannot contain parent traversal".to_string()),
+            component if component.contains(':') => {
+                return Err("cwd contains an invalid Windows path component".to_string())
+            }
+            component => components.push(component.to_string()),
+        }
+    }
+    Ok(components)
+}
+
+fn windows_runner_component_eq(left: &str, right: &str) -> bool {
+    left.to_lowercase() == right.to_lowercase()
+}
+
+fn windows_runner_descendant_tail<'a>(
+    root: &WindowsRunnerPath,
+    requested: &'a WindowsRunnerPath,
+) -> Option<&'a [String]> {
+    if root.drive != requested.drive
+        || requested.components.len() < root.components.len()
+        || !root
+            .components
+            .iter()
+            .zip(&requested.components)
+            .all(|(left, right)| windows_runner_component_eq(left, right))
+    {
+        return None;
+    }
+    Some(&requested.components[root.components.len()..])
+}
+
+fn render_windows_runner_path(root: &WindowsRunnerPath, tail: &[String]) -> String {
+    let mut output = if root.verbatim {
+        format!("\\\\?\\{}:\\", root.drive)
+    } else {
+        format!("{}:\\", root.drive)
+    };
+    let mut components = root.components.iter().chain(tail.iter()).peekable();
+    while let Some(component) = components.next() {
+        output.push_str(component);
+        if components.peek().is_some() {
+            output.push('\\');
+        }
+    }
+    output
+}
+
+fn resolve_windows_runner_cwd(
+    root: &WindowsRunnerPath,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+        return Ok(render_windows_runner_path(root, &[]));
+    };
+    if cwd == "." {
+        return Ok(render_windows_runner_path(root, &[]));
+    }
+
+    if let Some(absolute) = parse_windows_runner_absolute_path(cwd)? {
+        let tail = windows_runner_descendant_tail(root, &absolute)
+            .ok_or_else(|| "cwd is outside project directory".to_string())?;
+        return Ok(render_windows_runner_path(root, tail));
+    }
+    if cwd.starts_with(['\\', '/']) {
+        return Err(
+            "cwd must be project-relative or an absolute Windows local-drive path".to_string(),
+        );
+    }
+    let relative = windows_runner_relative_components(cwd)?;
+    Ok(render_windows_runner_path(root, &relative))
 }
 
 pub(crate) fn validate_project_relative_path(path: &str) -> Result<(), String> {
@@ -572,10 +705,76 @@ pub(crate) const DEFAULT_JOB_LOG_TAIL_LINES: usize = 200;
 
 #[cfg(test)]
 mod tests {
-    // Every test in this module is Unix-only, so the glob import is only
-    // needed there.
-    #[cfg(unix)]
     use super::*;
+
+    fn windows_project(path: &str) -> crate::projects::ProjectConfig {
+        crate::projects::ProjectConfig {
+            path: path.to_string(),
+            client_id: "windows-runner".to_string(),
+            allow_patch: true,
+        }
+    }
+
+    #[test]
+    fn runner_cwd_preserves_windows_native_path_syntax_across_server_platforms() {
+        let project = windows_project(r"\\?\E:\git\webcodex");
+        for (cwd, expected, relative) in [
+            (None, r"\\?\E:\git\webcodex", "."),
+            (Some("."), r"\\?\E:\git\webcodex", "."),
+            (
+                Some("apps/desktop"),
+                r"\\?\E:\git\webcodex\apps\desktop",
+                "apps/desktop",
+            ),
+            (
+                Some(r"apps\desktop"),
+                r"\\?\E:\git\webcodex\apps\desktop",
+                "apps/desktop",
+            ),
+            (
+                Some(r"e:/GIT/WEBCODEX/apps/桌面 project"),
+                r"\\?\E:\git\webcodex\apps\桌面 project",
+                "apps/桌面 project",
+            ),
+        ] {
+            let resolved = resolve_runner_cwd(&project, cwd).unwrap();
+            assert_eq!(resolved, expected, "cwd={cwd:?}");
+            assert_eq!(
+                project_relative_runner_cwd(&project, &resolved).unwrap(),
+                relative,
+                "cwd={cwd:?}"
+            );
+        }
+
+        let plain_project = windows_project(r"E:\git\webcodex");
+        let resolved =
+            resolve_runner_cwd(&plain_project, Some(r"\\?\e:\GIT\WEBCODEX\apps/desktop")).unwrap();
+        assert_eq!(resolved, r"E:\git\webcodex\apps\desktop");
+        assert_eq!(
+            project_relative_runner_cwd(&plain_project, &resolved).unwrap(),
+            "apps/desktop"
+        );
+    }
+
+    #[test]
+    fn runner_cwd_windows_lexical_boundary_rejects_escape_and_ambiguous_roots() {
+        let project = windows_project(r"\\?\E:\git\webcodex");
+        for cwd in [
+            r"..\outside",
+            "../outside",
+            r"E:\git\other",
+            r"F:\git\webcodex",
+            r"\Windows",
+            r"\\server\share\repo",
+            r"E:drive-relative",
+            "bad\0cwd",
+        ] {
+            assert!(
+                resolve_runner_cwd(&project, Some(cwd)).is_err(),
+                "unsafe Windows cwd must fail closed: {cwd:?}"
+            );
+        }
+    }
 
     /// Regression guard for the local-command infinite hang: a shell that exits
     /// immediately after backgrounding a long-lived process which inherits the

@@ -312,6 +312,62 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
 }
 
 #[tokio::test]
+async fn run_process_preserves_remote_windows_cwd_syntax_before_dispatch() {
+    let runtime = test_runtime();
+    let client_id = "process-windows-cwd";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            structured_validation_argv: true,
+            structured_process_argv: true,
+            ..Default::default()
+        },
+        vec![registered_project("demo", r"\\?\E:\git\webcodex")],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "demo");
+    let mut call = process_sync_call(project, None);
+    let ToolCall::RunProcess { cwd, .. } = &mut call else {
+        unreachable!("process_sync_call must return RunProcess");
+    };
+    *cwd = Some("apps/桌面 project".to_string());
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(call, Some(&auth_context(None, true)))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "run_process");
+    assert_eq!(
+        request.cwd.as_deref(),
+        Some(r"\\?\E:\git\webcodex\apps\桌面 project")
+    );
+    assert_eq!(request.command, "");
+    assert!(request.process.is_some());
+
+    complete_process_lifecycle(
+        &runtime,
+        client_id,
+        request.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(0),
+        "",
+        "",
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+}
+
+#[tokio::test]
 async fn detached_process_requires_job_run_and_detach_scopes_before_any_admission() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();

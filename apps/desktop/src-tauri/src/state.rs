@@ -849,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires current-source dogfood binaries and a temporary project"]
-    async fn windows_local_full_dogfood_reaches_ready_and_stops_owned_runtime() {
+    async fn windows_local_full_dogfood_reuses_enrollment_and_stops_owned_runtime() {
         if !cfg!(windows) {
             return;
         }
@@ -877,11 +877,47 @@ mod tests {
         assert!(snapshot.readiness.runtime_ready);
         assert!(!snapshot.readiness.ready_for_chatgpt);
 
+        let first_runtime = core
+            .config
+            .runtime
+            .as_ref()
+            .expect("local setup stores runtime identity");
+        let first_user_token_file = first_runtime
+            .user_token_file
+            .clone()
+            .expect("local setup stores managed user token path");
+        let first_user_token =
+            std::fs::read(&first_user_token_file).expect("read managed user token before restart");
+
         let stopped = core.stop_local_runtime().await.expect("stop local runtime");
         assert_eq!(stopped.readiness.server, ServerReadiness::Stopped);
         assert_eq!(stopped.readiness.runner, RunnerReadiness::Stopped);
         assert!(core.supervisor.snapshot(ProcessKind::LocalServer).is_none());
         assert!(core.supervisor.snapshot(ProcessKind::LocalRunner).is_none());
+
+        let restarted = core
+            .configure_local_setup(&project)
+            .await
+            .expect("restart local full setup without re-enrollment");
+        assert_eq!(restarted.readiness.server, ServerReadiness::Ready);
+        assert_eq!(restarted.readiness.runner, RunnerReadiness::Ready);
+        assert_eq!(restarted.readiness.project, ProjectReadiness::Ready);
+        let second_user_token_file = core
+            .config
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.user_token_file.clone())
+            .expect("restarted local setup keeps managed user token path");
+        assert_eq!(second_user_token_file, first_user_token_file);
+        let second_user_token =
+            std::fs::read(&second_user_token_file).expect("read managed user token after restart");
+        assert!(
+            first_user_token == second_user_token,
+            "local restart must reuse enrollment instead of rotating the managed user token"
+        );
+        core.stop_local_runtime()
+            .await
+            .expect("stop restarted local runtime");
         drop(core);
         std::fs::remove_dir_all(&data_dir).expect("remove local dogfood app data");
     }

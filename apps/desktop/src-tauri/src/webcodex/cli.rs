@@ -72,7 +72,7 @@ impl ResolvedBinaries {
             DesktopError::new(
                 "binary_directory_missing",
                 format!("WebCodex binary directory does not exist: {}", directory.display()),
-                "Build `cargo build --profile dogfood --bins` from this source baseline or set WEBCODEX_DESKTOP_BIN_DIR.",
+                "Build `cargo build --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner` from this source baseline or set WEBCODEX_DESKTOP_BIN_DIR.",
             )
         })?;
         let webcodex = directory.join(executable_name("webcodex"));

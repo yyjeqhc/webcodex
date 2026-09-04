@@ -111,32 +111,10 @@ def _semver_parts(value: str) -> tuple[tuple[int, int, int], tuple[str, ...] | N
     return (major, minor, patch), tuple(prerelease.split(".")) if separator else None
 
 
-def _compare_semver(left: str, right: str) -> int:
-    left_core, left_pre = _semver_parts(left)
-    right_core, right_pre = _semver_parts(right)
-    if left_core != right_core:
-        return -1 if left_core < right_core else 1
-    if left_pre is None or right_pre is None:
-        if left_pre is right_pre:
-            return 0
-        return 1 if left_pre is None else -1
-    for left_id, right_id in zip(left_pre, right_pre):
-        if left_id == right_id:
-            continue
-        left_numeric = left_id.isdigit()
-        right_numeric = right_id.isdigit()
-        if left_numeric and right_numeric:
-            return -1 if int(left_id) < int(right_id) else 1
-        if left_numeric != right_numeric:
-            return -1 if left_numeric else 1
-        return -1 if left_id < right_id else 1
-    if len(left_pre) == len(right_pre):
-        return 0
-    return -1 if len(left_pre) < len(right_pre) else 1
-
-
 def desktop_required(version: str) -> bool:
-    return _compare_semver(version, DESKTOP_FIRST_VERSION) >= 0
+    version_core, _ = _semver_parts(version)
+    desktop_first_core, _ = _semver_parts(DESKTOP_FIRST_VERSION)
+    return version_core >= desktop_first_core
 
 
 def expected_binary_names(platform: str) -> set[str]:

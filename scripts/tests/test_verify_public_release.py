@@ -260,9 +260,18 @@ class DesktopReleaseTests(unittest.TestCase):
         validated = verifier.validate_github_assets(self._release(version, include_desktop=True), version)
         self.assertIn(verifier.canonical_desktop_name(version), validated)
 
+    def test_0_4_prerelease_requires_desktop_asset(self) -> None:
+        version = "0.4.0-rc.1"
+        self.assertTrue(verifier.desktop_required(version))
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_github_assets(self._release(version, include_desktop=False), version)
+        validated = verifier.validate_github_assets(self._release(version, include_desktop=True), version)
+        self.assertIn(verifier.canonical_desktop_name(version), validated)
+
     def test_desktop_semver_gate_is_not_lexicographic(self) -> None:
         self.assertTrue(verifier.desktop_required("0.10.0"))
-        self.assertFalse(verifier.desktop_required("0.4.0-rc.1"))
+        self.assertTrue(verifier.desktop_required("0.4.0-rc.1"))
+        self.assertFalse(verifier.desktop_required("0.3.10-rc.1"))
         self.assertTrue(verifier.desktop_required("1.0.0"))
 
     def test_0_4_sha256sums_requires_desktop(self) -> None:

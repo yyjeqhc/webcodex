@@ -3,7 +3,9 @@
 mod assignment;
 mod closeout;
 mod console;
+mod continuation;
 mod events;
+mod handoff_brief;
 mod messages;
 mod model;
 mod persistence;
@@ -24,6 +26,11 @@ pub use console::{
     WorkflowSessionConsoleAttentionOverview, WorkflowSessionConsoleDetail,
     WorkflowSessionConsoleList, WorkflowSessionConsoleListItem,
 };
+pub use continuation::{
+    continuation_feedback_value, not_applicable_continuation_feedback_value,
+    validation_delta_value, ContinuationFeedbackInput, ContinuationProjectionHooks,
+    ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
+};
 pub use events::{
     canonical_tool_call_finished_events, current_attempt_event_view, exploration_tool_kind,
     is_tool_call_expectation_metadata_field, is_valid_session_id, normalize_observed_project_path,
@@ -33,6 +40,11 @@ pub use events::{
     validate_model_facing_result_expectation,
     validation_output_summary_for_tool_result as execution_output_summary_for_tool_result,
     ExplorationToolKind, SessionPathHint, SessionToolContract, EXPLORATION_TOOL_NAMES,
+};
+pub use handoff_brief::{
+    build_handoff_brief, handoff_brief_size, HandoffBriefInput, HANDOFF_BRIEF_HARD_MAX_BYTES,
+    HANDOFF_CHANGED_PATHS_MAX_ITEMS, HANDOFF_INSTRUCTION_MAX_CHARS, HANDOFF_NEXT_ACTIONS_MAX_ITEMS,
+    HANDOFF_OPEN_FAILURES_MAX_ITEMS, HANDOFF_RECENT_FILES_MAX_ITEMS,
 };
 pub use model::{
     CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput,

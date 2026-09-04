@@ -652,6 +652,9 @@ const APPLY_PATCH_FAILURE_MATCH_DIAGNOSTIC_FIELDS: [&str; 10] = [
     "first_exact_mismatch_offset",
 ];
 
+const APPLY_PATCH_RECOVERY_MARGIN_BEFORE: usize = 8;
+const APPLY_PATCH_RECOVERY_MARGIN_AFTER: usize = 8;
+
 fn expected_apply_patch_failure_pattern_len(
     hunk: &crate::apply_patch_shared::CodexPatchHunk,
     chunk_index: usize,
@@ -777,10 +780,89 @@ fn valid_apply_patch_failure_match_diagnostic(
     closest_start_valid && mismatch_valid
 }
 
+fn apply_patch_context_mismatch_recovery(
+    patch: &crate::apply_patch_shared::CodexPatch,
+    failure_output: &Value,
+) -> Option<Value> {
+    if failure_output.get("changed").and_then(Value::as_bool) != Some(false)
+        || failure_output.get("state_changed").and_then(Value::as_bool) != Some(false)
+        || failure_output
+            .get("execution_state")
+            .and_then(Value::as_str)
+            != Some("not_started")
+        || failure_output.get("error_kind").and_then(Value::as_str) != Some("context_mismatch")
+    {
+        return None;
+    }
+
+    let diagnostic = failure_output.get("match_diagnostic")?;
+    if !valid_apply_patch_failure_match_diagnostic(diagnostic, patch, failure_output) {
+        return None;
+    }
+    let change_index = failure_output
+        .get("change_index")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+    let hunk = patch.hunks.get(change_index)?;
+    let path = hunk.path();
+    let diagnostic = diagnostic.as_object()?;
+    let chunk_index = diagnostic
+        .get("chunk_index")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+    let search_start_line = diagnostic
+        .get("search_start_line")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+    let expected_line_count = diagnostic
+        .get("expected_line_count")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+    let available_line_count = diagnostic
+        .get("available_line_count")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+    let closest_start_line = diagnostic
+        .get("closest_start_line")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
+
+    let total_line_count = search_start_line
+        .checked_sub(1)?
+        .checked_add(available_line_count)?;
+    if total_line_count == 0 || closest_start_line > total_line_count {
+        return None;
+    }
+
+    let start_line = closest_start_line
+        .saturating_sub(APPLY_PATCH_RECOVERY_MARGIN_BEFORE)
+        .max(1);
+    let requested_limit = expected_line_count
+        .saturating_add(APPLY_PATCH_RECOVERY_MARGIN_BEFORE)
+        .saturating_add(APPLY_PATCH_RECOVERY_MARGIN_AFTER)
+        .min(crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES);
+    let available_from_start = total_line_count.checked_sub(start_line)?.checked_add(1)?;
+    let limit = requested_limit.min(available_from_start);
+    if limit == 0 {
+        return None;
+    }
+
+    Some(json!({
+        "action": "read_file",
+        "reason": "context_mismatch",
+        "path": path,
+        "start_line": start_line,
+        "limit": limit,
+        "change_index": change_index,
+        "chunk_index": chunk_index,
+    }))
+}
+
 fn sanitize_apply_patch_failure_metadata(
     output: &mut Value,
     patch: &crate::apply_patch_shared::CodexPatch,
 ) {
+    let recovery = apply_patch_context_mismatch_recovery(patch, output);
     let diagnostic_valid = output
         .get("match_diagnostic")
         .is_none_or(|value| valid_apply_patch_failure_match_diagnostic(value, patch, output));
@@ -790,6 +872,9 @@ fn sanitize_apply_patch_failure_metadata(
     fields.retain(|key, _| APPLY_PATCH_FAILURE_TOP_LEVEL_FIELDS.contains(&key.as_str()));
     if !diagnostic_valid {
         fields.remove("match_diagnostic");
+    }
+    if let Some(recovery) = recovery {
+        fields.insert("recovery".to_string(), recovery);
     }
 }
 
@@ -2193,6 +2278,45 @@ mod tests {
         .unwrap()
     }
 
+    fn update_patch_with_old_line_count(count: usize) -> crate::apply_patch_shared::CodexPatch {
+        assert!(count > 0);
+        let mut patch = String::from("*** Begin Patch\n*** Update File: file.txt\n");
+        for index in 0..count {
+            patch.push_str(&format!("-old-{index}\n"));
+        }
+        patch.push_str("+new\n*** End Patch");
+        crate::apply_patch_shared::parse_codex_patch(&patch).unwrap()
+    }
+
+    fn context_mismatch_payload(
+        expected_line_count: usize,
+        search_start_line: usize,
+        available_line_count: usize,
+        closest_start_line: Option<usize>,
+    ) -> Value {
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "context_mismatch",
+            "change_index": 0,
+            "path": "file.txt",
+            "error": "Rejected Codex patch before write: context mismatch. No files were modified.",
+            "match_diagnostic": {
+                "chunk_index": 0,
+                "match_source": "old_lines",
+                "search_start_line": search_start_line,
+                "expected_line_count": expected_line_count,
+                "available_line_count": available_line_count,
+                "closest_start_line": closest_start_line,
+                "closest_exact_line_matches": 0,
+                "closest_trim_end_line_matches": 0,
+                "closest_trim_line_matches": 0,
+                "first_exact_mismatch_offset": 1
+            }
+        })
+    }
+
     #[test]
     fn apply_patch_strict_capability_rejection_names_exact_additive_capability() {
         let result = apply_patch_strict_matching_capability_rejection(
@@ -2242,6 +2366,13 @@ mod tests {
         let result = apply_patch_agent_stdout_result(&valid.to_string(), &patch, false, true);
         assert!(!result.success);
         assert_eq!(result.output["match_diagnostic"]["closest_start_line"], 5);
+        assert_eq!(result.output["recovery"]["action"], "read_file");
+        assert_eq!(result.output["recovery"]["reason"], "context_mismatch");
+        assert_eq!(result.output["recovery"]["path"], "file.txt");
+        assert_eq!(result.output["recovery"]["start_line"], 1);
+        assert_eq!(result.output["recovery"]["limit"], 10);
+        assert_eq!(result.output["recovery"]["change_index"], 0);
+        assert_eq!(result.output["recovery"]["chunk_index"], 0);
         assert!(result.output.get("future_body_field").is_none());
         assert!(!serde_json::to_string(&result.output)
             .unwrap()
@@ -2266,6 +2397,14 @@ mod tests {
         let mut impossible_order = valid;
         impossible_order["match_diagnostic"]["closest_exact_line_matches"] = json!(1);
         cases.push(impossible_order);
+        let mut out_of_range_candidate = context_mismatch_payload(1, 3, 8, Some(11));
+        out_of_range_candidate["recovery"] = json!({
+            "action": "read_file",
+            "path": "other.txt",
+            "start_line": 999999,
+            "limit": 999999
+        });
+        cases.push(out_of_range_candidate);
 
         for invalid in cases {
             let result = apply_patch_agent_stdout_result(&invalid.to_string(), &patch, false, true);
@@ -2273,10 +2412,127 @@ mod tests {
             assert_eq!(result.output["execution_state"], "not_started");
             assert_eq!(result.output["state_changed"], false);
             assert!(result.output.get("match_diagnostic").is_none());
+            assert!(result.output.get("recovery").is_none());
             assert!(!serde_json::to_string(&result.output)
                 .unwrap()
                 .contains("must-not-survive"));
         }
+    }
+
+    #[test]
+    fn apply_patch_context_recovery_uses_deterministic_bounded_read_windows() {
+        let patch = update_patch_with_old_line_count(5);
+        let result = apply_patch_agent_stdout_result(
+            &context_mismatch_payload(5, 120, 50, Some(130)).to_string(),
+            &patch,
+            false,
+            false,
+        );
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_patch");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&result).unwrap(),
+            &schema,
+        )
+        .unwrap_or_else(|error| panic!("apply_patch recovery must match output schema: {error}"));
+        assert_eq!(result.output["recovery"]["start_line"], 122);
+        assert_eq!(result.output["recovery"]["limit"], 21);
+
+        let near_start = apply_patch_agent_stdout_result(
+            &context_mismatch_payload(5, 1, 20, Some(1)).to_string(),
+            &patch,
+            false,
+            false,
+        );
+        assert_eq!(near_start.output["recovery"]["start_line"], 1);
+        assert_eq!(near_start.output["recovery"]["limit"], 20);
+
+        let eof_partial = apply_patch_agent_stdout_result(
+            &context_mismatch_payload(5, 11, 2, Some(12)).to_string(),
+            &patch,
+            false,
+            false,
+        );
+        let recovery = &eof_partial.output["recovery"];
+        assert_eq!(recovery["start_line"], 4);
+        assert_eq!(recovery["limit"], 9);
+        assert_eq!(
+            recovery["start_line"].as_u64().unwrap() + recovery["limit"].as_u64().unwrap() - 1,
+            12
+        );
+
+        let large_patch = update_patch_with_old_line_count(100);
+        let large = apply_patch_agent_stdout_result(
+            &context_mismatch_payload(100, 1, 300, Some(100)).to_string(),
+            &large_patch,
+            false,
+            false,
+        );
+        assert_eq!(
+            large.output["recovery"]["limit"],
+            crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
+        );
+    }
+
+    #[test]
+    fn apply_patch_context_recovery_does_not_invent_candidate_or_leak_bodies() {
+        let patch = update_patch_with_old_line_count(3);
+        let no_candidate = apply_patch_agent_stdout_result(
+            &context_mismatch_payload(3, 5, 0, None).to_string(),
+            &patch,
+            false,
+            false,
+        );
+        assert!(no_candidate.output.get("match_diagnostic").is_some());
+        assert!(no_candidate.output.get("recovery").is_none());
+
+        let private_patch = crate::apply_patch_shared::parse_codex_patch(
+            "*** Begin Patch\n*** Update File: file.txt\n-PATCH_PRIVATE_TOKEN\n+new\n*** End Patch",
+        )
+        .unwrap();
+        let mut payload = context_mismatch_payload(1, 1, 3, Some(2));
+        payload["future_body_field"] = json!("SOURCE_PRIVATE_TOKEN");
+        payload["recovery"] = json!({
+            "action": "read_file",
+            "reason": "context_mismatch",
+            "path": "SOURCE_PRIVATE_TOKEN",
+            "start_line": 1,
+            "limit": 999999,
+            "change_index": 0,
+            "chunk_index": 0
+        });
+        let result =
+            apply_patch_agent_stdout_result(&payload.to_string(), &private_patch, false, false);
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        assert!(!serialized.contains("SOURCE_PRIVATE_TOKEN"));
+        assert!(!serialized.contains("PATCH_PRIVATE_TOKEN"));
+        assert_eq!(result.output["recovery"]["path"], "file.txt");
+        assert!(result.output["recovery"]["limit"].as_u64().unwrap() <= 64);
+    }
+
+    #[test]
+    fn apply_patch_context_recovery_is_suppressed_for_outcome_unknown() {
+        let patch = one_update_patch();
+        let mut payload = context_mismatch_payload(1, 1, 3, Some(2));
+        payload["changed"] = json!(true);
+        payload["recovery"] = json!({"action": "read_file", "path": "other.txt"});
+
+        let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, false, false);
+        assert!(!result.success);
+        assert_eq!(result.output["execution_state"], "outcome_unknown");
+        assert_eq!(
+            result.output["recovery_action"],
+            "inspect_workspace_before_retry"
+        );
+        assert!(result.output.get("match_diagnostic").is_none());
+        assert!(result.output.get("recovery").is_none());
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_patch");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&result).unwrap(),
+            &schema,
+        )
+        .unwrap_or_else(|error| {
+            panic!("apply_patch outcome_unknown must match output schema: {error}")
+        });
     }
 
     #[test]

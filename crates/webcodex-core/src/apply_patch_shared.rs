@@ -12,6 +12,7 @@ use std::fmt;
 pub const MAX_CODEX_PATCH_BYTES: usize = 256 * 1024;
 pub const MAX_CODEX_PATCH_FILE_CHANGES: usize = 64;
 pub const MAX_CODEX_PATCH_CHUNKS_PER_FILE: usize = 256;
+pub const MAX_CODEX_PATCH_RECOVERY_READ_LINES: usize = 64;
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";

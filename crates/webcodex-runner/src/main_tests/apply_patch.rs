@@ -289,6 +289,10 @@ fn file_apply_patch_context_conflict_keeps_whole_batch_unchanged() {
     assert_eq!(out["match_diagnostic"]["closest_start_line"], 1);
     assert_eq!(out["match_diagnostic"]["closest_exact_line_matches"], 0);
     assert_eq!(out["match_diagnostic"]["first_exact_mismatch_offset"], 1);
+    assert!(
+        out.get("recovery").is_none(),
+        "Runner must return canonical structural facts only; Server derives model-facing recovery"
+    );
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("first.txt")).unwrap(),
         "one\n"

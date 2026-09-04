@@ -298,6 +298,18 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         patch_output.get("match_diagnostic").is_some(),
         "apply_patch failures must expose body-free match diagnostics"
     );
+    let recovery = patch_output
+        .get("recovery")
+        .expect("apply_patch must publish bounded context-mismatch recovery");
+    assert_eq!(recovery["additionalProperties"], false);
+    assert_eq!(
+        recovery["properties"]["action"]["enum"],
+        json!(["read_file"])
+    );
+    assert_eq!(
+        recovery["properties"]["limit"]["maximum"],
+        webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
+    );
     let patch_files = &patch_output["files"];
     assert_eq!(patch_files["type"], "array");
     let file_properties = patch_files["items"]["properties"]

@@ -826,6 +826,10 @@ fn apply_patch_context_mismatch_recovery(
         .get("closest_start_line")?
         .as_u64()
         .and_then(|value| usize::try_from(value).ok())?;
+    let first_exact_mismatch_offset = diagnostic
+        .get("first_exact_mismatch_offset")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())?;
 
     let total_line_count = search_start_line
         .checked_sub(1)?
@@ -834,13 +838,27 @@ fn apply_patch_context_mismatch_recovery(
         return None;
     }
 
-    let start_line = closest_start_line
+    let mismatch_line = closest_start_line
+        .checked_add(first_exact_mismatch_offset.checked_sub(1)?)?
+        .min(total_line_count);
+    let initial_start_line = closest_start_line
         .saturating_sub(APPLY_PATCH_RECOVERY_MARGIN_BEFORE)
         .max(1);
     let requested_limit = expected_line_count
         .saturating_add(APPLY_PATCH_RECOVERY_MARGIN_BEFORE)
         .saturating_add(APPLY_PATCH_RECOVERY_MARGIN_AFTER)
         .min(crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES);
+    // Short hunks retain context around the candidate start. Once the bounded
+    // read cap applies, shift only as far as needed to include the first known
+    // mismatch plus useful trailing context; otherwise a large stale hunk can
+    // return a window containing only lines that still match.
+    let desired_end_line = mismatch_line
+        .saturating_add(APPLY_PATCH_RECOVERY_MARGIN_AFTER)
+        .min(total_line_count);
+    let mismatch_centered_start = desired_end_line
+        .saturating_sub(requested_limit.saturating_sub(1))
+        .max(1);
+    let start_line = initial_start_line.max(mismatch_centered_start);
     let available_from_start = total_line_count.checked_sub(start_line)?.checked_add(1)?;
     let limit = requested_limit.min(available_from_start);
     if limit == 0 {
@@ -2471,6 +2489,28 @@ mod tests {
             large.output["recovery"]["limit"],
             crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
         );
+
+        let mut distant_mismatch_payload = context_mismatch_payload(100, 1, 300, Some(100));
+        distant_mismatch_payload["match_diagnostic"]["closest_exact_line_matches"] = json!(99);
+        distant_mismatch_payload["match_diagnostic"]["closest_trim_end_line_matches"] = json!(99);
+        distant_mismatch_payload["match_diagnostic"]["closest_trim_line_matches"] = json!(99);
+        distant_mismatch_payload["match_diagnostic"]["first_exact_mismatch_offset"] = json!(90);
+        let distant_mismatch = apply_patch_agent_stdout_result(
+            &distant_mismatch_payload.to_string(),
+            &large_patch,
+            false,
+            false,
+        );
+        let recovery = &distant_mismatch.output["recovery"];
+        assert_eq!(recovery["start_line"], 134);
+        assert_eq!(
+            recovery["limit"],
+            crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
+        );
+        let mismatch_line = 100 + 90 - 1;
+        let recovery_start = recovery["start_line"].as_u64().unwrap() as usize;
+        let recovery_end = recovery_start + recovery["limit"].as_u64().unwrap() as usize - 1;
+        assert!((recovery_start..=recovery_end).contains(&mismatch_line));
     }
 
     #[test]

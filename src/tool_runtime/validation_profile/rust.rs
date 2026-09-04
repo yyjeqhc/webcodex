@@ -1,6 +1,7 @@
 use super::{ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence};
-use crate::tool_runtime::helpers::shell_escape_simple;
-use crate::tool_runtime::validation_parser::{
+use webcodex_core::runner_protocol::{normalize_cargo_value, normalize_rust_test_filter};
+use webcodex_core::shell_quote::shell_escape_simple;
+use webcodex_core::validation_evidence::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, ValidationDiagnostics,
 };
 
@@ -214,7 +215,7 @@ fn cargo_test_command(options: ValidationCommandOptions) -> Result<String, Strin
 /// is mapped to the tool-facing message.
 fn validate_arg(label: &str, value: Option<String>) -> Result<Option<String>, String> {
     match value {
-        Some(raw) => match crate::runner_protocol::normalize_cargo_value(&raw) {
+        Some(raw) => match normalize_cargo_value(&raw) {
             Ok(normalized) => Ok(normalized),
             Err(reason) => Err(format!("{} {reason}", label)),
         },
@@ -227,7 +228,7 @@ fn validate_arg(label: &str, value: Option<String>) -> Result<Option<String>, St
 /// argv builder.
 fn validate_filter(value: Option<String>) -> Result<Option<String>, String> {
     match value {
-        Some(raw) => match crate::runner_protocol::normalize_rust_test_filter(&raw) {
+        Some(raw) => match normalize_rust_test_filter(&raw) {
             Ok(normalized) => Ok(normalized),
             Err(reason) => Err(format!("filter {reason}")),
         },

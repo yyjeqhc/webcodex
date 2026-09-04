@@ -9,22 +9,23 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-
-use super::session_context::{
-    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
+use webcodex_core::audit_preview::command_preview;
+use webcodex_core::validation_evidence::{
+    ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
+    VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
 };
-use super::sessions::{
+use webcodex_tool_runtime_contracts::tool_audit::{
+    assertion_validation_identity, is_structured_validation_target_identity,
+    is_validation_execution_identity, structured_validation_target_identity,
+};
+use webcodex_workflow_session::{
     canonical_tool_call_finished_events, current_attempt_event_view,
     safe_model_facing_assertion_name, tool_supports_model_facing_assertion_name, SessionEvent,
     SessionSummary,
 };
-use super::tool_audit::{
-    assertion_validation_identity, is_structured_validation_target_identity,
-    is_validation_execution_identity, structured_validation_target_identity,
-};
-use super::validation_parser::{
-    ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
-    VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
+
+use super::session_context::{
+    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
 use super::validation_profile::{
     validation_adapter_for_tool, ValidationAdapter, ValidationFailureEvidence,
@@ -1593,7 +1594,7 @@ fn execution_identity(
 }
 
 fn first_line_summary(command: &str) -> String {
-    crate::runner_http::command_preview(command)
+    command_preview(command)
 }
 
 type OutputEvidence = (

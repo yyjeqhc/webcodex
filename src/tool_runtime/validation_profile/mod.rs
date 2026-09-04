@@ -7,7 +7,7 @@ mod recipe;
 mod recipe_tests;
 mod rust;
 
-use super::validation_parser::ValidationDiagnostics;
+use webcodex_core::validation_evidence::ValidationDiagnostics;
 
 #[cfg(test)]
 pub(crate) use recipe::RecipeError;

@@ -18,6 +18,7 @@ pub mod runner_protocol;
 pub mod runtime_contract;
 pub mod sensitive_paths;
 pub mod sensitive_text;
+pub mod shell_quote;
 pub mod skill_metadata;
 pub mod skill_store;
 pub mod validation_bridge;

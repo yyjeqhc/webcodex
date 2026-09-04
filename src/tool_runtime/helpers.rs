@@ -394,18 +394,7 @@ mod raw_shell_bound_tests {
     }
 }
 
-pub(crate) fn shell_escape_simple(s: &str) -> String {
-    let mut out = String::from("'");
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
-}
+pub(crate) use webcodex_core::shell_quote::shell_escape_simple;
 
 pub(crate) fn validate_limited_cleanup_paths(
     paths: &[String],

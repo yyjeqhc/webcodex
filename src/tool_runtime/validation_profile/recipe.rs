@@ -1,12 +1,12 @@
 //! Deterministic project-aware plans for the hosted `checks_run` capability.
 
-use crate::runner_protocol::ShellJobValidationStep;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use webcodex_core::runner_protocol::{normalize_rust_test_filter, ShellJobValidationStep};
 
 const RECIPE_VERSION: u32 = 1;
 const RECIPE_NAMES: [&str; 4] = ["rust", "node", "python", "go"];
@@ -476,7 +476,7 @@ fn safe_rust_filter(filter: Option<&str>) -> Result<Option<String>, RecipeError>
     };
     // The shared filter contract performs the single trim, rejects option-like
     // values and control bytes, and bounds the length.
-    match crate::runner_protocol::normalize_rust_test_filter(raw) {
+    match normalize_rust_test_filter(raw) {
         Ok(Some(normalized)) => Ok(Some(normalized)),
         Ok(None) => Ok(None),
         Err(_) => Err(filter_unsupported()),

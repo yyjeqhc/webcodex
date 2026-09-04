@@ -1,6 +1,7 @@
 use super::{ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence};
-use crate::tool_runtime::helpers::shell_escape_simple;
-use crate::tool_runtime::validation_parser::{parse_go_test_diagnostics, ValidationDiagnostics};
+use webcodex_core::runner_protocol::normalize_go_test_packages;
+use webcodex_core::shell_quote::shell_escape_simple;
+use webcodex_core::validation_evidence::{parse_go_test_diagnostics, ValidationDiagnostics};
 
 struct GoTestValidationAdapter;
 
@@ -34,7 +35,7 @@ impl ValidationAdapter for GoTestValidationAdapter {
         let Some(packages) = options.go_packages.as_deref() else {
             return Ok("go test -json ./...".to_string());
         };
-        let packages = crate::runner_protocol::normalize_go_test_packages(Some(packages))
+        let packages = normalize_go_test_packages(Some(packages))
             .map_err(|reason| format!("packages {reason}"))?;
         let mut command = vec!["go".to_string(), "test".to_string(), "-json".to_string()];
         command.extend(packages.iter().map(|package| shell_escape_simple(package)));

@@ -213,7 +213,11 @@ async fn run_bounded(
     command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // One-shot Desktop adapter calls must not survive cancellation or an
+        // early stdin/write error. Long-lived Server/Runner/Share processes
+        // are owned separately by ProcessSupervisor instead.
+        .kill_on_drop(true);
     if stdin_payload.is_some() {
         command.stdin(Stdio::piped());
     } else {

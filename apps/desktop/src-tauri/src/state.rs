@@ -199,15 +199,29 @@ impl DesktopCore {
                 .await?
                 .probe_url
         };
+        let reusable_identity = identity_from_config(&self.config).filter(|identity| {
+            same_server(&identity.server_url, &server_url)
+                && same_project(&identity.project_path, &project.path)
+        });
         self.config.topology = self.snapshot.topology.clone();
         self.config.project = Some(project.clone());
-        self.config.runtime = Some(StoredRuntime {
-            server_url: server_url.clone(),
-            server_env_file: Some(env_file.clone()),
-            runner_config: None,
-            user_token_file: None,
-            project_id: None,
-            runtime_project_id: None,
+        self.config.runtime = Some(match reusable_identity.as_ref() {
+            Some(identity) => StoredRuntime {
+                server_url: server_url.clone(),
+                server_env_file: Some(env_file.clone()),
+                runner_config: Some(identity.runner_config.clone()),
+                user_token_file: Some(identity.user_token_file.clone()),
+                project_id: Some(identity.project_id.clone()),
+                runtime_project_id: Some(identity.runtime_project_id.clone()),
+            },
+            None => StoredRuntime {
+                server_url: server_url.clone(),
+                server_env_file: Some(env_file.clone()),
+                runner_config: None,
+                user_token_file: None,
+                project_id: None,
+                runtime_project_id: None,
+            },
         });
         self.save_config().await?;
 
@@ -226,9 +240,7 @@ impl DesktopCore {
             .await?;
         self.snapshot.readiness.server = ServerReadiness::Ready;
 
-        let identity = match identity_from_config(&self.config)
-            .filter(|identity| same_project(&identity.project_path, &project.path))
-        {
+        let identity = match reusable_identity {
             Some(identity) => identity,
             None => {
                 let pairing_code = self
@@ -373,7 +385,10 @@ impl DesktopCore {
             ServerReadiness::Ready,
             RunnerReadiness::Ready,
             if server_url.starts_with("https://") {
-                ExposureReadiness::RemoteReady
+                // HTTPS proves transport shape, not that ChatGPT can reach and
+                // authenticate to the MCP endpoint. D1 has no canonical remote
+                // MCP/handoff probe, so keep this explicitly unverified.
+                ExposureReadiness::Unknown
             } else {
                 ExposureReadiness::Degraded
             },
@@ -466,19 +481,24 @@ impl DesktopCore {
             )
             .with_details(serde_json::json!({ "diagnostic_lines": logs })));
         };
-        let event: QuickShareReadyEvent = serde_json::from_value(event_value).map_err(|_| {
-            DesktopError::new(
-                "webcodex_contract_invalid",
-                "Quick Share returned an invalid readiness event",
-                "Verify that Desktop and WebCodex binaries come from the same source baseline.",
-            )
-        })?;
+        let event: QuickShareReadyEvent = match serde_json::from_value(event_value) {
+            Ok(event) => event,
+            Err(_) => {
+                self.supervisor.stop(ProcessKind::QuickShare).await;
+                return Err(DesktopError::new(
+                    "webcodex_contract_invalid",
+                    "Quick Share returned an invalid readiness event",
+                    "Verify that Desktop and WebCodex binaries come from the same source baseline.",
+                ));
+            }
+        };
         if event.event != "ready"
             || event.schema_version != 1
             || event.experience != "quick_share"
             || event.project.trim().is_empty()
             || event.exposure.kind.trim().is_empty()
         {
+            self.supervisor.stop(ProcessKind::QuickShare).await;
             return Err(DesktopError::new(
                 "webcodex_contract_invalid",
                 "Quick Share readiness identity is incomplete",
@@ -745,7 +765,9 @@ fn reserve_loopback_address() -> DesktopResult<String> {
 fn exposure_readiness(topology: Option<&RuntimeTopology>) -> ExposureReadiness {
     match topology.map(|topology| &topology.exposure) {
         Some(Exposure::None) => ExposureReadiness::LocalReady,
-        Some(Exposure::ExistingHttps { .. }) => ExposureReadiness::RemoteReady,
+        // An HTTPS origin is a configured route, not evidence that the MCP
+        // endpoint plus ChatGPT authentication/handoff is externally usable.
+        Some(Exposure::ExistingHttps { .. }) => ExposureReadiness::Unknown,
         Some(Exposure::Cloudflare | Exposure::OpenAiTunnel) => ExposureReadiness::Unknown,
         None => ExposureReadiness::Unknown,
     }
@@ -992,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn local_and_remote_exposure_readiness_are_independent_of_runner() {
+    fn configured_https_exposure_stays_unverified_without_mcp_handoff_evidence() {
         let local = RuntimeTopology {
             experience: Experience::Full,
             server: ServerTopology::Local,
@@ -1017,7 +1039,7 @@ mod tests {
         );
         assert_eq!(
             exposure_readiness(Some(&remote)),
-            ExposureReadiness::RemoteReady
+            ExposureReadiness::Unknown
         );
     }
 }

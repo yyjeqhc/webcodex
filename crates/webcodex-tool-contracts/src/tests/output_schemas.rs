@@ -39,6 +39,192 @@ fn structured_execution_output(
     })
 }
 
+fn continuation_feedback_subschema(specs: &[ToolSpec], tool: &str) -> Value {
+    let spec = spec_named(specs, tool);
+    spec.output_schema["properties"]["output"]["properties"]["continuation_feedback"].clone()
+}
+
+fn assert_all_objects_strict(schema: &Value, path: &str, open_boundaries: &[&str]) {
+    match schema {
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("object") {
+                let additional_properties = object.get("additionalProperties");
+                if open_boundaries.contains(&path) {
+                    assert!(
+                        additional_properties
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        "{path}: documented open boundary should be additionalProperties:true"
+                    );
+                } else {
+                    assert_eq!(
+                        additional_properties.and_then(Value::as_bool),
+                        Some(false),
+                        "{path}: core object must be additionalProperties:false"
+                    );
+                }
+            }
+            for (key, child) in object {
+                assert_all_objects_strict(child, &format!("{path}.{key}"), open_boundaries);
+            }
+        }
+        Value::Array(array) => {
+            for (index, child) in array.iter().enumerate() {
+                assert_all_objects_strict(child, &format!("{path}[{index}]"), open_boundaries);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn continuation_feedback_output_schemas_are_synchronized() {
+    let specs = registered_tool_specs();
+    for name in ["finish_coding_task", "session_handoff_summary"] {
+        let spec = spec_named(&specs, name);
+        let properties = &spec.output_schema["properties"]["output"]["properties"];
+        assert!(
+            properties
+                .as_object()
+                .is_some_and(|properties| properties.contains_key("continuation_feedback")),
+            "{name} output schema should expose continuation_feedback"
+        );
+    }
+
+    let validation_spec = spec_named(&specs, "validation_summary");
+    let validation_properties =
+        &validation_spec.output_schema["properties"]["output"]["properties"];
+    assert!(
+        validation_properties
+            .as_object()
+            .is_some_and(|properties| properties.contains_key("validation_delta")),
+        "validation_summary output schema should expose validation_delta"
+    );
+}
+
+#[test]
+fn continuation_feedback_schema_is_strict_on_core_objects() {
+    let specs = registered_tool_specs();
+    let schema = continuation_feedback_subschema(&specs, "finish_coding_task");
+    assert_all_objects_strict(&schema, "continuation_feedback", &[]);
+
+    let validation_spec = spec_named(&specs, "validation_summary");
+    let delta =
+        &validation_spec.output_schema["properties"]["output"]["properties"]["validation_delta"];
+    assert_eq!(
+        delta["additionalProperties"].as_bool(),
+        Some(false),
+        "validation_delta root must be strict"
+    );
+    assert_all_objects_strict(delta, "validation_delta", &[]);
+}
+
+#[test]
+fn continuation_feedback_schema_enums_and_signed_ints_are_stable() {
+    let specs = registered_tool_specs();
+    let schema = continuation_feedback_subschema(&specs, "finish_coding_task");
+
+    let status_enum = schema["properties"]["status"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(status_enum, ["available", "not_applicable", "unknown"]);
+
+    let validation_status_enum = schema["properties"]["attempt"]["properties"]["validation"]
+        ["properties"]["latest_status"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        validation_status_enum,
+        ["passed", "failed", "not_run", "unknown", "unavailable"]
+    );
+
+    let boundary_source_enum = schema["properties"]["attempt"]["properties"]["boundary"]
+        ["properties"]["source"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        boundary_source_enum,
+        [
+            "task_instruction",
+            "session_start",
+            "unavailable",
+            "no_events"
+        ]
+    );
+
+    let outcome_enum = schema["properties"]["attempt"]["properties"]["outcome"]["properties"]
+        ["status"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(outcome_enum, ["in_progress", "blocked", "clean", "unknown"]);
+
+    let recovery_state_enum = schema["properties"]["attempt"]["properties"]["jobs"]["properties"]
+        ["recovery_state"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recovery_state_enum,
+        [
+            "none",
+            "recovering",
+            "terminal_pending",
+            "active",
+            "unknown"
+        ]
+    );
+
+    let comparison_reason_enum = schema["properties"]["validation_delta"]["properties"]
+        ["comparison"]["properties"]["reason_code"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        comparison_reason_enum,
+        [
+            "no_previous_validation",
+            "validation_scope_changed",
+            "previous_evidence_incomplete",
+            "current_evidence_incomplete",
+            "parser_changed",
+            "parser_identity_unavailable",
+            "test_identity_unavailable",
+            "insufficient_scope_identity",
+            "validation_not_requested"
+        ]
+    );
+
+    for key in [
+        "passed_delta",
+        "failed_delta",
+        "ignored_delta",
+        "total_delta",
+    ] {
+        assert_eq!(
+            schema["properties"]["validation_delta"]["properties"]["counts"]["properties"][key]
+                ["type"],
+            "integer",
+            "{key} must be a signed integer"
+        );
+    }
+}
+
 #[test]
 fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
     let schema = output_schema_for_tool("observe_jobs");

@@ -114,12 +114,13 @@ webcodex pairing create `
   --ttl-secs 600
 ```
 
-Redeem the code on the Runner side. Restrict the allowed root to the real parent directory of the repositories when practical:
+Redeem the code on the Runner side. Register the repository you want to use through the Connector now, and restrict the allowed root to its real parent directory when practical:
 
 ```powershell
 webcodex login http://127.0.0.1:18080 `
   --code <wc_pair_...> `
   --allowed-root C:\src `
+  --project C:\src\your-repository `
   --json
 ```
 
@@ -129,7 +130,7 @@ webcodex login http://127.0.0.1:18080 `
 webcodex runner run --config <login-reported-runner-config>
 ```
 
-Check the returned config with `webcodex runner status --config <login-reported-runner-config>`. At this point the Server should see a normal independent Runner; it is valid for the Runner to have zero registered projects until you explicitly add one.
+Check the returned config with `webcodex runner status --config <login-reported-runner-config>`. At this point the Server should see a normal independent Runner with `C:\src\your-repository` already registered. Add more projects later with the normal `webcodex project register --config ...` workflow when needed.
 
 ## 4. Validate local MCP before exposing it through the Tunnel
 
@@ -199,10 +200,9 @@ Why **No authentication**? The WebCodex Bearer for the local MCP hop is already 
 
 After creating the Connector, refresh the ChatGPT window if the new tools do not appear in the current conversation. Then validate the path beyond UI setup:
 
-1. inspect the visible Projects; `list_projects` may legitimately be empty before the first registration;
-2. register or select a real repository under the Runner's configured `allowed_roots` using the current WebCodex project workflow;
-3. read a known file through the Connector;
-4. if write access is intentionally enabled, use a dedicated branch/safe change and review the resulting Git diff.
+1. confirm the Project registered during `webcodex login --project ...` is visible;
+2. select that registered Project and read a known file through the Connector;
+3. if write access is intentionally enabled, use a dedicated branch/safe change and review the resulting Git diff.
 
 The project handle returned by WebCodex is output, not setup input. Do not ask the user to invent a Runner/project runtime id.
 
@@ -218,7 +218,7 @@ Do not treat “the process started” as completion. Validate every layer that 
 | Tunnel health | `/readyz = 200` |
 | OpenAI control plane | metadata fetch succeeds and polling does not continuously fail |
 | ChatGPT | Connector is created and its tools load |
-| Project | the Connector can register a real Runner-owned path |
+| Project | the Project registered during login is visible through the Connector |
 | Read | files can be read through the new Connector |
 | Write | a dedicated branch can be modified and reviewed with Git diff |
 

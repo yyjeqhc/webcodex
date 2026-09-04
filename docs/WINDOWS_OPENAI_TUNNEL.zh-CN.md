@@ -65,7 +65,7 @@ CONTROL_PLANE_API_KEY
 
 `CONTROL_PLANE_API_KEY` 建议使用只授予 Tunnels **Read + Use** 的 Restricted key。
 
-不要把这两个值打印进终端日志、文档、issue 或截图。
+不要打印或提交 Tunnel ID、API key、WebCodex Bearer、bootstrap token 或 authorization-file 内容，也不要把它们放进文档、issue 或截图。
 
 WebCodex 会使用固定并校验的 OpenAI `tunnel-client`；当前实现也可以从 `WEBCODEX_TUNNEL_CLIENT_BIN` 或 `PATH` 解析它。
 
@@ -114,12 +114,13 @@ webcodex pairing create `
   --ttl-secs 600
 ```
 
-在 Runner 侧兑换 code。建议把允许范围限制到真实项目父目录，例如：
+在 Runner 侧兑换 code。此时就注册后续要通过 Connector 使用的仓库，并建议把允许范围限制到它的真实父目录，例如：
 
 ```powershell
 webcodex login http://127.0.0.1:18080 `
   --code <wc_pair_...> `
   --allowed-root C:\src `
+  --project C:\src\your-repository `
   --json
 ```
 
@@ -129,7 +130,7 @@ webcodex login http://127.0.0.1:18080 `
 webcodex runner run --config <login-reported-runner-config>
 ```
 
-使用 `webcodex runner status --config <login-reported-runner-config>` 检查状态。此时 Server 应看到一个普通独立 Runner；在第一次显式注册项目之前，Runner 显示零个 Project 是正常的。
+使用 `webcodex runner status --config <login-reported-runner-config>` 检查状态。此时 Server 应看到一个普通独立 Runner，并且 `C:\src\your-repository` 已经注册。以后需要增加更多 Project 时，再使用普通的 `webcodex project register --config ...` 流程。
 
 ## 4. 先验证本地 MCP，再启动 OpenAI Tunnel
 
@@ -206,10 +207,9 @@ flowchart TD
 
 Connector 创建成功后，如果当前对话还没出现新工具，先刷新 ChatGPT 窗口。然后验证真正的数据路径，而不只是 UI 创建成功：
 
-1. 查看当前可见 Project；第一次注册前 `list_projects` 为空是正常的；
-2. 使用当前 WebCodex Project workflow 注册或选择 `allowed_roots` 下的真实仓库；
-3. 通过 Connector 读取一个已知文件；
-4. 如果明确启用了写权限，用专用分支/安全小改动验证写入，并检查 Git diff。
+1. 确认 `webcodex login --project ...` 阶段已经注册的 Project 可以看到；
+2. 选择这个已注册 Project，并通过 Connector 读取一个已知文件；
+3. 如果明确启用了写权限，用专用分支/安全小改动验证写入，并检查 Git diff。
 
 WebCodex 返回的 Project handle 是结果，不是设置时需要用户自己编造的输入；不要让用户手工拼 Runner/project runtime id。
 
@@ -225,7 +225,7 @@ WebCodex 返回的 Project handle 是结果，不是设置时需要用户自己�
 | Tunnel health | `/readyz = 200` |
 | OpenAI control plane | metadata fetch 成功，poll 无持续失败 |
 | ChatGPT | Connector 可以创建并 Scan/加载 tools |
-| Project | 可以通过 Connector 注册真实 Runner path |
+| Project | login 阶段注册的 Project 可以通过 Connector 看到 |
 | Read | 可以通过新 Connector 读取仓库文件 |
 | Write | 可以在专用分支创建/修改文件，并用 Git diff 验证 |
 

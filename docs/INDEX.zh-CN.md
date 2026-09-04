@@ -51,6 +51,7 @@ protocol field、兼容名称和实现 invariant；普通用户不需要为了�
 - [测试策略](TESTING.md)
 - [发布清单](RELEASE_CHECKLIST.md)
 - [架构决策](agent/architecture-decisions.md)
+- [Runtime host context](agent/runtime-host-context.md) —— Runner 配置的 planning context 与 runtime diagnostics
 - [Job 可靠性与 Runner 并发](agent/job-reliability-and-concurrency.md)
 - [Tool request tracing](agent/tool-request-tracing.md) —— maintainer forensic payload/correlation contract
 - [权限模型](agent/permission-model.md)

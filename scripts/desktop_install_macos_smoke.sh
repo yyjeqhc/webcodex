@@ -97,7 +97,7 @@ short_source="$(printf '%s' "${source_sha:0:12}" | tr '[:upper:]' '[:lower:]')"
 for name in webcodex webcodex-server webcodex-runner; do
   binary="$runtime_dir/$name"
   [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] || { echo "bundled runtime missing: $name" >&2; exit 1; }
-  actual="$($binary --version | head -n 1)"
+  actual="$("$binary" --version | head -n 1)"
   expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
   [ "$actual" = "$expected" ] || { echo "unexpected bundled runtime identity for $name" >&2; exit 1; }
   actual_arch="$(/usr/bin/lipo -archs "$binary")"

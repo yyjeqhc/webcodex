@@ -22,8 +22,8 @@ use crate::wire_models::{
 use crate::workspace::{LocalResultDecision, PreparedWorkspace, WorkspaceManager};
 use crate::{
     ConnectorCallContext, ConnectorCallOutcome, ConnectorJobHostError, ConnectorPermission,
-    ConnectorProjectRegistration, ConnectorToolFailure, ConnectorToolRequest, ConnectorTransport,
-    ConnectorValidationPlanRequest, ConnectorWindowId,
+    ConnectorProjectRegistration, ConnectorRecipeId, ConnectorSemanticCheck, ConnectorToolFailure,
+    ConnectorToolRequest, ConnectorTransport, ConnectorWindowId,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -43,6 +43,7 @@ use webcodex_store::{
     ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWorkspaceTransition, Database,
     NewConnectorResult, NewConnectorTask,
 };
+use webcodex_validation::{resolve_validation_recipe, RecipeId, SemanticCheck};
 use webcodex_workspace::project_context::{
     capture_project_context, compare_project_context, ContextRefreshSummary,
     ProjectContextFingerprint,
@@ -54,6 +55,23 @@ const MAX_REVIEW_APPLIED_PATHS: usize = 200;
 const COMMAND_APPROVAL_TTL_SECS: i64 = 60 * 60;
 const CONNECTOR_PATCH_PREVIEW_BYTES: usize = 128 * 1024;
 const CONNECTOR_SEARCH_WINDOW: usize = crate::projections::CONNECTOR_SEARCH_WINDOW;
+
+fn validation_recipe_id(recipe: ConnectorRecipeId) -> RecipeId {
+    match recipe {
+        ConnectorRecipeId::Rust => RecipeId::Rust,
+        ConnectorRecipeId::Node => RecipeId::Node,
+        ConnectorRecipeId::Python => RecipeId::Python,
+        ConnectorRecipeId::Go => RecipeId::Go,
+    }
+}
+
+fn validation_semantic_check(check: ConnectorSemanticCheck) -> SemanticCheck {
+    match check {
+        ConnectorSemanticCheck::Format => SemanticCheck::Format,
+        ConnectorSemanticCheck::Check => SemanticCheck::Check,
+        ConnectorSemanticCheck::Test => SemanticCheck::Test,
+    }
+}
 #[cfg(test)]
 type FinishTestHook = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
@@ -1789,13 +1807,20 @@ impl ConnectorRuntime {
             Err(outcome) => return outcome,
         };
         let host = auth.host.clone();
-        let resolved = match host.plan_validation(ConnectorValidationPlanRequest {
-            execution_root: task.execution_root.clone(),
-            cwd: input.cwd.clone(),
-            recipe: input.recipe,
-            checks: input.checks.clone(),
-            test_filter: input.test_filter.clone(),
-        }) {
+        let recipe = input.recipe.map(validation_recipe_id);
+        let checks = input
+            .checks
+            .iter()
+            .copied()
+            .map(validation_semantic_check)
+            .collect::<Vec<_>>();
+        let resolved = match resolve_validation_recipe(
+            Path::new(&task.execution_root),
+            input.cwd.as_deref(),
+            recipe,
+            &checks,
+            input.test_filter.as_deref(),
+        ) {
             Ok(resolved) => resolved,
             Err(error) => return validation_recipe_error(&task, error),
         };
@@ -1824,7 +1849,7 @@ impl ConnectorRuntime {
                 }
             }
         }
-        let recipe_identity = resolved.durable_identity.clone();
+        let recipe_identity = resolved.durable_identity();
         let timeout_secs = input.timeout_secs.unwrap_or(120);
         let request_sha256 = check_request_hash(
             &task,

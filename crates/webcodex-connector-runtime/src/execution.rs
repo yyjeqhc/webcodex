@@ -683,8 +683,7 @@ mod service_tests {
     use super::*;
     use crate::{
         ConnectorHostFuture, ConnectorJobSubmission, ConnectorProjectRegistration,
-        ConnectorToolFailure, ConnectorToolRequest, ConnectorValidationEvidenceRequest,
-        ConnectorValidationPlan, ConnectorValidationPlanError, ConnectorValidationPlanRequest,
+        ConnectorToolFailure, ConnectorToolRequest,
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use webcodex_store::{ConnectorBinding, NewConnectorTask};
@@ -741,23 +740,6 @@ mod service_tests {
                     Ok(())
                 }
             })
-        }
-
-        fn plan_validation(
-            &self,
-            _request: ConnectorValidationPlanRequest,
-        ) -> Result<ConnectorValidationPlan, ConnectorValidationPlanError> {
-            Err(ConnectorValidationPlanError {
-                code: "not_used".to_string(),
-                details: None,
-            })
-        }
-
-        fn validation_failure_evidence(
-            &self,
-            _request: ConnectorValidationEvidenceRequest,
-        ) -> Value {
-            Value::Null
         }
     }
 

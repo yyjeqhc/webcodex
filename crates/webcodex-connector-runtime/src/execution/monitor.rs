@@ -1,5 +1,74 @@
 use super::*;
-use crate::ConnectorValidationEvidenceRequest;
+use webcodex_core::validation_bridge::sanitize_bridge_text;
+use webcodex_core::validation_evidence::{PARSER_KIND, PARSER_VERSION};
+use webcodex_store::MAX_ASSERTION_EVIDENCE_BYTES;
+use webcodex_validation::{validation_adapter_for_tool, ValidationFailureEvidence};
+
+fn durable_assertion_evidence(
+    check: &str,
+    recipe_identity: Option<&Value>,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Value {
+    let tool = recipe_identity.and_then(|identity| {
+        let checks = identity.get("semantic_checks")?.as_array()?;
+        let index = checks.iter().position(|candidate| candidate == check)?;
+        identity
+            .get("tool_identities")?
+            .as_array()?
+            .get(index)?
+            .as_str()
+    });
+    let (failure_kind, diagnostics) = tool
+        .and_then(validation_adapter_for_tool)
+        .map(|adapter| {
+            let diagnostics = adapter.parse(stdout, stderr, true);
+            let failure_kind = adapter.map_failure_kind(ValidationFailureEvidence {
+                success: false,
+                reported_failure_kind: Some("command_exit_nonzero"),
+                exit_code: exit_code.map(i64::from),
+                diagnostics: Some(&diagnostics),
+                stdout_excerpt: stdout,
+                stderr_excerpt: stderr,
+            });
+            (failure_kind, Some(diagnostics))
+        })
+        .unwrap_or(("process_exit", None));
+    let parser = diagnostics.as_ref().map(|_| PARSER_KIND);
+    let parser_version = diagnostics.as_ref().map(|_| PARSER_VERSION);
+    let mut evidence = json!({
+        "failed_check": check,
+        "failure_kind": failure_kind,
+        "exit_code": exit_code,
+        "parser": parser,
+        "parser_version": parser_version,
+        "diagnostics": diagnostics
+    });
+    sanitize_evidence(&mut evidence);
+    if serde_json::to_vec(&evidence).is_ok_and(|bytes| bytes.len() <= MAX_ASSERTION_EVIDENCE_BYTES)
+    {
+        evidence
+    } else {
+        json!({
+            "failed_check": check,
+            "failure_kind": failure_kind,
+            "exit_code": exit_code,
+            "parser": parser,
+            "parser_version": parser_version,
+            "diagnostics": null
+        })
+    }
+}
+
+fn sanitize_evidence(value: &mut Value) {
+    match value {
+        Value::String(text) => *text = sanitize_bridge_text(text),
+        Value::Array(items) => items.iter_mut().for_each(sanitize_evidence),
+        Value::Object(fields) => fields.values_mut().for_each(sanitize_evidence),
+        _ => {}
+    }
+}
 
 struct MonitorRegistration {
     execution_id: String,
@@ -80,7 +149,7 @@ impl ExecutionService {
                 let _ = self.dispatch_cancel(&task, &current, host.as_ref()).await;
             }
             match self
-                .refresh_once(&task, &execution_id, host.as_ref(), &runner_access)
+                .refresh_once(&task, &execution_id, &runner_access)
                 .await
             {
                 Ok(updated) => {
@@ -178,7 +247,6 @@ impl ExecutionService {
         &self,
         task: &ConnectorTaskSnapshot,
         execution_id: &str,
-        host: &dyn ConnectorExecutionHost,
         runner_access: &RunnerAccess,
     ) -> Result<ConnectorExecution, (&'static str, String)> {
         let execution = self
@@ -242,14 +310,16 @@ impl ExecutionService {
                 .job_log_for_auth(Some(runner_access), job_id, None, None, None, None, None)
                 .await
                 .unwrap_or_else(|_| (job.clone(), None, None, 1, 1, Default::default()));
+            let stdout = full_stdout.unwrap_or_default();
+            let stderr = full_stderr.unwrap_or_default();
             failed_check.map(|check| {
-                host.validation_failure_evidence(ConnectorValidationEvidenceRequest {
-                    check: check.to_string(),
-                    recipe_identity: execution.check_recipe.clone(),
-                    exit_code: job.exit_code,
-                    stdout: full_stdout.unwrap_or_default(),
-                    stderr: full_stderr.unwrap_or_default(),
-                })
+                durable_assertion_evidence(
+                    check,
+                    execution.check_recipe.as_ref(),
+                    job.exit_code,
+                    &stdout,
+                    &stderr,
+                )
             })
         } else {
             None

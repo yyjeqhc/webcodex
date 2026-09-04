@@ -13,6 +13,7 @@ webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-runner-registry = { path = "../webcodex-runner-registry" }
 webcodex-store = { path = "../webcodex-store" }
 webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }
+webcodex-validation = { path = "../webcodex-validation" }
 webcodex-workspace = { path = "../webcodex-workspace" }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

@@ -71,20 +71,6 @@ impl ConnectorExecutionHost for ScriptedHost {
         self.stops.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(()) })
     }
-
-    fn plan_validation(
-        &self,
-        _request: ConnectorValidationPlanRequest,
-    ) -> Result<ConnectorValidationPlan, ConnectorValidationPlanError> {
-        Err(ConnectorValidationPlanError {
-            code: "validation_recipe_not_found".to_string(),
-            details: None,
-        })
-    }
-
-    fn validation_failure_evidence(&self, request: ConnectorValidationEvidenceRequest) -> Value {
-        json!({"failed_check": request.check, "failure_kind": "test_failure"})
-    }
 }
 
 struct Fixture {
@@ -703,10 +689,15 @@ async fn validation_plan_failure_creates_no_execution_reservation() {
     let out = fx
         .call(
             "checks_run",
-            json!({"task_id": task_id, "operation_id": "check-1", "checks": ["test"]}),
+            json!({
+                "task_id": task_id,
+                "operation_id": "check-1",
+                "recipe": "go",
+                "checks": ["test"]
+            }),
         )
         .await;
-    assert_eq!(out.body["error"]["code"], "validation_recipe_not_found");
+    assert_eq!(out.body["error"]["code"], "validation_recipe_mismatch");
     let execution = fx
         .runtime
         .db

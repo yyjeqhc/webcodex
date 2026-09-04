@@ -10,7 +10,7 @@
 
 use super::wire_models::{FilesSearchInput, SearchResultMode};
 use super::{execution, ConnectorCallOutcome};
-use crate::{ConnectorPermission, ConnectorValidationPlanError, ConnectorWindowId};
+use crate::{ConnectorPermission, ConnectorWindowId};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -19,6 +19,7 @@ use webcodex_store::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorTaskResult, ConnectorTaskSnapshot,
     ConnectorTaskStoreError, ConnectorWindowBinding,
 };
+use webcodex_validation::RecipeError;
 use webcodex_workspace::project_context::{ContextRefreshSummary, ProjectContextFingerprint};
 
 pub(crate) const CONNECTOR_SEARCH_WINDOW: usize = 200;
@@ -508,7 +509,7 @@ pub fn approval_projection(approval: &ConnectorApproval) -> Value {
 
 pub(super) fn validation_recipe_error(
     task: &ConnectorTaskSnapshot,
-    error: ConnectorValidationPlanError,
+    error: RecipeError,
 ) -> ConnectorCallOutcome {
     ConnectorCallOutcome::error_for_task(
         409,

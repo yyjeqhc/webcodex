@@ -1,4 +1,4 @@
-//! Root ToolRuntime/validation-profile adapter for the Connector domain port.
+//! Root ToolRuntime/Job-authority adapter for the Connector domain port.
 
 use super::integration;
 use crate::auth::AuthContext;
@@ -6,16 +6,12 @@ use crate::tool_runtime::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
     ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
-use crate::tool_runtime::validation_profile::{resolve_validation_recipe, RecipeId, SemanticCheck};
 use crate::tool_runtime::ToolRuntime;
-use std::path::Path;
 use std::sync::Arc;
 use webcodex_connector_runtime::{
     ConnectorExecutionHost, ConnectorHostFuture, ConnectorJobHostError, ConnectorJobRequest,
-    ConnectorJobSubmission, ConnectorProjectRegistration, ConnectorRecipeId,
-    ConnectorSemanticCheck, ConnectorToolFailure, ConnectorToolRequest, ConnectorTransport,
-    ConnectorValidationEvidenceRequest, ConnectorValidationPlan, ConnectorValidationPlanError,
-    ConnectorValidationPlanRequest,
+    ConnectorJobSubmission, ConnectorProjectRegistration, ConnectorToolFailure,
+    ConnectorToolRequest, ConnectorTransport,
 };
 
 #[derive(Clone)]
@@ -34,23 +30,6 @@ fn tool_transport(transport: ConnectorTransport) -> ToolTransport {
     match transport {
         ConnectorTransport::Api => ToolTransport::Api,
         ConnectorTransport::Mcp => ToolTransport::Mcp,
-    }
-}
-
-fn recipe_id(recipe: ConnectorRecipeId) -> RecipeId {
-    match recipe {
-        ConnectorRecipeId::Rust => RecipeId::Rust,
-        ConnectorRecipeId::Node => RecipeId::Node,
-        ConnectorRecipeId::Python => RecipeId::Python,
-        ConnectorRecipeId::Go => RecipeId::Go,
-    }
-}
-
-fn semantic_check(check: ConnectorSemanticCheck) -> SemanticCheck {
-    match check {
-        ConnectorSemanticCheck::Format => SemanticCheck::Format,
-        ConnectorSemanticCheck::Check => SemanticCheck::Check,
-        ConnectorSemanticCheck::Test => SemanticCheck::Test,
     }
 }
 
@@ -185,122 +164,5 @@ impl ConnectorExecutionHost for RootConnectorHost {
                 Err(ConnectorJobHostError::OutcomeUnknown(result.error))
             }
         })
-    }
-
-    fn plan_validation(
-        &self,
-        request: ConnectorValidationPlanRequest,
-    ) -> Result<ConnectorValidationPlan, ConnectorValidationPlanError> {
-        let recipe = request.recipe.map(recipe_id);
-        let checks = request
-            .checks
-            .into_iter()
-            .map(semantic_check)
-            .collect::<Vec<_>>();
-        let resolved = resolve_validation_recipe(
-            Path::new(&request.execution_root),
-            request.cwd.as_deref(),
-            recipe,
-            &checks,
-            request.test_filter.as_deref(),
-        )
-        .map_err(|error| ConnectorValidationPlanError {
-            code: error.code.to_string(),
-            details: error.details,
-        })?;
-        Ok(ConnectorValidationPlan {
-            durable_identity: resolved.durable_identity(),
-            recipe_root_relative: resolved.recipe_root_relative,
-            steps: resolved.steps,
-            test_filter: resolved.test_filter,
-        })
-    }
-
-    fn validation_failure_evidence(
-        &self,
-        request: ConnectorValidationEvidenceRequest,
-    ) -> serde_json::Value {
-        durable_assertion_evidence(
-            &request.check,
-            request.recipe_identity.as_ref(),
-            request.exit_code,
-            &request.stdout,
-            &request.stderr,
-        )
-    }
-}
-
-fn durable_assertion_evidence(
-    check: &str,
-    recipe_identity: Option<&serde_json::Value>,
-    exit_code: Option<i32>,
-    stdout: &str,
-    stderr: &str,
-) -> serde_json::Value {
-    use crate::tool_runtime::validation_parser::{PARSER_KIND, PARSER_VERSION};
-    use crate::tool_runtime::validation_profile::{
-        validation_adapter_for_tool, ValidationFailureEvidence,
-    };
-    use serde_json::json;
-
-    let tool = recipe_identity.and_then(|identity| {
-        let checks = identity.get("semantic_checks")?.as_array()?;
-        let index = checks.iter().position(|candidate| candidate == check)?;
-        identity
-            .get("tool_identities")?
-            .as_array()?
-            .get(index)?
-            .as_str()
-    });
-    let (failure_kind, diagnostics) = tool
-        .and_then(validation_adapter_for_tool)
-        .map(|adapter| {
-            let diagnostics = adapter.parse(stdout, stderr, true);
-            let failure_kind = adapter.map_failure_kind(ValidationFailureEvidence {
-                success: false,
-                reported_failure_kind: Some("command_exit_nonzero"),
-                exit_code: exit_code.map(i64::from),
-                diagnostics: Some(&diagnostics),
-                stdout_excerpt: stdout,
-                stderr_excerpt: stderr,
-            });
-            (failure_kind, Some(diagnostics))
-        })
-        .unwrap_or(("process_exit", None));
-    let parser = diagnostics.as_ref().map(|_| PARSER_KIND);
-    let parser_version = diagnostics.as_ref().map(|_| PARSER_VERSION);
-    let mut evidence = json!({
-        "failed_check": check,
-        "failure_kind": failure_kind,
-        "exit_code": exit_code,
-        "parser": parser,
-        "parser_version": parser_version,
-        "diagnostics": diagnostics
-    });
-    sanitize_evidence(&mut evidence);
-    if serde_json::to_vec(&evidence)
-        .is_ok_and(|bytes| bytes.len() <= crate::db::MAX_ASSERTION_EVIDENCE_BYTES)
-    {
-        evidence
-    } else {
-        json!({
-            "failed_check": check,
-            "failure_kind": failure_kind,
-            "exit_code": exit_code,
-            "parser": parser,
-            "parser_version": parser_version,
-            "diagnostics": null
-        })
-    }
-}
-
-fn sanitize_evidence(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(text) => {
-            *text = crate::validation_bridge::sanitize_bridge_text(text)
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(sanitize_evidence),
-        serde_json::Value::Object(fields) => fields.values_mut().for_each(sanitize_evidence),
-        _ => {}
     }
 }

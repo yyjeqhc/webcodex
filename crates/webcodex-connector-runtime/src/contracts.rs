@@ -240,41 +240,9 @@ impl ConnectorRecipeId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ConnectorValidationPlanRequest {
-    pub execution_root: String,
-    pub cwd: Option<String>,
-    pub recipe: Option<ConnectorRecipeId>,
-    pub checks: Vec<ConnectorSemanticCheck>,
-    pub test_filter: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConnectorValidationPlan {
-    pub durable_identity: Value,
-    pub recipe_root_relative: String,
-    pub steps: Vec<ShellJobValidationStep>,
-    pub test_filter: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConnectorValidationPlanError {
-    pub code: String,
-    pub details: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConnectorValidationEvidenceRequest {
-    pub check: String,
-    pub recipe_identity: Option<Value>,
-    pub exit_code: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
-}
-
 /// Root policy adapter used only for operations whose canonical implementation
-/// still requires root tool/validation-profile policy. Runner observation,
-/// logs, visibility, Store, and Workspace operations are intentionally absent.
+/// still requires root ToolRuntime or Job authority. Validation planning and
+/// evidence classification are package-local and intentionally absent.
 pub trait ConnectorExecutionHost: Send + Sync {
     fn invoke_tool(
         &self,
@@ -296,13 +264,6 @@ pub trait ConnectorExecutionHost: Send + Sync {
         project: String,
         job_id: String,
     ) -> ConnectorHostFuture<'_, Result<(), ConnectorJobHostError>>;
-
-    fn plan_validation(
-        &self,
-        request: ConnectorValidationPlanRequest,
-    ) -> Result<ConnectorValidationPlan, ConnectorValidationPlanError>;
-
-    fn validation_failure_evidence(&self, request: ConnectorValidationEvidenceRequest) -> Value;
 }
 
 #[cfg(test)]

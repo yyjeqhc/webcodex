@@ -5227,6 +5227,7 @@ dependencies = [
  "webcodex-runner-registry",
  "webcodex-store",
  "webcodex-tool-contracts",
+ "webcodex-validation",
  "webcodex-workspace",
 ]
 

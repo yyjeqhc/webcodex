@@ -55,7 +55,7 @@ transport-specific v1 首个注册帧中，共享 Runner envelope 不再携带�
 
 ### Server/Runner 兼容
 
-从 pre-0.4 升级时应同步升级 first-party Server 与 Runner。`0.4.x` 内保持稳定 protocol baseline，新 optional capability 通过显式 capability 增量加入；旧但兼容的 Runner 缺少某项 capability 时，该功能 fail closed，而不是猜测或模拟支持。
+旧安装跨越 0.4 边界升级时，应同步升级 first-party Server 与 Runner。`0.4.x` 内保持稳定 protocol baseline，新 optional capability 通过显式 capability 增量加入；旧但兼容的 Runner 缺少某项 capability 时，该功能 fail closed，而不是猜测或模拟支持。
 
 精确的 protocol-generation field、baseline capability list、registration grammar 与 compatibility test matrix 属于 maintainer/wire contract，有意不放在这份运维指南中。
 

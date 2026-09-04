@@ -58,10 +58,9 @@ task_finish
 code_impact
 ```
 
-The Connector already owns a deterministic project binding. A Custom GPT must
-not call `listProjects`, `runtime_status`, `tool_manifest`, `start_session`,
-or Runner listing before normal coding, and the prompt must not contain a
-Runner client ID or runtime project ID.
+The Connector already owns the project binding. Start with the Connector actions
+directly; do not perform broader runtime/project discovery first, and do not put
+Runner client IDs or runtime project IDs in the prompt.
 
 `task_start` accepts only `normal` (default) and `read_only`. `normal` performs
 writable work in a managed isolated Git worktree and fails closed if that

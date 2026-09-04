@@ -62,8 +62,7 @@ profile credentials, and `runner.toml` are preserved.
 
 After connecting an MCP coding client, see the [Coding Workflow](CODING_WORKFLOW.md) for the
 canonical `work_on_project` model bootstrap, behavioral guidance, validation, and closeout
-evidence. The retired `start_coding_task` wire/API name is no longer callable; use
-`work_on_project` for both fresh coding tasks and exact Session continuation.
+evidence.
 
 ### Enrollment
 

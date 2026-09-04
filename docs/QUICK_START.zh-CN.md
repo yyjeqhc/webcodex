@@ -47,7 +47,7 @@ npx --yes @yyjeqhc/webcodex share
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-把输出的完整 `/mcp?token=...` 地址粘贴进去，认证选择 **No authentication**，然后再次点击 **Scan Tools**。这个 fallback 需要 WebCodex 0.3.9 或更新版本。完整地址包含本次临时密钥，不要公开或写入日志。如果已经全局安装 WebCodex，等价命令是 `webcodex share --auth query-token`。
+把输出的完整 `/mcp?token=...` 地址粘贴进去，认证选择 **No authentication**，然后再次点击 **Scan Tools**。完整地址包含本次临时密钥，不要公开或写入日志。如果已经全局安装 WebCodex，等价命令是 `webcodex share --auth query-token`。
 
 ## 4. 先试一个只读请求
 

@@ -47,7 +47,7 @@ If ChatGPT tries OAuth automatically and reports **does not implement OAuth**, o
 npx --yes @yyjeqhc/webcodex share --auth query-token
 ```
 
-Paste the complete `/mcp?token=...` URL, choose **No authentication**, and run **Scan Tools** again. This fallback requires WebCodex 0.3.9 or later. The complete URL contains a temporary secret; do not publish or log it. If WebCodex is installed globally, `webcodex share --auth query-token` is equivalent.
+Paste the complete `/mcp?token=...` URL, choose **No authentication**, and run **Scan Tools** again. The complete URL contains a temporary secret; do not publish or log it. If WebCodex is installed globally, `webcodex share --auth query-token` is equivalent.
 
 ## 4. Try a read-only request
 

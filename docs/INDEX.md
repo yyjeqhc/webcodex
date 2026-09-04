@@ -38,7 +38,7 @@ Start with the goal that matches what you are trying to do.
 
 - [Architecture](ARCHITECTURE.md) — how the major components fit together
 - [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
-- [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and dogfood priorities
+- [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and validation priorities
 
 ## I want to contribute or release WebCodex
 
@@ -53,6 +53,7 @@ ordinary users should not need to learn.
 - [Architecture decisions](agent/architecture-decisions.md)
 - [Runtime host context](agent/runtime-host-context.md) — Runner-configured planning context and runtime diagnostics
 - [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — restart recovery, observation semantics, shared Job capacity, and tool-description requirements
+- [Tool request tracing](agent/tool-request-tracing.md) — maintainer forensic payload/correlation contract
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
 - [Manual multi-window collaboration](agent/manual-window-collaboration.md)

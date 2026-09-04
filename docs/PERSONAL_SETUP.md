@@ -73,7 +73,7 @@ A Tunnel solves reachability only. Do not switch to `webcodex share` merely beca
 
 With public HTTPS or Cloudflare, both connections can often use the same HTTPS Server URL. OpenAI Secure MCP Tunnel may differ: the Runner can keep using loopback/LAN while ChatGPT reaches `/mcp` through the Tunnel.
 
-For Windows + OpenAI Secure MCP Tunnel, see the [Windows + OpenAI Tunnel deep-dive and troubleshooting guide](WINDOWS_OPENAI_TUNNEL.md). It records a complete real-world setup and one real network failure; treat it as deeper troubleshooting material to read only when needed.
+For Windows + OpenAI Secure MCP Tunnel, see the [Windows + OpenAI Tunnel deep-dive and troubleshooting guide](WINDOWS_OPENAI_TUNNEL.md). It contains the current setup/troubleshooting path plus a separately labeled historical validation record; treat it as deeper material to read only when needed.
 
 Below, `<server-url>` means the address used by the **CLI / Runner** to reach the Server. A same-machine setup can use `http://127.0.0.1:8080`; an existing stable HTTPS URL can be used directly as well.
 

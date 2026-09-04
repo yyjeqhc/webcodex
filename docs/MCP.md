@@ -180,7 +180,7 @@ Common setup failures:
 See xAI's [Connector documentation](https://docs.x.ai/grok/connectors) for the
 current Grok Custom MCP UI and availability.
 
-## The ProjectConnector exposure
+## Project-bound Connector workflow
 
 `webcodex run` and `webcodex share` bind one configured repository and expose a small task-oriented MCP surface:
 
@@ -305,7 +305,7 @@ No project discovery or runtime identifier belongs in this prompt.
 An empty search result is affirmative no-match evidence only after a recognized
 backend reports a successful completed/no-match status. Missing or malformed
 backend identity, missing completion status, status/output disagreement,
-backend failure, Agent failure, timeout, request drop, and provider failure
+backend failure, Runner failure, timeout, request drop, and provider failure
 return failures instead. Search failures retain the compatibility `code` and
 add bounded `failure_stage` plus a specific `reason_code`. Batch failure items
 retain their broad `reason_code` and preserve the single-search provenance as
@@ -323,8 +323,8 @@ prose.
 | `project_credential_invalid` | Private Project Credential is missing or mismatched | Restore both matching private files or recreate the profile |
 | `project_credential_rejected` | The reachable server rejected the credential | Restore the server-matching credential |
 | `workspace_unavailable` | The configured Git workspace is unavailable | Restore the workspace, then run doctor |
-| `server_unreachable` / `agent_offline` | The project runtime or Agent is unavailable | Run `webcodex run` / `webcodex doctor` |
-| `required_capability_unavailable` | The Agent lacks a coding capability | Upgrade all binaries |
+| `server_unreachable` / `agent_offline` | The project Runner/runtime is unavailable | Run `webcodex run` / `webcodex doctor` |
+| `required_capability_unavailable` | The current Runner/runtime lacks a required coding capability | Upgrade all binaries |
 | `task_not_active` | The task can no longer mutate or execute | Start a new task |
 | `execution_not_terminal` | Finish is blocked by active/unknown work | Review/wait/cancel |
 | `checks_required` | A normal task has not run checks | Call `checks_run` |
@@ -366,7 +366,5 @@ supporting ChatGPT host without a model manually carrying their Base64.
 
 When a broader model coding surface exposes `work_on_project`, use the
 [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap, behavioral-role
-mental model, and validation/closeout guidance. The retired `start_coding_task`
-wire/API tool name is neither discovered nor directly callable; external callers
-use `work_on_project`. See [Architecture](ARCHITECTURE.md) and the `webcodex` CLI
-for operator tooling.
+mental model, and validation/closeout guidance. See [Architecture](ARCHITECTURE.md)
+and the `webcodex` CLI for operator tooling.

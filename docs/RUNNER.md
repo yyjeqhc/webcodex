@@ -62,7 +62,7 @@ frame while the shared Runner envelope remains credential-free.
 
 ### Server/Runner compatibility
 
-Upgrade pre-0.4 first-party Server and Runner binaries together. Within `0.4.x`, first-party releases keep a stable protocol baseline and add new optional capabilities explicitly; when an older compatible Runner lacks one of those capabilities, that feature fails closed instead of being guessed or emulated.
+When upgrading an older installation across the 0.4 boundary, upgrade the first-party Server and Runner together. Within `0.4.x`, first-party releases keep a stable protocol baseline and add new optional capabilities explicitly; when an older compatible Runner lacks one of those capabilities, that feature fails closed instead of being guessed or emulated.
 
 The exact protocol-generation field names, baseline capability list, registration grammar, and compatibility-test matrix are maintainer/wire-contract details and are intentionally omitted from this operations guide.
 

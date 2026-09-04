@@ -169,7 +169,7 @@ OAuth access token 会绑定到该用户，同时继续受 client 注册权限�
 Grok Custom MCP UI 与可用范围以 xAI 的
 [Connector 文档](https://docs.x.ai/grok/connectors)为准。
 
-## ProjectConnector exposure
+## Project-bound Connector workflow
 
 `webcodex run` 与 `webcodex share` 会绑定一个已经配置好的仓库，并暴露一组较小的 task-oriented MCP 工具：
 
@@ -285,7 +285,7 @@ summarize the project, review the result, and finish. Do not edit files.
 
 只有已识别的 backend 明确报告搜索正常完成且无匹配时，空搜索结果才是肯定的
 “无匹配”证据。backend 标识缺失或畸形、完成状态缺失、状态与输出不一致、
-backend 失败、Agent 失败、超时、请求丢失及 provider 失败都会返回失败。
+backend 失败、Runner 失败、超时、请求丢失及 provider 失败都会返回失败。
 搜索失败保留兼容的 `code`，并增加有界的 `failure_stage` 与具体
 `reason_code`。批量失败条目保留宽泛的 `reason_code`，同时通过
 `failure_stage` 和 `detail_code` 保留单项搜索 provenance；成功条目仍保持
@@ -302,8 +302,8 @@ stderr、provider stderr 或任意 provider prose。
 | `project_credential_invalid` | 私有 Project Credential 缺失或不匹配 | 恢复两个匹配的私有文件或重建 profile |
 | `project_credential_rejected` | 可达 server 拒绝了该凭据 | 恢复与 server 匹配的凭据 |
 | `workspace_unavailable` | 配置的 Git 工作区不可用 | 恢复工作区，再运行 doctor |
-| `server_unreachable` / `agent_offline` | 项目 runtime 或 Agent 不可用 | 运行 `webcodex run` / `webcodex doctor` |
-| `required_capability_unavailable` | Agent 缺少 coding 能力 | 升级所有二进制 |
+| `server_unreachable` / `agent_offline` | 项目 Runner/runtime 不可用 | 运行 `webcodex run` / `webcodex doctor` |
+| `required_capability_unavailable` | 当前 Runner/runtime 缺少所需 coding capability | 升级所有二进制 |
 | `task_not_active` | 任务无法再变更或执行 | 开始新任务 |
 | `execution_not_terminal` | Finish 被活跃/未知工作阻塞 | 审查/等待/取消 |
 | `checks_required` | 普通任务尚未运行检查 | 调用 `checks_run` |
@@ -340,6 +340,5 @@ DOCX/PPTX/XLSX 等 Office artifact 与 PDF 复用同一 artifact transport，因
 
 更宽的 model coding surface 暴露 `work_on_project` 时，请阅读
 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，使用 canonical bootstrap / behavioral role
-心智模型，并遵循其中的 validation/closeout guidance。旧的 `start_coding_task` wire/API
-tool name 已退休：既不会 discovery，也不能直接调用；外部 caller 统一使用
-`work_on_project`。运维工具见[架构](ARCHITECTURE.md)与 `webcodex` CLI。
+心智模型，并遵循其中的 validation/closeout guidance。运维工具见
+[架构](ARCHITECTURE.md)与 `webcodex` CLI。

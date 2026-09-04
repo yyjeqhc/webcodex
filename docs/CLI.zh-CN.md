@@ -53,13 +53,11 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行
-执行 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
+structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
 匹配的本地项目 registration。其他项目、profile credential 和 `runner.toml` 都会保留。
 
 接入 MCP coding client 后，可阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，了解 canonical
 `work_on_project` model bootstrap、behavioral guidance、validation 与 closeout evidence。
-旧的 `start_coding_task` wire/API 名称已经退休，不再可调用；fresh task 与 exact Session
-continuation 都使用 `work_on_project`。
 
 ### 设备接入
 

@@ -90,7 +90,7 @@ Clipboard write is an independent effect requiring both `computer:control` and e
 
 On macOS, validation plus `NSString`, pasteboard, and type preparation complete before mutation. Calling `clearContents` is the native effect boundary and returns the ownership change count; `setString(_:forType: NSPasteboardTypeString)` must succeed and the change count must still match before completion is proven. Any definite failure before `clearContents` is `not_started`; once clear has been called, a failed set, ownership change, lost response, or otherwise unprovable replacement is `outcome_unknown`. Neither platform retries, restores previous content, performs hidden body readback, submits a second write, or repairs an uncertain result.
 
-`computer_write_clipboard` is intentionally a **replacement** operation: the native clear removes any previous image, rich-text, HTML/RTF, file-drop/file-URL, or custom formats before installing only the bounded plain Unicode text. It does not merge or preserve rich formats. Neither clipboard tool pastes anything, sends a paste shortcut, focuses/activates a target, or becomes a fallback for `computer_input_text`, key input, semantic control, or pointer operations. An `outcome_unknown` write is never blindly retried; a caller that separately holds clipboard-read authority may explicitly issue a fresh `computer_read_clipboard`, while a caller without that read scope must retain the unknown outcome rather than bypass authorization. Windows is production-dogfood accepted; macOS parity has native compile and non-mutating focused test coverage, with live shared-clipboard dogfood reserved for an explicit post-review validation.
+`computer_write_clipboard` is intentionally a **replacement** operation: the native clear removes any previous image, rich-text, HTML/RTF, file-drop/file-URL, or custom formats before installing only the bounded plain Unicode text. It does not merge or preserve rich formats. Neither clipboard tool pastes anything, sends a paste shortcut, focuses/activates a target, or becomes a fallback for `computer_input_text`, key input, semantic control, or pointer operations. An `outcome_unknown` write is never blindly retried; a caller that separately holds clipboard-read authority may explicitly issue a fresh `computer_read_clipboard`, while a caller without that read scope must retain the unknown outcome rather than bypass authorization. Windows behavior is production-validated; macOS parity has native compile and non-mutating focused test coverage, with live shared-clipboard validation still pending.
 
 ## Near-term slices
 
@@ -100,7 +100,7 @@ Add a bounded read-only `computer_find_elements` model-facing tool over the exis
 
 First implementation should be a Control-side focused adapter over the canonical bounded Accessibility tree rather than a new Runner query protocol. Reuse `computer:read`, exact `client_id`/`surface_id`, and the existing `computer_accessibility_observe` capability. Return only deterministic bounded matches and fresh ephemeral `element_id` values already produced by the underlying observation.
 
-Initial filters should remain closed and simple: role/subrole, literal semantic label text, focused, enabled, and limit. Do not add regex, fuzzy scoring, a query DSL, arbitrary AXValue search, or effect behavior. If dogfood later shows material transport/latency cost from fetching the bounded tree internally, the same semantics may be moved down to the Runner behind an additive capability.
+Initial filters should remain closed and simple: role/subrole, literal semantic label text, focused, enabled, and limit. Do not add regex, fuzzy scoring, a query DSL, arbitrary AXValue search, or effect behavior. If future measurements show material transport/latency cost from fetching the bounded tree internally, the same semantics may be moved down to the Runner behind an additive capability.
 
 Success criteria:
 
@@ -172,7 +172,7 @@ The first scroll slice is `computer_scroll_to_element(client_id, surface_id, ele
 
 On macOS the Runner keeps the existing exact surface/element correlation and protected-content fences, re-resolves the ephemeral Accessibility handle, verifies native `AXScrollToVisible` support, and performs only that semantic action. The caller supplies no wheel delta, direction, distance, or coordinates. Unsupported targets fail deterministically; a response lost after dispatch remains `outcome_unknown`, so current UI state must be observed before retrying.
 
-No lower-level wheel fallback is added in this slice. If later dogfood demonstrates a real need for one, it must remain separately bounded and tied to an exactly revalidated active/focused surface rather than widening this semantic contract.
+No lower-level wheel fallback is added in this slice. If a concrete product need emerges later, it must remain separately bounded and tied to an exactly revalidated active/focused surface rather than widening this semantic contract.
 
 ### CU-10 — closed key input
 
@@ -196,7 +196,7 @@ Windows reuses the existing `computer_activate_window` effect and its independen
 
 Immediately before the effect the Runner revalidates the xcap surface identity, exact native HWND/PID, and UIA root. Non-Window UIA roots fail closed before any effect. An already-foreground non-minimized window is a no-op success. A minimized exact window is restored with `ShowWindowAsync(SW_RESTORE)` plus a bounded local-state wait so a stalled foreign UI thread cannot block the Runner; then the exact UIA Window root receives `IUIAutomationElement::SetFocus`. Success still requires `GetForegroundWindow()` to equal the exact HWND. Once either restore or UIA focus has been attempted, any native error, timeout, or mismatched foreground postcondition is `outcome_unknown` and requires fresh observation before any retry.
 
-A background Runner is normally denied by `SetForegroundWindow`, which was confirmed during Windows live dogfood, so W2 does not pretend that API provides parity and does not bypass the policy with `AttachThreadInput`, synthetic Alt/key input, app/PID selection, or generic automation fallback. Exact UIA focus is the native automation path. Shared post-dispatch delivery fencing remains authoritative when the Runner response itself is lost.
+A background Runner is normally denied by `SetForegroundWindow`, so W2 does not pretend that API provides parity and does not bypass the policy with `AttachThreadInput`, synthetic Alt/key input, app/PID selection, or generic automation fallback. Exact UIA focus is the native automation path. Shared post-dispatch delivery fencing remains authoritative when the Runner response itself is lost.
 
 ### Windows UIA parity W3 — semantic press and focus
 
@@ -238,7 +238,7 @@ Windows UIA parity
 
 Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
 
-Windows Computer Use current planned mainline capabilities are implemented, independently reviewed, production-dogfooded, and integrated-dogfooded; future work is dogfood-driven maintenance rather than checklist parity.
+Windows Computer Use current planned mainline capabilities are implemented, independently reviewed, and production/integration validated; future work should be driven by observed product friction rather than checklist parity.
 
 Full-display observation receives separate authority from single-window observation because it widens the privacy surface. Windows and macOS share the same exact-display discovery, snapshot-generation, and bounded JPEG contract. macOS display/source geometry is the current display mode's backing pixel space, not Quartz logical bounds; the native macOS pointer path privately maps those source pixels into Quartz global coordinates without exposing scale/DPI/topology, while Windows maps them into virtual-desktop absolute input coordinates. Pointer actions on both platforms depend on a fresh snapshot generation, exact display-local geometry, native-coordinate revalidation, and post-effect reconciliation. Windows and macOS clipboard read/write share the same separately scoped bounded global authority while retaining platform-native plain-text representations and effect boundaries.
 
@@ -256,9 +256,9 @@ Do not introduce these as shortcuts while implementing earlier slices:
 
 Browser-native automation may become a separate branch of Computer Use later, sharing high-level safety principles without forcing DOM/ARIA semantics into the desktop AX/UIA backend.
 
-## Dogfood loop
+## Validation loop
 
-Keep a small set of representative traces and use them to reorder work when repeated friction is demonstrated:
+Keep a small set of representative scenarios and use them to reorder work when repeated friction is demonstrated:
 
 1. Edge: find an empty search/text field, focus it, input text, verify semantically.
 2. Messaging app: activate an observed window, find a contact/search target, navigate to a conversation, enter a message, explicitly send, then verify.
@@ -276,4 +276,4 @@ For every new Computer feature:
 4. revalidate exact native surface/element identity at the Runner immediately before an effect;
 5. keep sensitive screenshot/text bodies out of audit metadata;
 6. test stale handles, replacement/races, permission revocation, protected/secure content, response loss, process restart, and platform geometry where relevant;
-7. dogfood on macOS first for AX effects and on Windows as UIA/snapshot support becomes available.
+7. run live platform validation for new native effects before treating them as production-ready.

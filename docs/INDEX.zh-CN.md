@@ -38,6 +38,7 @@
 
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
+- [Computer Use roadmap](COMPUTER_USE.md) —— semantic-first desktop automation 方向与验证优先级
 
 ## 我想参与开发或发布
 
@@ -51,6 +52,7 @@ protocol field、兼容名称和实现 invariant；普通用户不需要为了�
 - [发布清单](RELEASE_CHECKLIST.md)
 - [架构决策](agent/architecture-decisions.md)
 - [Job 可靠性与 Runner 并发](agent/job-reliability-and-concurrency.md)
+- [Tool request tracing](agent/tool-request-tracing.md) —— maintainer forensic payload/correlation contract
 - [权限模型](agent/permission-model.md)
 - [会话模型](agent/session-model.md)
 - [手动多窗口协作](agent/manual-window-collaboration.md)

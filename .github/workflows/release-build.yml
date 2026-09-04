@@ -339,7 +339,7 @@ jobs:
       matrix:
         include:
           - platform: darwin-arm64
-            runner: macos-14
+            runner: macos-15
             host_arch: arm64
             rust_host: aarch64-apple-darwin
             file_arch: arm64

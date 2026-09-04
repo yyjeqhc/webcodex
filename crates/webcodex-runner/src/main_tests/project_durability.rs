@@ -114,7 +114,7 @@ fn register_and_create_retries_converge_without_duplicate_side_effects() {
             "id":"created", "name":"Created", "description":"Fixture",
             "path":create_dir.to_string_lossy(), "allow_patch":true,
             "template":"basic", "git_init":true,
-            "allow_existing_empty":false
+            "adopt_existing_empty":false
         }),
     );
     let created = project_ok(handle_project_op(&policy, &project_registry_dir, &create));

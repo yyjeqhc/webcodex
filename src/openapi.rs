@@ -239,7 +239,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "createProject",
                     "Create and register a new project",
-                    "Mutation with side effects. Creates a new directory on the selected Runner and registers it as a WebCodex Project. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
+                    "Mutation with side effects. Creates a new directory, or explicitly adopts an already-existing empty directory, on the selected Runner and registers it as a WebCodex Project. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
                     "CreateProjectRequest",
                     "ToolResult",
                     json!({
@@ -254,7 +254,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "allow_patch": true,
                                 "template": "basic",
                                 "git_init": true,
-                                "allow_existing_empty": false,
+                                "adopt_existing_empty": false,
                                 "overwrite": false
                             }
                         },
@@ -1767,9 +1767,9 @@ fn schemas() -> Value {
             "properties": {
                 "client_id": {"type": "string", "description": "Registered Runner client_id from the `list_runners` runtime tool."},
                 "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
-                "name": {"type": "string", "description": "Human-readable project name."},
+                "name": {"type": "string", "description": "Human-readable project name, bounded to 120 UTF-8 bytes server-side."},
                 "path": {"type": "string", "description": "Absolute directory path on the Runner host."},
-                "description": {"type": "string", "description": "Optional project description."},
+                "description": {"type": "string", "description": "Optional project description, bounded to 500 UTF-8 bytes server-side."},
                 "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
                 "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
             }
@@ -1778,17 +1778,17 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["client_id", "id", "name", "path"],
-            "description": "Create a new directory on the selected Runner and register it as a WebCodex Project. Mutation with side effects; executes on the Runner and is constrained by Runner policy.",
+            "description": "Create a new directory, or explicitly adopt an already-existing empty directory, on the selected Runner and register it as a WebCodex Project. Mutation with side effects; executes on the Runner and is constrained by Runner policy.",
             "properties": {
                 "client_id": {"type": "string", "description": "Registered Runner client_id from the `list_runners` runtime tool."},
                 "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
-                "name": {"type": "string", "description": "Human-readable project name."},
-                "path": {"type": "string", "description": "Absolute directory path on the Runner host."},
-                "description": {"type": "string", "description": "Optional project registration description. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content."},
+                "name": {"type": "string", "description": "Human-readable project name, bounded to 120 UTF-8 bytes server-side."},
+                "path": {"type": "string", "description": "Absolute directory path on the Runner host. For createProject, an already-existing path must be empty and adopt_existing_empty must be true."},
+                "description": {"type": "string", "description": "Optional project registration description, bounded to 500 UTF-8 bytes server-side. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content."},
                 "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
                 "template": {"type": "string", "description": "Template: 'empty' (default; generates no project files) or 'basic' (generates README.md and .gitignore). git_init is a separate explicit side effect."},
                 "git_init": {"type": "boolean", "description": "Initialize git in the new directory (default false)."},
-                "allow_existing_empty": {"type": "boolean", "description": "Allow registering an existing empty directory (default false)."},
+                "adopt_existing_empty": {"type": "boolean", "description": "Adopt an already-existing empty target directory instead of requiring create_project to create it (default false). Non-empty directories are always rejected."},
                 "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
             }
         }

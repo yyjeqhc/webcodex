@@ -42,13 +42,56 @@ fn create_project_rejects_existing_non_empty_directory() {
             "name": "Existing",
             "path": project_dir.to_string_lossy(),
             "template": "basic",
-            "allow_existing_empty": true
+            "adopt_existing_empty": true
         }),
     );
 
     let err = project_err(handle_project_op(&policy, &project_registry_dir, &req));
     assert_eq!(err, "path_not_empty");
     assert_eq!(std::fs::read_to_string(keep).unwrap(), "keep");
+}
+
+#[test]
+fn create_project_requires_explicit_adoption_of_existing_empty_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_dir = tmp.path().join("existing-empty");
+    let project_registry_dir = tmp.path().join("project-registry");
+    std::fs::create_dir(&project_dir).unwrap();
+    let policy = project_policy(tmp.path());
+    let req = project_request(
+        "create_project",
+        serde_json::json!({
+            "id": "existing-empty",
+            "name": "Existing Empty",
+            "path": project_dir.to_string_lossy(),
+            "template": "empty"
+        }),
+    );
+
+    let err = project_err(handle_project_op(&policy, &project_registry_dir, &req));
+    assert_eq!(err, "path_exists");
+    assert!(project_dir.is_dir());
+    assert!(std::fs::read_dir(&project_dir).unwrap().next().is_none());
+    assert!(!project_registry_dir.exists());
+
+    let adopted_req = project_request(
+        "create_project",
+        serde_json::json!({
+            "id": "existing-empty",
+            "name": "Existing Empty",
+            "path": project_dir.to_string_lossy(),
+            "template": "empty",
+            "adopt_existing_empty": true
+        }),
+    );
+    let adopted = project_ok(handle_project_op(
+        &policy,
+        &project_registry_dir,
+        &adopted_req,
+    ));
+    assert_eq!(adopted["created_directory"], false);
+    assert_eq!(adopted["created_config"], true);
+    assert!(std::fs::read_dir(&project_dir).unwrap().next().is_none());
 }
 
 #[test]
@@ -84,7 +127,7 @@ fn create_project_created_config_and_overwritten_semantics_are_accurate() {
             "name": "Empty",
             "path": project_dir.to_string_lossy(),
             "template": "empty",
-            "allow_existing_empty": true,
+            "adopt_existing_empty": true,
             "overwrite": overwrite
         })
     };
@@ -151,7 +194,7 @@ fn create_project_cleanup_removes_only_files_created_on_failure() {
             "name": "Cleanup",
             "path": project_dir.to_string_lossy(),
             "template": "basic",
-            "allow_existing_empty": true
+            "adopt_existing_empty": true
         }),
     );
 
@@ -179,7 +222,7 @@ fn create_project_does_not_delete_pre_existing_files() {
             "name": "Keep",
             "path": project_dir.to_string_lossy(),
             "template": "basic",
-            "allow_existing_empty": true
+            "adopt_existing_empty": true
         }),
     );
 

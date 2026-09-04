@@ -51,7 +51,7 @@ pub(crate) struct CreateProjectRequest {
     #[serde(default)]
     pub template: Option<String>,
     #[serde(default)]
-    pub allow_existing_empty: bool,
+    pub adopt_existing_empty: bool,
     pub idempotency_key: String,
 }
 
@@ -177,7 +177,7 @@ impl AdminProjectLifecycleService {
                         request.allow_patch,
                         request.template.clone(),
                         request.git_init,
-                        request.allow_existing_empty,
+                        request.adopt_existing_empty,
                         false,
                         Some(auth),
                     )
@@ -828,6 +828,7 @@ fn map_agent_error(error: &str) -> ServiceResponse {
         "project_not_found" => api_error(404, "project_not_found"),
         "path_outside_allowed_roots" => api_error(400, "path_outside_allowed_roots"),
         "path_not_empty" => api_error(409, "path_not_empty"),
+        "path_exists" => api_error(409, "path_exists"),
         "project_already_exists" => api_error(409, "project_already_exists"),
         "unsupported_runner_version" => api_error(409, "unsupported_runner_version"),
         "agent_unavailable" => api_error(503, "agent_unavailable"),
@@ -985,6 +986,7 @@ mod tests {
     fn project_lifecycle_error_mapping_is_stable_and_safe() {
         assert_eq!(map_agent_error("agent_unavailable").status, 503);
         assert_eq!(map_agent_error("revision_conflict").status, 409);
+        assert_eq!(map_agent_error("path_exists").status, 409);
         assert_eq!(map_agent_error("secret internal backtrace").status, 500);
         assert_eq!(
             map_agent_error("secret internal backtrace").body["error"]["code"],

@@ -23,7 +23,7 @@ test("register failure retries through production coordinator with same key", as
 });
 
 test("changed create form cancels old context and creates a new key", async()=>{
-  const h=harness(); const a={client_id:"oe",project_id:"p",name:"P",description:null,path:"/tmp/p",allow_patch:true,git_init:false,template:null,allow_existing_empty:false}; h.view.open("create:1");
+  const h=harness(); const a={client_id:"oe",project_id:"p",name:"P",description:null,path:"/tmp/p",allow_patch:true,git_init:false,template:null,adopt_existing_empty:false}; h.view.open("create:1");
   const first=h.view.submit("create",a); h.calls[0].task.reject(new Error("network")); await first;
   const b={...a,name:"Changed"}; const second=h.view.submit("create",b); assert.equal(h.calls[1].body.idempotency_key,"key-2"); h.calls[1].task.resolve({}); await second;
 });

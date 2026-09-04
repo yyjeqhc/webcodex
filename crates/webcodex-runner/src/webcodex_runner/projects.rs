@@ -851,7 +851,7 @@ fn validate_project_op_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate the project `name`: non-empty after trim, <= 120 chars, no NUL.
+/// Validate the project `name`: non-empty after trim, <= 120 UTF-8 bytes, no NUL.
 fn validate_project_op_name(name: &str) -> Result<(), String> {
     if name.contains('\0') {
         return Err("name must not contain NUL".to_string());
@@ -860,18 +860,18 @@ fn validate_project_op_name(name: &str) -> Result<(), String> {
         return Err("name cannot be empty".to_string());
     }
     if name.len() > 120 {
-        return Err("name must be at most 120 characters".to_string());
+        return Err("name must be at most 120 UTF-8 bytes".to_string());
     }
     Ok(())
 }
 
-/// Validate the optional `description`: <= 500 chars, no NUL.
+/// Validate the optional `description`: <= 500 UTF-8 bytes, no NUL.
 fn validate_project_op_description(desc: &str) -> Result<(), String> {
     if desc.contains('\0') {
         return Err("description must not contain NUL".to_string());
     }
     if desc.len() > 500 {
-        return Err("description must be at most 500 characters".to_string());
+        return Err("description must be at most 500 UTF-8 bytes".to_string());
     }
     Ok(())
 }
@@ -1852,8 +1852,8 @@ pub(crate) fn handle_project_op(
         .get("git_init")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let allow_existing_empty = json
-        .get("allow_existing_empty")
+    let adopt_existing_empty = json
+        .get("adopt_existing_empty")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if kind == "create_project" && template != "empty" && template != "basic" {
@@ -2040,8 +2040,8 @@ pub(crate) fn handle_project_op(
         if !is_empty {
             return project_error_cmd(start, "path_not_empty");
         }
-        if !allow_existing_empty {
-            return project_error_cmd(start, "path_not_empty");
+        if !adopt_existing_empty {
+            return project_error_cmd(start, "path_exists");
         }
     } else {
         // Create the directory.

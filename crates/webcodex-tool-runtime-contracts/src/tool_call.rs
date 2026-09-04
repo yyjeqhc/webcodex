@@ -1996,9 +1996,10 @@ pub enum ToolCall {
         expected_revision: String,
     },
 
-    /// Create a new directory on the selected Runner and register it as a
-    /// WebCodex project. The Runner validates the path against its own policy,
-    /// creates the directory (and optional template files / git init), writes
+    /// Create a new directory on the selected Runner, or explicitly adopt an
+    /// already-existing empty directory, and register it as a WebCodex project.
+    /// The Runner validates the path against its own policy, creates or adopts
+    /// the directory (and may add requested template files / git init), writes
     /// a project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
     /// Project list. The Server refreshes its cached Project summaries so
     /// `list_projects` sees the new Project immediately. This is a mutating
@@ -2019,7 +2020,7 @@ pub enum ToolCall {
         #[serde(default)]
         git_init: bool,
         #[serde(default)]
-        allow_existing_empty: bool,
+        adopt_existing_empty: bool,
         #[serde(default)]
         overwrite: bool,
     },

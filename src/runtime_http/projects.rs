@@ -25,8 +25,9 @@ struct RegisterProjectRequest {
 }
 
 /// `POST /api/projects/create` — thin REST wrapper over
-/// `ToolCall::CreateProject`. Mutation with side effects; creates a new
-/// directory on the selected Runner and registers it as a WebCodex project.
+/// `ToolCall::CreateProject`. Mutation with side effects; creates a new directory
+/// or explicitly adopts an existing empty directory on the selected Runner, then
+/// registers it as a WebCodex project.
 /// Dedicated GPT Action (`createProject`); also reachable via callRuntimeTool
 /// / MCP tools/call.
 #[derive(Debug, Deserialize)]
@@ -44,14 +45,16 @@ struct CreateProjectRequest {
     #[serde(default)]
     pub git_init: bool,
     #[serde(default)]
-    pub allow_existing_empty: bool,
+    pub adopt_existing_empty: bool,
     #[serde(default)]
     pub overwrite: bool,
-    /// Narrow pre-0.4 ingress sentinel. This dedicated endpoint historically
-    /// ignores unrelated unknown fields, so naming only the retired field keeps
-    /// that behavior without introducing a generic compatibility-field bag.
+    /// Narrow pre-0.4 ingress sentinels. This dedicated endpoint historically
+    /// ignores unrelated unknown fields, so naming only retired semantic fields
+    /// keeps that behavior without introducing a generic compatibility-field bag.
     #[serde(default, rename = "managed_temporary_project")]
     pub retired_managed_temporary_project: Option<Value>,
+    #[serde(default, rename = "allow_existing_empty")]
+    pub retired_allow_existing_empty: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,9 +124,10 @@ pub async fn projects_register(req: &mut Request, depot: &mut Depot, res: &mut R
     render_result(res, &audit, "register_project", None, result);
 }
 
-/// `ToolCall::CreateProject`. Creates a new directory on the selected Runner
-/// and registers it as a WebCodex project. Mutation with side effects; executes
-/// on the selected Runner and is constrained by Runner policy.
+/// `ToolCall::CreateProject`. Creates a new directory or explicitly adopts an
+/// existing empty directory on the selected Runner, then registers it as a
+/// WebCodex project. Mutation with side effects; executes on the selected Runner
+/// and is constrained by Runner policy.
 #[handler]
 pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/create", "createProject");
@@ -145,6 +149,18 @@ pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Res
         );
         return;
     }
+    if body.retired_allow_existing_empty.is_some() {
+        render_result(
+            res,
+            &audit,
+            "create_project",
+            None,
+            crate::tool_runtime::ToolResult::err(
+                "invalid arguments for create_project: field 'allow_existing_empty' is no longer supported; use 'adopt_existing_empty' to explicitly adopt an existing empty directory",
+            ),
+        );
+        return;
+    }
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
         .dispatch_with_auth(
@@ -157,7 +173,7 @@ pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Res
                 allow_patch: body.allow_patch,
                 template: body.template,
                 git_init: body.git_init,
-                allow_existing_empty: body.allow_existing_empty,
+                adopt_existing_empty: body.adopt_existing_empty,
                 overwrite: body.overwrite,
             },
             auth.as_ref(),

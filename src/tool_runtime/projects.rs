@@ -382,9 +382,9 @@ impl ToolRuntime {
         ToolResult::err_with_output(message, response.body)
     }
 
-    /// Create a new directory on the selected Runner and register it as a
-    /// WebCodex project. See the `ToolCall::CreateProject` doc comment for the
-    /// full contract.
+    /// Create a new directory on the selected Runner, or explicitly adopt an
+    /// already-existing empty directory, and register it as a WebCodex project.
+    /// See the `ToolCall::CreateProject` doc comment for the full contract.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn create_project(
         &self,
@@ -396,7 +396,7 @@ impl ToolRuntime {
         allow_patch: bool,
         template: Option<String>,
         git_init: bool,
-        allow_existing_empty: bool,
+        adopt_existing_empty: bool,
         overwrite: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
@@ -410,7 +410,7 @@ impl ToolRuntime {
             allow_patch,
             template,
             git_init,
-            allow_existing_empty,
+            adopt_existing_empty,
             overwrite,
             auth,
         )
@@ -477,7 +477,7 @@ impl ToolRuntime {
     /// Shared implementation for both `register_project` and `create_project`.
     /// `kind` is `"register_project"` or `"create_project"`. Fields not
     /// applicable to `register_project` (template, git_init,
-    /// allow_existing_empty) are ignored by the agent for that kind.
+    /// adopt_existing_empty) are ignored by the Runner for that kind.
     #[allow(clippy::too_many_arguments)]
     async fn project_op(
         &self,
@@ -490,7 +490,7 @@ impl ToolRuntime {
         allow_patch: bool,
         template: Option<String>,
         git_init: bool,
-        allow_existing_empty: bool,
+        adopt_existing_empty: bool,
         overwrite: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
@@ -523,7 +523,7 @@ impl ToolRuntime {
             "allow_patch": allow_patch,
             "template": template,
             "git_init": git_init,
-            "allow_existing_empty": allow_existing_empty,
+            "adopt_existing_empty": adopt_existing_empty,
             "overwrite": overwrite,
         });
         self.submit_project_op(kind, client_id, payload, auth).await
@@ -832,7 +832,7 @@ fn validate_project_op_id(id: &str) -> Result<(), String> {
 }
 
 /// Validate the project `name` field server-side: non-empty after trim, <= 120
-/// chars, no NUL.
+/// UTF-8 bytes, no NUL.
 fn validate_project_op_name(name: &str) -> Result<(), String> {
     if name.contains('\0') {
         return Err("name must not contain NUL".to_string());
@@ -841,18 +841,18 @@ fn validate_project_op_name(name: &str) -> Result<(), String> {
         return Err("name cannot be empty".to_string());
     }
     if name.len() > 120 {
-        return Err("name must be at most 120 characters".to_string());
+        return Err("name must be at most 120 UTF-8 bytes".to_string());
     }
     Ok(())
 }
 
-/// Validate the optional `description` field: <= 500 chars, no NUL.
+/// Validate the optional `description` field: <= 500 UTF-8 bytes, no NUL.
 fn validate_project_op_description(desc: &str) -> Result<(), String> {
     if desc.contains('\0') {
         return Err("description must not contain NUL".to_string());
     }
     if desc.len() > 500 {
-        return Err("description must be at most 500 characters".to_string());
+        return Err("description must be at most 500 UTF-8 bytes".to_string());
     }
     Ok(())
 }
@@ -861,11 +861,15 @@ pub(super) use webcodex_core::runtime_contract::validate_project_op_path;
 
 /// Truncate a string for inclusion in an error message (bounded).
 fn truncate_for_error(s: &str) -> String {
-    const MAX: usize = 200;
-    if s.len() <= MAX {
+    const MAX_BYTES: usize = 200;
+    if s.len() <= MAX_BYTES {
         s.to_string()
     } else {
-        format!("{}…", &s[..MAX])
+        let mut end = MAX_BYTES;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
 }
 
@@ -1051,6 +1055,23 @@ mod tests {
         assert!(validate_project_op_path(r"C:repo").is_err());
         assert!(validate_project_op_path(r"\repo").is_err());
         assert!(validate_project_op_path(r"relative\repo").is_err());
+    }
+
+    #[test]
+    fn validation_bounds_are_utf8_bytes() {
+        let name_error = validate_project_op_name(&"界".repeat(41)).unwrap_err();
+        assert!(name_error.contains("120 UTF-8 bytes"));
+
+        let description_error = validate_project_op_description(&"界".repeat(167)).unwrap_err();
+        assert!(description_error.contains("500 UTF-8 bytes"));
+    }
+
+    #[test]
+    fn truncate_for_error_never_splits_utf8() {
+        let input = "界".repeat(67);
+        let truncated = truncate_for_error(&input);
+        assert!(truncated.ends_with('…'));
+        assert_eq!(truncated.trim_end_matches('…').as_bytes().len(), 198);
     }
 
     #[test]

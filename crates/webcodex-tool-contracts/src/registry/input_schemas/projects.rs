@@ -11,7 +11,12 @@ pub fn register_project_input_schema() -> Value {
             "Project id (ASCII letters, digits, '-', '_'; no slash).",
             true,
         ),
-        ("name", "string", "Human-readable project name.", true),
+        (
+            "name",
+            "string",
+            "Human-readable project name, bounded to 120 UTF-8 bytes server-side.",
+            true,
+        ),
         (
             "path",
             "string",
@@ -21,7 +26,7 @@ pub fn register_project_input_schema() -> Value {
         (
             "description",
             "string",
-            "Optional project description.",
+            "Optional project description, bounded to 500 UTF-8 bytes server-side.",
             false,
         ),
         (
@@ -65,17 +70,22 @@ pub fn create_project_input_schema() -> Value {
             "Project id (ASCII letters, digits, '-', '_'; no slash).",
             true,
         ),
-        ("name", "string", "Human-readable project name.", true),
+        (
+            "name",
+            "string",
+            "Human-readable project name, bounded to 120 UTF-8 bytes server-side.",
+            true,
+        ),
         (
             "path",
             "string",
-            "Absolute directory path to create and register on the Runner.",
+            "Absolute directory path to create and register on the Runner. If it already exists, it must be empty and adopt_existing_empty must be true.",
             true,
         ),
         (
             "description",
             "string",
-            "Optional project registration description. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content.",
+            "Optional project registration description, bounded to 500 UTF-8 bytes server-side. The 'empty' template never creates project files from this metadata; the 'basic' template also includes it in generated README.md content.",
             false,
         ),
         (
@@ -97,9 +107,9 @@ pub fn create_project_input_schema() -> Value {
             false,
         ),
         (
-            "allow_existing_empty",
+            "adopt_existing_empty",
             "boolean",
-            "Allow registering an existing empty directory (default false).",
+            "Adopt an already-existing empty target directory instead of requiring create_project to create it (default false). Non-empty directories are always rejected.",
             false,
         ),
         (

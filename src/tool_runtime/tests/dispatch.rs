@@ -961,7 +961,7 @@ async fn dispatch_create_project_rejects_unknown_client_id() {
             allow_patch: true,
             template: None,
             git_init: false,
-            allow_existing_empty: false,
+            adopt_existing_empty: false,
             overwrite: false,
         })
         .await;
@@ -1013,7 +1013,7 @@ async fn dispatch_create_project_rejects_relative_path() {
             allow_patch: true,
             template: None,
             git_init: false,
-            allow_existing_empty: false,
+            adopt_existing_empty: false,
             overwrite: false,
         })
         .await;

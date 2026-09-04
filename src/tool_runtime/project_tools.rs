@@ -67,7 +67,7 @@ impl ToolRuntime {
                 allow_patch,
                 template,
                 git_init,
-                allow_existing_empty,
+                adopt_existing_empty,
                 overwrite,
             } => {
                 self.create_project(
@@ -79,7 +79,7 @@ impl ToolRuntime {
                     allow_patch,
                     template,
                     git_init,
-                    allow_existing_empty,
+                    adopt_existing_empty,
                     overwrite,
                     auth,
                 )

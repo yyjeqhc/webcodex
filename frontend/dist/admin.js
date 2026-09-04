@@ -452,11 +452,11 @@ function openCreate(kind, trigger) {
     dialogFlow.open(target);
     dialogTrigger = trigger;
     text("dialog-title", kind === "register" ? "Register existing project" : "Create project");
-    text("dialog-description", kind === "create" ? "Create may create a directory and Git repository. Existing non-empty directories are never overwritten, and no directory deletion is offered." : "Register an existing directory. The path remains only in this form and page memory.");
+    text("dialog-description", kind === "create" ? "Create may create a directory and Git repository. An existing empty directory is used only when explicitly adopted; non-empty directories are never overwritten, and no directory deletion is offered." : "Register an existing directory. The path remains only in this form and page memory.");
     const fields = byId("dialog-fields");
     fields.replaceChildren(field("client_id", "Client ID"), field("project_id", "Project ID"), field("name", "Name"), field("description", "Description"), field("path", "Path"), field("allow_patch", "Allow patch", "checkbox", true));
     if (kind === "create")
-        fields.append(field("git_init", "Initialize Git repository", "checkbox"), field("template", "Template"), field("allow_existing_empty", "Allow existing empty directory", "checkbox"));
+        fields.append(field("git_init", "Initialize Git repository", "checkbox"), field("template", "Template"), field("adopt_existing_empty", "Adopt existing empty directory", "checkbox"));
     visible("dialog-error", false);
     byId("project-form").dataset.kind = kind;
     byId("project-dialog").showModal();
@@ -506,7 +506,7 @@ byId("project-form")?.addEventListener("submit", (event) => {
     if (kind === "register" || kind === "create") {
         body = { client_id: String(data.get("client_id") || "").trim(), project_id: String(data.get("project_id") || "").trim(), name: String(data.get("name") || "").trim(), description: String(data.get("description") || "").trim() || null, path: String(data.get("path") || "").trim(), allow_patch: data.get("allow_patch") === "on" };
         if (kind === "create")
-            Object.assign(body, { git_init: data.get("git_init") === "on", template: String(data.get("template") || "").trim() || null, allow_existing_empty: data.get("allow_existing_empty") === "on" });
+            Object.assign(body, { git_init: data.get("git_init") === "on", template: String(data.get("template") || "").trim() || null, adopt_existing_empty: data.get("adopt_existing_empty") === "on" });
     }
     else {
         const revisionText = byId("dialog-fields")?.children[1]?.textContent || "";

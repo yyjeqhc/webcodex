@@ -22,6 +22,7 @@ REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
 DESKTOP_FIRST_VERSION = "0.4.0"
 SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
 SERVER_IMAGE_METADATA = "webcodex-server-image.json"
@@ -45,7 +46,7 @@ SERVER_IMAGE_BASE_METADATA_KEYS = frozenset(
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
-MAX_DESKTOP_INSTALLER_BYTES = 128 * 1024 * 1024
+MAX_DESKTOP_ARTIFACT_BYTES = 128 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_MEMBER_BYTES = 96 * 1024 * 1024
 MAX_DYNAMIC_BYTES = 1024 * 1024
@@ -88,8 +89,11 @@ def canonical_archive_name(version: str, platform: str) -> str:
     return f"webcodex-v{version}-{platform}.tar.gz"
 
 
-def canonical_desktop_name(version: str) -> str:
-    return f"webcodex-desktop-v{version}-win32-x64-setup.exe"
+def canonical_desktop_name(version: str, platform: str) -> str:
+    if platform not in DESKTOP_PLATFORMS:
+        raise VerificationError(f"unsupported Desktop platform: {platform!r}")
+    suffix = "-setup.exe" if platform == "win32-x64" else ".dmg"
+    return f"webcodex-desktop-v{version}-{platform}{suffix}"
 
 
 def expected_artifact_url(version: str, platform: str) -> str:
@@ -99,8 +103,8 @@ def expected_artifact_url(version: str, platform: str) -> str:
     )
 
 
-def expected_desktop_url(version: str) -> str:
-    return f"https://github.com/{REPO}/releases/download/v{version}/{canonical_desktop_name(version)}"
+def expected_desktop_url(version: str, platform: str) -> str:
+    return f"https://github.com/{REPO}/releases/download/v{version}/{canonical_desktop_name(version, platform)}"
 
 
 def _semver_parts(value: str) -> tuple[tuple[int, int, int], tuple[str, ...] | None]:
@@ -284,7 +288,7 @@ def validate_public_manifest(manifest: dict, version: str) -> dict[str, dict[str
 def parse_sha256sums(text: str, version: str) -> dict[str, str]:
     expected_names = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     if desktop_required(version):
-        expected_names.add(canonical_desktop_name(version))
+        expected_names.update(canonical_desktop_name(version, platform) for platform in DESKTOP_PLATFORMS)
     result: dict[str, str] = {}
     for raw_line in text.splitlines():
         if not raw_line:
@@ -398,7 +402,7 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
     required = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     required.add("SHA256SUMS")
     if desktop_required(version):
-        required.add(canonical_desktop_name(version))
+        required.update(canonical_desktop_name(version, platform) for platform in DESKTOP_PLATFORMS)
     server_assets = {SERVER_IMAGE_METADATA, *SERVER_DEPLOYMENT_ASSETS}
     assets = release.get("assets")
     if not isinstance(assets, list):
@@ -666,29 +670,30 @@ def _asset_digest(asset: dict) -> str | None:
 
 def verify_desktop_asset(
     version: str,
+    platform: str,
     asset: dict,
     sums: dict[str, str],
     root: Path,
     timeout: float,
 ) -> tuple[int, str]:
-    desktop_name = canonical_desktop_name(version)
+    desktop_name = canonical_desktop_name(version, platform)
     desktop_url = asset.get("browser_download_url")
-    if desktop_url != expected_desktop_url(version):
+    if desktop_url != expected_desktop_url(version, platform):
         raise VerificationError(f"unexpected GitHub Desktop asset URL: {desktop_url!r}")
     if desktop_name not in sums:
-        raise VerificationError("SHA256SUMS is missing the Windows Desktop installer")
+        raise VerificationError(f"SHA256SUMS is missing the Desktop artifact for {platform}")
     desktop_path = root / desktop_name
     desktop_size, desktop_digest = download_file(
         desktop_url,
         desktop_path,
-        MAX_DESKTOP_INSTALLER_BYTES,
+        MAX_DESKTOP_ARTIFACT_BYTES,
         timeout,
     )
     if desktop_size <= 0 or desktop_digest != sums[desktop_name]:
-        raise VerificationError("Windows Desktop installer SHA-256 disagreement")
+        raise VerificationError(f"Desktop artifact SHA-256 disagreement for {platform}")
     github_desktop_digest = _asset_digest(asset)
     if github_desktop_digest is not None and desktop_digest != github_desktop_digest:
-        raise VerificationError("GitHub Desktop installer digest mismatch")
+        raise VerificationError(f"GitHub Desktop artifact digest mismatch for {platform}")
     return desktop_size, desktop_digest
 
 
@@ -729,15 +734,17 @@ def verify_public_release(version: str, timeout: float) -> None:
         sums = parse_sha256sums(sums_text, version)
 
         if desktop_required(version):
-            desktop_name = canonical_desktop_name(version)
-            desktop_size, desktop_digest = verify_desktop_asset(
-                version,
-                assets[desktop_name],
-                sums,
-                root,
-                timeout,
-            )
-            print(f"desktop_win32_x64 sha256={desktop_digest} bytes={desktop_size}")
+            for platform in DESKTOP_PLATFORMS:
+                desktop_name = canonical_desktop_name(version, platform)
+                desktop_size, desktop_digest = verify_desktop_asset(
+                    version,
+                    platform,
+                    assets[desktop_name],
+                    sums,
+                    root,
+                    timeout,
+                )
+                print(f"desktop_{platform.replace('-', '_')} sha256={desktop_digest} bytes={desktop_size}")
 
         image_identity = None
         image_asset = assets.get(SERVER_IMAGE_METADATA)

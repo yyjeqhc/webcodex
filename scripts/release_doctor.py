@@ -30,6 +30,7 @@ EXPECTED_PLATFORMS = (
     "win32-x64",
     "win32-arm64",
 )
+EXPECTED_DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
 REQUIRED_TOOLS = ("git", "gh", "npm", "node", "python3", "bash")
 
 
@@ -58,7 +59,7 @@ def _platform_contract(root: Path) -> str:
         raise DoctorError(
             f"collector platform contract drift: expected={EXPECTED_PLATFORMS} actual={tuple(collector.PLATFORMS)}"
         )
-    if tuple(collector.DESKTOP_PLATFORMS) != ("win32-x64",):
+    if tuple(collector.DESKTOP_PLATFORMS) != EXPECTED_DESKTOP_PLATFORMS:
         raise DoctorError(
             f"Desktop release platform contract drift: actual={tuple(collector.DESKTOP_PLATFORMS)}"
         )
@@ -72,7 +73,10 @@ def _platform_contract(root: Path) -> str:
         raise DoctorError(
             f"npm manifest platform contract drift: expected={EXPECTED_PLATFORMS} actual={tuple(artifacts) if isinstance(artifacts, dict) else None}"
         )
-    return f"six-platform npm runtime contract plus Desktop win32-x64: {', '.join(EXPECTED_PLATFORMS)}"
+    return (
+        "six-platform npm runtime contract plus Desktop "
+        f"{', '.join(EXPECTED_DESKTOP_PLATFORMS)}: {', '.join(EXPECTED_PLATFORMS)}"
+    )
 
 
 def _version_contract(root: Path, version: str) -> str:
@@ -98,6 +102,10 @@ def _workflow_contract(root: Path) -> str:
             ("DESKTOP_RESULT", ci),
             ("prepare_desktop_bundle.ps1", ci),
             ("desktop_install_windows_smoke.ps1", ci),
+            ("prepare_desktop_bundle_macos.py", ci),
+            ("desktop_install_macos_smoke.sh", ci),
+            ("darwin-arm64", ci),
+            ("darwin-x64", ci),
         ),
         "release-readiness.yml": (
             ("ci_run_id", readiness_workflow),
@@ -111,8 +119,14 @@ def _workflow_contract(root: Path) -> str:
             ("ubuntu-24.04-arm", build),
             ("prepare_desktop_bundle.ps1", build),
             ("desktop_install_windows_smoke.ps1", build),
+            ("prepare_desktop_bundle_macos.py", build),
+            ("desktop_install_macos_smoke.sh", build),
             ("desktop_artifacts", build),
             ("webcodex-desktop-v$env:VERSION-win32-x64-setup.exe", build),
+            ("webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg", build),
+            ("APPLE_CERTIFICATE", build),
+            ("APPLE_API_KEY_PATH", build),
+            ("APPLE_API_PRIVATE_KEY", build),
         ),
     }
     missing = []

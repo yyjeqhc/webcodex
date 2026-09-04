@@ -46,13 +46,14 @@ fi
 # The release operator first binds one successful exact-source main-push CI run;
 # that CI already owns the deterministic release/static contract, complete Linux
 # Rust coverage, frontend checks, both native macOS Runner suites, Windows x64
-# runtime/package/Desktop-installer coverage, and lightweight Linux/Windows arm64
+# runtime/package/Desktop coverage, and lightweight Linux/Windows arm64
 # production-target compilation. Readiness revalidates that exact CI run attempt, then runs only:
 #   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
 #   - disposable linux/amd64 + linux/arm64 Server-image/runtime/bootstrap validation
-# Six-platform release-profile/ABI/package candidates plus the Windows x64 Desktop
-# installer are built exactly once after immutable tagging by release-build.yml.
+# Six-platform release-profile/ABI/package candidates plus the Windows x64 and
+# both native macOS Desktop artifacts are built exactly once after immutable tagging
+# by release-build.yml.
 #
 # Usage:
 #   bash scripts/release_check.sh
@@ -199,10 +200,15 @@ if bash scripts/test_python_tooling.sh \
     && python3 scripts/release_operator.py verify-draft --help >/dev/null \
     && test -f scripts/prepare_desktop_bundle.ps1 \
     && test -f scripts/desktop_install_windows_smoke.ps1 \
+    && test -f scripts/prepare_desktop_bundle_macos.py \
+    && test -f scripts/desktop_install_macos_smoke.sh \
     && grep -Fq 'test-windows-desktop:' .github/workflows/ci.yml \
     && grep -Fq 'DESKTOP_RESULT' .github/workflows/ci.yml \
+    && grep -Fq 'prepare_desktop_bundle_macos.py' .github/workflows/ci.yml \
+    && grep -Fq 'desktop_install_macos_smoke.sh' .github/workflows/ci.yml \
     && grep -Fq 'desktop_artifacts' .github/workflows/release-build.yml \
     && grep -Fq 'prepare_desktop_bundle.ps1' .github/workflows/release-build.yml \
+    && grep -Fq 'prepare_desktop_bundle_macos.py' .github/workflows/release-build.yml \
     && python3 scripts/check_markdown_links.py \
     && bash scripts/tests/test_npm_package_smoke_existing_binaries.sh; then
     ok "release verification tooling self-tests"

@@ -92,16 +92,20 @@ def _write_bundle(root: Path) -> dict:
         digest = hashlib.sha256(payload).hexdigest()
         artifact_payload[platform] = {"filename": name, "sha256": digest}
         checksum_lines.append(f"{digest}  {name}")
-    desktop_name = collector.desktop_installer_filename(
-        VERSION,
-        build_kind="release",
-        tag=TAG,
-        source_sha=SOURCE,
-    )
-    desktop_bytes = b"synthetic-desktop-installer"
-    (root / desktop_name).write_bytes(desktop_bytes)
-    desktop_digest = hashlib.sha256(desktop_bytes).hexdigest()
-    checksum_lines.append(f"{desktop_digest}  {desktop_name}")
+    desktop_artifacts = {}
+    for platform in collector.DESKTOP_PLATFORMS:
+        desktop_name = collector.desktop_artifact_filename(
+            VERSION,
+            platform,
+            build_kind="release",
+            tag=TAG,
+            source_sha=SOURCE,
+        )
+        desktop_bytes = f"synthetic-{platform}-desktop".encode("ascii")
+        (root / desktop_name).write_bytes(desktop_bytes)
+        desktop_digest = hashlib.sha256(desktop_bytes).hexdigest()
+        checksum_lines.append(f"{desktop_digest}  {desktop_name}")
+        desktop_artifacts[platform] = {"filename": desktop_name, "sha256": desktop_digest}
     (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="ascii")
     (root / "linux-x64-elf.txt").write_text("ELF x64\n", encoding="utf-8")
     (root / "linux-arm64-elf.txt").write_text("ELF arm64\n", encoding="utf-8")
@@ -126,9 +130,7 @@ def _write_bundle(root: Path) -> dict:
         "workflow_run_id": RUN_ID,
         "archive_stem": stem,
         "artifacts": artifact_payload,
-        "desktop_artifacts": {
-            "win32-x64": {"filename": desktop_name, "sha256": desktop_digest},
-        },
+        "desktop_artifacts": desktop_artifacts,
     }
     (root / "release-build.json").write_text(json.dumps(release_build) + "\n", encoding="utf-8")
     return release_build
@@ -490,10 +492,17 @@ class NpmStagingTests(unittest.TestCase):
             "archive_stem": f"webcodex-v{VERSION}",
             "artifacts": {platform: "a" * 64 for platform in collector.PLATFORMS},
             "desktop_artifacts": {
-                "win32-x64": {
-                    "filename": f"webcodex-desktop-v{VERSION}-win32-x64-setup.exe",
+                platform: {
+                    "filename": collector.desktop_artifact_filename(
+                        VERSION,
+                        platform,
+                        build_kind="release",
+                        tag=TAG,
+                        source_sha=SOURCE,
+                    ),
                     "sha256": "b" * 64,
                 }
+                for platform in collector.DESKTOP_PLATFORMS
             },
         }
         with tempfile.TemporaryDirectory() as temp:
@@ -535,11 +544,13 @@ class DraftVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             meta = _write_bundle(root)
-            desktop_name = meta["desktop_artifacts"]["win32-x64"]["filename"]
+            desktop_names = [
+                meta["desktop_artifacts"][platform]["filename"] for platform in collector.DESKTOP_PLATFORMS
+            ]
             names = [
                 "SHA256SUMS",
                 *(entry["filename"] for entry in meta["artifacts"].values()),
-                desktop_name,
+                *desktop_names,
             ]
             assets = []
             for index, name in enumerate(names, 1):
@@ -570,8 +581,9 @@ class DraftVerificationTests(unittest.TestCase):
                     timeout=5,
                 )
             self.assertTrue(summary["draft"])
-            self.assertEqual(len(summary["assets"]), 8)
+            self.assertEqual(len(summary["assets"]), 10)
 
+            desktop_name = meta["desktop_artifacts"]["darwin-arm64"]["filename"]
             desktop_asset = next(asset for asset in release["assets"] if asset["name"] == desktop_name)
             desktop_asset["digest"] = "sha256:" + "0" * 64
             with mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(

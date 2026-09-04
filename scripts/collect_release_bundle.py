@@ -23,7 +23,7 @@ from typing import BinaryIO
 DEFAULT_REPO = "yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
-DESKTOP_PLATFORMS = ("win32-x64",)
+DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
 RELEASE_WORKFLOW_PATH = ".github/workflows/release-build.yml"
 API_VERSION = "2022-11-28"
 USER_AGENT = "webcodex-release-bundle-collector/1"
@@ -64,17 +64,21 @@ def validate_expected_tag(value: str) -> str:
     raise CollectionError(f"invalid release or verification tag: {value!r}")
 
 
-def desktop_installer_filename(
+def desktop_artifact_filename(
     version: str,
+    platform: str,
     *,
     build_kind: str,
     tag: str,
     source_sha: str,
 ) -> str:
+    if platform not in DESKTOP_PLATFORMS:
+        raise CollectionError(f"unsupported Desktop platform: {platform!r}")
+    suffix = "-setup.exe" if platform == "win32-x64" else ".dmg"
     if build_kind == "release":
-        return f"webcodex-desktop-v{version}-win32-x64-setup.exe"
+        return f"webcodex-desktop-v{version}-{platform}{suffix}"
     if build_kind == "verification":
-        return f"webcodex-desktop-{tag}-{source_sha[:12]}-v{version}-win32-x64-setup.exe"
+        return f"webcodex-desktop-{tag}-{source_sha[:12]}-v{version}-{platform}{suffix}"
     raise CollectionError(f"unsupported release build kind: {build_kind!r}")
 
 
@@ -583,7 +587,7 @@ def verify_bundle_directory(
 
     desktop_artifacts = release_build.get("desktop_artifacts")
     if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(DESKTOP_PLATFORMS):
-        raise CollectionError("release-build.json must contain exactly the Windows x64 Desktop artifact")
+        raise CollectionError("release-build.json must contain exactly the supported Desktop artifacts")
     desktop_files: dict[str, str] = {}
     desktop_hashes: dict[str, str] = {}
     for platform in DESKTOP_PLATFORMS:
@@ -592,8 +596,9 @@ def verify_bundle_directory(
             raise CollectionError(f"release-build.json Desktop artifact entry is malformed: {platform}")
         filename = item.get("filename")
         digest = item.get("sha256")
-        expected_filename = desktop_installer_filename(
+        expected_filename = desktop_artifact_filename(
             version,
+            platform,
             build_kind=build_kind,
             tag=expected_tag,
             source_sha=expected_source_sha,
@@ -643,12 +648,12 @@ def verify_bundle_directory(
         try:
             size = path.stat().st_size
         except OSError as exc:
-            raise CollectionError(f"Desktop installer is missing: {filename}") from exc
+            raise CollectionError(f"Desktop distribution artifact is missing: {filename}") from exc
         if size <= 0 or size > MAX_MEMBER_BYTES:
-            raise CollectionError(f"Desktop installer is outside its size bound: {filename}")
+            raise CollectionError(f"Desktop distribution artifact is outside its size bound: {filename}")
         actual = sha256_file(path)
         if actual != desktop_hashes[platform] or sums.get(filename) != actual:
-            raise CollectionError(f"Desktop installer SHA-256 mismatch: {platform}")
+            raise CollectionError(f"Desktop distribution artifact SHA-256 mismatch: {platform}")
 
     for report in ("linux-x64-elf.txt", "linux-arm64-elf.txt"):
         try:

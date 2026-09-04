@@ -242,6 +242,7 @@ pub(crate) fn usage() -> &'static str {
     "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
                      [--tunnel cloudflare|openai|none] [--auth bearer|query-token|oauth]\n\
                      [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
+                     [--stop-on-stdin-eof]\n\
        webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
        webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
@@ -255,7 +256,8 @@ OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and kee
 the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\
 copies only the MCP URL by default; `--auth query-token` explicitly opts into a\n\
 single sensitive URL carrying the temporary share credential. Use `--no-copy-url`\n\
-to disable clipboard access.\n\
+to disable clipboard access. `--stop-on-stdin-eof` is a `--json` machine-integration\n\
+lifecycle hook: the foreground share exits cleanly when its supervising parent closes stdin.\n\
 `setup`, `doctor`, and `run` remain the local/manual workflow; setup writes private state without\n\
 starting services. `run` is the explicit foreground local runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\

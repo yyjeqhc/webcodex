@@ -14,6 +14,7 @@ use super::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -50,6 +51,7 @@ pub(crate) struct ShareCommandOptions {
     pub(crate) oauth_redirect_uri: Option<String>,
     pub(crate) public_url: Option<String>,
     pub(crate) copy_url: bool,
+    pub(crate) stop_on_stdin_eof: bool,
 }
 
 pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions, String> {
@@ -58,6 +60,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
     let mut oauth_redirect_uri = None;
     let mut public_url = None;
     let mut copy_url = true;
+    let mut stop_on_stdin_eof = false;
     let mut project_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -119,6 +122,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                 }
             }
             "--no-copy-url" => copy_url = false,
+            "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
             flag => project_args.push(flag.to_string()),
         }
         index += 1;
@@ -148,6 +152,9 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                 .to_string(),
         );
     }
+    if stop_on_stdin_eof && !project.json {
+        return Err("--stop-on-stdin-eof requires --json machine integration mode".to_string());
+    }
     Ok(ShareCommandOptions {
         project,
         tunnel,
@@ -155,6 +162,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         oauth_redirect_uri,
         public_url,
         copy_url,
+        stop_on_stdin_eof,
     })
 }
 
@@ -738,17 +746,17 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
 
     let outcome = match (cloudflare_tunnel.as_mut(), openai_tunnel.as_mut()) {
         (Some(tunnel), None) => tokio::select! {
-            _ = wait_for_share_stop_signal() => Ok(()),
+            _ = wait_for_share_stop_signal(options.stop_on_stdin_eof) => Ok(()),
             result = runtime.wait_for_exit() => result,
             result = tunnel.wait_for_exit() => result,
         },
         (None, Some(tunnel)) => tokio::select! {
-            _ = wait_for_share_stop_signal() => Ok(()),
+            _ = wait_for_share_stop_signal(options.stop_on_stdin_eof) => Ok(()),
             result = runtime.wait_for_exit() => result,
             result = tunnel.wait_for_exit() => result,
         },
         (None, None) => tokio::select! {
-            _ = wait_for_share_stop_signal() => Ok(()),
+            _ = wait_for_share_stop_signal(options.stop_on_stdin_eof) => Ok(()),
             result = runtime.wait_for_exit() => result,
         },
         (Some(_), Some(_)) => unreachable!("one share cannot own two tunnel providers"),
@@ -768,13 +776,42 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     outcome
 }
 
+async fn wait_for_share_stop_signal(stop_on_stdin_eof: bool) {
+    if !stop_on_stdin_eof {
+        wait_for_platform_share_stop_signal().await;
+        return;
+    }
+    tokio::select! {
+        _ = wait_for_platform_share_stop_signal() => {},
+        _ = wait_for_share_stdin_eof() => {},
+    }
+}
+
+async fn wait_for_share_stdin_eof() {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = std::thread::Builder::new()
+        .name("webcodex-share-stdin".to_string())
+        .spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            let mut buffer = [0_u8; 256];
+            loop {
+                match stdin.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+            let _ = tx.send(());
+        });
+    let _ = rx.await;
+}
+
 #[cfg(not(windows))]
-async fn wait_for_share_stop_signal() {
+async fn wait_for_platform_share_stop_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
 #[cfg(windows)]
-async fn wait_for_share_stop_signal() {
+async fn wait_for_platform_share_stop_signal() {
     let mut ctrl_break = match tokio::signal::windows::ctrl_break() {
         Ok(signal) => signal,
         Err(_) => {
@@ -1174,6 +1211,7 @@ mod tests {
         assert!(default.oauth_redirect_uri.is_none());
         assert!(default.public_url.is_none());
         assert!(default.copy_url);
+        assert!(!default.stop_on_stdin_eof);
         let explicit =
             parse_share_options(&["--tunnel".to_string(), "cloudflare".to_string()]).unwrap();
         assert_eq!(explicit.tunnel, TunnelProvider::CloudflareQuick);
@@ -1251,10 +1289,13 @@ mod tests {
             "--tunnel".to_string(),
             "cloudflare".to_string(),
             "--json".to_string(),
+            "--stop-on-stdin-eof".to_string(),
         ])
         .unwrap();
         assert!(machine.project.json);
         assert_eq!(machine.auth, ShareAuth::Bearer);
+        assert!(machine.stop_on_stdin_eof);
+        assert!(parse_share_options(&["--stop-on-stdin-eof".to_string()]).is_err());
 
         let oauth = parse_share_options(&[
             "--json".to_string(),

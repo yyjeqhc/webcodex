@@ -10,7 +10,7 @@
 use super::support::*;
 use crate::tool_runtime::continuation_feedback::{
     continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
-    ContinuationFeedbackInput,
+    root_tool_is_meaningful, ContinuationFeedbackInput,
 };
 use crate::tool_runtime::sessions::{
     self, SessionDiscussionCounts, SessionGuards, SessionTransport,
@@ -23,7 +23,8 @@ use crate::tool_runtime::validation_events::{
     current_validation_evidence_for_session, validation_summary_from_events,
 };
 use crate::tool_runtime::{
-    registered_tool_specs, SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime, ToolSpec,
+    known_tool_names, registered_tool_specs, SessionMode, StartupDetail, ToolCall, ToolResult,
+    ToolRuntime, ToolSpec,
 };
 use serde_json::{json, Value};
 
@@ -736,6 +737,14 @@ async fn finish_coding_task_continuation_matches_handoff_attempt_without_rerunni
 
 #[test]
 fn meaningful_tool_classification_excludes_status_and_manifest_queries() {
+    for name in known_tool_names() {
+        assert_eq!(
+            root_tool_is_meaningful(name),
+            is_meaningful(name),
+            "continuation hook drifted from canonical runtime policy for {name}"
+        );
+    }
+
     // Pure status/manifest/summary queries must never count as work progress.
     for name in [
         "runtime_status",

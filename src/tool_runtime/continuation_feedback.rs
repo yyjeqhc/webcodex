@@ -22,7 +22,7 @@ pub(crate) fn continuation_validation_snapshot(
     ContinuationValidationSnapshot::new(&current.evidence, &current.current_validation)
 }
 
-fn root_tool_is_meaningful(tool_name: &str) -> bool {
+pub(crate) fn root_tool_is_meaningful(tool_name: &str) -> bool {
     runtime_tool_is_write_like(tool_name)
         || runtime_tool_is_shell_like(tool_name)
         || runtime_tool_is_git_like(tool_name)

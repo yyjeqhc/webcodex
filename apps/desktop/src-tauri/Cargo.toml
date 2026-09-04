@@ -1,0 +1,25 @@
+[package]
+name = "webcodex-desktop"
+version = "0.1.0"
+description = "WebCodex Desktop runtime and setup control surface"
+edition = "2021"
+publish = false
+
+# Keep Tauri/WebView dependencies out of the root WebCodex Cargo workspace.
+[workspace]
+
+[lib]
+name = "webcodex_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+url = "2"
+

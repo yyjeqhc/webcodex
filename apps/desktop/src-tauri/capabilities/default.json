@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-default",
+  "description": "Minimal WebCodex Desktop window permissions",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
+

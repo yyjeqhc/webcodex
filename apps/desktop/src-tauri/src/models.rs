@@ -1,0 +1,302 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Experience {
+    Full,
+    QuickShare,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ServerTopology {
+    Local,
+    Remote { url: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunnerTopology {
+    Local,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Exposure {
+    None,
+    ExistingHttps { url: String },
+    Cloudflare,
+    OpenAiTunnel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Enrollment {
+    ManagedPairing,
+    SharedKey,
+    ExistingProfile { profile: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeTopology {
+    pub experience: Experience,
+    pub server: ServerTopology,
+    pub runner: RunnerTopology,
+    pub exposure: Exposure,
+    pub enrollment: Enrollment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerReadiness {
+    Stopped,
+    Starting,
+    Ready,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerReadiness {
+    Stopped,
+    Connecting,
+    Ready,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExposureReadiness {
+    Disabled,
+    Starting,
+    LocalReady,
+    RemoteReady,
+    Degraded,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectReadiness {
+    None,
+    Configured,
+    ReloadRequired,
+    Ready,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadinessSnapshot {
+    pub server: ServerReadiness,
+    pub runner: RunnerReadiness,
+    pub exposure: ExposureReadiness,
+    pub project: ProjectReadiness,
+    pub runtime_ready: bool,
+    pub ready_for_chatgpt: bool,
+    pub summary: String,
+    pub next_action: Option<String>,
+}
+
+impl Default for ReadinessSnapshot {
+    fn default() -> Self {
+        aggregate_readiness(
+            ServerReadiness::Unknown,
+            RunnerReadiness::Unknown,
+            ExposureReadiness::Unknown,
+            ProjectReadiness::None,
+        )
+    }
+}
+
+pub fn aggregate_readiness(
+    server: ServerReadiness,
+    runner: RunnerReadiness,
+    exposure: ExposureReadiness,
+    project: ProjectReadiness,
+) -> ReadinessSnapshot {
+    let runtime_ready = server == ServerReadiness::Ready
+        && runner == RunnerReadiness::Ready
+        && project == ProjectReadiness::Ready;
+    let ready_for_chatgpt = runtime_ready && exposure == ExposureReadiness::RemoteReady;
+    let (summary, next_action) = if ready_for_chatgpt {
+        ("Ready to use with ChatGPT".to_string(), None)
+    } else if !matches!(server, ServerReadiness::Ready) {
+        (
+            "WebCodex Service needs attention".to_string(),
+            Some("Start or reconnect the WebCodex Service.".to_string()),
+        )
+    } else if !matches!(runner, RunnerReadiness::Ready) {
+        (
+            "Runner is not connected".to_string(),
+            Some("Start the Runner and wait for it to connect.".to_string()),
+        )
+    } else if !matches!(project, ProjectReadiness::Ready) {
+        (
+            "Project is not ready".to_string(),
+            Some("Add or reload the selected project.".to_string()),
+        )
+    } else if exposure == ExposureReadiness::Disabled || exposure == ExposureReadiness::LocalReady {
+        (
+            "Runtime ready on this computer".to_string(),
+            Some("Choose a ChatGPT connection in Connection.".to_string()),
+        )
+    } else {
+        (
+            "ChatGPT connection is not verified".to_string(),
+            Some("Check the ChatGPT connection status.".to_string()),
+        )
+    };
+    ReadinessSnapshot {
+        server,
+        runner,
+        exposure,
+        project,
+        runtime_ready,
+        ready_for_chatgpt,
+        summary,
+        next_action,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSelection {
+    pub path: String,
+    pub allowed_root: String,
+    pub is_git_repository: bool,
+    pub runtime_project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BinaryInfo {
+    pub directory: String,
+    pub version: String,
+    pub git_commit: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuickShareState {
+    pub provider: String,
+    pub project: String,
+    pub mcp_url: Option<String>,
+    pub clipboard_state: String,
+    pub clipboard_contains: String,
+    pub ready_for_chatgpt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopStateSnapshot {
+    pub topology: Option<RuntimeTopology>,
+    pub readiness: ReadinessSnapshot,
+    pub project: Option<ProjectSelection>,
+    pub binaries: Option<BinaryInfo>,
+    pub quick_share: Option<QuickShareState>,
+    pub activity_sequence: u64,
+    pub openai_tunnel_configured: bool,
+    pub regular_tunnel_available: bool,
+}
+
+impl Default for DesktopStateSnapshot {
+    fn default() -> Self {
+        Self {
+            topology: None,
+            readiness: ReadinessSnapshot::default(),
+            project: None,
+            binaries: None,
+            quick_share: None,
+            activity_sequence: 0,
+            openai_tunnel_configured: false,
+            regular_tunnel_available: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct StoredDesktopConfig {
+    pub topology: Option<RuntimeTopology>,
+    pub project: Option<ProjectSelection>,
+    pub runtime: Option<StoredRuntime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredRuntime {
+    pub server_url: String,
+    pub server_env_file: Option<PathBuf>,
+    pub runner_config: Option<PathBuf>,
+    pub user_token_file: Option<PathBuf>,
+    pub project_id: Option<String>,
+    pub runtime_project_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topology_dimensions_stay_orthogonal() {
+        let local = RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::OpenAiTunnel,
+            enrollment: Enrollment::ManagedPairing,
+        };
+        let remote = RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Remote {
+                url: "https://server.example".to_string(),
+            },
+            runner: RunnerTopology::Local,
+            exposure: Exposure::ExistingHttps {
+                url: "https://server.example".to_string(),
+            },
+            enrollment: Enrollment::ManagedPairing,
+        };
+        assert_eq!(local.runner, remote.runner);
+        assert_ne!(local.server, remote.server);
+        assert_ne!(local.exposure, remote.exposure);
+    }
+
+    #[test]
+    fn process_alive_is_not_aggregate_readiness() {
+        let server_only = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Connecting,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::Configured,
+        );
+        assert!(!server_only.runtime_ready);
+        assert!(!server_only.ready_for_chatgpt);
+
+        let missing_project = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::None,
+        );
+        assert!(!missing_project.runtime_ready);
+
+        let local_only = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::LocalReady,
+            ProjectReadiness::Ready,
+        );
+        assert!(local_only.runtime_ready);
+        assert!(!local_only.ready_for_chatgpt);
+
+        let full = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::Ready,
+        );
+        assert!(full.runtime_ready);
+        assert!(full.ready_for_chatgpt);
+    }
+}

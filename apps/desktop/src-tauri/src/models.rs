@@ -91,6 +91,31 @@ pub enum ProjectReadiness {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessSummaryKind {
+    ReadyForChatGpt,
+    ServiceNeedsAttention,
+    RunnerDisconnected,
+    ProjectNotReady,
+    RuntimeReadyLocalOnly,
+    ConnectionUnverified,
+    QuickShareStopped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessNextActionKind {
+    StartOrReconnectService,
+    StartRunner,
+    AddOrReloadProject,
+    ChooseConnection,
+    CheckConnection,
+    RestartQuickShare,
+    RestoreClipboardHandoff,
+    RestartSecureTunnel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReadinessSnapshot {
     pub server: ServerReadiness,
     pub runner: RunnerReadiness,
@@ -98,6 +123,8 @@ pub struct ReadinessSnapshot {
     pub project: ProjectReadiness,
     pub runtime_ready: bool,
     pub ready_for_chatgpt: bool,
+    pub summary_kind: ReadinessSummaryKind,
+    pub next_action_kind: Option<ReadinessNextActionKind>,
     pub summary: String,
     pub next_action: Option<String>,
 }
@@ -123,30 +150,45 @@ pub fn aggregate_readiness(
         && runner == RunnerReadiness::Ready
         && project == ProjectReadiness::Ready;
     let ready_for_chatgpt = runtime_ready && exposure == ExposureReadiness::RemoteReady;
-    let (summary, next_action) = if ready_for_chatgpt {
-        ("Ready to use with ChatGPT".to_string(), None)
+    let (summary_kind, next_action_kind, summary, next_action) = if ready_for_chatgpt {
+        (
+            ReadinessSummaryKind::ReadyForChatGpt,
+            None,
+            "Ready to use with ChatGPT".to_string(),
+            None,
+        )
     } else if !matches!(server, ServerReadiness::Ready) {
         (
+            ReadinessSummaryKind::ServiceNeedsAttention,
+            Some(ReadinessNextActionKind::StartOrReconnectService),
             "WebCodex Service needs attention".to_string(),
             Some("Start or reconnect the WebCodex Service.".to_string()),
         )
     } else if !matches!(runner, RunnerReadiness::Ready) {
         (
+            ReadinessSummaryKind::RunnerDisconnected,
+            Some(ReadinessNextActionKind::StartRunner),
             "Runner is not connected".to_string(),
             Some("Start the Runner and wait for it to connect.".to_string()),
         )
     } else if !matches!(project, ProjectReadiness::Ready) {
         (
+            ReadinessSummaryKind::ProjectNotReady,
+            Some(ReadinessNextActionKind::AddOrReloadProject),
             "Project is not ready".to_string(),
             Some("Add or reload the selected project.".to_string()),
         )
     } else if exposure == ExposureReadiness::Disabled || exposure == ExposureReadiness::LocalReady {
         (
+            ReadinessSummaryKind::RuntimeReadyLocalOnly,
+            Some(ReadinessNextActionKind::ChooseConnection),
             "Runtime ready on this computer".to_string(),
             Some("Choose a ChatGPT connection in Connection.".to_string()),
         )
     } else {
         (
+            ReadinessSummaryKind::ConnectionUnverified,
+            Some(ReadinessNextActionKind::CheckConnection),
             "ChatGPT connection is not verified".to_string(),
             Some("Check the ChatGPT connection status.".to_string()),
         )
@@ -158,6 +200,8 @@ pub fn aggregate_readiness(
         project,
         runtime_ready,
         ready_for_chatgpt,
+        summary_kind,
+        next_action_kind,
         summary,
         next_action,
     }
@@ -190,12 +234,30 @@ pub struct QuickShareState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegularTunnelStatus {
+    Starting,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegularTunnelState {
+    pub provider: String,
+    pub status: RegularTunnelStatus,
+    pub clipboard_state: String,
+    pub clipboard_contains: String,
+    pub ready_for_chatgpt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
     pub readiness: ReadinessSnapshot,
     pub project: Option<ProjectSelection>,
     pub binaries: Option<BinaryInfo>,
     pub quick_share: Option<QuickShareState>,
+    pub regular_tunnel: Option<RegularTunnelState>,
     pub activity_sequence: u64,
     pub openai_tunnel_configured: bool,
     pub regular_tunnel_available: bool,
@@ -209,6 +271,7 @@ impl Default for DesktopStateSnapshot {
             project: None,
             binaries: None,
             quick_share: None,
+            regular_tunnel: None,
             activity_sequence: 0,
             openai_tunnel_configured: false,
             regular_tunnel_available: false,

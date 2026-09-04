@@ -1,12 +1,15 @@
-use crate::activity::{ActivityLevel, ActivityLog};
+use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, DesktopStateSnapshot, Enrollment, Experience, Exposure, ExposureReadiness,
-    ProjectReadiness, ProjectSelection, QuickShareState, RunnerReadiness, RunnerTopology,
+    ProjectReadiness, ProjectSelection, QuickShareState, ReadinessNextActionKind,
+    ReadinessSummaryKind, RegularTunnelState, RegularTunnelStatus, RunnerReadiness, RunnerTopology,
     RuntimeTopology, ServerReadiness, ServerTopology, StoredDesktopConfig, StoredRuntime,
 };
 use crate::process::{ProcessKind, ProcessPhase, ProcessSupervisor};
-use crate::webcodex::{ProjectRuntimeIdentity, QuickShareReadyEvent, WebCodexAdapter};
+use crate::webcodex::{
+    ProjectRuntimeIdentity, QuickShareReadyEvent, RegularTunnelReadyEvent, WebCodexAdapter,
+};
 use serde_json::Value;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -17,6 +20,7 @@ const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const RUNNER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROJECT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QUICK_SHARE_READY_TIMEOUT: Duration = Duration::from_secs(90);
+const REGULAR_TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 
 pub struct AppState {
@@ -59,7 +63,7 @@ impl DesktopCore {
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
         snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
-        snapshot.regular_tunnel_available = false;
+        snapshot.regular_tunnel_available = true;
         Self {
             data_dir,
             config_path,
@@ -78,6 +82,33 @@ impl DesktopCore {
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
         self.supervisor.refresh();
         self.snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
+        self.snapshot.regular_tunnel_available = true;
+        if self.snapshot.regular_tunnel.is_some() {
+            let active = self
+                .supervisor
+                .snapshot(ProcessKind::RegularTunnel)
+                .is_some_and(|process| {
+                    matches!(
+                        process.phase,
+                        ProcessPhase::Starting | ProcessPhase::Running
+                    )
+                });
+            if let Some(exposure) =
+                regular_tunnel_exposure(&mut self.snapshot.regular_tunnel, active)
+            {
+                self.snapshot.readiness = aggregate_readiness(
+                    self.snapshot.readiness.server.clone(),
+                    self.snapshot.readiness.runner.clone(),
+                    exposure.clone(),
+                    self.snapshot.readiness.project.clone(),
+                );
+                apply_regular_tunnel_next_action(&mut self.snapshot, &exposure);
+                self.snapshot.topology = effective_topology(
+                    self.config.topology.as_ref(),
+                    self.snapshot.regular_tunnel.is_some(),
+                );
+            }
+        }
         self.snapshot.activity_sequence = self.activity.latest_sequence();
         Ok(self.snapshot.clone())
     }
@@ -101,6 +132,9 @@ impl DesktopCore {
                     ExposureReadiness::Error,
                     ProjectReadiness::Configured,
                 );
+                self.snapshot.readiness.summary_kind = ReadinessSummaryKind::QuickShareStopped;
+                self.snapshot.readiness.next_action_kind =
+                    Some(ReadinessNextActionKind::RestartQuickShare);
                 self.snapshot.readiness.summary = "Quick Share stopped".to_string();
                 self.snapshot.readiness.next_action = Some("Start Quick Share again.".to_string());
             }
@@ -142,9 +176,34 @@ impl DesktopCore {
             Ok(false) => ProjectReadiness::ReloadRequired,
             Err(_) => ProjectReadiness::Unknown,
         };
-        let exposure = exposure_readiness(self.config.topology.as_ref());
-        self.snapshot.readiness = aggregate_readiness(server, runner, exposure, project);
-        self.snapshot.topology = self.config.topology.clone();
+        let tunnel_active = self
+            .supervisor
+            .snapshot(ProcessKind::RegularTunnel)
+            .is_some_and(|process| {
+                matches!(
+                    process.phase,
+                    ProcessPhase::Starting | ProcessPhase::Running
+                )
+            });
+        let regular_tunnel_expected = self.snapshot.regular_tunnel.is_some();
+        let exposure = regular_tunnel_exposure(&mut self.snapshot.regular_tunnel, tunnel_active)
+            .unwrap_or_else(|| exposure_readiness(self.config.topology.as_ref()));
+        self.snapshot.readiness = aggregate_readiness(server, runner, exposure.clone(), project);
+        if regular_tunnel_expected && exposure == ExposureReadiness::Error {
+            self.snapshot.readiness.next_action_kind =
+                Some(ReadinessNextActionKind::RestartSecureTunnel);
+            self.snapshot.readiness.next_action = Some("Restart the secure tunnel.".to_string());
+        } else if regular_tunnel_expected && exposure == ExposureReadiness::Degraded {
+            self.snapshot.readiness.next_action_kind =
+                Some(ReadinessNextActionKind::RestoreClipboardHandoff);
+            self.snapshot.readiness.next_action = Some(
+                "Restore clipboard access, then restart the secure tunnel handoff.".to_string(),
+            );
+        }
+        self.snapshot.topology = effective_topology(
+            self.config.topology.as_ref(),
+            self.snapshot.regular_tunnel.is_some(),
+        );
         self.snapshot.project = project_snapshot(&self.config);
         self.get_state().await
     }
@@ -157,6 +216,7 @@ impl DesktopCore {
         let binaries = self.adapter.ensure_binaries().await?.clone();
         self.snapshot.binaries = Some(binaries.info());
         self.activity.push(
+            ActivityEventKind::LocalSetupPreparing,
             "desktop",
             ActivityLevel::Info,
             "Preparing WebCodex on this computer",
@@ -280,6 +340,7 @@ impl DesktopCore {
             ProjectReadiness::Ready,
         );
         self.activity.push(
+            ActivityEventKind::LocalRuntimeReady,
             "desktop",
             ActivityLevel::Info,
             "Local WebCodex runtime is ready",
@@ -327,6 +388,7 @@ impl DesktopCore {
             ProjectReadiness::Configured,
         );
         self.activity.push(
+            ActivityEventKind::RemoteConnecting,
             "desktop",
             ActivityLevel::Info,
             "Connecting this computer to the existing WebCodex Server",
@@ -395,6 +457,7 @@ impl DesktopCore {
             ProjectReadiness::Ready,
         );
         self.activity.push(
+            ActivityEventKind::RemoteConnected,
             "desktop",
             ActivityLevel::Info,
             "This computer is connected to the existing WebCodex Server",
@@ -455,6 +518,7 @@ impl DesktopCore {
             ProjectReadiness::Configured,
         );
         self.activity.push(
+            ActivityEventKind::QuickShareStarting,
             "quick_share",
             ActivityLevel::Info,
             "Starting the temporary Quick Share runtime",
@@ -529,10 +593,13 @@ impl DesktopCore {
             ProjectReadiness::Ready,
         );
         if !handoff_available {
+            self.snapshot.readiness.next_action_kind =
+                Some(ReadinessNextActionKind::RestoreClipboardHandoff);
             self.snapshot.readiness.next_action =
                 Some("Clipboard handoff is unavailable; restart Quick Share after clipboard access is restored.".to_string());
         }
         self.activity.push(
+            ActivityEventKind::QuickShareReady,
             "quick_share",
             ActivityLevel::Info,
             "Quick Share reached verified readiness",
@@ -545,6 +612,12 @@ impl DesktopCore {
         self.snapshot.quick_share = None;
         self.snapshot.topology = self.config.topology.clone();
         self.snapshot.project = self.config.project.clone();
+        self.activity.push(
+            ActivityEventKind::QuickShareStopped,
+            "quick_share",
+            ActivityLevel::Info,
+            "Quick Share stopped",
+        );
         if self.config.runtime.is_some() {
             self.refresh_runtime_status().await
         } else {
@@ -553,9 +626,220 @@ impl DesktopCore {
         }
     }
 
+    pub async fn start_regular_tunnel(&mut self) -> DesktopResult<DesktopStateSnapshot> {
+        if self.snapshot.quick_share.is_some() {
+            return Err(DesktopError::new(
+                "unsupported_topology",
+                "Regular ChatGPT Connection is unavailable while Quick Share is active",
+                "Stop Quick Share and start the Local Full Runtime first.",
+            ));
+        }
+        let topology = self.config.topology.clone().ok_or_else(|| {
+            DesktopError::new(
+                "runtime_not_ready",
+                "Local Full Runtime has not been configured",
+                "Set up WebCodex on this computer before starting the secure tunnel.",
+            )
+        })?;
+        if topology.experience != Experience::Full
+            || !matches!(topology.server, ServerTopology::Local)
+        {
+            return Err(DesktopError::new(
+                "unsupported_topology",
+                "Regular OpenAI Secure Tunnel is only started for a local WebCodex Server",
+                "Manage external exposure on the remote Server instead.",
+            ));
+        }
+        if !openai_tunnel_is_configured() {
+            return Err(DesktopError::new(
+                "tunnel_unavailable",
+                "OpenAI Secure Tunnel is not configured",
+                "Configure the canonical Control Plane Tunnel environment, then retry.",
+            ));
+        }
+        if self
+            .supervisor
+            .snapshot(ProcessKind::RegularTunnel)
+            .is_some_and(|process| {
+                matches!(
+                    process.phase,
+                    ProcessPhase::Starting | ProcessPhase::Running
+                )
+            })
+        {
+            return Err(DesktopError::new(
+                "regular_tunnel_already_running",
+                "OpenAI Secure Tunnel is already running",
+                "Stop the current secure tunnel before starting another one.",
+            ));
+        }
+
+        let current = self.refresh_runtime_status().await?;
+        if !current.readiness.runtime_ready {
+            return Err(DesktopError::new(
+                "runtime_not_ready",
+                "Local WebCodex runtime is not ready",
+                "Restore the Server, Runner, and project readiness before starting the secure tunnel.",
+            ));
+        }
+        let runtime = self.config.runtime.clone().ok_or_else(|| {
+            DesktopError::new(
+                "runtime_not_ready",
+                "Local runtime identity is incomplete",
+                "Run Local Setup again.",
+            )
+        })?;
+        let env_file = runtime
+            .server_env_file
+            .filter(|path| path.is_file())
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "server_unavailable",
+                    "Local Server configuration is unavailable",
+                    "Run Local Setup again.",
+                )
+            })?;
+        let user_token_file = runtime
+            .user_token_file
+            .filter(|path| path.is_file())
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "tunnel_auth_invalid",
+                    "Desktop-managed WebCodex user authentication is unavailable",
+                    "Run Local Setup again to restore the managed connection.",
+                )
+            })?;
+
+        let command = self
+            .adapter
+            .regular_tunnel_command(&env_file, &user_token_file)?;
+        let mut events = self
+            .supervisor
+            .spawn_owned(ProcessKind::RegularTunnel, command, true)
+            .await?
+            .expect("regular tunnel machine stdout requested");
+        self.snapshot.regular_tunnel = Some(RegularTunnelState {
+            provider: "openai".to_string(),
+            status: RegularTunnelStatus::Starting,
+            clipboard_state: "pending".to_string(),
+            clipboard_contains: "tunnel_id".to_string(),
+            ready_for_chatgpt: false,
+        });
+        self.snapshot.topology = effective_topology(self.config.topology.as_ref(), true);
+        self.snapshot.readiness = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::Starting,
+            ProjectReadiness::Ready,
+        );
+        self.activity.push(
+            ActivityEventKind::RegularTunnelStarting,
+            "regular_tunnel",
+            ActivityLevel::Info,
+            "Starting the regular OpenAI Secure Tunnel",
+        );
+
+        let event_value = tokio::time::timeout(REGULAR_TUNNEL_READY_TIMEOUT, async {
+            while let Some(value) = events.recv().await {
+                if value.get("event").and_then(Value::as_str) == Some("ready") {
+                    return Some(value);
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(event_value) = event_value else {
+            let logs = self.supervisor.logs(ProcessKind::RegularTunnel);
+            self.supervisor.stop(ProcessKind::RegularTunnel).await;
+            self.snapshot.regular_tunnel = Some(RegularTunnelState {
+                provider: "openai".to_string(),
+                status: RegularTunnelStatus::Error,
+                clipboard_state: "unavailable".to_string(),
+                clipboard_contains: "tunnel_id".to_string(),
+                ready_for_chatgpt: false,
+            });
+            self.snapshot.readiness = aggregate_readiness(
+                ServerReadiness::Ready,
+                RunnerReadiness::Ready,
+                ExposureReadiness::Error,
+                ProjectReadiness::Ready,
+            );
+            apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
+            return Err(DesktopError::new(
+                "tunnel_unavailable",
+                "OpenAI Secure Tunnel did not reach verified readiness",
+                "Check Activity and the canonical Tunnel prerequisites, then retry.",
+            )
+            .with_details(serde_json::json!({ "diagnostic_lines": logs })));
+        };
+        let event: RegularTunnelReadyEvent = match serde_json::from_value(event_value) {
+            Ok(event) => event,
+            Err(_) => {
+                self.supervisor.stop(ProcessKind::RegularTunnel).await;
+                self.snapshot.regular_tunnel = None;
+                return Err(DesktopError::new(
+                    "webcodex_contract_invalid",
+                    "Regular Tunnel returned an invalid readiness event",
+                    "Verify that Desktop and WebCodex binaries come from the same source baseline.",
+                ));
+            }
+        };
+        if event.event != "ready"
+            || event.schema_version != 1
+            || event.provider != "openai"
+            || event.connection.kind != "openai_tunnel"
+            || event.connection.clipboard_contains != "tunnel_id"
+        {
+            self.supervisor.stop(ProcessKind::RegularTunnel).await;
+            self.snapshot.regular_tunnel = None;
+            return Err(DesktopError::new(
+                "webcodex_contract_invalid",
+                "Regular Tunnel readiness identity is incomplete",
+                "Update Desktop and WebCodex together.",
+            ));
+        }
+        let handoff_available = event.connection.clipboard_state == "copied";
+        self.snapshot.regular_tunnel = Some(RegularTunnelState {
+            provider: event.provider,
+            status: RegularTunnelStatus::Ready,
+            clipboard_state: event.connection.clipboard_state,
+            clipboard_contains: event.connection.clipboard_contains,
+            ready_for_chatgpt: event.ready_for_chatgpt && handoff_available,
+        });
+        self.activity.push(
+            ActivityEventKind::RegularTunnelReady,
+            "regular_tunnel",
+            ActivityLevel::Info,
+            "Regular OpenAI Secure Tunnel reached verified readiness",
+        );
+        self.refresh_runtime_status().await
+    }
+
+    pub async fn stop_regular_tunnel(&mut self) -> DesktopResult<DesktopStateSnapshot> {
+        self.supervisor.stop(ProcessKind::RegularTunnel).await;
+        self.snapshot.regular_tunnel = None;
+        self.snapshot.topology = self.config.topology.clone();
+        self.activity.push(
+            ActivityEventKind::RegularTunnelStopped,
+            "regular_tunnel",
+            ActivityLevel::Info,
+            "Regular OpenAI Secure Tunnel stopped",
+        );
+        if self.config.runtime.is_some() {
+            self.refresh_runtime_status().await
+        } else {
+            self.get_state().await
+        }
+    }
+
     pub async fn stop_local_runtime(&mut self) -> DesktopResult<DesktopStateSnapshot> {
+        self.supervisor.stop(ProcessKind::RegularTunnel).await;
+        self.snapshot.regular_tunnel = None;
         self.supervisor.stop(ProcessKind::LocalRunner).await;
         self.supervisor.stop(ProcessKind::LocalServer).await;
+        self.snapshot.topology = self.config.topology.clone();
         let exposure = exposure_readiness(self.config.topology.as_ref());
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Stopped,
@@ -566,6 +850,12 @@ impl DesktopCore {
                 .as_ref()
                 .map(|_| ProjectReadiness::Configured)
                 .unwrap_or(ProjectReadiness::None),
+        );
+        self.activity.push(
+            ActivityEventKind::RuntimeStopped,
+            "desktop",
+            ActivityLevel::Info,
+            "Desktop-managed local runtime stopped",
         );
         self.get_state().await
     }
@@ -760,6 +1050,62 @@ fn reserve_loopback_address() -> DesktopResult<String> {
         )
     })?;
     Ok(address.to_string())
+}
+
+fn regular_tunnel_exposure(
+    state: &mut Option<RegularTunnelState>,
+    process_active: bool,
+) -> Option<ExposureReadiness> {
+    let state = state.as_mut()?;
+    if !process_active {
+        state.status = RegularTunnelStatus::Error;
+        state.ready_for_chatgpt = false;
+        return Some(ExposureReadiness::Error);
+    }
+    Some(match state.status {
+        RegularTunnelStatus::Starting => ExposureReadiness::Starting,
+        RegularTunnelStatus::Ready if state.ready_for_chatgpt => ExposureReadiness::RemoteReady,
+        RegularTunnelStatus::Ready => ExposureReadiness::Degraded,
+        RegularTunnelStatus::Error => ExposureReadiness::Error,
+    })
+}
+
+fn apply_regular_tunnel_next_action(
+    snapshot: &mut DesktopStateSnapshot,
+    exposure: &ExposureReadiness,
+) {
+    if !snapshot.readiness.runtime_ready {
+        return;
+    }
+    match exposure {
+        ExposureReadiness::Error => {
+            snapshot.readiness.next_action_kind =
+                Some(ReadinessNextActionKind::RestartSecureTunnel);
+            snapshot.readiness.next_action = Some("Restart the secure tunnel.".to_string());
+        }
+        ExposureReadiness::Degraded => {
+            snapshot.readiness.next_action_kind =
+                Some(ReadinessNextActionKind::RestoreClipboardHandoff);
+            snapshot.readiness.next_action = Some(
+                "Restore clipboard access, then restart the secure tunnel handoff.".to_string(),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn effective_topology(
+    configured: Option<&RuntimeTopology>,
+    regular_tunnel_selected: bool,
+) -> Option<RuntimeTopology> {
+    let mut topology = configured.cloned()?;
+    if regular_tunnel_selected
+        && topology.experience == Experience::Full
+        && matches!(topology.server, ServerTopology::Local)
+    {
+        topology.exposure = Exposure::OpenAiTunnel;
+    }
+    Some(topology)
 }
 
 fn exposure_readiness(topology: Option<&RuntimeTopology>) -> ExposureReadiness {
@@ -1076,6 +1422,134 @@ mod tests {
         assert_eq!(
             exposure_readiness(Some(&remote)),
             ExposureReadiness::Unknown
+        );
+    }
+
+    #[test]
+    fn regular_tunnel_child_death_only_degrades_connection_readiness() {
+        let mut state = Some(RegularTunnelState {
+            provider: "openai".to_string(),
+            status: RegularTunnelStatus::Ready,
+            clipboard_state: "copied".to_string(),
+            clipboard_contains: "tunnel_id".to_string(),
+            ready_for_chatgpt: true,
+        });
+        assert_eq!(
+            regular_tunnel_exposure(&mut state, true),
+            Some(ExposureReadiness::RemoteReady)
+        );
+        assert_eq!(
+            regular_tunnel_exposure(&mut state, false),
+            Some(ExposureReadiness::Error)
+        );
+        assert_eq!(state.as_ref().unwrap().status, RegularTunnelStatus::Error);
+        assert!(!state.as_ref().unwrap().ready_for_chatgpt);
+
+        let readiness = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::Error,
+            ProjectReadiness::Ready,
+        );
+        assert!(readiness.runtime_ready);
+        assert!(!readiness.ready_for_chatgpt);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_failed_regular_tunnel_child_cannot_leave_fake_green_readiness() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "webcodex-desktop-tunnel-failure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let mut core = DesktopCore::new(data_dir.clone());
+        let topology = RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::None,
+            enrollment: Enrollment::ManagedPairing,
+        };
+        core.config.topology = Some(topology.clone());
+        core.snapshot.topology = Some(topology);
+        core.snapshot.readiness = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::Ready,
+        );
+        core.snapshot.regular_tunnel = Some(RegularTunnelState {
+            provider: "openai".to_string(),
+            status: RegularTunnelStatus::Ready,
+            clipboard_state: "copied".to_string(),
+            clipboard_contains: "tunnel_id".to_string(),
+            ready_for_chatgpt: true,
+        });
+
+        let mut command = tokio::process::Command::new("cmd.exe");
+        command.args(["/D", "/C", "exit", "/B", "23"]);
+        core.supervisor
+            .spawn_owned(ProcessKind::RegularTunnel, command, false)
+            .await
+            .expect("start failing tunnel fixture");
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let snapshot = loop {
+            let snapshot = core.get_state().await.expect("observe failed tunnel");
+            if snapshot.readiness.exposure == ExposureReadiness::Error {
+                break snapshot;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fake tunnel did not exit"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+
+        assert!(snapshot.readiness.runtime_ready);
+        assert!(!snapshot.readiness.ready_for_chatgpt);
+        assert_eq!(snapshot.readiness.server, ServerReadiness::Ready);
+        assert_eq!(snapshot.readiness.runner, RunnerReadiness::Ready);
+        assert_eq!(snapshot.readiness.project, ProjectReadiness::Ready);
+        assert_eq!(
+            snapshot.readiness.next_action_kind,
+            Some(ReadinessNextActionKind::RestartSecureTunnel)
+        );
+        core.supervisor.stop_all().await;
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn regular_tunnel_selection_is_ephemeral_and_local_only() {
+        let local = RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::None,
+            enrollment: Enrollment::ManagedPairing,
+        };
+        let selected = effective_topology(Some(&local), true).unwrap();
+        assert_eq!(selected.exposure, Exposure::OpenAiTunnel);
+        assert_eq!(local.exposure, Exposure::None);
+
+        let remote = RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Remote {
+                url: "https://example.test".to_string(),
+            },
+            runner: RunnerTopology::Local,
+            exposure: Exposure::ExistingHttps {
+                url: "https://example.test".to_string(),
+            },
+            enrollment: Enrollment::ManagedPairing,
+        };
+        assert_eq!(
+            effective_topology(Some(&remote), true).unwrap().exposure,
+            remote.exposure
         );
     }
 }

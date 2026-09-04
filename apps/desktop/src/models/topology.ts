@@ -53,6 +53,25 @@ export type ProjectReadiness =
   | "error"
   | "unknown";
 
+export type ReadinessSummaryKind =
+  | "ready_for_chat_gpt"
+  | "service_needs_attention"
+  | "runner_disconnected"
+  | "project_not_ready"
+  | "runtime_ready_local_only"
+  | "connection_unverified"
+  | "quick_share_stopped";
+
+export type ReadinessNextActionKind =
+  | "start_or_reconnect_service"
+  | "start_runner"
+  | "add_or_reload_project"
+  | "choose_connection"
+  | "check_connection"
+  | "restart_quick_share"
+  | "restore_clipboard_handoff"
+  | "restart_secure_tunnel";
+
 export interface ReadinessSnapshot {
   server: ServerReadiness;
   runner: RunnerReadiness;
@@ -61,7 +80,9 @@ export interface ReadinessSnapshot {
   runtime_ready: boolean;
   ready_for_chatgpt: boolean;
   summary: string;
+  summary_kind: ReadinessSummaryKind;
   next_action?: string | null;
+  next_action_kind?: ReadinessNextActionKind | null;
 }
 
 export interface ProjectSelection {
@@ -87,12 +108,23 @@ export interface QuickShareState {
   ready_for_chatgpt: boolean;
 }
 
+export type RegularTunnelStatus = "starting" | "ready" | "error";
+
+export interface RegularTunnelState {
+  provider: string;
+  status: RegularTunnelStatus;
+  clipboard_state: string;
+  clipboard_contains: string;
+  ready_for_chatgpt: boolean;
+}
+
 export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
   project?: ProjectSelection | null;
   binaries?: BinaryInfo | null;
   quick_share?: QuickShareState | null;
+  regular_tunnel?: RegularTunnelState | null;
   activity_sequence: number;
   openai_tunnel_configured: boolean;
   regular_tunnel_available: boolean;
@@ -110,6 +142,23 @@ export interface ActivityEntry {
   timestamp_ms: number;
   source: string;
   level: "info" | "warning" | "error";
+  event_kind:
+    | "process_started"
+    | "process_exited"
+    | "process_observation_failed"
+    | "process_stopping"
+    | "process_stopped"
+    | "local_setup_preparing"
+    | "local_runtime_ready"
+    | "remote_connecting"
+    | "remote_connected"
+    | "quick_share_starting"
+    | "quick_share_ready"
+    | "quick_share_stopped"
+    | "regular_tunnel_starting"
+    | "regular_tunnel_ready"
+    | "regular_tunnel_stopped"
+    | "runtime_stopped";
   message: string;
 }
 

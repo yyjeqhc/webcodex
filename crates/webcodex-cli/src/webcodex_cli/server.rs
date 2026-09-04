@@ -5,7 +5,8 @@ use webcodex::SERVER_SYSTEMD_TIMEOUT_STOP_SECS;
 use webcodex_admin::ServerHttpOptions;
 
 use crate::{
-    ServerInitOptions, ServerInstallServiceOptions, ServiceActionKind, ServiceActionOptions,
+    ServerInitOptions, ServerInstallServiceOptions, ServerTunnelOptions, ServiceActionKind,
+    ServiceActionOptions,
 };
 
 use super::{
@@ -28,6 +29,41 @@ pub(crate) struct ServerStatusOptions {
     pub(crate) token_file: Option<PathBuf>,
     pub(crate) service_file: PathBuf,
     pub(crate) json: bool,
+}
+
+pub(crate) async fn run_server_tunnel(opts: ServerTunnelOptions) -> Result<(), String> {
+    let local_server_url = derive_regular_tunnel_server_url(&opts.env_file)?;
+    webcodex::run_regular_server_tunnel(webcodex::RegularServerTunnelOptions {
+        local_server_url,
+        user_token_file: opts.user_token_file,
+    })
+    .await
+}
+
+pub(crate) fn derive_regular_tunnel_server_url(env_file: &Path) -> Result<String, String> {
+    if !env_file.is_file() {
+        return Err(format!("env file {} does not exist", env_file.display()));
+    }
+    let value = read_env_file_value(env_file, "WEBCODEX_ADDR")?
+        .ok_or_else(|| format!("{} does not define WEBCODEX_ADDR", env_file.display()))?;
+    let mut addr = value.trim().parse::<SocketAddr>().map_err(|error| {
+        format!(
+            "WEBCODEX_ADDR {:?} from {} is not a fixed IP socket address: {error}",
+            value.trim(),
+            env_file.display()
+        )
+    })?;
+    if addr.ip().is_unspecified() {
+        addr.set_ip(if addr.is_ipv4() {
+            std::net::Ipv4Addr::LOCALHOST.into()
+        } else {
+            std::net::Ipv6Addr::LOCALHOST.into()
+        });
+    }
+    if !addr.ip().is_loopback() {
+        return Err("server tunnel requires a loopback WEBCODEX_ADDR".to_string());
+    }
+    Ok(format!("http://{addr}"))
 }
 
 pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String> {

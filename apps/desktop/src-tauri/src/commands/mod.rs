@@ -100,6 +100,20 @@ pub async fn stop_quick_share(
 }
 
 #[tauri::command]
+pub async fn start_regular_tunnel(
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    state.lock().await.start_regular_tunnel().await
+}
+
+#[tauri::command]
+pub async fn stop_regular_tunnel(
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    state.lock().await.stop_regular_tunnel().await
+}
+
+#[tauri::command]
 pub async fn stop_local_runtime(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {

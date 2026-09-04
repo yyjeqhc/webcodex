@@ -238,14 +238,28 @@ Commands:\n\
   init        Initialize or update Server configuration\n\
   install     Install, enable, and start the Linux systemd socket/service pair\n\
   run         Run webcodex-server directly in the foreground\n\
+  tunnel      Run a regular local Server OpenAI Secure Tunnel in the foreground\n\
   start       Start the Linux listener socket, then the Server service\n\
   stop        Stop Linux socket activation and the Server service\n\
   restart     Restart only the Linux Server service while the socket stays active\n\
   status      Check socket/service state, HTTP reachability, and build revisions\n\
   logs        Read bounded Linux Server service journal logs or explicitly follow them\n\
   uninstall   Remove only the Linux systemd socket/service pair; requires --confirm\n\n\
-Windows supports `server init` and foreground `server run`; WebCodex-managed Windows Server services are not supported yet.\n\
+Windows supports `server init`, foreground `server run`, and `server tunnel`; WebCodex-managed Windows Server services are not supported yet.\n\
 For start/stop/restart/logs/uninstall, --service-file PATH targets a custom managed service unit and derives its sibling .socket.\n"
+}
+
+pub(crate) fn server_tunnel_usage() -> &'static str {
+    "Usage: webcodex server tunnel --provider openai --env-file PATH --user-token-file PATH --json --stop-on-stdin-eof\n\n\
+Run the canonical OpenAI Secure Tunnel for an already-running local WebCodex Server.\n\n\
+Options:\n\
+  --provider openai          Required provider; regular Cloudflare remains a separate future contract\n\
+  --env-file PATH            Local Server env file used only to derive its loopback address\n\
+  --user-token-file PATH     Protected WebCodex user token file; token contents never enter argv/output\n\
+  --json                     Emit the safe machine readiness event\n\
+  --stop-on-stdin-eof        Stop when the owning integration closes stdin\n\
+  -h, --help                 Print help and exit\n\n\
+The ready event contains only provider/readiness/clipboard metadata. Tunnel and WebCodex credentials are never printed.\n"
 }
 
 pub(crate) fn server_init_usage() -> &'static str {

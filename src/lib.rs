@@ -81,7 +81,10 @@ pub(crate) use runner_http::{
     shell_file_op, shell_job, shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list,
     shell_run, RunnerRegistry,
 };
-pub use startup::{is_project_command, run_project_command, CliCommandOutput};
+pub use startup::{
+    is_project_command, run_project_command, run_regular_server_tunnel, CliCommandOutput,
+    RegularServerTunnelOptions,
+};
 
 // ============================================================================
 // Main

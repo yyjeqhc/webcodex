@@ -1,23 +1,26 @@
 import type { DesktopState } from "../../models/topology";
+import { useLocale } from "../../i18n/locale";
+import { projectReadinessLabel } from "../../i18n/presentation";
 
 export function ProjectsPanel({ state }: { state: DesktopState }) {
+  const { t } = useLocale();
   return (
-    <section className="page-section">
-      <div className="eyebrow">Projects</div>
-      <h1>Projects on this computer</h1>
-      <p className="lede">Desktop only manages folders you explicitly choose. It does not scan sibling repositories or the whole disk.</p>
+    <section className="page-section" aria-labelledby="projects-title" data-webcodex-page="projects">
+      <div className="eyebrow">{t("project.eyebrow")}</div>
+      <h1 id="projects-title">{t("project.title")}</h1>
+      <p className="lede">{t("project.description")}</p>
       {state.project ? (
-        <article className="detail-card">
-          <span className="section-kicker">Configured project</span>
+        <article className="detail-card" aria-labelledby="configured-project-title">
+          <h2 id="configured-project-title" className="section-title">{t("project.configured")}</h2>
           <strong>{state.project.path}</strong>
           <dl className="detail-list">
-            <div><dt>Status</dt><dd>{state.readiness.project.replaceAll("_", " ")}</dd></div>
-            <div><dt>Allowed root</dt><dd>{state.project.allowed_root}</dd></div>
-            <div><dt>Git</dt><dd>{state.project.is_git_repository ? "Repository detected" : "Not required"}</dd></div>
+            <div><dt>{t("project.status")}</dt><dd>{projectReadinessLabel(state.readiness.project, t)}</dd></div>
+            <div><dt>{t("project.allowedRoot")}</dt><dd>{state.project.allowed_root}</dd></div>
+            <div><dt>{t("project.git")}</dt><dd>{state.project.is_git_repository ? t("project.gitDetected") : t("project.gitNotRequired")}</dd></div>
           </dl>
         </article>
       ) : (
-        <div className="empty-state">No project has been configured yet.</div>
+        <div className="empty-state">{t("project.none")}</div>
       )}
     </section>
   );

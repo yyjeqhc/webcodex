@@ -1,4 +1,12 @@
 import type { DesktopState } from "../../models/topology";
+import { useLocale } from "../../i18n/locale";
+import {
+  projectReadinessLabel,
+  readinessNextAction,
+  readinessSummary,
+  runnerReadinessLabel,
+  serverReadinessLabel,
+} from "../../i18n/presentation";
 
 interface DashboardProps {
   state: DesktopState;
@@ -15,71 +23,93 @@ export function Dashboard({
   onStopQuickShare,
   onStopRuntime,
 }: DashboardProps) {
+  const { t } = useLocale();
   const isQuickShare = state.topology?.experience === "quick_share";
+  const summary = readinessSummary(state.readiness.summary_kind, state.readiness.summary, t);
+  const nextAction = readinessNextAction(
+    state.readiness.next_action_kind,
+    state.readiness.next_action,
+    t,
+  );
   return (
-    <section className="page-section">
+    <section
+      className="page-section"
+      aria-labelledby="home-title"
+      aria-busy={refreshing}
+      data-webcodex-page="home"
+    >
       <div className="page-heading-row">
         <div>
-          <div className="eyebrow">Home</div>
-          <h1>WebCodex</h1>
-          <p className="lede">{state.readiness.summary}</p>
+          <div className="eyebrow">{t("home.eyebrow")}</div>
+          <h1 id="home-title">WebCodex</h1>
+          <p className="lede">{summary}</p>
         </div>
-        <button className="secondary-button" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "Checking…" : "Refresh"}
+        <button
+          className="secondary-button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          data-webcodex-action="refresh-runtime"
+        >
+          {refreshing ? t("home.checking") : t("home.refresh")}
         </button>
       </div>
 
       <div className="status-grid">
         <StatusCard
-          title="Service"
-          value={serviceLabel(state)}
+          title={t("home.service")}
+          value={serviceLabel(state, t)}
           state={state.readiness.server}
-          explanation={serviceExplanation(state)}
+          explanation={serviceExplanation(state, t)}
         />
         <StatusCard
-          title="Runner"
-          value={runnerLabel(state.readiness.runner)}
+          title={t("home.runner")}
+          value={runnerReadinessLabel(state.readiness.runner, t)}
           state={state.readiness.runner}
-          explanation="The Runner executes work for projects on this computer."
+          explanation={t("home.runnerExplanation")}
         />
         <StatusCard
-          title="Projects"
-          value={state.readiness.project === "ready" ? "1 ready" : projectLabel(state.readiness.project)}
+          title={t("home.projects")}
+          value={state.readiness.project === "ready" ? t("home.projectReady") : projectReadinessLabel(state.readiness.project, t)}
           state={state.readiness.project}
-          explanation={state.project?.path ?? "No project selected"}
+          explanation={state.project?.path ?? t("home.noProject")}
         />
         <StatusCard
-          title="ChatGPT Connection"
-          value={connectionLabel(state)}
+          title={t("home.connection")}
+          value={connectionLabel(state, t)}
           state={state.readiness.exposure}
-          explanation={connectionExplanation(state)}
+          explanation={connectionExplanation(state, t)}
         />
       </div>
 
-      <div className={`readiness-banner ${state.readiness.ready_for_chatgpt ? "ready" : "pending"}`}>
+      <div
+        className={`readiness-banner ${state.readiness.ready_for_chatgpt ? "ready" : "pending"}`}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         <div>
-          <span className="section-kicker">Overall</span>
-          <strong>{state.readiness.ready_for_chatgpt ? "Ready to use" : state.readiness.summary}</strong>
+          <span className="section-kicker">{t("home.overall")}</span>
+          <strong>{state.readiness.ready_for_chatgpt ? t("home.readyToUse") : summary}</strong>
         </div>
-        {state.readiness.next_action && <span>{state.readiness.next_action}</span>}
+        {nextAction && <span>{nextAction}</span>}
       </div>
 
       {state.quick_share && (
         <div className="handoff-card">
           <div>
-            <span className="section-kicker">Quick Share handoff</span>
-            <strong>{state.quick_share.ready_for_chatgpt ? "Connection handoff ready" : "Handoff needs action"}</strong>
+            <span className="section-kicker">{t("home.quickShareHandoff")}</span>
+            <strong>{state.quick_share.ready_for_chatgpt ? t("home.handoffReady") : t("home.handoffAction")}</strong>
             {state.quick_share.mcp_url && <code>{state.quick_share.mcp_url}</code>}
-            <span>{quickShareClipboardLabel(state.quick_share.clipboard_state, state.quick_share.clipboard_contains)}</span>
+            <span>{quickShareClipboardLabel(state.quick_share.clipboard_state, state.quick_share.clipboard_contains, t)}</span>
           </div>
-          <button className="danger-button" onClick={onStopQuickShare}>Stop Share</button>
+          <button className="danger-button" onClick={onStopQuickShare} data-webcodex-action="stop-quick-share">{t("home.stopShare")}</button>
         </div>
       )}
 
       {!isQuickShare && state.topology && (
         <div className="runtime-actions">
-          <span>Desktop stops only processes that it started. Existing user-managed processes are left alone.</span>
-          <button className="secondary-button" onClick={onStopRuntime}>Stop Desktop-owned runtime</button>
+          <span>{t("home.runtimeOwnership")}</span>
+          <button className="secondary-button" onClick={onStopRuntime} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
         </div>
       )}
     </section>
@@ -101,49 +131,43 @@ function StatusCard({
   return (
     <article className="status-card">
       <span className="section-kicker">{title}</span>
-      <div className="status-value"><i className={`status-dot ${tone}`} />{value}</div>
+      <div className="status-value"><i className={`status-dot ${tone}`} aria-hidden="true" />{value}</div>
       <p>{explanation}</p>
     </article>
   );
 }
 
-function serviceLabel(state: DesktopState) {
-  if (state.readiness.server === "ready") return state.topology?.server.kind === "remote" ? "Connected" : "Running";
-  return state.readiness.server.replaceAll("_", " ");
+type Translate = ReturnType<typeof useLocale>["t"];
+
+function serviceLabel(state: DesktopState, t: Translate) {
+  if (state.readiness.server === "ready" && state.topology?.server.kind === "remote") return t("common.connected");
+  return serverReadinessLabel(state.readiness.server, t);
 }
 
-function serviceExplanation(state: DesktopState) {
-  if (state.topology?.server.kind === "remote") return `Existing Server · ${state.topology.server.url}`;
-  return "WebCodex Service on this computer.";
+function serviceExplanation(state: DesktopState, t: Translate) {
+  if (state.topology?.server.kind === "remote") return t("home.serviceRemote", { url: state.topology.server.url });
+  return t("home.serviceLocal");
 }
 
-function runnerLabel(value: string) {
-  return value === "ready" ? "Connected" : value.replaceAll("_", " ");
+function quickShareClipboardLabel(state: string, contains: string, t: Translate) {
+  if (state !== "copied") return t("clipboard.unavailable");
+  if (contains === "tunnel_id") return t("clipboard.tunnelId");
+  if (contains === "bearer_credential") return t("clipboard.bearer");
+  if (contains === "sensitive_mcp_url") return t("clipboard.sensitiveUrl");
+  return t("clipboard.copied");
 }
 
-function projectLabel(value: string) {
-  return value.replaceAll("_", " ");
-}
-
-function quickShareClipboardLabel(state: string, contains: string) {
-  if (state !== "copied") return "Clipboard handoff is unavailable.";
-  if (contains === "tunnel_id") return "OpenAI Tunnel handoff copied to the clipboard.";
-  if (contains === "bearer_credential") return "Temporary connection credential copied to the clipboard.";
-  if (contains === "sensitive_mcp_url") return "Temporary connection URL copied to the clipboard.";
-  return "Connection handoff copied to the clipboard.";
-}
-
-function connectionLabel(state: DesktopState) {
+function connectionLabel(state: DesktopState, t: Translate) {
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return "Local only";
+  if (!exposure || exposure.kind === "none") return t("common.localOnly");
   if (exposure.kind === "cloudflare") return "Cloudflare";
   if (exposure.kind === "open_ai_tunnel") return "OpenAI Secure Tunnel";
   return "Existing HTTPS";
 }
 
-function connectionExplanation(state: DesktopState) {
-  if (state.readiness.exposure === "remote_ready") return "The Server endpoint is ready for a ChatGPT connection.";
-  if (state.readiness.exposure === "local_ready") return "Runtime is healthy; external reachability has not been configured.";
-  return "External reachability is not fully verified.";
+function connectionExplanation(state: DesktopState, t: Translate) {
+  if (state.readiness.exposure === "remote_ready") return t("home.connectionRemoteReady");
+  if (state.readiness.exposure === "local_ready") return t("home.connectionLocalReady");
+  return t("home.connectionUnverified");
 }
 

@@ -1,19 +1,22 @@
 import type { ActivityEntry } from "../../models/topology";
+import { useLocale } from "../../i18n/locale";
+import { activityMessage, activitySource } from "../../i18n/presentation";
 
 export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
+  const { t, formatTime } = useLocale();
   return (
-    <section className="page-section">
-      <div className="eyebrow">Activity</div>
-      <h1>Recent runtime activity</h1>
-      <p className="lede">A bounded, secret-redacted history of Desktop lifecycle events. Raw terminal output is not mirrored into this view.</p>
+    <section className="page-section" aria-labelledby="activity-title" data-webcodex-page="activity">
+      <div className="eyebrow">{t("activity.eyebrow")}</div>
+      <h1 id="activity-title">{t("activity.title")}</h1>
+      <p className="lede">{t("activity.description")}</p>
       <div className="activity-list">
-        {activity.length === 0 && <div className="empty-state">No Desktop runtime activity yet.</div>}
+        {activity.length === 0 && <div className="empty-state">{t("activity.empty")}</div>}
         {[...activity].reverse().map((entry) => (
           <article className="activity-row" key={entry.sequence}>
-            <i className={`status-dot ${entry.level === "error" ? "error" : entry.level === "warning" ? "pending" : "unknown"}`} />
+            <i className={`status-dot ${entry.level === "error" ? "error" : entry.level === "warning" ? "pending" : "unknown"}`} aria-hidden="true" />
             <div>
-              <strong>{entry.message}</strong>
-              <span>{entry.source.replaceAll("_", " ")} · {new Date(entry.timestamp_ms).toLocaleTimeString()}</span>
+              <strong>{activityMessage(entry, t)}</strong>
+              <span>{activitySource(entry.source, t)} · {formatTime(entry.timestamp_ms)}</span>
             </div>
           </article>
         ))}

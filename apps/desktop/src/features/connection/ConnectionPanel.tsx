@@ -1,51 +1,250 @@
-import type { DesktopState } from "../../models/topology";
+import { useState } from "react";
+import { desktopApi } from "../../lib/desktop-api";
+import type { DesktopError, DesktopState } from "../../models/topology";
+import { useLocale } from "../../i18n/locale";
+import {
+  desktopErrorPresentation,
+  normalizeDesktopError,
+} from "../../i18n/presentation";
 
-export function ConnectionPanel({ state }: { state: DesktopState }) {
+type RegularProvider = "local" | "openai" | "cloudflare";
+
+export function ConnectionPanel({
+  state,
+  onState,
+}: {
+  state: DesktopState;
+  onState: (state: DesktopState) => void;
+}) {
+  const { t } = useLocale();
+  const [provider, setProvider] = useState<RegularProvider>(
+    state.regular_tunnel ? "openai" : "local",
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<DesktopError | null>(null);
+  const topology = state.topology;
+
+  const run = async (operation: () => Promise<DesktopState>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      onState(await operation());
+    } catch (value) {
+      setError(normalizeDesktopError(value));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (topology?.server.kind === "remote") {
+    return (
+      <section className="page-section" aria-labelledby="connection-title" data-webcodex-page="connection">
+        <PageHeading />
+        <article className="detail-card" aria-labelledby="remote-server-title">
+          <h2 id="remote-server-title">{t("connection.remoteServer")}</h2>
+          <strong>{topology.server.url}</strong>
+          <dl className="detail-list">
+            <div><dt>Runner</dt><dd>{t("connection.runnerThisComputer")}</dd></div>
+            <div><dt>{t("connection.methods")}</dt><dd>{t("connection.externalManagedRemote")}</dd></div>
+          </dl>
+        </article>
+      </section>
+    );
+  }
+
+  if (topology?.experience === "quick_share") {
+    return (
+      <section className="page-section" aria-labelledby="connection-title" data-webcodex-page="connection">
+        <PageHeading />
+        <article className="detail-card">
+          <span className="section-kicker">Quick Share</span>
+          <strong>{currentConnection(state, t)}</strong>
+          <p>{t("connection.quickShareManaged")}</p>
+        </article>
+      </section>
+    );
+  }
+
+  const tunnelEstablished = state.regular_tunnel?.status === "ready";
+  const tunnelReady = tunnelEstablished && state.readiness.ready_for_chatgpt;
+  const tunnelError = state.regular_tunnel?.status === "error";
+  const canStart = state.readiness.runtime_ready && state.openai_tunnel_configured && provider === "openai";
+
   return (
-    <section className="page-section">
-      <div className="eyebrow">Connection</div>
-      <h1>ChatGPT reachability</h1>
-      <p className="lede">Reachability is separate from WebCodex permissions and execution mode. A Tunnel does not grant additional authority.</p>
+    <section
+      className="page-section"
+      aria-labelledby="connection-title"
+      aria-busy={busy}
+      data-webcodex-page="connection"
+    >
+      <PageHeading />
 
-      <div className="connection-current detail-card">
-        <span className="section-kicker">Current</span>
-        <strong>{currentConnection(state)}</strong>
-        <p>{state.readiness.exposure === "remote_ready" ? "External endpoint readiness is verified." : "No verified external endpoint is active for the regular Service."}</p>
-      </div>
+      <article className="connection-current detail-card" aria-labelledby="connection-current-title">
+        <h2 id="connection-current-title" className="section-title">{t("connection.current")}</h2>
+        <div className="status-value">
+          <i className={`status-dot ${tunnelReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
+          <strong>{tunnelReady ? t("common.connected") : currentConnection(state, t)}</strong>
+        </div>
+        <p>{tunnelReady ? t("connection.verified") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
+      </article>
 
-      <div className="section-heading">
-        <div><span className="section-kicker">Regular Service tunnels</span><h2>Next desktop slice</h2></div>
-        <span className="planned-badge">D2</span>
-      </div>
-      <div className="two-column-grid">
-        <article className="detail-card muted-card">
-          <strong>OpenAI Secure MCP Tunnel</strong>
-          <p>{state.openai_tunnel_configured ? "Required environment is configured; credential values stay in Rust and are never returned here." : "Required environment is not currently detected."}</p>
-          <span>Regular Server lifecycle integration is intentionally not faked in D1.</span>
+      {tunnelEstablished ? (
+        <article className="handoff-card" aria-labelledby="regular-tunnel-ready-title">
+          <div>
+            <span className="section-kicker">OpenAI Secure Tunnel</span>
+            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
+            <span>{state.regular_tunnel?.clipboard_state === "copied" ? t("connection.clipboardReady") : t("clipboard.unavailable")}</span>
+          </div>
+          <button
+            className="danger-button"
+            disabled={busy}
+            onClick={() => void run(desktopApi.stopRegularTunnel)}
+            data-webcodex-action="stop-regular-tunnel"
+          >
+            {busy ? t("common.checking") : t("connection.stopTunnel")}
+          </button>
         </article>
-        <article className="detail-card muted-card">
-          <strong>Cloudflare</strong>
-          <p>Quick Share already reuses the canonical Cloudflare lifecycle.</p>
-          <span>Regular Server foreground tunnel ownership remains D2.</span>
-        </article>
-      </div>
+      ) : (
+        <form
+          className="connection-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canStart) void run(desktopApi.startRegularTunnel);
+          }}
+        >
+          <fieldset className="provider-row provider-fieldset" role="radiogroup" aria-labelledby="regular-provider-legend">
+            <legend id="regular-provider-legend">{t("connection.methods")}</legend>
+            <ProviderOption
+              id="regular-provider-local"
+              value="local"
+              checked={provider === "local"}
+              onChange={setProvider}
+              title={t("common.localOnly")}
+              description={t("connection.localDescription")}
+              disabled={busy}
+            />
+            <ProviderOption
+              id="regular-provider-openai"
+              value="openai"
+              checked={provider === "openai"}
+              onChange={setProvider}
+              title="OpenAI Secure Tunnel"
+              description={state.openai_tunnel_configured ? t("connection.openaiDescription") : t("connection.openaiNotConfigured")}
+              disabled={busy || !state.openai_tunnel_configured}
+            />
+            <ProviderOption
+              id="regular-provider-cloudflare"
+              value="cloudflare"
+              checked={provider === "cloudflare"}
+              onChange={setProvider}
+              title="Cloudflare"
+              description={t("connection.cloudflareQuickOnly")}
+              disabled
+            />
+          </fieldset>
 
-      <details className="advanced-enrollment detail-card">
-        <summary>Advanced enrollment: shared key / existing profile</summary>
-        <p>
-          The existing <code>webcodex connect</code> profile remains the lifecycle owner for shared-key setups.
-          Desktop D1 does not duplicate its credential storage and never treats a Server bootstrap token as a Runner or MCP credential.
-        </p>
-      </details>
+          {!state.readiness.runtime_ready && <p className="inline-note">{t("connection.runtimeRequired")}</p>}
+
+          {error && <LocalizedError error={error} />}
+
+          {provider === "openai" && (
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={busy || !canStart}
+              data-webcodex-action="start-regular-tunnel"
+            >
+              {busy ? t("connection.tunnelStarting") : t("connection.startTunnel")}
+            </button>
+          )}
+          {provider === "local" && state.regular_tunnel && (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void run(desktopApi.stopRegularTunnel)}
+              data-webcodex-action="stop-regular-tunnel"
+            >
+              {busy ? t("common.checking") : t("connection.useLocalOnly")}
+            </button>
+          )}
+        </form>
+      )}
     </section>
   );
 }
 
-function currentConnection(state: DesktopState) {
+function PageHeading() {
+  const { t } = useLocale();
+  return (
+    <>
+      <div className="eyebrow">{t("connection.eyebrow")}</div>
+      <h1 id="connection-title">{t("connection.title")}</h1>
+      <p className="lede">{t("connection.description")}</p>
+    </>
+  );
+}
+
+function ProviderOption({
+  id,
+  value,
+  checked,
+  onChange,
+  title,
+  description,
+  disabled,
+}: {
+  id: string;
+  value: RegularProvider;
+  checked: boolean;
+  onChange: (value: RegularProvider) => void;
+  title: string;
+  description: string;
+  disabled: boolean;
+}) {
+  const descriptionId = `${id}-description`;
+  return (
+    <div className={`provider-option ${checked ? "selected" : ""}`}>
+      <input
+        id={id}
+        type="radio"
+        name="regular-connection-provider"
+        value={value}
+        checked={checked}
+        onChange={() => onChange(value)}
+        aria-describedby={descriptionId}
+        disabled={disabled}
+      />
+      <label htmlFor={id}>
+        <strong>{title}</strong>
+        <span id={descriptionId}>{description}</span>
+      </label>
+    </div>
+  );
+}
+
+function LocalizedError({ error }: { error: DesktopError }) {
+  const { t } = useLocale();
+  const presentation = desktopErrorPresentation(error, t);
+  return (
+    <div className="error-card" role="alert">
+      <strong>{presentation.title}</strong>
+      <span>{presentation.action}</span>
+      <details>
+        <summary>{t("common.details")}</summary>
+        <code>{error.code}</code>
+        <p>{error.message}</p>
+      </details>
+    </div>
+  );
+}
+
+function currentConnection(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
+  if (state.regular_tunnel) return "OpenAI Secure Tunnel";
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return "Local only";
+  if (!exposure || exposure.kind === "none") return t("common.localOnly");
   if (exposure.kind === "existing_https") return `Existing HTTPS · ${exposure.url}`;
   if (exposure.kind === "cloudflare") return "Cloudflare Quick Share";
-  return "OpenAI Secure Tunnel Quick Share";
+  return "OpenAI Secure Tunnel";
 }
 

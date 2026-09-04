@@ -10,6 +10,8 @@ mod client_handoff_service;
 mod cloudflared_service;
 #[path = "project_entry_openai_tunnel.rs"]
 mod openai_tunnel_service;
+#[path = "project_entry_regular_tunnel.rs"]
+mod regular_tunnel_service;
 #[path = "project_entry_setup.rs"]
 mod setup_service;
 #[path = "project_entry_share.rs"]
@@ -18,6 +20,7 @@ mod share_service;
 #[path = "project_entry_windows.rs"]
 mod windows_private_state;
 
+pub(crate) use regular_tunnel_service::{run_regular_server_tunnel, RegularServerTunnelOptions};
 use setup_service::{
     create_private_dir, local_readiness, prepare_runtime_private_state, read_private_value,
     read_project_agent_token, read_project_credential, read_toml_optional,

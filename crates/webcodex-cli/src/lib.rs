@@ -45,15 +45,16 @@ use webcodex_cli::{
     run_login, run_logout, run_ops_command, run_pairing_create, run_project_register,
     run_runner_install_service, run_runner_service, run_runner_status,
     run_runner_token_create_local, run_server_init, run_server_install_service, run_server_service,
-    run_server_status, run_status, run_token_create_local, runner_config_for_scope,
-    runner_init_usage, runner_install_service_usage, runner_service_file_for_scope,
-    runner_status_usage, runner_usage, server_init_usage, server_install_service_usage,
-    server_status_usage, server_usage, service_unit_name, status_usage, system_user_home,
-    system_user_is_root, usage, validate_client_profile, validate_service_file_scope,
-    write_connect_result, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions,
-    LogoutOptions, OpsCommand, OpsCommonOptions, OpsRunnerOptions, OpsSmokePreflightOptions,
-    ProjectRegisterOptions, ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES,
-    RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    run_server_status, run_server_tunnel, run_status, run_token_create_local,
+    runner_config_for_scope, runner_init_usage, runner_install_service_usage,
+    runner_service_file_for_scope, runner_status_usage, runner_usage, server_init_usage,
+    server_install_service_usage, server_status_usage, server_tunnel_usage, server_usage,
+    service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
+    validate_client_profile, validate_service_file_scope, write_connect_result, ConnectAuth,
+    ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions,
+    OpsRunnerOptions, OpsSmokePreflightOptions, ProjectRegisterOptions, ServerStatusOptions,
+    ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE,
+    SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -124,6 +125,7 @@ enum CliAction {
     ServerInit(ServerInitOptions),
     ServerInstall(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
+    ServerTunnel(ServerTunnelOptions),
     ServerRun(InternalRunOptions),
     ServerService(ServiceActionOptions),
     Exit {
@@ -183,6 +185,12 @@ struct ServerInitOptions {
     open: bool,
     overwrite: bool,
     json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerTunnelOptions {
+    env_file: PathBuf,
+    user_token_file: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1518,6 +1526,7 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
             "init" => server_init_usage(),
             "install" => server_install_service_usage(),
             "run" => "Usage: webcodex server run [--env-file PATH] [--help|--version]\n\nRun webcodex-server directly in the foreground. --env-file passes the exact path through WEBCODEX_ENV_FILE; the Server remains the authoritative env-file parser.\n",
+            "tunnel" => server_tunnel_usage(),
             "start" | "stop" | "restart" => "Usage: webcodex server <start|stop|restart>\n",
             "status" => server_status_usage(),
             "logs" => "Usage: webcodex server logs [--lines N] [--since VALUE] [--follow]\n",
@@ -1535,6 +1544,7 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
             CliAction::ServerInstall,
         ),
         "run" => result_action(parse_server_run(&args[1..]), CliAction::ServerRun),
+        "tunnel" => result_action(parse_server_tunnel(&args[1..]), CliAction::ServerTunnel),
         "status" => result_action(parse_server_status(&args[1..]), CliAction::ServerStatus),
         "start" | "stop" | "restart" | "logs" | "uninstall" => result_action(
             parse_server_service_action(command, &args[1..]),
@@ -1584,6 +1594,43 @@ fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
         env: env_file
             .map(|path| vec![(OsString::from("WEBCODEX_ENV_FILE"), path.into_os_string())])
             .unwrap_or_default(),
+    })
+}
+
+fn parse_server_tunnel(args: &[String]) -> Result<ServerTunnelOptions, String> {
+    let mut provider: Option<String> = None;
+    let mut env_file: Option<PathBuf> = None;
+    let mut user_token_file: Option<PathBuf> = None;
+    let mut json = false;
+    let mut stop_on_stdin_eof = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--provider" => provider = Some(next_value(&mut iter, arg)?),
+            "--env-file" => env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--user-token-file" => {
+                user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?));
+            }
+            "--json" => json = true,
+            "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
+            other => return Err(format!("unknown server tunnel option: {other}")),
+        }
+    }
+    if provider.as_deref() != Some("openai") {
+        return Err("--provider openai is required for regular Server Tunnel".to_string());
+    }
+    let env_file = env_file.ok_or_else(|| "--env-file is required".to_string())?;
+    let user_token_file =
+        user_token_file.ok_or_else(|| "--user-token-file is required".to_string())?;
+    if !json {
+        return Err("server tunnel currently requires --json".to_string());
+    }
+    if !stop_on_stdin_eof {
+        return Err("server tunnel currently requires --stop-on-stdin-eof".to_string());
+    }
+    Ok(ServerTunnelOptions {
+        env_file,
+        user_token_file,
     })
 }
 
@@ -2616,6 +2663,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        CliAction::ServerTunnel(opts) => match run_server_tunnel(opts).await {
+            Ok(()) => std::process::exit(0),
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         CliAction::RunnerService(opts) => match run_runner_service(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);

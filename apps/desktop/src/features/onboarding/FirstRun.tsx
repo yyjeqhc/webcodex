@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi, type QuickShareProvider } from "../../lib/desktop-api";
+import { useLocale } from "../../i18n/locale";
+import {
+  desktopErrorPresentation,
+  normalizeDesktopError,
+} from "../../i18n/presentation";
 import type {
   DesktopError,
   DesktopState,
@@ -15,6 +20,7 @@ interface FirstRunProps {
 }
 
 export function FirstRun({ state, onState }: FirstRunProps) {
+  const { t } = useLocale();
   const initialMode = useMemo<SetupMode | null>(() => {
     if (state.topology?.experience === "quick_share") return "share";
     if (state.topology?.server.kind === "local") return "local";
@@ -45,13 +51,13 @@ export function FirstRun({ state, onState }: FirstRunProps) {
     const selection = await open({
       directory: true,
       multiple: false,
-      title: "Choose a project folder",
+      title: t("setup.chooseProject"),
     });
     if (typeof selection !== "string") return;
     try {
       setProject(await desktopApi.inspectProject(selection));
     } catch (value) {
-      setError(normalizeError(value));
+      setError(normalizeDesktopError(value));
     }
   };
 
@@ -75,7 +81,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
         onState(await desktopApi.startQuickShare(project.path, provider));
       }
     } catch (value) {
-      setError(normalizeError(value));
+      setError(normalizeDesktopError(value));
     } finally {
       setBusy(false);
     }
@@ -83,63 +89,79 @@ export function FirstRun({ state, onState }: FirstRunProps) {
 
   if (!mode) {
     return (
-      <section className="first-run">
-        <div className="eyebrow">Welcome to WebCodex</div>
-        <h1>How do you want to use this computer?</h1>
-        <p className="lede">
-          Desktop manages the Service, Runner, projects, and ChatGPT connection
-          without requiring PowerShell setup.
-        </p>
+      <section className="first-run" aria-labelledby="first-run-title" data-webcodex-page="first-run">
+        <div className="eyebrow">{t("first.welcome")}</div>
+        <h1 id="first-run-title">{t("first.title")}</h1>
+        <p className="lede">{t("first.description")}</p>
         <div className="entry-grid">
-          <button className="entry-card recommended" onClick={() => setMode("local")}>
-            <span className="entry-badge">Recommended</span>
-            <strong>Use WebCodex on this computer</strong>
-            <span>Run the WebCodex Service and Runner here, then add projects.</span>
+          <button className="entry-card recommended" onClick={() => setMode("local")} data-webcodex-action="choose-local-setup">
+            <span className="entry-badge">{t("first.recommended")}</span>
+            <strong>{t("first.localTitle")}</strong>
+            <span>{t("first.localDescription")}</span>
           </button>
-          <button className="entry-card" onClick={() => setMode("remote")}>
-            <strong>Connect this computer to an existing Server</strong>
-            <span>Keep the Server remote and run only this computer&apos;s Runner here.</span>
+          <button className="entry-card" onClick={() => setMode("remote")} data-webcodex-action="choose-remote-setup">
+            <strong>{t("first.remoteTitle")}</strong>
+            <span>{t("first.remoteDescription")}</span>
           </button>
-          <button className="entry-card" onClick={() => setMode("share")}>
-            <strong>Quick Share a project</strong>
-            <span>Start a temporary one-project session that ends when you stop it.</span>
+          <button className="entry-card" onClick={() => setMode("share")} data-webcodex-action="choose-quick-share-setup">
+            <strong>{t("first.shareTitle")}</strong>
+            <span>{t("first.shareDescription")}</span>
           </button>
         </div>
       </section>
     );
   }
 
+  const presentation = error ? desktopErrorPresentation(error, t) : null;
+  const serverInvalid = error?.code === "server_url_invalid" || error?.code === "server_unreachable";
+  const pairingInvalid = error?.code === "pairing_code_invalid";
+
   return (
-    <section className="setup-shell">
-      <button className="back-button" onClick={() => !busy && setMode(null)}>
-        ← All setup options
+    <form
+      className="setup-shell"
+      aria-labelledby="setup-title"
+      aria-busy={busy}
+      data-webcodex-page="setup"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void run();
+      }}
+    >
+      <button type="button" className="back-button" onClick={() => !busy && setMode(null)} data-webcodex-action="show-setup-options">
+        {t("setup.back")}
       </button>
-      <div className="eyebrow">{modeLabel(mode)}</div>
-      <h1>{setupTitle(mode)}</h1>
-      <p className="lede">{setupDescription(mode)}</p>
+      <div className="eyebrow">{modeLabel(mode, t)}</div>
+      <h1 id="setup-title">{setupTitle(mode, t)}</h1>
+      <p className="lede">{setupDescription(mode, t)}</p>
 
       {mode === "remote" && (
         <div className="form-card">
-          <label>
-            Server URL
+          <div className="field-group">
+            <label htmlFor="setup-server-url">{t("setup.serverUrl")}</label>
             <input
+              id="setup-server-url"
               type="url"
               value={serverUrl}
               onChange={(event) => setServerUrl(event.target.value)}
               placeholder="https://webcodex.example.com"
               disabled={busy}
+              aria-describedby="setup-server-url-help"
+              aria-invalid={serverInvalid || undefined}
+              aria-errormessage={serverInvalid ? "setup-error" : undefined}
             />
-          </label>
+            <span className="field-help" id="setup-server-url-help">{t("setup.serverUrlHelp")}</span>
+          </div>
           {canReuseRemoteEnrollment ? (
             <div className="enrollment-note">
-              <span className="section-kicker">Enrollment</span>
-              <strong>Existing connection will be reused</strong>
-              <span>No new login code is required for this Server and project.</span>
+              <span className="section-kicker">{t("setup.enrollment")}</span>
+              <strong>{t("setup.reuseEnrollment")}</strong>
+              <span>{t("setup.reuseEnrollmentHelp")}</span>
             </div>
           ) : (
-            <label>
-              One-time login code
+            <div className="field-group">
+              <label htmlFor="setup-pairing-code">{t("setup.pairingCode")}</label>
               <input
+                id="setup-pairing-code"
                 type="password"
                 value={pairingCode}
                 onChange={(event) => setPairingCode(event.target.value)}
@@ -147,137 +169,142 @@ export function FirstRun({ state, onState }: FirstRunProps) {
                 autoComplete="off"
                 spellCheck={false}
                 disabled={busy}
+                aria-describedby="setup-pairing-code-help"
+                aria-invalid={pairingInvalid || undefined}
+                aria-errormessage={pairingInvalid ? "setup-error" : undefined}
               />
-              <span className="field-help">
-                The code is passed to Rust for this login attempt, then cleared from the UI.
-              </span>
-            </label>
+              <span className="field-help" id="setup-pairing-code-help">{t("setup.pairingCodeHelp")}</span>
+            </div>
           )}
         </div>
       )}
 
       {mode === "share" && (
-        <div className="provider-row" role="radiogroup" aria-label="Quick Share provider">
+        <fieldset className="provider-row provider-fieldset" role="radiogroup" aria-labelledby="quick-share-provider-legend">
+          <legend id="quick-share-provider-legend">{t("setup.providerLegend")}</legend>
           {(["cloudflare", "openai", "none"] as QuickShareProvider[]).map((value) => (
-            <button
+            <div
               className={`provider-option ${provider === value ? "selected" : ""}`}
               key={value}
-              onClick={() => setProvider(value)}
-              disabled={busy}
             >
-              <strong>{providerLabel(value)}</strong>
-              <span>{providerDescription(value)}</span>
-            </button>
+              <input
+                id={`quick-share-provider-${value}`}
+                type="radio"
+                name="quick-share-provider"
+                value={value}
+                checked={provider === value}
+                onChange={() => setProvider(value)}
+                disabled={busy}
+                aria-describedby={`quick-share-provider-${value}-description`}
+                data-webcodex-control={`quick-share-provider-${value}`}
+              />
+              <label htmlFor={`quick-share-provider-${value}`}>
+                <strong>{providerLabel(value, t)}</strong>
+                <span id={`quick-share-provider-${value}-description`}>{providerDescription(value, t)}</span>
+              </label>
+            </div>
           ))}
-        </div>
+        </fieldset>
       )}
 
       <div className="project-picker-card">
         <div>
-          <span className="section-kicker">Project</span>
-          <strong>{project ? project.path : "Choose a project folder"}</strong>
+          <span className="section-kicker">{t("setup.project")}</span>
+          <strong>{project ? project.path : t("setup.chooseProject")}</strong>
           {project && (
             <span className="project-meta">
-              Allowed root: {project.allowed_root} · {project.is_git_repository ? "Git repository" : "Folder"}
+              {t("setup.allowedRoot", {
+                root: project.allowed_root,
+                kind: project.is_git_repository ? t("setup.gitRepository") : t("setup.folder"),
+              })}
             </span>
           )}
         </div>
-        <button className="secondary-button" onClick={chooseProject} disabled={busy}>
-          {project ? "Change folder" : "Choose folder"}
+        <button type="button" className="secondary-button" onClick={chooseProject} disabled={busy} data-webcodex-action="choose-project">
+          {project ? t("setup.changeFolder") : t("setup.chooseFolder")}
         </button>
       </div>
 
       {mode === "remote" && (
         <details className="advanced-enrollment">
-          <summary>Advanced enrollment</summary>
-          <p>
-            Shared key and existing hosted profiles remain owned by the canonical
-            <code> webcodex connect </code> lifecycle. D1 does not copy bootstrap or
-            admin credentials into Desktop. Direct profile handoff is planned for D2.
-          </p>
+          <summary>{t("setup.advancedEnrollment")}</summary>
+          <p>{t("setup.advancedEnrollmentHelp")}</p>
         </details>
       )}
 
       {error && (
-        <div className="error-card" role="alert">
-          <strong>{error.message}</strong>
-          <span>{error.next_action}</span>
-          <code>{error.code}</code>
+        <div className="error-card" role="alert" id="setup-error">
+          <strong>{presentation?.title}</strong>
+          <span>{presentation?.action}</span>
+          <details>
+            <summary>{t("common.details")}</summary>
+            <code>{error.code}</code>
+            <p>{error.message}</p>
+          </details>
         </div>
       )}
 
       <div className="setup-actions">
         <button
+          type="submit"
           className="primary-button"
-          onClick={run}
           disabled={
             busy ||
             !project ||
             (mode === "remote" &&
               (!serverUrl.trim() || (!canReuseRemoteEnrollment && !pairingCode.trim())))
           }
+          data-webcodex-action={mode === "local" ? "configure-local" : mode === "remote" ? "configure-remote" : "start-quick-share"}
         >
-          {busy ? "Checking real readiness…" : actionLabel(mode, canReuseRemoteEnrollment)}
+          {busy ? t("common.checking") : actionLabel(mode, canReuseRemoteEnrollment, t)}
         </button>
         <span className="action-help">
-          {busy ? "Desktop is verifying Service, Runner, and project state." : "No terminal commands required."}
+          {busy ? t("setup.verifying") : t("setup.noTerminal")}
         </span>
       </div>
-    </section>
+    </form>
   );
 }
 
-function normalizeError(value: unknown): DesktopError {
-  if (value && typeof value === "object") {
-    const candidate = value as Partial<DesktopError>;
-    if (candidate.code && candidate.message && candidate.next_action) {
-      return candidate as DesktopError;
-    }
-  }
-  return {
-    code: "desktop_operation_failed",
-    message: "Desktop could not complete the operation.",
-    next_action: "Retry the operation or open Activity for safe diagnostics.",
-  };
+type Translate = ReturnType<typeof useLocale>["t"];
+
+function modeLabel(mode: SetupMode, t: Translate) {
+  return mode === "local" ? t("setup.localLabel") : mode === "remote" ? t("setup.remoteLabel") : t("setup.shareLabel");
 }
 
-function modeLabel(mode: SetupMode) {
-  return mode === "local" ? "This computer" : mode === "remote" ? "Existing Server" : "Temporary session";
-}
-
-function setupTitle(mode: SetupMode) {
+function setupTitle(mode: SetupMode, t: Translate) {
   return mode === "local"
-    ? "Set up WebCodex here"
+    ? t("setup.localTitle")
     : mode === "remote"
-      ? "Connect this computer"
-      : "Quick Share a project";
+      ? t("setup.remoteTitle")
+      : t("setup.shareTitle");
 }
 
-function setupDescription(mode: SetupMode) {
-  if (mode === "local") return "Desktop will prepare a local Service, enroll this Runner once, and verify the selected project.";
-  if (mode === "remote") return "The Server stays remote. Desktop enrolls and supervises only this computer's Runner.";
-  return "Desktop reuses the existing WebCodex share lifecycle and stops the entire temporary session together.";
+function setupDescription(mode: SetupMode, t: Translate) {
+  if (mode === "local") return t("setup.localDescription");
+  if (mode === "remote") return t("setup.remoteDescription");
+  return t("setup.shareDescription");
 }
 
-function actionLabel(mode: SetupMode, canReuseRemoteEnrollment: boolean) {
-  if (mode === "local") return "Set up WebCodex";
-  if (mode === "remote") return canReuseRemoteEnrollment ? "Reconnect computer" : "Connect computer";
-  return "Start Quick Share";
+function actionLabel(mode: SetupMode, canReuseRemoteEnrollment: boolean, t: Translate) {
+  if (mode === "local") return t("setup.setUp");
+  if (mode === "remote") return canReuseRemoteEnrollment ? t("setup.reconnect") : t("setup.connect");
+  return t("setup.startShare");
 }
 
 function sameServerOrigin(left: string, right: string) {
   return left.trim().replace(/\/+$/, "").toLowerCase() === right.trim().replace(/\/+$/, "").toLowerCase();
 }
 
-function providerLabel(provider: QuickShareProvider) {
+function providerLabel(provider: QuickShareProvider, t: Translate) {
   if (provider === "cloudflare") return "Cloudflare";
   if (provider === "openai") return "OpenAI Secure Tunnel";
-  return "Local only";
+  return t("common.localOnly");
 }
 
-function providerDescription(provider: QuickShareProvider) {
-  if (provider === "cloudflare") return "Temporary public HTTPS reachability";
-  if (provider === "openai") return "Private OpenAI tunnel when already configured";
-  return "No external exposure";
+function providerDescription(provider: QuickShareProvider, t: Translate) {
+  if (provider === "cloudflare") return t("provider.cloudflareDescription");
+  if (provider === "openai") return t("provider.openaiDescription");
+  return t("provider.localDescription");
 }
 

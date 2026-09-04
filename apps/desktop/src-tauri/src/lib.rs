@@ -26,6 +26,8 @@ pub fn run() {
             commands::configure_remote_setup,
             commands::start_quick_share,
             commands::stop_quick_share,
+            commands::start_regular_tunnel,
+            commands::stop_regular_tunnel,
             commands::stop_local_runtime,
             commands::get_bounded_activity,
         ])

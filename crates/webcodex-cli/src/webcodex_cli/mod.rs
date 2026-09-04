@@ -97,7 +97,7 @@ pub(crate) use runner_service::{
 };
 pub(crate) use server::{
     run_server_init, run_server_install_service, run_server_service, run_server_status,
-    ServerStatusOptions,
+    run_server_tunnel, ServerStatusOptions,
 };
 pub(crate) use service::{
     control_server_unit_pair, control_service_for_scope, encode_exec_argument,
@@ -126,7 +126,8 @@ pub(crate) use usage::{
     ops_runner_usage, ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
     pairing_create_usage, pairing_usage, project_register_usage, runner_init_usage,
     runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
-    server_install_service_usage, server_status_usage, server_usage, status_usage, usage,
+    server_install_service_usage, server_status_usage, server_tunnel_usage, server_usage,
+    status_usage, usage,
 };
 
 #[cfg(test)]

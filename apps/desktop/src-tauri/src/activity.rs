@@ -14,12 +14,34 @@ pub enum ActivityLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityEventKind {
+    ProcessStarted,
+    ProcessExited,
+    ProcessObservationFailed,
+    ProcessStopping,
+    ProcessStopped,
+    LocalSetupPreparing,
+    LocalRuntimeReady,
+    RemoteConnecting,
+    RemoteConnected,
+    QuickShareStarting,
+    QuickShareReady,
+    QuickShareStopped,
+    RegularTunnelStarting,
+    RegularTunnelReady,
+    RegularTunnelStopped,
+    RuntimeStopped,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityEntry {
     pub sequence: u64,
     pub timestamp_ms: u64,
     pub source: String,
     pub level: ActivityLevel,
+    pub event_kind: ActivityEventKind,
     pub message: String,
 }
 
@@ -35,7 +57,13 @@ struct ActivityInner {
 }
 
 impl ActivityLog {
-    pub fn push(&self, source: impl Into<String>, level: ActivityLevel, message: impl AsRef<str>) {
+    pub fn push(
+        &self,
+        event_kind: ActivityEventKind,
+        source: impl Into<String>,
+        level: ActivityLevel,
+        message: impl AsRef<str>,
+    ) {
         let mut inner = self
             .inner
             .lock()
@@ -51,6 +79,7 @@ impl ActivityLog {
                 .unwrap_or(u64::MAX),
             source: source.into(),
             level,
+            event_kind,
             message: sanitize_message(message.as_ref()),
         };
         inner.entries.push_back(entry);
@@ -135,7 +164,12 @@ mod tests {
     fn activity_history_is_bounded() {
         let log = ActivityLog::default();
         for index in 0..250 {
-            log.push("test", ActivityLevel::Info, format!("message {index}"));
+            log.push(
+                ActivityEventKind::ProcessStarted,
+                "test",
+                ActivityLevel::Info,
+                format!("message {index}"),
+            );
         }
         let entries = log.snapshot();
         assert_eq!(entries.len(), ACTIVITY_LIMIT);

@@ -1,4 +1,4 @@
-use crate::activity::{sanitize_message, ActivityLevel, ActivityLog};
+use crate::activity::{sanitize_message, ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::error::{DesktopError, DesktopResult};
 use crate::platform;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ pub enum ProcessKind {
     LocalServer,
     LocalRunner,
     QuickShare,
+    RegularTunnel,
 }
 
 impl ProcessKind {
@@ -31,6 +32,7 @@ impl ProcessKind {
             Self::LocalServer => "service",
             Self::LocalRunner => "runner",
             Self::QuickShare => "quick_share",
+            Self::RegularTunnel => "regular_tunnel",
         }
     }
 }
@@ -97,7 +99,7 @@ impl ProcessSupervisor {
         }
         self.processes.remove(&kind);
 
-        if kind == ProcessKind::QuickShare {
+        if matches!(kind, ProcessKind::QuickShare | ProcessKind::RegularTunnel) {
             command.stdin(Stdio::piped());
         } else {
             command.stdin(Stdio::null());
@@ -145,6 +147,7 @@ impl ProcessSupervisor {
         let stderr_logs = Arc::clone(&logs);
         let stderr_task = tokio::spawn(drain_stream(stderr, stderr_logs, None, false));
         self.activity.push(
+            ActivityEventKind::ProcessStarted,
             kind.source(),
             ActivityLevel::Info,
             format!(
@@ -184,6 +187,7 @@ impl ProcessSupervisor {
                         ProcessPhase::Failed
                     };
                     self.activity.push(
+                        ActivityEventKind::ProcessExited,
                         kind.source(),
                         if status.success() {
                             ActivityLevel::Info
@@ -197,6 +201,7 @@ impl ProcessSupervisor {
                 Err(_) => {
                     process.phase = ProcessPhase::Failed;
                     self.activity.push(
+                        ActivityEventKind::ProcessObservationFailed,
                         kind.source(),
                         ActivityLevel::Error,
                         "Desktop could not observe the child process state",
@@ -242,16 +247,18 @@ impl ProcessSupervisor {
         ) {
             process.phase = ProcessPhase::Stopping;
             self.activity.push(
+                ActivityEventKind::ProcessStopping,
                 kind.source(),
                 ActivityLevel::Info,
                 "Stopping the Desktop-owned process",
             );
             let pid = process.child.id();
-            let graceful = if kind == ProcessKind::QuickShare {
+            let graceful = if matches!(kind, ProcessKind::QuickShare | ProcessKind::RegularTunnel) {
                 drop(process.child.stdin.take());
-                tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, process.child.wait())
-                    .await
-                    .is_ok()
+                matches!(
+                    tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, process.child.wait()).await,
+                    Ok(Ok(_))
+                )
             } else {
                 false
             };
@@ -266,6 +273,7 @@ impl ProcessSupervisor {
         finish_drain_task(process.stdout_task).await;
         finish_drain_task(process.stderr_task).await;
         self.activity.push(
+            ActivityEventKind::ProcessStopped,
             kind.source(),
             ActivityLevel::Info,
             "Desktop-owned process stopped",
@@ -275,6 +283,7 @@ impl ProcessSupervisor {
     pub async fn stop_all(&mut self) {
         for kind in [
             ProcessKind::QuickShare,
+            ProcessKind::RegularTunnel,
             ProcessKind::LocalRunner,
             ProcessKind::LocalServer,
         ] {
@@ -368,7 +377,44 @@ mod tests {
             ProcessKind::LocalServer,
             ProcessKind::LocalRunner,
             ProcessKind::QuickShare,
+            ProcessKind::RegularTunnel,
         ];
-        assert_eq!(kinds.len(), 3);
+        assert_eq!(kinds.len(), 4);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn regular_tunnel_stop_closes_stdin_for_canonical_graceful_shutdown() {
+        let marker = std::env::temp_dir().join(format!(
+            "webcodex-desktop-regular-tunnel-eof-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let escaped_marker = marker.to_string_lossy().replace('\'', "''");
+        let mut command = Command::new("powershell.exe");
+        command
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(format!(
+                "$null = [Console]::In.ReadToEnd(); Set-Content -LiteralPath '{escaped_marker}' -Value 'eof'"
+            ));
+
+        let activity = ActivityLog::default();
+        let mut supervisor = ProcessSupervisor::new(activity);
+        supervisor
+            .spawn_owned(ProcessKind::RegularTunnel, command, false)
+            .await
+            .expect("start EOF fixture");
+        supervisor.stop(ProcessKind::RegularTunnel).await;
+
+        assert!(
+            marker.is_file(),
+            "regular tunnel child must observe stdin EOF before the graceful stop completes"
+        );
+        let _ = std::fs::remove_file(marker);
     }
 }

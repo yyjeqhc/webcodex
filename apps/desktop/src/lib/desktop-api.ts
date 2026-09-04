@@ -29,6 +29,8 @@ export const desktopApi = {
       request: { projectPath, provider },
     }),
   stopQuickShare: () => invoke<DesktopState>("stop_quick_share"),
+  startRegularTunnel: () => invoke<DesktopState>("start_regular_tunnel"),
+  stopRegularTunnel: () => invoke<DesktopState>("stop_regular_tunnel"),
   stopLocalRuntime: () => invoke<DesktopState>("stop_local_runtime"),
   activity: () => invoke<ActivityEntry[]>("get_bounded_activity"),
 };

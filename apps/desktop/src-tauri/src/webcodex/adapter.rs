@@ -207,6 +207,29 @@ impl WebCodexAdapter {
         Ok(command)
     }
 
+    pub fn regular_tunnel_command(
+        &self,
+        env_file: &Path,
+        user_token_file: &Path,
+    ) -> DesktopResult<Command> {
+        let binaries = self.binaries()?;
+        let mut command = Command::new(&binaries.webcodex);
+        command
+            .arg("server")
+            .arg("tunnel")
+            .arg("--provider")
+            .arg("openai")
+            .arg("--env-file")
+            .arg(env_file)
+            .arg("--user-token-file")
+            .arg(user_token_file)
+            .arg("--json")
+            .arg("--stop-on-stdin-eof")
+            .env_remove("OPENAI_ADMIN_KEY")
+            .env_remove("OPENAI_API_KEY");
+        Ok(command)
+    }
+
     pub async fn create_local_pairing(
         &mut self,
         server_url: &str,
@@ -517,6 +540,54 @@ mod tests {
             assert!(!openai_env
                 .iter()
                 .any(|(name, _)| name.to_str() == Some(key)));
+        }
+    }
+
+    #[test]
+    fn regular_tunnel_uses_file_auth_and_only_inherits_control_plane_credentials() {
+        let binaries = ResolvedBinaries {
+            directory: PathBuf::from("bin"),
+            webcodex: PathBuf::from("webcodex"),
+            server: PathBuf::from("webcodex-server"),
+            runner: PathBuf::from("webcodex-runner"),
+            version: "0.3.9".to_string(),
+            git_commit: "0123456789abcdef".to_string(),
+            source: super::super::cli::ResolvedBinarySource::Environment,
+        };
+        let adapter = WebCodexAdapter {
+            binaries: Some(binaries),
+        };
+        let command = adapter
+            .regular_tunnel_command(Path::new("server.env"), Path::new("user-token"))
+            .unwrap();
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "server",
+                "tunnel",
+                "--provider",
+                "openai",
+                "--env-file",
+                "server.env",
+                "--user-token-file",
+                "user-token",
+                "--json",
+                "--stop-on-stdin-eof",
+            ]
+        );
+        let env: Vec<_> = command.as_std().get_envs().collect();
+        for key in ["OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
+            assert!(env
+                .iter()
+                .any(|(name, value)| name.to_str() == Some(key) && value.is_none()));
+        }
+        for key in ["CONTROL_PLANE_API_KEY", "CONTROL_PLANE_TUNNEL_ID"] {
+            assert!(!env.iter().any(|(name, _)| name.to_str() == Some(key)));
         }
     }
 

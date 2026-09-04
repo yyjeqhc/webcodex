@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { desktopApi } from "./lib/desktop-api";
-import type { ActivityEntry, DesktopState } from "./models/topology";
+import type { ActivityEntry, DesktopError, DesktopState } from "./models/topology";
 import { FirstRun } from "./features/onboarding/FirstRun";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { ProjectsPanel } from "./features/projects/ProjectsPanel";
 import { ConnectionPanel } from "./features/connection/ConnectionPanel";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
+import { useLocale } from "./i18n/locale";
+import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presentation";
 
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
 export default function App() {
+  const { locale, setLocale, t } = useLocale();
   const [state, setState] = useState<DesktopState | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [navigation, setNavigation] = useState<Navigation>("home");
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<DesktopError | null>(null);
 
   const load = useCallback(async () => {
     const initial = await desktopApi.getState();
@@ -32,17 +36,26 @@ export default function App() {
     }
   }, [navigation, state?.activity_sequence]);
 
+  const runStateOperation = async (operation: () => Promise<DesktopState>) => {
+    setError(null);
+    try {
+      setState(await operation());
+    } catch (value) {
+      setError(normalizeDesktopError(value));
+    }
+  };
+
   const refresh = async () => {
     setRefreshing(true);
     try {
-      setState(await desktopApi.refresh());
+      await runStateOperation(desktopApi.refresh);
     } finally {
       setRefreshing(false);
     }
   };
 
   if (!state) {
-    return <div className="splash"><div className="brand-mark">W</div><span>Loading WebCodex…</span></div>;
+    return <div className="splash" role="status"><div className="brand-mark" aria-hidden="true">W</div><span>{t("app.loading")}</span></div>;
   }
 
   const needsSetup =
@@ -52,26 +65,41 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark">W</div><div><strong>WebCodex</strong><span>Desktop</span></div></div>
-        <nav>
+        <div className="brand"><div className="brand-mark" aria-hidden="true">W</div><div><strong>WebCodex</strong><span>Desktop</span></div></div>
+        <nav aria-label={t("nav.main")}>
           {(["home", "projects", "connection", "activity", "settings"] as Navigation[]).map((item) => (
             <button
               key={item}
               className={navigation === item ? "active" : ""}
               onClick={() => setNavigation(item)}
+              aria-current={navigation === item ? "page" : undefined}
+              data-webcodex-action={`navigate-${item}`}
             >
-              <span className={`nav-icon nav-${item}`} />
-              {item[0].toUpperCase() + item.slice(1)}
+              <span className={`nav-icon nav-${item}`} aria-hidden="true" />
+              {t(`nav.${item}`)}
             </button>
           ))}
         </nav>
+        <div className="sidebar-locale">
+          <label htmlFor="desktop-sidebar-locale">{t("locale.label")}</label>
+          <select
+            id="desktop-sidebar-locale"
+            value={locale}
+            onChange={(event) => setLocale(event.target.value as typeof locale)}
+            data-webcodex-control="locale"
+          >
+            <option value="zh-CN">{t("locale.zh")}</option>
+            <option value="en-US">{t("locale.en")}</option>
+          </select>
+        </div>
         <div className="sidebar-status">
-          <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} />
-          <div><strong>{state.readiness.runtime_ready ? "Runtime ready" : "Needs setup"}</strong><span>{state.readiness.ready_for_chatgpt ? "ChatGPT ready" : "Connection not complete"}</span></div>
+          <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} aria-hidden="true" />
+          <div><strong>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : t("sidebar.needsSetup")}</strong><span>{state.readiness.ready_for_chatgpt ? t("sidebar.chatgptReady") : t("sidebar.connectionIncomplete")}</span></div>
         </div>
       </aside>
 
       <main className="main-content">
+        {error && <AppError error={error} />}
         {navigation === "home" && (needsSetup ? (
           <FirstRun state={state} onState={setState} />
         ) : (
@@ -79,15 +107,31 @@ export default function App() {
             state={state}
             refreshing={refreshing}
             onRefresh={() => void refresh()}
-            onStopQuickShare={() => void desktopApi.stopQuickShare().then(setState)}
-            onStopRuntime={() => void desktopApi.stopLocalRuntime().then(setState)}
+            onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
+            onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)}
           />
         ))}
         {navigation === "projects" && <ProjectsPanel state={state} />}
-        {navigation === "connection" && <ConnectionPanel state={state} />}
+        {navigation === "connection" && <ConnectionPanel state={state} onState={setState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "settings" && <SettingsPanel state={state} />}
       </main>
+    </div>
+  );
+}
+
+function AppError({ error }: { error: DesktopError }) {
+  const { t } = useLocale();
+  const presentation = desktopErrorPresentation(error, t);
+  return (
+    <div className="error-card app-error" role="alert">
+      <strong>{presentation.title}</strong>
+      <span>{presentation.action}</span>
+      <details>
+        <summary>{t("common.details")}</summary>
+        <code>{error.code}</code>
+        <p>{error.message}</p>
+      </details>
     </div>
   );
 }

@@ -14,7 +14,7 @@ use webcodex_core::validation_evidence::{
     ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
     VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
 };
-use webcodex_tool_runtime_contracts::tool_audit::{
+use webcodex_core::validation_identity::{
     assertion_validation_identity, is_structured_validation_target_identity,
     is_validation_execution_identity, structured_validation_target_identity,
 };

@@ -7,10 +7,7 @@ use super::tool_inputs::{is_checkpoint_kind, is_checkpoint_validation_status};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use webcodex_core::audit_preview::{command_preview, process_preview};
-use webcodex_core::runner_protocol::{
-    normalize_cargo_value, normalize_go_test_packages, normalize_rust_test_filter,
-    CARGO_TEST_MIN_TESTS_MAX,
-};
+use webcodex_core::runner_protocol::{normalize_cargo_value, normalize_rust_test_filter};
 use webcodex_workflow_session::SessionExecutionContext;
 
 pub fn session_log_arguments_for_tool_request(tool_name: &str, arguments: &Value) -> Value {
@@ -2142,9 +2139,6 @@ fn insert_exact_git_commit_audit(
     }
 }
 
-const STRUCTURED_VALIDATION_TARGET_PREFIX: &str = "target:";
-const STRUCTURED_VALIDATION_TARGET_HEX_LEN: usize = 24;
-
 fn insert_structured_validation_target(
     tool_name: &str,
     arguments: &serde_json::Map<String, Value>,
@@ -2157,106 +2151,13 @@ fn insert_structured_validation_target(
     }
 }
 
-pub fn structured_validation_target_identity(tool_name: &str, arguments: &Value) -> Option<String> {
-    let obj = arguments.as_object()?;
-    let cwd = normalized_validation_target_cwd(obj.get("cwd"))?;
-    let semantic = match tool_name {
-        "cargo_fmt" => serde_json::json!({
-            "tool": tool_name,
-            "kind": "format",
-            "cwd": cwd,
-            "check": obj.get("check").and_then(Value::as_bool).unwrap_or(false),
-        }),
-        "cargo_check" => {
-            if obj.get("features_present").and_then(Value::as_bool) == Some(true)
-                && obj.get("features").is_none()
-            {
-                return None;
-            }
-            let features = normalized_cargo_target_value(obj.get("features"))?;
-            let package = normalized_cargo_target_value(obj.get("package"))?;
-            serde_json::json!({
-                "tool": tool_name,
-                "kind": "check",
-                "cwd": cwd,
-                "package": package,
-                "features": features,
-                "all_targets": obj.get("all_targets").and_then(Value::as_bool).unwrap_or(true),
-                "all_features": obj.get("all_features").and_then(Value::as_bool).unwrap_or(false),
-                "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
-            })
-        }
-        "cargo_test" => {
-            if obj.get("filter_present").and_then(Value::as_bool) == Some(true)
-                && obj.get("filter").is_none()
-            {
-                return None;
-            }
-            if obj.get("features_present").and_then(Value::as_bool) == Some(true)
-                && obj.get("features").is_none()
-            {
-                return None;
-            }
-            let filter = normalized_rust_test_target_filter(obj.get("filter"))?;
-            let features = normalized_cargo_target_value(obj.get("features"))?;
-            let package = normalized_cargo_target_value(obj.get("package"))?;
-            let require_tests = obj
-                .get("require_tests")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let min_tests = obj.get("min_tests").and_then(Value::as_u64);
-            if min_tests.is_some_and(|minimum| !(1..=CARGO_TEST_MIN_TESTS_MAX).contains(&minimum)) {
-                return None;
-            }
-            let minimum_tests = match (require_tests, min_tests) {
-                (true, Some(minimum)) => Some(minimum.max(1)),
-                (true, None) => Some(1),
-                (false, minimum) => minimum,
-            };
-            serde_json::json!({
-                "tool": tool_name,
-                "kind": "test",
-                "cwd": cwd,
-                "package": package,
-                "filter": filter,
-                "features": features,
-                "all_targets": obj.get("all_targets").and_then(Value::as_bool).unwrap_or(false),
-                "all_features": obj.get("all_features").and_then(Value::as_bool).unwrap_or(false),
-                "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
-                "no_run": obj.get("no_run").and_then(Value::as_bool).unwrap_or(false),
-                "minimum_tests": minimum_tests,
-            })
-        }
-        "go_test" => {
-            if obj.get("packages_present").and_then(Value::as_bool) == Some(true)
-                && obj.get("packages").is_none()
-            {
-                return None;
-            }
-            let packages = normalized_go_test_target_packages(obj.get("packages"))?;
-            serde_json::json!({
-                "tool": tool_name,
-                "kind": "test",
-                "cwd": cwd,
-                "packages": packages,
-            })
-        }
-        _ => return None,
-    };
-    let encoded = serde_json::to_vec(&semantic).ok()?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
-    Some(format!(
-        "{STRUCTURED_VALIDATION_TARGET_PREFIX}{}",
-        &digest[..STRUCTURED_VALIDATION_TARGET_HEX_LEN]
-    ))
-}
-
 pub use webcodex_core::validation_identity::{
     assertion_validation_identity, is_structured_validation_target_identity,
-    is_validation_execution_identity,
+    is_validation_execution_identity, structured_validation_target_identity,
 };
-
-const GENERIC_VALIDATION_IDENTITY_PREFIX: &str = "command:";
+use webcodex_core::validation_identity::{
+    GENERIC_VALIDATION_IDENTITY_PREFIX, VALIDATION_IDENTITY_HEX_LEN,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericValidationIdentity {
@@ -2294,7 +2195,7 @@ fn generic_validation_digest<'a>(
     let digest = format!("{:x}", hasher.finalize());
     format!(
         "{GENERIC_VALIDATION_IDENTITY_PREFIX}{}",
-        &digest[..STRUCTURED_VALIDATION_TARGET_HEX_LEN]
+        &digest[..VALIDATION_IDENTITY_HEX_LEN]
     )
 }
 
@@ -2483,59 +2384,6 @@ pub fn run_script_validation_identity(
         identity: generic_validation_digest("run_script", purpose, cwd, parts),
         validation_tool: None,
     })
-}
-
-fn normalized_validation_target_cwd(value: Option<&Value>) -> Option<String> {
-    let Some(value) = value else {
-        return Some(".".to_string());
-    };
-    if value.is_null() {
-        return Some(".".to_string());
-    }
-    let raw = value.as_str()?;
-    let trimmed = raw.trim().trim_start_matches("./").trim_end_matches('/');
-    Some(if trimmed.is_empty() || trimmed == "." {
-        ".".to_string()
-    } else {
-        trimmed.to_string()
-    })
-}
-
-fn normalized_cargo_target_value(value: Option<&Value>) -> Option<Option<String>> {
-    let Some(value) = value else {
-        return Some(None);
-    };
-    if value.is_null() {
-        return Some(None);
-    }
-    normalize_cargo_value(value.as_str()?).ok()
-}
-
-fn normalized_rust_test_target_filter(value: Option<&Value>) -> Option<Option<String>> {
-    let Some(value) = value else {
-        return Some(None);
-    };
-    if value.is_null() {
-        return Some(None);
-    }
-    normalize_rust_test_filter(value.as_str()?).ok()
-}
-
-fn normalized_go_test_target_packages(value: Option<&Value>) -> Option<Vec<String>> {
-    let packages = match value {
-        None | Some(Value::Null) => None,
-        Some(Value::Array(values)) => Some(
-            values
-                .iter()
-                .map(Value::as_str)
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .map(str::to_string)
-                .collect::<Vec<_>>(),
-        ),
-        Some(_) => return None,
-    };
-    normalize_go_test_packages(packages.as_deref()).ok()
 }
 
 #[cfg(test)]

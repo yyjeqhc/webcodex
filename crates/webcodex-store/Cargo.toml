@@ -9,7 +9,6 @@ root-test-support = []
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
-webcodex-workspace = { path = "../webcodex-workspace" }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 fs2 = "0.4"

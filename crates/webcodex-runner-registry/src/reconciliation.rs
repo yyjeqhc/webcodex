@@ -134,7 +134,7 @@ fn validate_context(
         .workflow_session_id
         .as_deref()
         .is_some_and(|session_id| {
-            !webcodex_workflow_session::is_valid_session_id(session_id)
+            !webcodex_core::workflow_session_contract::is_valid_session_id(session_id)
                 || session_id.chars().count() > 128
         })
     {

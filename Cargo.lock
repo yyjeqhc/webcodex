@@ -5319,7 +5319,6 @@ dependencies = [
  "tracing",
  "uuid",
  "webcodex-core",
- "webcodex-workflow-session",
 ]
 
 [[package]]
@@ -5337,7 +5336,6 @@ dependencies = [
  "tracing",
  "uuid",
  "webcodex-core",
- "webcodex-workspace",
 ]
 
 [[package]]

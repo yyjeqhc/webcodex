@@ -6,16 +6,15 @@ use webcodex_core::lsp_bridge::{
     LocationsResult, WorkspaceSymbolsResult,
 };
 use webcodex_core::workflow_session_contract::is_tool_call_expectation_metadata_field as shared_is_tool_call_expectation_metadata_field;
-pub use webcodex_core::workflow_session_contract::EXPLORATION_TOOL_NAMES;
+pub use webcodex_core::workflow_session_contract::{is_valid_session_id, EXPLORATION_TOOL_NAMES};
 
 use super::model::{
     PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, SessionSummary,
     ToolCallExpectation, ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
     LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
     LOGICAL_INVOCATION_ROLE_RECORDER, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
-    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, SESSION_ID_PREFIX,
-    TOOL_ACCEPTED_EXIT_CODES_FIELD, TOOL_ASSERTION_NAME_FIELD,
-    TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
     TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
     TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
     TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MATCHED_RESULT,
@@ -102,15 +101,6 @@ impl ToolCallRecorderMetadata {
             },
         }
     }
-}
-
-pub fn is_valid_session_id(session_id: &str) -> bool {
-    session_id.starts_with(SESSION_ID_PREFIX)
-        && session_id.len() > SESSION_ID_PREFIX.len()
-        && session_id
-            .as_bytes()
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 pub(super) fn is_valid_logical_invocation_id(value: &str) -> bool {

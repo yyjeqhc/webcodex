@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
-use webcodex_workspace::project_context::ProjectContextFingerprint;
+use webcodex_core::project_context_contract::ProjectContextFingerprint;
 
 pub struct ConnectorBinding<'a> {
     pub project_id: &'a str,

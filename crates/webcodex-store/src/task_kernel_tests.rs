@@ -48,7 +48,7 @@ fn fingerprint(root_sha256: &str, target_path: &str) -> ProjectContextFingerprin
         schema_version: 2,
         project_root_sha256: root_sha256.to_string(),
         target_directory: target_path.to_string(),
-        git: webcodex_workspace::project_context::GitContextFingerprint {
+        git: webcodex_core::project_context_contract::GitContextFingerprint {
             available: true,
             branch: Some("main".to_string()),
             head: Some("0123456789abcdef".to_string()),
@@ -57,7 +57,7 @@ fn fingerprint(root_sha256: &str, target_path: &str) -> ProjectContextFingerprin
         },
         rules: Vec::new(),
         manifests: Vec::new(),
-        completeness: webcodex_workspace::project_context::FingerprintCompleteness::default(),
+        completeness: webcodex_core::project_context_contract::FingerprintCompleteness::default(),
     }
 }
 

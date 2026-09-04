@@ -9,7 +9,7 @@ use webcodex_core::project_instructions::{
 };
 use webcodex_core::workflow_session_contract::{ExecutionShell, PermissionDecision, SessionMode};
 pub use webcodex_core::workflow_session_contract::{
-    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
+    MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS, SESSION_ID_PREFIX,
     SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
     SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON, TOOL_ACCEPTED_EXIT_CODES_FIELD,
     TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
@@ -20,7 +20,6 @@ pub use webcodex_core::workflow_session_contract::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
 };
 
-pub const SESSION_ID_PREFIX: &str = "wc_sess_";
 pub const EVENT_ID_PREFIX: &str = "evt_";
 pub const CALL_ID_PREFIX: &str = "wc_call_";
 pub const LOGICAL_INVOCATION_ID_PREFIX: &str = "wc_inv_";

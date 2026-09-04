@@ -6,7 +6,6 @@ edition.workspace = true
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
-webcodex-tool-runtime-contracts = { path = "../webcodex-tool-runtime-contracts" }
 webcodex-workflow-session = { path = "../webcodex-workflow-session" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,4 +15,5 @@ toml = "0.8"
 [dev-dependencies]
 tempfile = "3"
 webcodex-tool-contracts = { path = "../webcodex-tool-contracts", features = ["root-test-support"] }
+webcodex-tool-runtime-contracts = { path = "../webcodex-tool-runtime-contracts" }
 webcodex-workflow-session = { path = "../webcodex-workflow-session", features = ["root-test-support"] }

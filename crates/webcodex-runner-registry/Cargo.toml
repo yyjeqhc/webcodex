@@ -9,7 +9,6 @@ root-test-support = []
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
-webcodex-workflow-session = { path = "../webcodex-workflow-session" }
 chrono = "0.4"
 serde_json = "1"
 sha2 = "0.10"

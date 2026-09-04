@@ -15,7 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
-            app.manage(AppState::new(data_dir));
+            let resource_dir = app.path().resource_dir()?;
+            app.manage(AppState::new(data_dir, resource_dir));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

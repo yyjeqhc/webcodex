@@ -21,16 +21,21 @@ pub struct ProjectRuntimeIdentity {
 
 pub struct WebCodexAdapter {
     binaries: Option<ResolvedBinaries>,
+    bundled_runtime_dir: Option<PathBuf>,
 }
 
 impl WebCodexAdapter {
-    pub fn new() -> Self {
-        Self { binaries: None }
+    pub fn new(bundled_runtime_dir: Option<PathBuf>) -> Self {
+        Self {
+            binaries: None,
+            bundled_runtime_dir,
+        }
     }
 
     pub async fn ensure_binaries(&mut self) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
-            self.binaries = Some(ResolvedBinaries::resolve().await?);
+            self.binaries =
+                Some(ResolvedBinaries::resolve(self.bundled_runtime_dir.as_deref()).await?);
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
     }
@@ -511,6 +516,7 @@ mod tests {
         };
         let adapter = WebCodexAdapter {
             binaries: Some(binaries),
+            bundled_runtime_dir: None,
         };
         let local = adapter
             .quick_share_command(Path::new("repo"), "none")
@@ -556,6 +562,7 @@ mod tests {
         };
         let adapter = WebCodexAdapter {
             binaries: Some(binaries),
+            bundled_runtime_dir: None,
         };
         let command = adapter
             .regular_tunnel_command(Path::new("server.env"), Path::new("user-token"))

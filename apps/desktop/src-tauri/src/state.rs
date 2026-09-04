@@ -28,9 +28,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> Self {
         Self {
-            core: Mutex::new(DesktopCore::new(data_dir)),
+            core: Mutex::new(DesktopCore::new(data_dir, resource_dir)),
         }
     }
 
@@ -55,7 +55,7 @@ pub struct DesktopCore {
 }
 
 impl DesktopCore {
-    fn new(data_dir: PathBuf) -> Self {
+    fn new(data_dir: PathBuf, resource_dir: PathBuf) -> Self {
         let activity = ActivityLog::default();
         let config_path = data_dir.join("desktop-state.json");
         let config = load_config(&config_path).unwrap_or_default();
@@ -69,7 +69,7 @@ impl DesktopCore {
             config_path,
             config,
             snapshot,
-            adapter: WebCodexAdapter::new(),
+            adapter: WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime"))),
             supervisor: ProcessSupervisor::new(activity.clone()),
             activity,
         }
@@ -81,6 +81,11 @@ impl DesktopCore {
 
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
         self.supervisor.refresh();
+        if self.snapshot.binaries.is_none() {
+            if let Ok(binaries) = self.adapter.ensure_binaries().await {
+                self.snapshot.binaries = Some(binaries.info());
+            }
+        }
         self.snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
         self.snapshot.regular_tunnel_available = true;
         if self.snapshot.regular_tunnel.is_some() {
@@ -1206,7 +1211,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&data_dir);
-        let mut core = DesktopCore::new(data_dir.clone());
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
         let setup = core.configure_local_setup(&project).await;
         let snapshot = match setup {
             Ok(snapshot) => snapshot,
@@ -1281,7 +1286,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&data_dir);
-        let mut core = DesktopCore::new(data_dir.clone());
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
         let started = core.start_quick_share(&project, "none").await;
         let snapshot = match started {
             Ok(snapshot) => snapshot,
@@ -1321,7 +1326,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&host_data);
         let _ = std::fs::remove_dir_all(&client_data);
 
-        let mut host = DesktopCore::new(host_data.clone());
+        let mut host = DesktopCore::new(host_data.clone(), host_data.join("test-resources"));
         let host_runtime = host_data.join("runtime");
         let env_file = host_runtime.join("webcodex.env");
         let data_dir = host_runtime.join("data");
@@ -1344,7 +1349,7 @@ mod tests {
             .await
             .expect("start remote dogfood Server");
 
-        let mut client = DesktopCore::new(client_data.clone());
+        let mut client = DesktopCore::new(client_data.clone(), client_data.join("test-resources"));
         let result: DesktopResult<(DesktopStateSnapshot, DesktopStateSnapshot, bool, bool)> =
             async {
                 host.wait_for_server(&server_url, Some(&env_file), None)
@@ -1466,7 +1471,7 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ));
-        let mut core = DesktopCore::new(data_dir.clone());
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
         let topology = RuntimeTopology {
             experience: Experience::Full,
             server: ServerTopology::Local,

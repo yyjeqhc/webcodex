@@ -27,6 +27,8 @@ The Server may run on the repository machine or elsewhere. The Runner should run
 
 ## 1. Install WebCodex
 
+On Windows, you can install **WebCodex Desktop** from the matching [GitHub Release](https://github.com/yyjeqhc/webcodex/releases). The Desktop UI can set up the local Server, Runner, projects, and ChatGPT connection, including the regular OpenAI Secure MCP Tunnel path. The command-line setup below remains available for advanced configuration and troubleshooting.
+
 Install Node.js 18+ and Git, then:
 
 ```bash

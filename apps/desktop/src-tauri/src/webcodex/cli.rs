@@ -13,6 +13,7 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedBinarySource {
+    Bundled,
     Environment,
     SourceDogfoodTarget,
 }
@@ -20,6 +21,7 @@ pub enum ResolvedBinarySource {
 impl ResolvedBinarySource {
     fn label(self) -> &'static str {
         match self {
+            Self::Bundled => "Bundled",
             Self::Environment => "WEBCODEX_DESKTOP_BIN_DIR",
             Self::SourceDogfoodTarget => "source target/dogfood",
         }
@@ -38,41 +40,63 @@ pub struct ResolvedBinaries {
 }
 
 impl ResolvedBinaries {
-    pub async fn resolve() -> DesktopResult<Self> {
-        let (directory, source) = if let Some(value) = std::env::var_os("WEBCODEX_DESKTOP_BIN_DIR")
-        {
-            let directory = PathBuf::from(value);
-            if directory.as_os_str().is_empty() {
+    pub async fn resolve(bundled_runtime_dir: Option<&Path>) -> DesktopResult<Self> {
+        let (directory, source) =
+            if let Some(directory) = bundled_runtime_dir.filter(|path| path.is_dir()) {
+                (directory.to_path_buf(), ResolvedBinarySource::Bundled)
+            } else if !cfg!(debug_assertions) {
+                let expected = bundled_runtime_dir
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<Desktop resource directory>/webcodex-runtime".to_string());
                 return Err(DesktopError::new(
-                    "binary_directory_invalid",
-                    "WEBCODEX_DESKTOP_BIN_DIR is empty",
-                    "Set it to the directory containing the source-matched WebCodex binaries.",
+                    "bundled_runtime_missing",
+                    format!("The installed WebCodex runtime is missing: {expected}"),
+                    "Reinstall WebCodex Desktop from the matching release installer.",
                 ));
-            }
-            (directory, ResolvedBinarySource::Environment)
-        } else {
-            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let repo = manifest
-                .parent()
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .ok_or_else(|| {
-                    DesktopError::new(
+            } else if let Some(value) = std::env::var_os("WEBCODEX_DESKTOP_BIN_DIR") {
+                let directory = PathBuf::from(value);
+                if directory.as_os_str().is_empty() {
+                    return Err(DesktopError::new(
                         "binary_directory_invalid",
-                        "Could not derive the WebCodex source root",
-                        "Set WEBCODEX_DESKTOP_BIN_DIR explicitly.",
-                    )
-                })?;
-            (
-                repo.join("target").join("dogfood"),
-                ResolvedBinarySource::SourceDogfoodTarget,
-            )
+                        "WEBCODEX_DESKTOP_BIN_DIR is empty",
+                        "Set it to the directory containing the source-matched WebCodex binaries.",
+                    ));
+                }
+                (directory, ResolvedBinarySource::Environment)
+            } else {
+                let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                let repo = manifest
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::parent)
+                    .ok_or_else(|| {
+                        DesktopError::new(
+                            "binary_directory_invalid",
+                            "Could not derive the WebCodex source root",
+                            "Set WEBCODEX_DESKTOP_BIN_DIR explicitly.",
+                        )
+                    })?;
+                (
+                    repo.join("target").join("dogfood"),
+                    ResolvedBinarySource::SourceDogfoodTarget,
+                )
+            };
+        let missing_directory_action = match source {
+            ResolvedBinarySource::Bundled => {
+                "Reinstall WebCodex Desktop from the matching release installer."
+            }
+            ResolvedBinarySource::Environment | ResolvedBinarySource::SourceDogfoodTarget => {
+                "Build `cargo build --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner` from this source baseline or set WEBCODEX_DESKTOP_BIN_DIR."
+            }
         };
         let directory = directory.canonicalize().map_err(|_| {
             DesktopError::new(
                 "binary_directory_missing",
-                format!("WebCodex binary directory does not exist: {}", directory.display()),
-                "Build `cargo build --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner` from this source baseline or set WEBCODEX_DESKTOP_BIN_DIR.",
+                format!(
+                    "WebCodex binary directory does not exist: {}",
+                    directory.display()
+                ),
+                missing_directory_action,
             )
         })?;
         let webcodex = directory.join(executable_name("webcodex"));
@@ -83,7 +107,15 @@ impl ResolvedBinaries {
                 return Err(DesktopError::new(
                     "binary_missing",
                     format!("Required WebCodex binary is missing: {}", path.display()),
-                    "Build all WebCodex dogfood binaries from the current source baseline.",
+                    match source {
+                        ResolvedBinarySource::Bundled => {
+                            "Reinstall WebCodex Desktop from the matching release installer."
+                        }
+                        ResolvedBinarySource::Environment
+                        | ResolvedBinarySource::SourceDogfoodTarget => {
+                            "Build all WebCodex dogfood binaries from the current source baseline."
+                        }
+                    },
                 ));
             }
         }
@@ -323,5 +355,10 @@ mod tests {
         assert_eq!(parsed.version, "0.3.9");
         assert_eq!(parsed.git_commit, "0123456789abcdef");
         assert!(parse_version_line(b"webcodex 0.3.9\n").is_none());
+    }
+
+    #[test]
+    fn bundled_source_label_is_stable() {
+        assert_eq!(ResolvedBinarySource::Bundled.label(), "Bundled");
     }
 }

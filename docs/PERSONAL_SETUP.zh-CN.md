@@ -27,6 +27,8 @@ Server 可以在仓库机器本身运行，也可以放在另一台机器。Runn
 
 ## 1. 安装 WebCodex
 
+Windows 用户可以从对应的 [GitHub Release](https://github.com/yyjeqhc/webcodex/releases) 安装 **WebCodex Desktop**。Desktop 界面可以完成本机 Server、Runner、Project 和 ChatGPT 连接，包括普通 OpenAI Secure MCP Tunnel 路径。下面的命令行完整路径仍然保留，适合高级配置和排障。
+
 需要 Node.js 18+ 和 Git：
 
 ```bash

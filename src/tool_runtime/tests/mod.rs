@@ -43,7 +43,6 @@ mod skills;
 mod startup_brief;
 mod sync_timeout;
 mod targeted_inventory;
-mod tool_call;
 mod trusted_smoke;
 mod unified_diff;
 mod validation_events;

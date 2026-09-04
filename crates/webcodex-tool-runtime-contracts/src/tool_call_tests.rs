@@ -1,8 +1,13 @@
-//! Tool Call tests for tool_runtime.
+//! Tool Call parser, wire, accessor, and audit-contract tests.
 
-use super::super::*;
-use super::support::*;
+use crate::tool_call_test_support::*;
+use crate::*;
 use serde_json::{json, Value};
+use webcodex_tool_contracts::{
+    is_known_tool_name, is_model_hidden_tool_name, known_tool_names, lookup_tool_definition,
+    model_hidden_tool_names, registered_tool_specs,
+};
+use webcodex_workflow_session as sessions;
 
 #[test]
 fn from_tool_name_parses_unit_tools_without_arguments() {
@@ -51,8 +56,8 @@ fn legacy_list_agents_alias_parses_to_canonical_list_runners() {
             ..
         } if client_id == "special"
     ));
-    assert!(super::super::tool_definition::lookup_tool_definition("list_agents").is_none());
-    assert!(super::super::tool_definition::lookup_tool_definition("list_runners").is_some());
+    assert!(lookup_tool_definition("list_agents").is_none());
+    assert!(lookup_tool_definition("list_runners").is_some());
 }
 
 #[test]
@@ -966,7 +971,7 @@ fn observe_session_messages_tool_call_and_audit_are_bounded() {
             "token_present": true
         })
     );
-    let output_audit = super::super::tool_audit::session_log_result_for_tool(
+    let output_audit = crate::tool_audit::session_log_result_for_tool(
         "observe_session_messages",
         &json!({
             "success": true,
@@ -1373,7 +1378,7 @@ fn retired_start_coding_task_wire_name_is_rejected() {
     // Kernel audit recording happens before ToolCall parsing, so rejected
     // legacy requests keep a bounded compatibility sanitizer without reviving
     // a current ToolCall identity or retaining the raw path.
-    let audit = super::super::tool_audit::session_log_arguments_for_tool_request(
+    let audit = crate::tool_audit::session_log_arguments_for_tool_request(
         "start_coding_task",
         &json!({
             "project": "agent:legacy:demo",

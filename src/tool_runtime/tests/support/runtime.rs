@@ -154,18 +154,6 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
     }
 }
 
-pub(in crate::tool_runtime::tests) fn sample_tool_args_with_session(name: &str) -> Value {
-    let mut args = sample_tool_args(name);
-    let obj = args
-        .as_object_mut()
-        .unwrap_or_else(|| panic!("{name} does not accept object arguments"));
-    obj.insert(
-        "session_id".to_string(),
-        Value::String("wc_sess_accessor".to_string()),
-    );
-    args
-}
-
 /// Helper: fetch a ToolSpec by name from the runtime.
 pub(in crate::tool_runtime::tests) fn spec_named<'a>(
     specs: &'a [ToolSpec],

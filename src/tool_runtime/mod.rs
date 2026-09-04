@@ -117,8 +117,6 @@ pub(crate) use tool_call::{
 #[cfg(test)]
 pub use tool_definition::is_known_tool_name;
 #[cfg(test)]
-pub(crate) use tool_definition::is_model_hidden_tool_name;
-#[cfg(test)]
 pub(crate) use tool_definition::{
     known_tool_names, model_hidden_tool_names, runtime_tool_category as tool_manifest_category,
     RunnerCapabilityRequirement,

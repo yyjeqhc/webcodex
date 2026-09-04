@@ -12,3 +12,8 @@ pub mod tool_result;
 pub use tool_call::*;
 pub use tool_inputs::*;
 pub use tool_result::*;
+
+#[cfg(test)]
+mod tool_call_test_support;
+#[cfg(test)]
+mod tool_call_tests;

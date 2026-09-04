@@ -16,7 +16,7 @@ fn resolve(
     recipe: Option<RecipeId>,
     checks: &[SemanticCheck],
     test_filter: Option<&str>,
-) -> Result<super::recipe::ResolvedValidationRecipe, RecipeError> {
+) -> Result<super::ResolvedValidationRecipe, RecipeError> {
     resolve_validation_recipe(root, cwd, recipe, checks, test_filter)
 }
 

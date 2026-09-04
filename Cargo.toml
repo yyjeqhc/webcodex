@@ -15,6 +15,7 @@ members = [
     "crates/webcodex-workflow-session",
     "crates/webcodex-tool-contracts",
     "crates/webcodex-tool-runtime-contracts",
+    "crates/webcodex-validation",
 ]
 resolver = "2"
 
@@ -41,6 +42,7 @@ webcodex-runner-registry = { path = "crates/webcodex-runner-registry" }
 webcodex-core = { path = "crates/webcodex-core" }
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts" }
 webcodex-tool-runtime-contracts = { path = "crates/webcodex-tool-runtime-contracts" }
+webcodex-validation = { path = "crates/webcodex-validation" }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session" }
 webcodex-persistent-shell = { path = "crates/webcodex-persistent-shell" }
 webcodex-store = { path = "crates/webcodex-store" }

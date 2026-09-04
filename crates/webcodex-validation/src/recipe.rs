@@ -25,7 +25,7 @@ const NODE_LOCKFILES: [(&str, &str); 6] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[repr(usize)]
-pub(crate) enum RecipeId {
+pub enum RecipeId {
     Rust,
     Node,
     Python,
@@ -33,7 +33,7 @@ pub(crate) enum RecipeId {
 }
 
 impl RecipeId {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         RECIPE_NAMES[self as usize]
     }
 
@@ -49,33 +49,33 @@ impl RecipeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[repr(usize)]
-pub(crate) enum SemanticCheck {
+pub enum SemanticCheck {
     Format,
     Check,
     Test,
 }
 
 impl SemanticCheck {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         ["format", "check", "test"][self as usize]
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedValidationRecipe {
-    pub(crate) recipe_id: &'static str,
-    pub(crate) recipe_root_relative: String,
-    pub(crate) steps: Vec<ShellJobValidationStep>,
-    pub(crate) invocation_digest: String,
-    pub(crate) manifest_digest: String,
+pub struct ResolvedValidationRecipe {
+    pub recipe_id: &'static str,
+    pub recipe_root_relative: String,
+    pub steps: Vec<ShellJobValidationStep>,
+    pub invocation_digest: String,
+    pub manifest_digest: String,
     /// Normalized (trimmed, validated) test filter actually placed in the plan,
     /// or `None`. Bound into the request hash so retries key on the executed
     /// value, not the raw request string.
-    pub(crate) test_filter: Option<String>,
+    pub test_filter: Option<String>,
 }
 
 impl ResolvedValidationRecipe {
-    pub(crate) fn durable_identity(&self) -> Value {
+    pub fn durable_identity(&self) -> Value {
         json!({
             "recipe_id": self.recipe_id,
             "recipe_version": RECIPE_VERSION,
@@ -89,9 +89,9 @@ impl ResolvedValidationRecipe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecipeError {
-    pub(crate) code: &'static str,
-    pub(crate) details: Option<Value>,
+pub struct RecipeError {
+    pub code: &'static str,
+    pub details: Option<Value>,
 }
 
 impl RecipeError {
@@ -112,7 +112,7 @@ impl RecipeError {
     }
 }
 
-pub(crate) fn resolve_validation_recipe(
+pub fn resolve_validation_recipe(
     execution_root: &Path,
     cwd: Option<&str>,
     explicit_recipe: Option<RecipeId>,

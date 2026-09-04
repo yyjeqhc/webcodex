@@ -11,7 +11,6 @@ use super::helpers::{
 use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::structured_execution::structured_job_observation;
 use super::tool_result::ToolResult;
-use super::validation_parser::parse_complete_cargo_test_summary_counts;
 use super::validation_profile::{
     validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
 };
@@ -22,6 +21,7 @@ use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationStep,
 };
+pub(crate) use webcodex_validation::parse_cargo_test_run_metadata;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
 const CARGO_VALIDATION_FAILURE_KIND: &str = "validation_failed";
@@ -52,124 +52,6 @@ pub(crate) fn count_rustc_diagnostics(text: &str, prefix: &str) -> usize {
             line.starts_with(prefix) || line.starts_with(&coded_prefix)
         })
         .count()
-}
-
-/// Aggregate passed/failed counts across every Cargo test harness summary line.
-///
-/// Uses the same multi-harness aggregation as diagnostics `test_summary` so
-/// top-level `tests_passed` / `tests_failed` stay consistent when the bounded
-/// tails still contain every summary.
-#[cfg(test)]
-pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) {
-    let metadata = parse_cargo_test_run_metadata(text);
-    (metadata.tests_passed, metadata.tests_failed)
-}
-
-#[cfg(test)]
-mod cargo_test_count_tests {
-    use super::parse_cargo_test_counts;
-
-    #[test]
-    fn parse_cargo_test_counts_aggregates_multiple_harness_summaries() {
-        let (passed, failed) = parse_cargo_test_counts(
-            "test result: ok. 2 passed; 0 failed; 1 ignored\n\
-             test result: FAILED. 3 passed; 1 failed; 0 ignored\n\
-             test result: ok. 0 passed; 0 failed; 2 ignored\n",
-        );
-        assert_eq!(passed, Some(5));
-        assert_eq!(failed, Some(1));
-    }
-
-    #[test]
-    fn parse_cargo_test_counts_does_not_use_last_summary_wins() {
-        let (passed, failed) = parse_cargo_test_counts(
-            "test result: FAILED. 10 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out\n\
-             test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
-        );
-        assert_eq!(passed, Some(11));
-        assert_eq!(failed, Some(4));
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CargoTestRunMetadata {
-    pub(crate) tests_detected: bool,
-    pub(crate) tests_run_count: Option<u64>,
-    pub(crate) tests_passed: Option<u64>,
-    pub(crate) tests_failed: Option<u64>,
-    pub(crate) zero_tests_run: Option<bool>,
-    pub(crate) count_evidence_reason: &'static str,
-}
-
-pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
-    let mut tests_run_count = 0_u64;
-    let mut tests_passed = 0_u64;
-    let mut tests_failed = 0_u64;
-    let mut complete_summary_found = false;
-    let mut incomplete_summary_found = false;
-    let mut tests_detected = false;
-
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("running ") {
-            let mut parts = rest.split_whitespace();
-            if parts
-                .next()
-                .is_some_and(|count| count.parse::<u64>().is_ok())
-                && parts
-                    .next()
-                    .is_some_and(|label| label == "test" || label == "tests")
-            {
-                // `running N tests` includes ignored items. It is useful only
-                // as a harness-detection signal, never as executed-count proof.
-                tests_detected = true;
-            }
-        }
-
-        if !line.contains("test result:") {
-            continue;
-        }
-        tests_detected = true;
-        match parse_complete_cargo_test_summary_counts(line) {
-            Some((passed, failed)) => {
-                complete_summary_found = true;
-                tests_passed = tests_passed.saturating_add(passed);
-                tests_failed = tests_failed.saturating_add(failed);
-                tests_run_count = tests_run_count
-                    .saturating_add(passed)
-                    .saturating_add(failed);
-            }
-            None => {
-                // A partial/malformed summary makes the aggregate unproven;
-                // do not promote counts observed in other retained sections.
-                incomplete_summary_found = true;
-            }
-        }
-    }
-
-    if complete_summary_found && !incomplete_summary_found {
-        CargoTestRunMetadata {
-            tests_detected,
-            tests_run_count: Some(tests_run_count),
-            tests_passed: Some(tests_passed),
-            tests_failed: Some(tests_failed),
-            zero_tests_run: Some(tests_run_count == 0),
-            count_evidence_reason: "complete_summary",
-        }
-    } else {
-        CargoTestRunMetadata {
-            tests_detected,
-            tests_run_count: None,
-            tests_passed: None,
-            tests_failed: None,
-            zero_tests_run: None,
-            count_evidence_reason: if incomplete_summary_found {
-                "partial_harness_summary"
-            } else {
-                "no_complete_summary"
-            },
-        }
-    }
 }
 
 fn is_cargo_validation_failure(output: &ProjectCommandOutput, timeout_secs: u64) -> bool {

@@ -751,7 +751,7 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
             .as_str()
             .unwrap_or("");
         assert!(
-            desc.to_lowercase().contains("agent shell capability"),
+            desc.to_lowercase().contains("runner shell capability"),
             "{path}: {desc}"
         );
     }
@@ -764,7 +764,7 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
             .unwrap_or("");
         assert!(desc.contains("structured_process_argv"), "{path}: {desc}");
         assert!(
-            !desc.to_lowercase().contains("agent shell capability"),
+            !desc.to_lowercase().contains("runner shell capability"),
             "{path}: {desc}"
         );
     }

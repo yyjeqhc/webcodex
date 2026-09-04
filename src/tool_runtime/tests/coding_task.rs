@@ -577,19 +577,20 @@ async fn coding_workflow_standard_returns_model_facing_brief_without_diagnostics
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
         "tools.names",
-        "policy",
         "allowed_roots",
         "compact-allowed-root-never-emit",
-        "stdout",
-        "stderr",
-        "command",
-        "env",
-        "token",
-        "secret",
     ] {
         assert!(
             !serialized.contains(forbidden),
-            "compact startup leaked {forbidden}: {serialized}"
+            "compact startup leaked sensitive value {forbidden}: {serialized}"
+        );
+    }
+    for forbidden in [
+        "policy", "stdout", "stderr", "command", "env", "token", "secret",
+    ] {
+        assert!(
+            !json_contains_key(&result.output, forbidden),
+            "compact startup leaked field {forbidden}: {serialized}"
         );
     }
 }

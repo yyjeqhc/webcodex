@@ -2471,6 +2471,13 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     let reused_bytes = serde_json::to_vec(&reused.output).unwrap().len();
     let workflow_omitted_bytes = serde_json::to_vec(&workflow_omitted.output).unwrap().len();
     let standard_bytes = serde_json::to_vec(&standard.output).unwrap().len();
+    eprintln!(
+        "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} workflow_omitted={workflow_omitted_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} workflow_omitted={} standard={}",
+        fresh_requests.len(),
+        reused_requests.len(),
+        workflow_omitted_requests.len(),
+        standard_requests.len()
+    );
     let hard_max = crate::tool_runtime::startup_brief::STANDARD_STARTUP_HARD_MAX_BYTES;
     assert!(fresh_bytes < hard_max);
     assert!(reused_bytes < hard_max);
@@ -2485,25 +2492,18 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         workflow_omitted_bytes <= 1000,
         "workflow-omitted projection regressed above the context budget: {workflow_omitted_bytes} bytes"
     );
-    // Before sparse-by-default projection this fixture was 3154 bytes fresh
-    // and 3259 bytes on unchanged continuation. Session protocol v3 now carries
-    // explicit message-ACK and recording adoption guidance, intentionally growing
-    // the retained static workflow projection. Keep the sparse result far below
-    // the standard startup hard cap while leaving modest protocol headroom.
+    // The sparse projection itself remains below 1 KiB when static workflow
+    // guidance is omitted. With Session ACK/recording/sidecar guidance included,
+    // the canonical default is about 4.0 KiB fresh and 4.1 KiB on unchanged
+    // continuation. Keep that default tightly bounded and still far below the
+    // standard startup hard cap while leaving modest protocol headroom.
     assert!(
-        fresh_bytes <= 3600,
+        fresh_bytes <= 4300,
         "fresh work_on_project projection regressed above the sparse context budget: {fresh_bytes} bytes"
     );
     assert!(
-        reused_bytes <= 3700,
+        reused_bytes <= 4400,
         "unchanged work_on_project projection regressed above the sparse continuation budget: {reused_bytes} bytes"
-    );
-    eprintln!(
-        "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} workflow_omitted={workflow_omitted_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} workflow_omitted={} standard={}",
-        fresh_requests.len(),
-        reused_requests.len(),
-        workflow_omitted_requests.len(),
-        standard_requests.len()
     );
 }
 

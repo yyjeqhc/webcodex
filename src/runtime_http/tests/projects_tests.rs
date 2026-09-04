@@ -107,7 +107,7 @@ async fn http_projects_register_rejects_unknown_client_id() {
     assert!(
         body["error"]
             .as_str()
-            .is_some_and(|e| e.contains("unknown agent")),
+            .is_some_and(|e| e.contains("unknown Runner")),
         "register_project should reject unknown client_id: {:?}",
         body["error"]
     );
@@ -137,7 +137,7 @@ async fn http_projects_create_rejects_unknown_client_id() {
     assert!(
         body["error"]
             .as_str()
-            .is_some_and(|e| e.contains("unknown agent")),
+            .is_some_and(|e| e.contains("unknown Runner")),
         "create_project should reject unknown client_id: {:?}",
         body["error"]
     );
@@ -169,7 +169,7 @@ async fn http_projects_create_keeps_unrelated_unknown_field_tolerance() {
     assert!(
         body["error"]
             .as_str()
-            .is_some_and(|error| error.contains("unknown agent")),
+            .is_some_and(|error| error.contains("unknown Runner")),
         "unrelated unknown fields should keep the endpoint's historical tolerance: {:?}",
         body["error"]
     );

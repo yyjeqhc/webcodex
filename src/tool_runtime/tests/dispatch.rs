@@ -846,7 +846,7 @@ async fn dispatch_register_project_rejects_unknown_client_id() {
             .error
             .as_deref()
             .unwrap_or("")
-            .contains("unknown agent"),
+            .contains("unknown Runner"),
         "register_project should reject unknown client_id: {:?}",
         result.error
     );
@@ -971,7 +971,7 @@ async fn dispatch_create_project_rejects_unknown_client_id() {
             .error
             .as_deref()
             .unwrap_or("")
-            .contains("unknown agent"),
+            .contains("unknown Runner"),
         "create_project should reject unknown client_id: {:?}",
         result.error
     );

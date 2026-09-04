@@ -885,7 +885,11 @@ mod service_tests {
             .service
             .clone()
             .with_yield_ms(5)
-            .with_monitor_timing(100, 5)
+            // This assertion covers the late-attach compensating dispatch, not
+            // the monitor's recurring cancel retry cadence. Keep a second
+            // monitor poll outside the test window so CI scheduling cannot add
+            // an arbitrary third stop before the assertion runs.
+            .with_monitor_timing(60_000, 60_000)
             .with_attach_gate(gate.clone());
         let host = Arc::new(TestHost::default());
         let reservation = reserve(&fx, "late-attach");

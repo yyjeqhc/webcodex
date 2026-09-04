@@ -39,7 +39,13 @@ fn clipboard_backends_are_platform_bounded() {
             }
         ]
     );
-    assert!(clipboard_commands("windows").is_empty());
+    assert_eq!(
+        clipboard_commands("windows"),
+        vec![HelperCommand {
+            program: "clip.exe",
+            args: &[]
+        }]
+    );
 }
 
 #[test]

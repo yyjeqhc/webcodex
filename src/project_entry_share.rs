@@ -1,6 +1,6 @@
 use super::client_handoff_service::{
-    copy_mcp_url, maybe_spawn_chatgpt_open_prompt, mcp_url, render_clipboard_status,
-    ClipboardCopyOutcome,
+    copy_mcp_url, copy_text_to_clipboard, maybe_spawn_chatgpt_open_prompt, mcp_url,
+    render_clipboard_status, ClipboardCopyOutcome,
 };
 use super::setup_service::{
     create_private_dir, generate_project_credential, read_private_value, read_project_credential,
@@ -11,6 +11,7 @@ use super::{
     remove_npm_wrapper_network_environment, setup, start_local_runtime, LocalRuntimeOptions,
     ProductError, ProjectCommandOptions, ProjectShareOAuthRuntimeOptions,
 };
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -141,6 +142,12 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         crate::oauth_http::validate_redirect_uri(redirect_uri)?;
     }
     let project = parse_options(&project_args, "share")?;
+    if project.json && auth == ShareAuth::OAuth {
+        return Err(
+            "share --json supports bearer or query-token handoff; OAuth client secrets are intentionally excluded from the machine protocol"
+                .to_string(),
+        );
+    }
     Ok(ShareCommandOptions {
         project,
         tunnel,
@@ -155,6 +162,67 @@ fn mcp_query_token_url(public_url: &str, credential: &str) -> String {
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     query.append_pair("token", credential);
     format!("{}?{}", mcp_url(public_url), query.finish())
+}
+
+fn clipboard_outcome_name(outcome: ClipboardCopyOutcome) -> &'static str {
+    match outcome {
+        ClipboardCopyOutcome::Copied => "copied",
+        ClipboardCopyOutcome::Unavailable => "unavailable",
+        ClipboardCopyOutcome::Disabled => "disabled",
+    }
+}
+
+fn machine_share_ready_event(
+    project_name: &str,
+    tunnel: TunnelProvider,
+    auth: ShareAuth,
+    externally_managed: bool,
+    local_url: &str,
+    public_url: &str,
+    clipboard: ClipboardCopyOutcome,
+) -> Value {
+    let exposure = match (tunnel, externally_managed) {
+        (TunnelProvider::CloudflareQuick, _) => "cloudflare",
+        (TunnelProvider::OpenAiSecure, _) => "openai_tunnel",
+        (TunnelProvider::None, true) => "existing_https",
+        (TunnelProvider::None, false) => "none",
+    };
+    let remote_ready = tunnel != TunnelProvider::None || externally_managed;
+    let clipboard_contains = match (tunnel, auth) {
+        (TunnelProvider::OpenAiSecure, _) => "tunnel_id",
+        (_, ShareAuth::Bearer) => "bearer_credential",
+        (_, ShareAuth::QueryToken) => "sensitive_mcp_url",
+        (_, ShareAuth::OAuth) => "none",
+    };
+    let authentication = if tunnel == TunnelProvider::OpenAiSecure {
+        "none"
+    } else if auth == ShareAuth::QueryToken {
+        "query_token"
+    } else {
+        "bearer"
+    };
+    let safe_mcp_url = (tunnel != TunnelProvider::OpenAiSecure && auth != ShareAuth::QueryToken)
+        .then(|| mcp_url(public_url));
+    json!({
+        "event": "ready",
+        "schema_version": 1,
+        "experience": "quick_share",
+        "project": project_name,
+        "server": { "kind": "local", "url": local_url },
+        "runner": { "kind": "local" },
+        "exposure": {
+            "kind": exposure,
+            "state": if remote_ready { "remote_ready" } else { "local_ready" }
+        },
+        "connection": {
+            "kind": if tunnel == TunnelProvider::OpenAiSecure { "openai_tunnel" } else { "mcp_url" },
+            "mcp_url": safe_mcp_url,
+            "authentication": authentication,
+            "clipboard_state": clipboard_outcome_name(clipboard),
+            "clipboard_contains": clipboard_contains,
+        },
+        "ready_for_chatgpt": remote_ready,
+    })
 }
 
 fn validate_share_public_url(value: &str) -> Result<String, String> {
@@ -576,63 +644,97 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     };
 
     let externally_managed = options.tunnel == TunnelProvider::None && options.public_url.is_some();
-    let ready = if let Some(prerequisites) = openai_prerequisites.as_ref() {
-        render_openai_share_ready(&runtime.project_name, &prerequisites.tunnel_id)
-    } else {
-        match oauth_client.as_ref() {
-            Some(oauth) => render_share_oauth_ready(
-                &runtime.project_name,
-                options.tunnel,
-                externally_managed,
-                &runtime.public_url,
-                &session.credential,
-                oauth,
-            ),
-            None => render_share_ready(
-                &runtime.project_name,
-                options.tunnel,
-                options.auth,
-                externally_managed,
-                &runtime.public_url,
-                &session.credential,
-            ),
-        }
-    };
-    println!("{ready}");
-
     let copy_remote_mcp_url =
         options.tunnel == TunnelProvider::CloudflareQuick || externally_managed;
     let open_chatgpt_handoff =
         copy_remote_mcp_url || options.tunnel == TunnelProvider::OpenAiSecure;
-    let clipboard_outcome = if copy_remote_mcp_url {
-        let clipboard_url = if options.auth == ShareAuth::QueryToken {
-            mcp_query_token_url(&runtime.public_url, &session.credential)
+    let handoff_task = if options.project.json {
+        let query_token_url = (options.auth == ShareAuth::QueryToken)
+            .then(|| mcp_query_token_url(&runtime.public_url, &session.credential));
+        let clipboard_value = if let Some(prerequisites) = openai_prerequisites.as_ref() {
+            Some(prerequisites.tunnel_id.as_str())
+        } else if let Some(url) = query_token_url.as_deref() {
+            Some(url)
         } else {
-            mcp_url(&runtime.public_url)
+            Some(session.credential.as_str())
         };
-        copy_mcp_url(&clipboard_url, options.copy_url).await
+        let clipboard_outcome = match clipboard_value {
+            Some(value) => copy_text_to_clipboard(value, options.copy_url).await,
+            None => ClipboardCopyOutcome::Disabled,
+        };
+        let event = machine_share_ready_event(
+            &runtime.project_name,
+            options.tunnel,
+            options.auth,
+            externally_managed,
+            &runtime.local_url,
+            &runtime.public_url,
+            clipboard_outcome,
+        );
+        let encoded = serde_json::to_string(&event).map_err(|_| {
+            ProductError::new(
+                "machine_output_failed",
+                "WebCodex could not encode Quick Share readiness",
+                Some("Retry Quick Share or use the interactive CLI output."),
+            )
+        })?;
+        println!("{encoded}");
+        None
     } else {
-        ClipboardCopyOutcome::Disabled
-    };
-    let clipboard_status = if options.auth == ShareAuth::QueryToken {
-        match clipboard_outcome {
-            ClipboardCopyOutcome::Copied => Some(
-                "Sensitive MCP URL copied to clipboard. It contains the temporary share credential.",
-            ),
-            ClipboardCopyOutcome::Unavailable => {
-                Some("Clipboard copy unavailable; copy the sensitive MCP URL above manually.")
+        let ready = if let Some(prerequisites) = openai_prerequisites.as_ref() {
+            render_openai_share_ready(&runtime.project_name, &prerequisites.tunnel_id)
+        } else {
+            match oauth_client.as_ref() {
+                Some(oauth) => render_share_oauth_ready(
+                    &runtime.project_name,
+                    options.tunnel,
+                    externally_managed,
+                    &runtime.public_url,
+                    &session.credential,
+                    oauth,
+                ),
+                None => render_share_ready(
+                    &runtime.project_name,
+                    options.tunnel,
+                    options.auth,
+                    externally_managed,
+                    &runtime.public_url,
+                    &session.credential,
+                ),
             }
-            ClipboardCopyOutcome::Disabled => None,
+        };
+        println!("{ready}");
+
+        let clipboard_outcome = if copy_remote_mcp_url {
+            let clipboard_url = if options.auth == ShareAuth::QueryToken {
+                mcp_query_token_url(&runtime.public_url, &session.credential)
+            } else {
+                mcp_url(&runtime.public_url)
+            };
+            copy_mcp_url(&clipboard_url, options.copy_url).await
+        } else {
+            ClipboardCopyOutcome::Disabled
+        };
+        let clipboard_status = if options.auth == ShareAuth::QueryToken {
+            match clipboard_outcome {
+                ClipboardCopyOutcome::Copied => Some(
+                    "Sensitive MCP URL copied to clipboard. It contains the temporary share credential.",
+                ),
+                ClipboardCopyOutcome::Unavailable => {
+                    Some("Clipboard copy unavailable; copy the sensitive MCP URL above manually.")
+                }
+                ClipboardCopyOutcome::Disabled => None,
+            }
+        } else {
+            render_clipboard_status(clipboard_outcome)
+        };
+        if let Some(status) = clipboard_status {
+            println!("\n{status}");
         }
-    } else {
-        render_clipboard_status(clipboard_outcome)
+        open_chatgpt_handoff
+            .then(maybe_spawn_chatgpt_open_prompt)
+            .flatten()
     };
-    if let Some(status) = clipboard_status {
-        println!("\n{status}");
-    }
-    let handoff_task = open_chatgpt_handoff
-        .then(maybe_spawn_chatgpt_open_prompt)
-        .flatten();
 
     let outcome = match (cloudflare_tunnel.as_mut(), openai_tunnel.as_mut()) {
         (Some(tunnel), None) => tokio::select! {
@@ -1141,6 +1243,69 @@ mod tests {
             "https://share.example".to_string(),
         ])
         .is_err());
+    }
+
+    #[test]
+    fn share_json_is_a_safe_foreground_integration_mode() {
+        let machine = parse_share_options(&[
+            "--tunnel".to_string(),
+            "cloudflare".to_string(),
+            "--json".to_string(),
+        ])
+        .unwrap();
+        assert!(machine.project.json);
+        assert_eq!(machine.auth, ShareAuth::Bearer);
+
+        let oauth = parse_share_options(&[
+            "--json".to_string(),
+            "--auth".to_string(),
+            "oauth".to_string(),
+            "--oauth-redirect-uri".to_string(),
+            "https://client.example/callback".to_string(),
+        ])
+        .unwrap_err();
+        assert!(oauth.contains("OAuth client secrets are intentionally excluded"));
+    }
+
+    #[test]
+    fn machine_share_ready_event_never_contains_handoff_secret_material() {
+        let cloudflare = machine_share_ready_event(
+            "demo",
+            TunnelProvider::CloudflareQuick,
+            ShareAuth::Bearer,
+            false,
+            "http://127.0.0.1:43210",
+            "https://demo.trycloudflare.com",
+            ClipboardCopyOutcome::Copied,
+        );
+        assert_eq!(cloudflare["event"], "ready");
+        assert_eq!(cloudflare["experience"], "quick_share");
+        assert_eq!(cloudflare["exposure"]["state"], "remote_ready");
+        assert_eq!(
+            cloudflare["connection"]["mcp_url"],
+            "https://demo.trycloudflare.com/mcp"
+        );
+        assert_eq!(
+            cloudflare["connection"]["clipboard_contains"],
+            "bearer_credential"
+        );
+        let encoded = serde_json::to_string(&cloudflare).unwrap();
+        assert!(!encoded.contains("wc_pair_"));
+        assert!(!encoded.contains("webcodex_temporary"));
+
+        let openai = machine_share_ready_event(
+            "demo",
+            TunnelProvider::OpenAiSecure,
+            ShareAuth::Bearer,
+            false,
+            "http://127.0.0.1:43210",
+            "http://127.0.0.1:43210",
+            ClipboardCopyOutcome::Copied,
+        );
+        assert!(openai["connection"]["mcp_url"].is_null());
+        assert_eq!(openai["connection"]["authentication"], "none");
+        assert_eq!(openai["connection"]["clipboard_contains"], "tunnel_id");
+        assert_eq!(openai["ready_for_chatgpt"], true);
     }
 
     #[test]

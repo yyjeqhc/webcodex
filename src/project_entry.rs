@@ -219,7 +219,7 @@ pub(crate) fn parse_options(
             "--root" => options.root = PathBuf::from(value(&mut index)?),
             "--profile" => options.profile = value(&mut index)?,
             "--state-dir" => options.state_dir = Some(PathBuf::from(value(&mut index)?)),
-            "--json" if !matches!(command, "run" | "share") => options.json = true,
+            "--json" if command != "run" => options.json = true,
             "--console-assets-dir" if command == "run" => {
                 let directory = PathBuf::from(value(&mut index)?);
                 if !directory.is_absolute() {
@@ -239,7 +239,7 @@ pub(crate) fn parse_options(
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
+    "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
                      [--tunnel cloudflare|openai|none] [--auth bearer|query-token|oauth]\n\
                      [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
        webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\

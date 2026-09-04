@@ -29,17 +29,21 @@ pub(super) fn mcp_url(public_url: &str) -> String {
     format!("{}/mcp", public_url.trim_end_matches('/'))
 }
 
-pub(super) async fn copy_mcp_url(url: &str, enabled: bool) -> ClipboardCopyOutcome {
+pub(super) async fn copy_text_to_clipboard(text: &str, enabled: bool) -> ClipboardCopyOutcome {
     if !enabled {
         return ClipboardCopyOutcome::Disabled;
     }
     let commands = clipboard_commands(std::env::consts::OS);
     for command in commands {
-        if run_clipboard_command(&command, url).await {
+        if run_clipboard_command(&command, text).await {
             return ClipboardCopyOutcome::Copied;
         }
     }
     ClipboardCopyOutcome::Unavailable
+}
+
+pub(super) async fn copy_mcp_url(url: &str, enabled: bool) -> ClipboardCopyOutcome {
+    copy_text_to_clipboard(url, enabled).await
 }
 
 pub(super) fn render_clipboard_status(outcome: ClipboardCopyOutcome) -> Option<&'static str> {
@@ -98,6 +102,10 @@ fn clipboard_commands(os: &str) -> Vec<HelperCommand> {
                 args: &["--clipboard", "--input"],
             },
         ],
+        "windows" => vec![HelperCommand {
+            program: "clip.exe",
+            args: &[],
+        }],
         _ => Vec::new(),
     }
 }

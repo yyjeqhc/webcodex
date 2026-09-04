@@ -384,11 +384,12 @@ pub(crate) fn runner_status_usage() -> &'static str {
 }
 
 pub(crate) fn login_usage() -> &'static str {
-    "Usage: webcodex login <SERVER-URL> --code <PAIRING-CODE> [OPTIONS]\n\n\
+    "Usage: webcodex login <SERVER-URL> (--code <PAIRING-CODE>|--code-stdin) [OPTIONS]\n\n\
      Use a one-time login code (`webcodex pairing create`) to connect this project machine.\n\
      Add --project to add an existing project during the same login.\n\n\
      Options:\n\
-     \x20\x20--code CODE          Pairing code from the server (required)\n\
+     \x20\x20--code CODE          Pairing code from the server\n\
+     \x20\x20--code-stdin         Read the pairing code from bounded UTF-8 stdin; avoids argv exposure\n\
      \x20\x20--proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
      \x20\x20--no-system-proxy   Ignore proxy environment and connect directly\n\
      \x20\x20--device NAME        Name for this device [default: hostname + local suffix]\n\

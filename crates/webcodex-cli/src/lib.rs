@@ -15,7 +15,7 @@
 //! binaries.
 
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod webcodex_cli;
@@ -725,6 +725,7 @@ fn parse_login(args: &[String]) -> CliAction {
     let mut server_url: Option<String> = None;
     let mut server_http = ServerHttpOptions::default();
     let mut code: Option<String> = None;
+    let mut code_stdin = false;
     let mut device: Option<String> = None;
     let mut device_explicit = false;
     let mut base_dir: Option<PathBuf> = None;
@@ -751,6 +752,7 @@ fn parse_login(args: &[String]) -> CliAction {
                 Some(value) => code = Some(value),
                 None => return cli_parse_error(format!("{arg} requires a value")),
             },
+            "--code-stdin" => code_stdin = true,
             "--device" | "--device-name" => match take(&mut index) {
                 Some(value) => {
                     device = Some(value);
@@ -798,14 +800,26 @@ fn parse_login(args: &[String]) -> CliAction {
                 .to_string(),
         );
     }
+    if code.is_some() && code_stdin {
+        return cli_parse_error("use only one of --code or --code-stdin".to_string());
+    }
     let Some(server_url) = server_url else {
         return cli_parse_error(
             "login needs a server URL, e.g. `webcodex login https://example.com --code wc_pair_...`"
                 .to_string(),
         );
     };
-    let Some(code) = code else {
-        return cli_parse_error("login needs --code with the pairing code".to_string());
+    let code = match (code, code_stdin) {
+        (Some(code), false) => code,
+        (None, true) => match read_login_pairing_code_from_stdin() {
+            Ok(code) => code,
+            Err(message) => return cli_parse_error(message),
+        },
+        (None, false) => return cli_parse_error(
+            "login needs --code with the pairing code (or --code-stdin for process integrations)"
+                .to_string(),
+        ),
+        (Some(_), true) => unreachable!("pairing code source conflict handled above"),
     };
     let base_dir = match base_dir_or_default(base_dir) {
         Ok(dir) => dir,
@@ -825,6 +839,26 @@ fn parse_login(args: &[String]) -> CliAction {
         json,
         print_mcp_config,
     })
+}
+
+const MAX_LOGIN_PAIRING_CODE_STDIN_BYTES: u64 = 4096;
+
+fn read_login_pairing_code_from_stdin() -> Result<String, String> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(MAX_LOGIN_PAIRING_CODE_STDIN_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "could not read pairing code from stdin".to_string())?;
+    if bytes.len() as u64 > MAX_LOGIN_PAIRING_CODE_STDIN_BYTES {
+        return Err("pairing code from stdin exceeds the 4096-byte limit".to_string());
+    }
+    let value = String::from_utf8(bytes)
+        .map_err(|_| "pairing code from stdin must be UTF-8".to_string())?;
+    let code = value.trim();
+    if code.is_empty() {
+        return Err("pairing code from stdin is empty".to_string());
+    }
+    Ok(code.to_string())
 }
 
 fn parse_logout(args: &[String]) -> CliAction {

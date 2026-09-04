@@ -194,7 +194,10 @@ pub async fn run_project_command(args: Vec<String>) -> CliCommandOutput {
             Ok(()) => CliCommandOutput::success(String::new()),
             Err(error) => CliCommandOutput::failure(
                 1,
-                format!("{}\n", project_entry::render_error(&error, false)),
+                format!(
+                    "{}\n",
+                    project_entry::render_error(&error, options.project.json)
+                ),
             ),
         },
         ProjectCliAction::Task(command) => match task_cli::run(command) {
@@ -250,6 +253,14 @@ mod tests {
             project_cli_action(["share", "--tunnel", "openai"]),
             ProjectCliAction::Share(project_entry::ShareCommandOptions {
                 tunnel: project_entry::TunnelProvider::OpenAiSecure,
+                ..
+            })
+        ));
+        assert!(matches!(
+            project_cli_action(["share", "--tunnel", "none", "--json"]),
+            ProjectCliAction::Share(project_entry::ShareCommandOptions {
+                project: project_entry::ProjectCommandOptions { json: true, .. },
+                tunnel: project_entry::TunnelProvider::None,
                 ..
             })
         ));

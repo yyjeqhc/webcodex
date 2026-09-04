@@ -139,6 +139,7 @@ fn project_register_and_login_project_help_prioritize_user_language() {
     let login_help = cli_exit(["login", "--help"]).unwrap();
     assert!(login_help.contains("one-time login code"));
     assert!(login_help.contains("--project PATH"));
+    assert!(login_help.contains("--code-stdin"));
     assert!(login_help.contains("projects may be added later"));
 
     assert!(matches!(
@@ -156,6 +157,20 @@ fn project_register_and_login_project_help_prioritize_user_language() {
             if opts.allowed_roots == vec![std::path::PathBuf::from("/tmp")]
                 && opts.project == Some(std::path::PathBuf::from("/tmp/repo"))
     ));
+
+    match cli_action([
+        "login",
+        "https://example.test",
+        "--code",
+        "wc_pair_example",
+        "--code-stdin",
+    ]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(stderr.contains("use only one of --code or --code-stdin"));
+        }
+        other => panic!("expected pairing-code source conflict, got {other:?}"),
+    }
 }
 
 #[test]

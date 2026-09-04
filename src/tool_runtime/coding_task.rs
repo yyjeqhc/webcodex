@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::continuation_feedback::{
-    continuation_feedback_value, not_applicable_continuation_feedback_value,
-    ContinuationFeedbackInput,
+    continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
+    not_applicable_continuation_feedback_value, ContinuationFeedbackInput,
 };
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
@@ -1392,6 +1392,11 @@ impl ToolRuntime {
         } else {
             json!({ "available": false, "not_requested": true })
         };
+        let continuation_current_validation =
+            super::validation_events::current_validation_evidence_for_session(
+                &closeout_session_summary,
+                20,
+            );
         let continuation_feedback = if closeout_session_summary.events.is_empty() {
             not_applicable_continuation_feedback_value("empty_session")
         } else {
@@ -1407,6 +1412,10 @@ impl ToolRuntime {
                     .and_then(Value::as_u64)
                     .unwrap_or(0)
                     > 0,
+                hooks: continuation_projection_hooks(),
+                current_validation: continuation_validation_snapshot(
+                    &continuation_current_validation,
+                ),
             })
         };
 
@@ -1508,6 +1517,10 @@ impl ToolRuntime {
             &projection_summary.events,
             20,
         );
+        let current_validation = super::validation_events::current_validation_evidence_for_session(
+            projection_summary,
+            20,
+        );
         let (discussion, _) = self.discussion_snapshot(&summary.session_id);
         continuation_feedback_value(ContinuationFeedbackInput {
             session_summary: projection_summary,
@@ -1517,6 +1530,8 @@ impl ToolRuntime {
             continuation: continuation_kind,
             suggest_exploration_continuity: true,
             workspace_conflicts,
+            hooks: continuation_projection_hooks(),
+            current_validation: continuation_validation_snapshot(&current_validation),
         })
     }
 

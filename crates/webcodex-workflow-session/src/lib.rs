@@ -1,6 +1,7 @@
 //! Protocol-neutral Workflow Session domain model, ledger/store, collaboration, and deterministic projections.
 
 mod assignment;
+mod closeout;
 mod console;
 mod events;
 mod messages;
@@ -17,6 +18,7 @@ mod collaboration_tests;
 #[cfg(test)]
 mod message_mutation_tests;
 
+pub use closeout::closeout_work_projection;
 pub use console::{
     aggregate_console_list, ConsoleValidationHooks, WorkflowSessionConsoleAggregate,
     WorkflowSessionConsoleAttentionOverview, WorkflowSessionConsoleDetail,

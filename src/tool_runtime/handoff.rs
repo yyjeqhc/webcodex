@@ -10,10 +10,10 @@
 //! full diffs, file contents, stdout/stderr bodies, validation commands,
 //! secrets, tokens, or raw session input payloads.
 
-use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
-
-use super::continuation_feedback::{continuation_feedback_value, ContinuationFeedbackInput};
+use super::continuation_feedback::{
+    continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
+    ContinuationFeedbackInput,
+};
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::permission_summary_from_events;
 use super::session_context::{session_project_mismatch_result, SessionProjectMismatch};
@@ -25,6 +25,9 @@ use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, Session
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::auth::AuthContext;
+use serde_json::{json, Value};
+
+pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
 const DEFAULT_HANDOFF_LIMIT: usize = 20;
 const MAX_HANDOFF_LIMIT: usize = 100;
@@ -291,6 +294,11 @@ impl ToolRuntime {
         if include_validation {
             output["validation"] = feedback_validation.clone();
         }
+        let continuation_current_validation =
+            super::validation_events::current_validation_evidence_for_session(
+                &closeout_session,
+                20,
+            );
         let (work_performed, changed_paths) = closeout_work_projection(&summary.events);
         output["work_performed"] = work_performed;
         output["changed_paths"] = changed_paths;
@@ -312,6 +320,8 @@ impl ToolRuntime {
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
                 > 0,
+            hooks: continuation_projection_hooks(),
+            current_validation: continuation_validation_snapshot(&continuation_current_validation),
         });
         let reconciliation = reconcile_closeout_evidence(
             output.get("tool_failures").unwrap_or(&Value::Null),
@@ -1289,38 +1299,6 @@ fn install_compact_workflow_outcomes(target: &mut Value, outcomes: Value) {
     ] {
         target[field] = outcomes.get(field).cloned().unwrap_or(Value::Null);
     }
-}
-
-pub(crate) fn closeout_work_projection(events: &[SessionEvent]) -> (Value, Value) {
-    let mut tools = BTreeMap::<String, (u64, u64, u64, Option<i64>)>::new();
-    let mut changed_paths = BTreeSet::<String>::new();
-    for event in canonical_tool_call_finished_events(events) {
-        let counts = tools.entry(event.tool_name.clone()).or_default();
-        counts.0 = counts.0.saturating_add(1);
-        match event.status.as_deref() {
-            Some("succeeded") => counts.1 = counts.1.saturating_add(1),
-            Some("failed") => counts.2 = counts.2.saturating_add(1),
-            _ => {}
-        }
-        counts.3 = event.finished_at.or(Some(event.timestamp));
-        changed_paths.extend(event.changed_paths.iter().cloned());
-    }
-    let work = tools
-        .into_iter()
-        .map(|(tool_name, (count, succeeded, failed, completed_at))| {
-            json!({
-                "tool_name": tool_name,
-                "count": count,
-                "succeeded": succeeded,
-                "failed": failed,
-                "last_completed_at": completed_at,
-            })
-        })
-        .collect::<Vec<_>>();
-    (
-        json!(work),
-        json!(changed_paths.into_iter().take(200).collect::<Vec<_>>()),
-    )
 }
 
 fn validation_historical_failures_resolved(validation: &Value) -> bool {

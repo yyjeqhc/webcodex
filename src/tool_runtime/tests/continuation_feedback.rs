@@ -9,7 +9,8 @@
 
 use super::support::*;
 use crate::tool_runtime::continuation_feedback::{
-    continuation_feedback_value, validation_delta_value, ContinuationFeedbackInput,
+    continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
+    validation_delta_value, ContinuationFeedbackInput,
 };
 use crate::tool_runtime::sessions::{
     self, SessionDiscussionCounts, SessionGuards, SessionTransport,
@@ -18,7 +19,9 @@ use crate::tool_runtime::tool_definition::{
     runtime_tool_captures_validation_output, runtime_tool_is_git_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like,
 };
-use crate::tool_runtime::validation_events::validation_summary_from_events;
+use crate::tool_runtime::validation_events::{
+    current_validation_evidence_for_session, validation_summary_from_events,
+};
 use crate::tool_runtime::{registered_tool_specs, SessionMode, ToolRuntime, ToolSpec};
 use serde_json::{json, Value};
 
@@ -760,6 +763,8 @@ fn exploration_continuity_suggestion_is_lower_priority_than_blocking_evidence() 
         .summary(&conflict_session, Some(200))
         .unwrap();
     let conflict_validation = validation_summary_from_events(&conflict_summary.events, 20);
+    let conflict_current_validation =
+        current_validation_evidence_for_session(&conflict_summary, 20);
     let conflict_discussion = empty_discussion();
     let conflict_feedback = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &conflict_summary,
@@ -769,6 +774,8 @@ fn exploration_continuity_suggestion_is_lower_priority_than_blocking_evidence() 
         continuation: "continued",
         suggest_exploration_continuity: true,
         workspace_conflicts: true,
+        hooks: continuation_projection_hooks(),
+        current_validation: continuation_validation_snapshot(&conflict_current_validation),
     });
     assert!(!has_exploration_action(&conflict_feedback));
 }
@@ -2677,6 +2684,7 @@ fn feedback_for_with_discussion(
     continuation: &'static str,
 ) -> Value {
     let validation = validation_summary_from_events(&summary.events, 20);
+    let current_validation = current_validation_evidence_for_session(summary, 20);
     let jobs = json!({"active_count": 0, "terminal_pending_count": 0, "recent": []});
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: summary,
@@ -2686,6 +2694,8 @@ fn feedback_for_with_discussion(
         continuation,
         suggest_exploration_continuity: true,
         workspace_conflicts: false,
+        hooks: continuation_projection_hooks(),
+        current_validation: continuation_validation_snapshot(&current_validation),
     })
 }
 
@@ -2696,6 +2706,7 @@ fn feedback_for_with_jobs(
     continuation: &'static str,
 ) -> Value {
     let validation = validation_summary_from_events(&summary.events, 20);
+    let current_validation = current_validation_evidence_for_session(summary, 20);
     let discussion = empty_discussion();
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: summary,
@@ -2705,5 +2716,7 @@ fn feedback_for_with_jobs(
         continuation,
         suggest_exploration_continuity: true,
         workspace_conflicts: false,
+        hooks: continuation_projection_hooks(),
+        current_validation: continuation_validation_snapshot(&current_validation),
     })
 }

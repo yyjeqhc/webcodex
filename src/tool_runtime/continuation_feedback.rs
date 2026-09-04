@@ -42,6 +42,7 @@ use super::tool_definition::{
     runtime_tool_captures_validation_output, runtime_tool_is_git_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like,
 };
+use super::validation_events::CurrentValidationEvidenceProjection;
 
 /// Maximum number of characters returned from the previous instruction.
 const MAX_INSTRUCTION_EXCERPT_CHARS: usize = 500;
@@ -293,6 +294,39 @@ pub(crate) struct FailureIdentity {
     pub(crate) line: Option<u64>,
 }
 
+/// Narrow deterministic policy hook supplied by the root adapter. The Session
+/// observation domain receives only the classification fact it needs; it does
+/// not own or duplicate the runtime tool taxonomy.
+#[derive(Clone, Copy)]
+pub(crate) struct ContinuationProjectionHooks {
+    pub(crate) tool_is_meaningful: fn(&str) -> bool,
+}
+
+/// Bounded current-validation view computed by the canonical Validation owner.
+/// The full validation summary remains a separate input because it may carry
+/// job-enriched history while this snapshot is derived from durable Session
+/// events using the exact current-evidence fence semantics.
+#[derive(Clone, Copy)]
+pub(crate) struct ContinuationValidationSnapshot<'a> {
+    pub(crate) current_evidence: &'a Value,
+    pub(crate) current_validation: &'a Value,
+}
+
+pub(crate) fn continuation_projection_hooks() -> ContinuationProjectionHooks {
+    ContinuationProjectionHooks {
+        tool_is_meaningful: root_tool_is_meaningful,
+    }
+}
+
+pub(crate) fn continuation_validation_snapshot(
+    current: &CurrentValidationEvidenceProjection,
+) -> ContinuationValidationSnapshot<'_> {
+    ContinuationValidationSnapshot {
+        current_evidence: &current.evidence,
+        current_validation: &current.current_validation,
+    }
+}
+
 /// Inputs gathered up-front so the projection helpers stay pure and never
 /// touch locks, the network, or the filesystem. Callers copy bounded
 /// snapshots before constructing this.
@@ -314,6 +348,8 @@ pub(crate) struct ContinuationFeedbackInput<'a> {
     /// Current startup workspace conflict fact, gathered outside this pure
     /// projection. It gates the optional exploration continuity suggestion.
     pub(crate) workspace_conflicts: bool,
+    pub(crate) hooks: ContinuationProjectionHooks,
+    pub(crate) current_validation: ContinuationValidationSnapshot<'a>,
 }
 
 impl ContinuationFeedback {
@@ -354,6 +390,8 @@ impl ContinuationFeedback {
             attempt_start,
             input.session_summary,
             input.validation,
+            input.hooks,
+            input.current_validation,
             input.jobs,
             input.discussion,
             input.continuation,
@@ -474,6 +512,8 @@ fn build_attempt_summary(
     attempt_start: usize,
     session_summary: &SessionSummary,
     validation: &Value,
+    hooks: ContinuationProjectionHooks,
+    current_validation: ContinuationValidationSnapshot<'_>,
     jobs: &Value,
     discussion: &SessionDiscussionSummary,
     continuation: &'static str,
@@ -512,7 +552,7 @@ fn build_attempt_summary(
     let meaningful: Vec<&SessionEvent> = canonical_finished
         .iter()
         .copied()
-        .filter(|event| is_meaningful_tool(&event.tool_name))
+        .filter(|event| (hooks.tool_is_meaningful)(&event.tool_name))
         .collect();
     let successful_tool_calls = meaningful
         .iter()
@@ -538,12 +578,10 @@ fn build_attempt_summary(
     // material workspace-content change. Historical validation remains intact
     // in the session-wide summary, while activity/open-failure counts use only
     // evidence that still describes the current workspace state.
-    let current_validation =
-        super::validation_events::current_validation_evidence_for_session(session_summary, 20);
     let current_evidence = validation
         .get("current_evidence")
         .filter(|value| value.is_object())
-        .unwrap_or(&current_validation.evidence);
+        .unwrap_or(current_validation.current_evidence);
     let resolved_failures = current_evidence
         .get("resolved_failure_count")
         .and_then(Value::as_u64)
@@ -572,7 +610,7 @@ fn build_attempt_summary(
 
     // --- validation (current attempt verdict, history must not pollute) ---
     let delta = validation_delta(validation);
-    let validation_block = build_attempt_validation(validation, &current_validation, &delta);
+    let validation_block = build_attempt_validation(validation, current_validation, &delta);
 
     // --- jobs (reuse existing lifecycle fields) ---
     let jobs_block = build_attempt_jobs(jobs);
@@ -741,7 +779,7 @@ fn instruction_from_boundary(
 /// True when a finished tool call counts as work progress (not a pure
 /// status/manifest/summary query). Reuses the existing tool classification so
 /// the continuation layer never invents its own tool taxonomy.
-fn is_meaningful_tool(tool_name: &str) -> bool {
+fn root_tool_is_meaningful(tool_name: &str) -> bool {
     runtime_tool_is_write_like(tool_name)
         || runtime_tool_is_shell_like(tool_name)
         || runtime_tool_is_git_like(tool_name)
@@ -750,7 +788,7 @@ fn is_meaningful_tool(tool_name: &str) -> bool {
 
 fn build_attempt_validation(
     validation: &Value,
-    current_validation: &super::validation_events::CurrentValidationEvidenceProjection,
+    current_validation: ContinuationValidationSnapshot<'_>,
     delta: &ValidationDelta,
 ) -> AttemptValidation {
     // When the caller explicitly did not request validation (handoff with
@@ -763,7 +801,7 @@ fn build_attempt_validation(
     let evidence = validation
         .get("current_evidence")
         .filter(|value| value.is_object())
-        .unwrap_or(&current_validation.evidence);
+        .unwrap_or(current_validation.current_evidence);
     let current_status = if not_requested {
         "unknown"
     } else {
@@ -783,7 +821,7 @@ fn build_attempt_validation(
     let (open_failures, observed_open_failures, observed_truncated) = if not_requested {
         (Vec::new(), 0, false)
     } else {
-        attempt_open_failures(&current_validation.current_validation)
+        attempt_open_failures(current_validation.current_validation)
     };
     let total_open_failures = observed_open_failures.max(current_unresolved);
     let failures_truncated = observed_truncated || total_open_failures > open_failures.len();

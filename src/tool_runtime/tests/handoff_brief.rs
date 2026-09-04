@@ -2,7 +2,8 @@
 
 use super::support::*;
 use crate::tool_runtime::continuation_feedback::{
-    continuation_feedback_value, ContinuationFeedbackInput,
+    continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
+    ContinuationFeedbackInput,
 };
 use crate::tool_runtime::handoff_brief::{
     build_handoff_brief, handoff_brief_size, HandoffBriefInput, HANDOFF_BRIEF_HARD_MAX_BYTES,
@@ -14,7 +15,9 @@ use crate::tool_runtime::sessions::{
     SessionMessageKind, SessionMessagePriority, SessionStore, SessionTransport,
 };
 use crate::tool_runtime::startup_brief::validate_schema_instance_for_test;
-use crate::tool_runtime::validation_events::validation_summary_from_events;
+use crate::tool_runtime::validation_events::{
+    current_validation_evidence_for_session, validation_summary_from_events,
+};
 use crate::tool_runtime::{registered_tool_specs, SessionMode, ToolCall, ToolRuntime};
 use serde_json::{json, Value};
 
@@ -143,6 +146,7 @@ fn brief_for(
 ) -> Value {
     let summary = store.summary(session_id, Some(200)).unwrap();
     let computed_validation = validation_summary_from_events(&summary.events, 20);
+    let current_validation = current_validation_evidence_for_session(&summary, 20);
     let validation = validation_override.unwrap_or(&computed_validation);
     let validation_not_requested = json!({
         "available": false,
@@ -168,6 +172,8 @@ fn brief_for(
             .and_then(Value::as_u64)
             .unwrap_or(0)
             > 0,
+        hooks: continuation_projection_hooks(),
+        current_validation: continuation_validation_snapshot(&current_validation),
     });
     build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,
@@ -831,6 +837,7 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
     add_instruction(&store, &session_id, &latest);
     let summary = store.summary(&session_id, Some(200)).unwrap();
     let validation = passed_validation();
+    let current_validation = current_validation_evidence_for_session(&summary, 20);
     let discussion = discussion(&store, &session_id);
     let jobs = empty_jobs();
     let mut feedback = continuation_feedback_value(ContinuationFeedbackInput {
@@ -841,6 +848,8 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
         continuation: "continued",
         suggest_exploration_continuity: false,
         workspace_conflicts: false,
+        hooks: continuation_projection_hooks(),
+        current_validation: continuation_validation_snapshot(&current_validation),
     });
     mutate_feedback_to_worst_case(&mut feedback);
     let mut workspace = dirty_workspace(0);

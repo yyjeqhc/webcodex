@@ -24,8 +24,6 @@ use super::session_context::{
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
-#[cfg(test)]
-pub(crate) use webcodex_validation::validation_kind_for_tool;
 pub(crate) use webcodex_validation::{
     current_validation_evidence_for_session, event_observes_validation_activity,
     skipped_validation_summary, validation_summary_from_events,

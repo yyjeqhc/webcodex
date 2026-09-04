@@ -1,12 +1,16 @@
-use super::super::tool_audit::is_structured_validation_target_identity;
-use super::super::validation_parser::{
+use crate::{validation_adapter_for_tool, ValidationCommandOptions, ValidationFailureEvidence};
+use webcodex_core::runner_protocol::{GO_TEST_PACKAGE_MAX_BYTES, GO_TEST_PACKAGE_MAX_ITEMS};
+use webcodex_core::validation_evidence::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, parse_go_test_diagnostics,
     PARSER_KIND, PARSER_VERSION,
 };
-use super::super::validation_profile::{
-    validation_adapter_for_tool, ValidationCommandOptions, ValidationFailureEvidence,
+use webcodex_tool_contracts::{is_known_tool_name, registered_tool_specs};
+use webcodex_tool_runtime_contracts::{
+    tool_audit::{
+        is_structured_validation_target_identity, session_log_arguments_for_tool_request,
+    },
+    ToolCall,
 };
-use super::super::{is_known_tool_name, registered_tool_specs, ToolCall};
 
 #[test]
 fn rust_profile_selects_cargo_fmt_adapter_and_preserves_command() {
@@ -131,14 +135,8 @@ fn go_test_schema_and_audit_projection_are_bounded_and_explicit() {
     let spec = specs.iter().find(|spec| spec.name == "go_test").unwrap();
     let packages = &spec.input_schema["properties"]["packages"];
     assert_eq!(packages["minItems"], 1);
-    assert_eq!(
-        packages["maxItems"],
-        crate::runner_protocol::GO_TEST_PACKAGE_MAX_ITEMS
-    );
-    assert_eq!(
-        packages["items"]["maxLength"],
-        crate::runner_protocol::GO_TEST_PACKAGE_MAX_BYTES
-    );
+    assert_eq!(packages["maxItems"], GO_TEST_PACKAGE_MAX_ITEMS);
+    assert_eq!(packages["items"]["maxLength"], GO_TEST_PACKAGE_MAX_BYTES);
 
     let raw = serde_json::json!({
         "project": "agent:test:demo",
@@ -147,8 +145,7 @@ fn go_test_schema_and_audit_projection_are_bounded_and_explicit() {
         "timeout_secs": 90,
         "unrecognized_private_field": "NEVER_PERSIST_GO_TEST_UNKNOWN"
     });
-    let raw_audit =
-        super::super::tool_audit::session_log_arguments_for_tool_request("go_test", &raw);
+    let raw_audit = session_log_arguments_for_tool_request("go_test", &raw);
     let target_id = raw_audit["validation_target_id"]
         .as_str()
         .expect("go_test audit projection should include validation_target_id");

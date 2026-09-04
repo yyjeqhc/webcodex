@@ -80,8 +80,7 @@ pub(crate) const TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT: &str =
 
 #[cfg(test)]
 pub(crate) use webcodex_workflow_session::root_test_support::{
-    session_input_summary_for_tool, MAX_VALIDATION_EXCERPT_CHARS,
-    TOOL_CALL_EXPECTATION_METADATA_FIELDS,
+    session_input_summary_for_tool, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
 };
 
 #[cfg(test)]

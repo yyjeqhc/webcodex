@@ -13,3 +13,8 @@ serde_json = "1"
 sha2 = "0.10"
 toml = "0.8"
 
+[dev-dependencies]
+tempfile = "3"
+webcodex-tool-contracts = { path = "../webcodex-tool-contracts", features = ["root-test-support"] }
+webcodex-workflow-session = { path = "../webcodex-workflow-session", features = ["root-test-support"] }
+

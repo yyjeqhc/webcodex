@@ -10,6 +10,13 @@ mod cargo_test;
 mod evidence;
 mod recipe;
 
+#[cfg(test)]
+mod evidence_tests;
+#[cfg(test)]
+mod profile_tests;
+#[cfg(test)]
+mod recipe_tests;
+
 pub use adapters::{
     validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
     ValidationFailureEvidence,

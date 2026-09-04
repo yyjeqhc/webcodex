@@ -82,3 +82,29 @@ pub fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_cargo_test_run_metadata;
+
+    #[test]
+    fn cargo_test_counts_aggregate_multiple_harness_summaries() {
+        let metadata = parse_cargo_test_run_metadata(
+            "test result: ok. 2 passed; 0 failed; 1 ignored\n\
+             test result: FAILED. 3 passed; 1 failed; 0 ignored\n\
+             test result: ok. 0 passed; 0 failed; 2 ignored\n",
+        );
+        assert_eq!(metadata.tests_passed, Some(5));
+        assert_eq!(metadata.tests_failed, Some(1));
+    }
+
+    #[test]
+    fn cargo_test_counts_do_not_use_last_summary_wins() {
+        let metadata = parse_cargo_test_run_metadata(
+            "test result: FAILED. 10 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out\n\
+             test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        );
+        assert_eq!(metadata.tests_passed, Some(11));
+        assert_eq!(metadata.tests_failed, Some(4));
+    }
+}

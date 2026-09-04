@@ -5368,8 +5368,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "toml 0.8.23",
  "webcodex-core",
+ "webcodex-tool-contracts",
  "webcodex-tool-runtime-contracts",
  "webcodex-workflow-session",
 ]

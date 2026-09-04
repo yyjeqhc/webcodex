@@ -2,11 +2,7 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Custom GPT 需要通过 Server 的 OpenAPI surface 调用 WebCodex 时使用 GPT Actions；
-客户端直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)。两者都适配同一个 Server，但
-实际暴露的 schema 由顶层 RuntimeExposure 决定：`project_connector` 暴露
-project-bound Connector schema；`Runtime(ModelSurface)` 则按选定 runtime surface
-暴露标准 runtime OpenAPI schema。
+Custom GPT 需要通过 Server 的 OpenAPI surface 调用 WebCodex 时使用 GPT Actions；客户端直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)。导入的 schema 由当前 Server 配置决定：project-first 部署暴露 project-bound actions，普通 Server 暴露其 runtime actions。普通用户不需要理解内部 surface type 名称。
 
 ## 什么是 GPT Action
 
@@ -23,15 +19,14 @@ plugin 是 ChatGPT/Codex plugin 目录中可安装的包。参见 OpenAI 的
 https://your-domain.example/openapi.json
 ```
 
-不要预设导入后的 operation 集合。带 project-bound Connector 配置的 Server 返回
-下文十四个 capability；普通 Server 则返回标准 runtime OpenAPI projection。
+不要预设导入后的 operation 集合；直接检查当前 Server 返回的 operation names。Project-first 与普通 runtime 部署会有意暴露不同的 operation set。
 
 ChatGPT 需要公网 HTTPS。把 API-key 认证配置为 HTTP Bearer。使用生成的
 `webcodex-user-token`（`wc_pat_*`）——它用于 GPT Actions、MCP 与普通 REST/项目
 API。Runner token（`wc_agent_*`）只被 Runner 传输 endpoint 接受；不要把
 bootstrap/admin token 或 account credential 粘贴到 GPT 中。
 
-OpenAPI 管理 surface 有意排除 users、API token、agent token、pairing/enrollment、
+OpenAPI 管理 surface 有意排除 users、API token、Runner token、pairing/enrollment、
 setup、doctor、npm、server 管理与 audit endpoint。这些请用 `webcodex` CLI 完成。
 
 ## Connector surface
@@ -63,7 +58,7 @@ listing，prompt 中也不得包含 Runner client ID 或 runtime project ID。
 `task_start` 只接受 `normal`（默认）和 `read_only`。`normal` 在受管理的隔离 Git
 worktree 中执行可写工作；无法安全准备 workspace 时会 fail closed，模型不会直接写
 目标 checkout，也不能接受自己的结果。`read_only` 允许分析，但拒绝 edit、command 与
-check。pre-0.4 `inspect` mode 已退休，不提供 restricted-shell alias。
+check。
 
 ## 建议的 GPT 指令
 
@@ -71,19 +66,17 @@ check。pre-0.4 `inspect` mode 已退休，不提供 restricted-shell alias。
 使用配置好的 WebCodex 项目。
 每次用户指令用 task_start 开始或延续。
 让 task_start 复用当前项目上下文；不要向用户询问 ID。
-只有在 WebCodex 报告自动传输窗口恢复不可用时才使用 task_list 与 task_resume。
+只有 WebCodex 明确要求恢复或继续已有 task 时才使用 task_list 与 task_resume。
 猜测路径前先用 files_list 查看项目内容。
 在 edits_apply 前使用 files_read/files_search。
 使用 code_navigate 进行只读的语义状态、symbols、definition、references、
 diagnostics 与 hover；只提供项目相对路径。
 使用 code_impact 做有界 incoming/outgoing call hierarchy 与变更影响检查；只提供
 项目相对路径和源码位置。
-用稳定的 operation_id 做精确重试。
 在 task_finish 前运行 checks_run。
 用 task_review 查看执行进度与结果审查。
 仅当结构化能力不足且有人工审批时使用 commands_run。
-永远不要向用户询问 task、session、current-binding、Agent、transport、queue
-或 workflow 标识符。
+永远不要向用户询问 WebCodex 内部 ID；后续调用需要时直接使用工具返回的值。
 ```
 
 ## 校验
@@ -118,7 +111,7 @@ webcodex task accept <task-id>
 - `required_capability_unavailable` / `structured_validation_unavailable`：
   升级所有 WebCodex 二进制。
 - `checks_required`：调用 `checks_run`。
-- `checks_stale`：用新的 operation ID 运行一次新检查。
+- `checks_stale`：针对当前 task state 重新运行要求的检查。
 
 每个错误都带稳定 code、人类可读消息、可重试性与建议的下一步。控制流应使用
 code，而不是匹配任意英文消息。

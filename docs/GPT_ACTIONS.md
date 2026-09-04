@@ -2,12 +2,7 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Use GPT Actions when a Custom GPT should call WebCodex through the Server's
-OpenAPI surface. Use [MCP](MCP.md) when the client supports MCP directly.
-Both are adapters over the same Server, but the exposed schema follows its
-top-level RuntimeExposure: `project_connector` exposes the project-bound
-Connector schema, while `Runtime(ModelSurface)` exposes the standard runtime
-OpenAPI schema for the selected runtime surface.
+Use GPT Actions when a Custom GPT should call WebCodex through the Server's OpenAPI surface. Use [MCP](MCP.md) when the client supports MCP directly. The imported schema reflects the Server configuration: project-first deployments expose project-bound actions, while regular Servers expose their runtime actions. Ordinary users do not need the internal surface type names.
 
 ## What a GPT Action is
 
@@ -37,7 +32,7 @@ for GPT Actions, MCP, and ordinary REST/project APIs. The Runner token
 it, a bootstrap/admin token, or an account credential into a GPT.
 
 The OpenAPI management surface intentionally excludes users, API tokens,
-agent tokens, pairing/enrollment, setup, doctor, npm, server management, and
+Runner tokens, pairing/enrollment, setup, doctor, npm, server management, and
 audit endpoints. Use the `webcodex` CLI for those tasks.
 
 ## The Connector surface
@@ -72,7 +67,7 @@ Runner client ID or runtime project ID.
 writable work in a managed isolated Git worktree and fails closed if that
 workspace cannot be prepared; the model never writes the target checkout or
 accepts its own result. `read_only` permits analysis but rejects edits, commands,
-and checks. The pre-0.4 `inspect` mode is retired with no restricted-shell alias.
+and checks.
 
 ## Suggested GPT instructions
 
@@ -80,21 +75,20 @@ and checks. The pre-0.4 `inspect` mode is retired with no restricted-shell alias
 Use the configured WebCodex project.
 Start or continue each user instruction with task_start.
 Let task_start reuse the current project context; do not ask the user for IDs.
-Use task_list and task_resume only after WebCodex reports that automatic
-transport-window recovery is unavailable.
+Use task_list and task_resume only when WebCodex explicitly asks you to recover
+or continue an existing task.
 Use files_list to see what the project contains before guessing paths.
 Use files_read/files_search before edits_apply.
 Use code_navigate for read-only semantic status, symbols, definitions,
 references, diagnostics, and hover; provide only project-relative paths.
 Use code_impact for bounded incoming/outgoing call hierarchy and change-impact
 inspection; provide only a project-relative path and source position.
-Use a stable operation_id for exact retry.
 Run checks_run before task_finish.
 Use task_review for execution progress and result review.
 Use commands_run only when structured capabilities are insufficient and
 approval is available.
-Never ask the user for task, session, current-binding, Agent, transport, queue,
-or workflow identifiers.
+Never ask the user for internal WebCodex identifiers; use the values returned by
+the tools when a later call needs one.
 ```
 
 ## Validation
@@ -132,7 +126,7 @@ This keeps the acceptance authority local even when the model is hosted.
 - `required_capability_unavailable` / `structured_validation_unavailable`:
   upgrade all WebCodex binaries.
 - `checks_required`: call `checks_run`.
-- `checks_stale`: run a fresh check with a new operation ID.
+- `checks_stale`: run the requested check again against the current task state.
 
 Every error carries a stable code, human message, retryability, and a suggested
 next action. Control flow should use the code, never arbitrary English message

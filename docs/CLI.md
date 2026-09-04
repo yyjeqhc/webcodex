@@ -38,9 +38,9 @@ These commands work on the current Git project.
 | `webcodex run` | Start the project-bound loopback Server and local Runner | Local-only/manual workflow; foreground, Ctrl-C stops both. |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | Remove one hosted project registration | Exact inverse of `connect` for that repository; never removes the repository or `.git`. |
 
-`webcodex share --auth query-token` is an explicit temporary-share compatibility mode for MCP clients that cannot configure a Bearer header. It accepts the exact share Project Credential only on `/mcp?token=...`, prints a URL-encoded sensitive MCP URL, and tells the client to use No authentication. The mode is disabled for ordinary Server/runtime requests, does not accept PAT/OAuth/shared-key/Agent credentials through the query, and is rejected with `--tunnel openai`. Treat the complete URL as a credential because URL queries may be retained by clients, proxies, clipboards, or access logs. The default remains `--auth bearer`.
+`webcodex share --auth query-token` is an explicit temporary-share compatibility mode for MCP clients that cannot configure a Bearer header. It accepts the exact share Project Credential only on `/mcp?token=...`, prints a URL-encoded sensitive MCP URL, and tells the client to use No authentication. The mode is disabled for ordinary Server/runtime requests, does not accept PAT/OAuth/shared-key/Runner credentials through the query, and is rejected with `--tunnel openai`. Treat the complete URL as a credential because URL queries may be retained by clients, proxies, clipboards, or access logs. The default remains `--auth bearer`.
 
-`webcodex share --auth oauth --oauth-redirect-uri <exact-callback>` uses OAuth 2.0 Authorization Code with PKCE S256. The OAuth client ID/secret are persisted in protected project state for that project + callback, while authorization codes, access tokens, refresh tokens, and the temporary Project Credential are fenced to the current `share` process. Restarting `share` therefore invalidates old OAuth grants without changing the Connector's stable project identity. OAuth access tokens are never accepted on Runner transport.
+`webcodex share --auth oauth --oauth-redirect-uri <exact-callback>` uses OAuth 2.0 Authorization Code with PKCE S256. The OAuth client ID/secret are persisted in protected project state for that project + callback, while the temporary OAuth grants are valid only for the current `share` run. Restarting `share` therefore invalidates old OAuth grants without changing the project. OAuth access tokens are never accepted on Runner transport.
 
 Quick Tunnel origins remain temporary. For an operator-managed stable HTTPS origin, use `--tunnel none --public-url https://share.example` and route that origin to the loopback WebCodex Server yourself; `--public-url` advertises the external origin/issuer and does not create a proxy or tunnel.
 
@@ -50,14 +50,13 @@ For public `share`, WebCodex best-effort copies only the MCP URL to the clipboar
 
 For supervised machine integration, `webcodex share --json --stop-on-stdin-eof` keeps the same foreground lifecycle but also treats the supervising parent's closed stdin as a stop request. This lets Desktop or another structured process owner ask `share` to clean up its own temporary Server, Runner, and Tunnel without shell-command signaling. The flag is rejected outside `--json` mode.
 
-`webcodex connect <server> --auth oauth --oauth-redirect-uri <exact-callback>` is the ordinary ChatGPT OAuth path for hosted connect. It uses the same `wck_*` shared-key identity as the Runner and keeps the direct shared-key baseline unchanged: `runtime:read`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`. A fresh OAuth client starts with that full baseline, while an existing protected client may carry a valid narrower baseline subset. Adding `--oauth-computer-permissions` is an explicit client-ceiling opt-in that appends only `computer:launch`, `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` to the existing baseline subset; it never restores baseline scopes that were previously absent and does not grant the optional scopes by itself. The WebCodex authorize page presents eligible additional Computer permissions unchecked, and only the selected permissions enter the authorization code/access/refresh grant. Launch consent requires the OAuth request to contain both `computer:read` and `computer:launch`; missing prerequisites are disabled rather than filled in by WebCodex. A real ceiling expansion revokes existing grants and requires reauthorization; ordinary reconnect never widens a baseline client. `account:manage`, `admin`, `job:detach`, every `agent:*` scope, and future scopes are never part of this picker. Runner capability shown on the consent page is current backend availability, not a guarantee that native/OS permission will succeed; runtime calls recheck current capability and native preflight. OAuth access tokens remain invalid on Agent transport.
-To let the same Connector access Runner-owned local MCP providers, add the separate explicit `--oauth-local-mcp` opt-in. It adds only `mcp:local` to that shared-key-owned OAuth client's ceiling; old clients/credentials do not gain it on upgrade. A real ceiling change revokes old grants and requires reauthorization.
+`webcodex connect <server> --auth oauth --oauth-redirect-uri <exact-callback>` is the ordinary hosted OAuth path. The Runner keeps its existing hosted credential while the MCP client uses OAuth. Add `--oauth-computer-permissions` or `--oauth-local-mcp` only when those optional capabilities are actually needed; they are explicit permission changes and can require reauthorization. See [MCP](MCP.md#oauth2) for client setup and [Authentication](AUTH_MODEL.md#oauth2) for the security model.
 
 The advanced managed identity flow remains available as `--auth managed-oauth --oauth-redirect-uri <exact-callback>` and requires `webcodex login`; `--user` applies only to that mode.
 
 `disconnect` matches the canonical repository path, not a basename or project id. If the same
 repository is registered in more than one hosted profile, specify `--profile`. With a live
-managed Runner it performs a fenced structured unregister before removing the local registration;
+managed Runner it performs a structured unregister before removing the local registration;
 with a stopped Runner it removes only the exact local project registration. Other projects,
 profile credentials, and `runner.toml` are preserved.
 
@@ -189,47 +188,14 @@ normal entry points.
 
 ## Terminology
 
-### People and machines
+- **Server** — authenticates callers, stores shared runtime state, and routes work.
+- **Runner** — runs repository work on the machine that owns the code.
+- **Project** — one repository/workspace registered by a Runner.
+- **Task** — one bounded project-first unit of work that can be reviewed.
+- **Job** — a command or validation that continues after the initiating call returns.
+- **Workflow Session** — bounded coding evidence/continuity used by the runtime. Ordinary users normally do not manage its internal protocol fields.
 
-- **Server** — the `webcodex-server` process that authenticates callers and
-  routes tool requests.
-- **CLI** — the `webcodex` command described here.
-- **Runner** — the `webcodex-runner` process on the machine that owns the
-  repositories. It executes the actual work.
-- **profile** — a named local client configuration (paths, `runner.toml`,
-  tokens) under the user's WebCodex config directory. `webcodex connect`
-  creates one; `webcodex runner ... --profile <name>` targets it.
-- **client_id** — a stable logical identifier for one Runner/device (for
-  example `workstation` or `alice-macbook`). A Runner's `client_id` is part of
-  its runtime project ids and is what Runner tokens are bound to.
-- **agent_instance_id** — a per-process identity generated by
-  `webcodex-runner` at startup and reused for the whole process lifetime
-  (including WebSocket reconnects). The Server treats it as the active lease
-  identity: a second process with the same `client_id` but a different
-  `agent_instance_id` is rejected while the first is online, and a
-  stale/replaced instance can no longer poll or submit results. It is not a
-  secret.
-- **Connector** — the project-bound coding surface exposed by a configured
-  local project. A Connector binds one logical project to its registered
-  executor, so the model does not manage project ids.
-
-### Projects and work
-
-- **project_id** — a project id registered by an agent in its `project-registry`
-  registry.
-- **runtime project id** — the full identifier `agent:<client_id>:<project_id>`
-  that addresses a registered project. A project-bound Connector resolves this
-  internally; ordinary users do not type it.
-- **Task** — one bounded unit of project work created by the model and
-  reviewed by a human. Tasks have stable ids (`task_...`) and a review result.
-- **Job** — a long-running command or validation that continues after the
-  initiating call returns. Jobs have ids and bounded logs, and can be stopped.
-- **Workflow Session** — the operator runtime's bounded evidence ledger for a
-  long-lived coding session. Connector users do not manage session ids; their
-  continuity comes from the project-bound task context.
-- **request / operation ids** — correlation and retry identifiers used by the
-  model (`operation_id`, `request_id`, `execution_id`, `result_id`). They are
-  plumbing: ordinary users do not need to manage them.
+Some compatibility-facing names still contain `agent`, notably `wc_agent_*` and `agent:<client_id>:<project_id>`. They refer to Runner-era compatibility, not the separate Durable Agent domain. Other process/protocol identifiers remain internal. New prose should say **Runner** unless it is quoting one of those public names.
 
 ## Credentials: which token do I need?
 
@@ -248,81 +214,15 @@ quick answer.
 | Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
 | OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
 
-### Hosted shared key (`wck_...`)
+### Practical credential rules
 
-- Generated by `webcodex connect` when no `--key` or `--key-file` is supplied.
-- Printed in full only when first created; the profile stores it so a repeat
-  `connect` reuses it without printing it again.
-- Stored in the owner-only profile config at
-  `~/.config/webcodex/clients/<profile>/runner.toml` (or
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`) as the top-level
-  `token = "wck_..."` field.
-- To recover the value as a human, copy that `token` field. Status and log
-  commands deliberately do not print it. There is no `show-token` command. An
-  AI agent should locate the profile and point the human at the file rather
-  than echoing the value.
-- A repeat `connect` reuses the profile and does not print the key again.
-- Never put `wck_` into a managed `wc_*` context; shared-key auth never falls
-  back to managed identity.
-
-### Project Credential
-
-- Created by `webcodex setup` for the selected Git root and profile; stored in
-  owner-only private files (a Connector credential file and the generated
-  Runner configuration).
-- If lost, restore both matching private files. There is no in-place rotate
-  command; if unrecoverable, stop the runtime and explicitly recreate the
-  private project-state profile (this also retires that profile's local task
-  history).
-
-### `WEBCODEX_TOKEN`
-
-- The Server bootstrap/admin credential, created by `webcodex server init`
-  and stored in the server env file (normally `/etc/webcodex/webcodex.env`)
-  under the variable name `WEBCODEX_TOKEN`.
-- It is not an MCP, Runner, or daily-use token. Use it only for initial setup,
-  user creation, pairing, and emergency administration.
-- To identify the env file and variable name: look at the Server service unit
-  or the operator-managed env file that the service loads. Reading the token
-  value is a secret-revealing, human-only action; do not paste it into a
-  client or commit it.
-
-### `wc_pat_*` (personal API token)
-
-- A managed user token generated locally by `webcodex tokens create-local`;
-  the Server stores only its hash.
-- `webcodex login` writes it to a file named `webcodex-user-token` under the
-  login directory for that server/user.
-- Supply it to commands with `--token-file <path>` rather than `--token`.
-  `--token-file` keeps the value out of shell history and process lists.
-- To paste it into an MCP client, read that one specific `webcodex-user-token`
-  file. Do not echo whole config files.
-
-### `wc_agent_*` (Runner token)
-
-- A Runner transport token generated locally by
-  `webcodex runner-tokens create-local` and bound to a `client_id`.
-- `webcodex login` stores it **only** inline in the generated `runner.toml`
-  under `~/.config/webcodex/<server-slug>/<user>/` — no separate
-  `webcodex-runner-token` file is created. This is the canonical managed
-  enrollment layout.
-- It is accepted only by Runner transport endpoints; using it on MCP/REST
-  returns 403. Never use it as an MCP/API token.
-
-### `wc_pair_*` (pairing code)
-
-- A short-lived, one-time code created server-side by
-  `webcodex pairing create`.
-- Transfer only this code to the enrolling client; the client redeems it with
-  `webcodex login <server-url> --code <code>`.
-- It is not a long-lived API token and cannot be used after it expires.
-
-### OAuth
-
-When OAuth is enabled on the Server, MCP/GPT clients can use the
-authorization-code flow instead of a static PAT. The client id, client secret,
-and `wc_oat_*` access tokens are delegated credentials; see
-[AUTH_MODEL.md](AUTH_MODEL.md#oauth2) and [MCP.md](MCP.md#oauth2).
+- Normal managed setup: `webcodex login` creates the local user/API and Runner credentials; use the paths and MCP values it reports.
+- Existing shared-key Server: use the operator-provided `wck_...` with `webcodex connect`.
+- Project-first/manual setup: keep the Project Credential in its protected project state; do not reuse it as a general user/admin token.
+- Keep `WEBCODEX_TOKEN` on the Server. It is not an MCP or Runner credential.
+- `wc_agent_*` is a Runner transport token only; `wc_pat_*` is the normal managed user API token.
+- Prefer `--token-file` and never paste whole configuration files into chat.
+- OAuth clients should follow the OAuth flow rather than manually copying access tokens. See [Authentication](AUTH_MODEL.md#oauth2) and [MCP](MCP.md#oauth2).
 
 ## Common examples
 

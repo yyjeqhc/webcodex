@@ -41,6 +41,10 @@
 
 ## 我想参与开发或发布
 
+下面 `docs/agent/` 中的页面属于 maintainer/internal contract。它们会有意保留
+protocol field、兼容名称和实现 invariant；普通用户不需要为了使用 WebCodex 而学习
+这些内容。
+
 - [AGENTS.md](../AGENTS.md) —— 面向 coding/AI agent 的仓库开发指引
 - [仓库维护](MAINTENANCE.md) —— 维护队列、依赖更新节奏、PR/CI 约定和双语文档规则
 - [测试策略](TESTING.md)

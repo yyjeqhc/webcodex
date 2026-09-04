@@ -62,7 +62,7 @@ webcodex runner run --config <login-reported-runner-config>
 
 When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
 
-To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material and records a real end-to-end dogfood run, including a Windows + Clash control-plane routing failure and its proxy fix; ordinary users do not need it before understanding the full setup path.
+To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material; ordinary users do not need it before understanding the full setup path.
 
 ## Connect a repository to an existing shared-key Server
 
@@ -117,7 +117,7 @@ sudo webcodex server init \
   --public-url https://your-domain.example
 ```
 
-`server init` creates the selected data directory and the server-side bootstrap/admin token. It does not create user API tokens or agent tokens. Its next-step guidance preserves the exact env/data paths supplied above.
+`server init` creates the selected data directory and the server-side bootstrap/admin token. It does not create user API tokens or Runner tokens. Its next-step guidance preserves the exact env/data paths supplied above.
 
 Install and start the managed systemd socket/service pair:
 
@@ -169,9 +169,7 @@ for the live address. Stop the legacy Server first, then rerun the install with
 
 ### Tool invocation tracing
 
-`WEBCODEX_TOOL_REQUEST_TRACE` has three operator modes. It is off by default;
-`true` keeps the historical metadata-only lifecycle trace, while `full` enables
-Server-side forensic payload capture:
+Tool-request tracing is an **operator diagnostic** and is disabled by default. Use metadata mode for lightweight lifecycle diagnostics; use `full` only when you explicitly need request/response payload capture:
 
 ```text
 WEBCODEX_TOOL_REQUEST_TRACE=full
@@ -180,59 +178,9 @@ WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
 WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
 ```
 
-`metadata` (and the compatibility values `true`, `1`, `yes`, `on`) records only
-lifecycle fields such as `server_trace_id`, tool/method, status, duration and
-response size. `full` additionally stores the parsed inbound tool request/raw
-arguments, Server-effective arguments after wrapper/session normalization, the
-exact typed Server-to-Runner request when dispatch occurs, correlated Runner
-replies/Job updates, and final JSON tool response where a bounded JSON response
-exists. Full payloads are complete JSON compressed with
-zstd under `<trace-dir>/<server_trace_id>/`; they are not stored as BLOBs in the
-canonical runtime database. Full-mode persistence runs on a bounded background
-writer so trace I/O and compression do not backpressure tool requests. Captures
-are best-effort diagnostics: if that writer queue is saturated, the affected
-record is omitted and the Server emits `tool_trace_capture_omitted` with
-`trace_writer_queue_full`. Large payloads are never silently truncated: if the
-configured total-byte budget cannot fit a capture after pruning expired/old
-traces, that capture is omitted with `trace_disk_budget_exceeded`.
+`full` tracing can contain source text, patches, command/script input and output, user messages, and secrets that were themselves present inside captured tool payloads. Protect the trace directory like other sensitive diagnostic data and keep retention/budget bounded. Trace capture is diagnostic only; trace-write failure does not change tool execution.
 
-Full tracing is an explicit self-hosted diagnostic mode and can contain source
-files, patches, script/stdin data, command output, user messages, or other tool
-payloads. Protect the trace directory accordingly. The trace path does not read
-the WebCodex ingress HTTP `Authorization` header. A token, key, or other secret
-that is itself present inside a tool argument, script/stdin, Runner request, or
-Runner response is part of the payload and therefore can be captured in `full`
-mode. Trace I/O, compression, pruning, or correlation failures are fail-open for
-the tool itself and are reported as `tool_trace_capture_failed` rather than
-changing execution correctness.
-
-With `full` mode enabled, eligible failed model calls may expose an opaque
-`trace_ref` only to an `admin` caller on a Stateless MCP 2026 operator-capable
-surface. The ModelHidden `read_tool_trace` tool reads that Server-hosted store;
-Full Operator Runtime projects it directly, while Adaptive Runtime invokes it
-through `call_runtime_tool`. The tool is unavailable to ordinary runtime scopes,
-Local Coding, legacy MCP protocol eras, and HTTP runtime calls. It lists bounded
-payload metadata before raw content is requested, never accepts or returns native
-trace paths, verifies the owned trace directory/index plus payload size and
-SHA-256, and reads at most 256 KiB of uncompressed JSON for one selected payload
-(with a 512 KiB compressed-file safety ceiling). Larger retained payloads remain
-operator-visible as metadata but are not returned to the model. `read_tool_trace`
-does not recursively persist its own raw payload, and its Workflow Session audit
-record contains only trace metadata rather than the selected body.
-
-When a tool dispatches to a Runner, the Server records the mapping from
-`server_trace_id` to the existing `runner_request_id`, Runner client/instance,
-transport, and advertised build version/commit; the full store also captures the
-exact typed Runner request as `runner_request`. The Server keeps only a bounded
-in-memory correlation index for later Runner results and Job updates; raw Runner
-payloads still live only in the Server trace directory. If the same trace mode
-is enabled in the Runner environment, the Runner journal adds dispatch/result
-lifecycle records keyed by that same `runner_request_id`; it does not persist a
-second raw-payload copy.
-
-`tool_handler_returned` proves only that WebCodex handed the response to the HTTP
-framework. For client-delivery debugging, correlate `server_trace_id` and request
-timing with the reverse proxy's status/body-bytes/request-time logs.
+The exact trace file layout, correlation ids, model-facing forensic reader, queueing, compression, and payload-validation rules are implementation/maintainer details and are intentionally omitted here.
 
 ### Public HTTPS
 
@@ -274,7 +222,7 @@ webcodex pairing create \
 ```
 
 Copy only the short-lived `wc_pair_*` code to the client. Do not copy
-`WEBCODEX_TOKEN`, user API tokens, agent tokens, env files, or complete
+`WEBCODEX_TOKEN`, user API tokens, Runner tokens, env files, or complete
 `runner.toml` files between machines. Each friend should use a unique
 `username`.
 
@@ -400,9 +348,9 @@ Client enrollment generates the Runner config. Important settings in
 | Setting | Notes |
 | --- | --- |
 | `server_url` | Public WebCodex URL. |
-| `token` | Agent token. Do not commit or print it. |
+| `token` | Runner credential. Do not commit or print it. |
 | `client_id` | Stable id used in `agent:<client_id>:<project_id>`. |
-| `owner` | Owner principal for this agent. |
+| `owner` | Owner principal for this Runner. |
 | `transport` | Prefer `auto` with `[quic]` configured. |
 | `project_registry_dir` | Directory of project registry files. |
 | `[policy]` | Local execution boundary (`allowed_roots`, etc.). |
@@ -410,7 +358,7 @@ Client enrollment generates the Runner config. Important settings in
 | `[ssh.resources.<name>]` | Optional named SSH target for Session-bound `run_shell` / `run_job`. |
 
 Policy defaults: missing or empty `allowed_roots` defaults to `$HOME`; an
-explicit `allowed_roots` overrides it. Use explicit roots to narrow an agent,
+explicit `allowed_roots` overrides it. Use explicit roots to narrow a Runner,
 for example to one workspace tree:
 
 ```toml
@@ -458,7 +406,7 @@ webcodex connect https://your-domain.example --auth oauth \
   --oauth-computer-permissions --project .
 ```
 
-The Runner continues to authenticate with the hosted shared key, whose model-facing authority remains the fixed baseline (`runtime/project/job` plus `computer:read` and `computer:control`). `connect` provisions a separate OAuth client bound to that shared-key hash. A fresh client starts with the full baseline; a protected historical client may legitimately retain a narrower baseline subset. `--oauth-computer-permissions` appends only launch, full-display, pointer, clipboard-read, and clipboard-write scopes to that existing subset and never restores baseline scopes that were previously absent; the flag itself grants nothing. The WebCodex authorize page leaves those permissions unchecked and maps browser selections to the fixed scope bundles, constrained by the OAuth request. Launch is selectable only when the request already contains both `computer:read` and `computer:launch`; the Server never fills a missing prerequisite. Existing baseline clients are never widened by ordinary reconnect, and revoked/missing-client rotation preserves the same protected baseline subset. A real ceiling change atomically revokes prior access/refresh/code grants so reauthorization is required. The picker never contains account/admin/Agent, `job:detach`, or future scopes. It reports only safe per-same-Runner capability availability and performs no hidden Computer observation/effect; native/OS permission and current capability are still checked by the runtime call. ChatGPT never receives the shared key, and OAuth access tokens remain invalid on Agent transport.
+The Runner continues using its hosted credential while the MCP client receives a separate OAuth credential. `--oauth-computer-permissions` and `--oauth-local-mcp` are explicit opt-ins for optional capabilities; ordinary reconnect never silently adds them. A real OAuth permission change requires the client to authorize again. ChatGPT never receives the Runner/shared-key credential, and OAuth tokens are not valid on Runner transport.
 
 If a managed-user OAuth identity is specifically required, use the advanced `webcodex login` flow followed by `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`; `--user` applies only there.
 
@@ -472,41 +420,9 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
   -d '{"name":"ChatGPT MCP","redirect_uris":["https://chatgpt.com/connector/oauth/<callback-id>"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
 
-`allowed_scopes` is the client's persistent delegation ceiling. Computer observation
-requires `computer:read`; effectful Computer tools additionally require
-`computer:control`. Existing clients are never silently widened when a new scope is
-introduced. To explicitly add Computer control to an existing client, send the
-**complete** desired non-empty allow-list to the first-party management endpoint:
+`allowed_scopes` limits what an OAuth client may request. Existing clients are not silently widened when WebCodex adds new permissions. To change an existing client, submit the complete desired non-empty allow-list to `POST /api/oauth/clients/update_scopes`. A real change invalidates the client's old OAuth grants and requires reauthorization; submitting the same canonical list is a no-op. See [Authentication](AUTH_MODEL.md#oauth2) for the security model.
 
-```bash
-curl -fsS -X POST https://your-domain.example/api/oauth/clients/update_scopes \
-  -H "Authorization: Bearer $WEBCODEX_PAT" \
-  -H "Content-Type: application/json" \
-  -d '{"client_id":"wc_client_<server-generated-id>","allowed_scopes":["runtime:read","project:read","project:write","job:run","computer:read","computer:control"]}'
-```
-
-A changed allow-list atomically revokes that client's existing access tokens, refresh
-tokens, and outstanding authorization codes. The OAuth host must then authorize
-again and obtain a new token; this is intentional for any permission expansion or
-reduction. Re-sending the same canonical allow-list is a no-op and does not revoke
-existing grants.
-
-ChatGPT MCP host-file imports use a separate operator trust anchor because their
-host-provided temporary download URLs are not restricted to the GPT Action
-`files.oaiusercontent.com` hostname policy. After creating the ChatGPT OAuth
-client above, take the returned server-generated `wc_client_*` ID and configure
-that exact ID (comma-separated for multiple trusted registrations):
-
-```text
-WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS=wc_client_<server-generated-id>
-```
-
-The server requires the request's OAuth access token to resolve through
-`allowed_client_id` to that exact configured, still-active OAuth client record.
-Redirect URIs and client display names are not trust identities. Reprovisioning
-a ChatGPT OAuth client generates a new client ID and is therefore an explicit
-trust rotation: update this setting to the new ID. Ordinary API-token/raw MCP
-callers remain ineligible.
+If ChatGPT MCP host-file import is enabled, configure the exact server-generated OAuth client id in `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS`. Reprovisioning the client creates a new id, so update this setting as part of that explicit trust rotation. Client display names and redirect URIs are not substitutes for the configured client id.
 
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;

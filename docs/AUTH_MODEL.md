@@ -1,447 +1,136 @@
-# Authentication and credential model
+# Authentication and credentials
 
 [English](AUTH_MODEL.md) | [简体中文](AUTH_MODEL.zh-CN.md)
 
-WebCodex separates bootstrap administration, account onboarding, runtime API
-access, and Runner connectivity. Do not reuse one credential across all
-surfaces.
+WebCodex has several ways to authenticate because Server administration, model/API access, and Runner connectivity are different trust boundaries. Ordinary users do **not** need to learn WebCodex's internal identifier vocabulary to use it safely.
 
-## Credential summary
+## The short version
 
-| Credential | Prefix | Created by | Used for | Do not use for |
-| --- | --- | --- | --- | --- |
-| Server bootstrap token | `WEBCODEX_TOKEN` (env) | `webcodex server init` | server/admin setup, user creation, pairing | GPT/MCP/agent daily use |
-| Project Credential | (private file) | `webcodex setup` | exact access to one private project grant | other projects/admin/general quick start |
-| Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
-| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT/MCP/agent |
-| Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, runtime API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | Runner transport only | GPT/MCP/runtime/project API |
-| OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
+For normal daily use, follow [Full Setup](PERSONAL_SETUP.md): redeem a one-time login code, let `webcodex login` create the local user and Runner credentials, and use the connection values it reports for ChatGPT.
 
-The quick answer for "which token do I need?" is in
-[CLI.md](CLI.md#credentials-which-token-do-i-need). This page explains each
-credential in detail and how to recover or rotate it.
+If you are using an existing hosted shared-key Server, use the shared key supplied by its operator with `webcodex connect`. If you are only trying one repository temporarily, use the credential printed by `webcodex share` for that run.
 
-## `WEBCODEX_TOKEN`
+Do not copy the Server bootstrap token to a client, and do not use a Runner token as an MCP/API token.
 
-`WEBCODEX_TOKEN` is the Server bootstrap/root/admin credential. It is created
-by `webcodex server init`, stored in the server env file (normally
-`/etc/webcodex/webcodex.env`) under the variable name `WEBCODEX_TOKEN`, and used
-for first-user creation, pairing, and emergency administration.
+## Credentials you may encounter
 
-Do not put `WEBCODEX_TOKEN` in GPT Actions, MCP clients, or day-to-day agent
-configs.
+| Credential | Typical form | Used for |
+| --- | --- | --- |
+| Server bootstrap token | `WEBCODEX_TOKEN` in the Server env | Initial administration and emergency recovery |
+| Pairing code | `wc_pair_...` | One-time device/user enrollment |
+| Personal API token (PAT) | `wc_pat_...` | MCP, GPT Actions, and runtime API access for a managed user |
+| Runner token | `wc_agent_...` | `webcodex-runner` transport only |
+| Shared key | `wck_...` | Hosted shared-key MCP/runtime access and the matching Runner group |
+| Project Credential | protected project-private file | One project-first Connector/share environment |
+| OAuth access token | `wc_oat_...` | Delegated MCP/GPT access when OAuth is enabled |
+| Account credential | `wc_acct_...` | Advanced managed-account token creation only |
 
-**Recovery / rotation:** rotate it if it may have leaked. Regenerate the value
-in the server env file and restart the Server. The env file is server-side only
-and should never be copied to client machines.
+The prefixes are useful for diagnosing configuration mistakes. They are not a reason to expose every internal identifier to users.
 
-## Project Credential
+## Credentials are not the same as identifiers
 
-`webcodex setup` creates one Project Credential for the selected Git root,
-profile, and private state directory. The Connector credential file and the
-generated Runner configuration carry the same secret; exact verification maps
-both callers to one stable, non-secret `project_grant_id`. Agent registry
-access, readiness, file operations, jobs, logs, and cancellation all require
-that grant.
+WebCodex also uses non-secret IDs and opaque tool state internally. Users normally do not need to learn their formats.
 
-The secret exists only in owner-protected private files. It is not written to
-the database, returned by readiness, or included in Browser JSON, logs, and
-errors. The runtime holds only its SHA-256 verifier value and compares
-candidate hashes in constant time.
+| Kind | Examples | Meaning |
+| --- | --- | --- |
+| Credential | PAT, Runner token, shared key, OAuth token | Authenticates a caller |
+| Resource ID | Project, Job, Workflow Session, task | Identifies an object; does not grant access to it |
+| Opaque tool state | continuation/recovery values returned by a tool | Helps continue or safely retry a specific workflow; not authentication |
 
-Project mode is not shared-key quick start. It explicitly disables direct
-unknown-token fallback and accepts only the configured credential. An
-arbitrary nonempty Bearer token therefore receives `401` and cannot create a
-Task, Execution, binding, or Agent request. The same rule applies on loopback.
+The rule is simple: **knowing an ID or opaque tool value never substitutes for authentication and authorization.** Exact internal identity and continuity formats belong in maintainer contracts and code, not in this user guide.
 
-**Recovery / rotation:** setup does not silently rotate a surviving Project
-Credential. After a recoverable loss, restore the matching Connector and Agent
-private files. If the secret is unrecoverable, stop the runtime and explicitly
-retire the entire private project-state profile before running setup again;
-this creates a new secret and also retires that profile's local task/execution
-history. There is no in-place rotate command.
+## Secret handling
+
+- Do not print, log, commit, or paste whole credential files into chat.
+- Prefer `--token-file <path>` over command-line plaintext tokens.
+- Let an AI agent point to the exact protected file or field; the human should copy the secret when necessary.
+- Status, diagnostics, and normal API responses intentionally avoid returning plaintext credentials.
+- If a credential may have leaked, rotate or replace the credential according to the flow that created it.
+
+## Server bootstrap token
+
+`WEBCODEX_TOKEN` is the Server's bootstrap/admin credential. `webcodex server init` stores it in the Server environment. Use it for initial administration, user creation/pairing, and emergency recovery. Do not use it for MCP, GPT Actions, Runner connectivity, or ordinary daily work.
+
+## Pairing and managed login
+
+`webcodex pairing create` produces a short-lived `wc_pair_*` code. A repository machine redeems it with `webcodex login <server-url> --code <code>`. Login then creates the ordinary local files needed for user/API access and Runner connectivity.
+
+The pairing code is temporary; it is not a long-lived API credential.
+
+## Personal API token (`wc_pat_*`)
+
+A PAT represents a managed user on MCP, GPT Actions, and the runtime API. The Server stores only its hash. `webcodex login` normally writes the user's token to `webcodex-user-token` under that Server/user's local configuration directory.
+
+Use the smallest scopes needed for the workflow. A PAT used by an MCP coding client normally needs runtime/project scopes appropriate to the actions that client will perform. Account-management authority is separate and should not be added to ordinary coding clients.
+
+## Runner token (`wc_agent_*`)
+
+A Runner token authenticates `webcodex-runner` and is bound to the configured Runner `client_id`. It is rejected on MCP/runtime/account surfaces.
+
+The `wc_agent_*` prefix is a compatibility-facing historical name. In current product terminology this is a **Runner token**, not a Durable Agent identity. The same rule applies to other retained `agent_*` wire/storage names: do not infer the Durable Agent domain from the compatibility name.
 
 ## Shared key (`wck_...`)
 
-A shared key is a quick-start secret generated by `webcodex connect` and
-supplied to MCP/Runner as `Authorization: Bearer <KEY>`. The same trimmed key
-may authenticate both the MCP/runtime client and a local Runner. WebCodex
-groups both sides by `shared_key_hash = SHA-256(trimmed key)`: the same value
-sees its own Runners, projects, and Jobs; different values create isolated
-lightweight groups.
+A shared key is the simple hosted connection credential used by `webcodex connect`. The same key can authenticate the MCP/runtime client and the matching Runner group. Different shared keys remain isolated from each other.
 
-The key is printed in full only when first created, then stored in the
-owner-only profile config at
-`~/.config/webcodex/clients/<profile>/runner.toml` (or
-`$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`) as the top-level
-`token = "wck_..."` field. A repeat `connect` reuses the profile and does not
-print it again. To recover it as a human, copy that `token` field; status and
-log commands deliberately do not print it. There is no `show-token` command.
-An AI agent should locate the file and point the human at it without echoing
-the value.
+The protected profile stores the key after creation; repeated `connect` reuses it rather than printing it again. Shared-key mode is intended for simple trusted deployments, not as a replacement for managed multi-user IAM.
 
-A shared key is not an admin credential, not a managed user identity, and not
-production IAM. It has no independent per-device revocation: rotate the shared
-secret for the whole group, or use managed credentials.
+## Project Credential
 
-Its default principal carries `runtime:read`, `session:collaborate`, `project:read`,
-`project:write`, `job:run`, `computer:read`, `computer:control`, and the bounded Agent-transport
-scopes `agent:register`, `agent:poll`, `agent:result`, and `agent:job_update`. It
-does not carry account-management or admin scopes.
+`webcodex setup` and temporary project-first flows use a protected Project Credential tied to one project environment. It is not a general user/admin token and must not be reused for unrelated projects.
 
-`WEBCODEX_SHARED_KEY_ENABLED=true` enables direct Bearer shared-key fallback on
-an ordinary server. Managed `wc_*` values and empty/whitespace Bearer values
-never fall back to shared-key mode. `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is a
-separate flag for the OAuth authorize page and does not enable direct Bearer
-fallback.
-
-## `wc_acct_xxx` (account credential)
-
-`wc_acct_xxx` is issued once when an administrator creates a user with
-`--issue-credential`. The user uses it locally with:
-
-```bash
-webcodex tokens create-local
-webcodex runner-tokens create-local
-```
-
-Those commands generate plaintext tokens locally and register only token hashes
-with the server.
-
-`webcodex tokens generate --kind api|agent` is an offline primitive: it prints a
-token and hash but registers nothing. Its output cannot authenticate until the
-hash is registered through the managed credential flow. Do not use an
-offline-generated `wc_pat_*` or `wc_agent_*` as a hosted shared key.
-
-Do not use `wc_acct_xxx` as a GPT Action token, MCP token, runtime API token,
-or agent connection token.
-
-## `wc_pat_xxx` (personal API token)
-
-`wc_pat_xxx` is a personal API token generated locally by the user; the server
-stores only its hash. `webcodex login` writes it to a file named
-`webcodex-user-token` under the login directory for that server/user.
-
-Use `wc_pat_xxx` for:
-
-- GPT Actions
-- MCP
-- Runtime API calls
-- Tool calls such as `/api/tools/list` and `/api/tools/call`
-
-Supply it to CLI commands with `--token-file <path>` rather than `--token`, so
-the value stays out of shell history and process lists. Scope the PAT to the
-workflow. For example, a GPT Action that inspects and edits projects may need
-`runtime:read`, `project:read`, `project:write`, and `job:run`; add
-`session:collaborate` only when it must post, resolve, complete, replace, withdraw,
-or close Workflow Session collaboration state. `runtime:read` alone remains
-observation-only for that collaboration state.
-
-Managed user discovery is owner-scoped. A normal PAT or managed OAuth token for
-`alice` can discover only Runners, projects, Jobs, and derived runtime metadata
-owned by `alice`, including several devices registered to that same username.
-Bootstrap/admin callers retain their existing global visibility. Shared-key and
-Project Credential callers remain isolated by their existing authorization
-groups rather than by managed usernames.
-
-Local saved identities are also selected explicitly at logout time. If one
-Server has several saved usernames on the same machine, `webcodex logout
-<server-url>` is ambiguous and removes nothing; use `--user USER` for one
-identity or `--all` for every saved identity on that exact Server URL.
-
-## `wc_agent_xxx` (Runner token)
-
-`wc_agent_xxx` is a Runner token generated locally by the user; the server
-stores only its hash and binds it to `allowed_client_id`. Use it only for
-`webcodex-runner` connectivity. It cannot call runtime, project, tool, MCP, or
-account endpoints.
-
-`webcodex login` stores it **only** inline in the generated `runner.toml`
-(`~/.config/webcodex/<server-slug>/<user>/runner.toml`); it does not create a
-`webcodex-runner-token` file. This is the canonical managed enrollment layout.
-Selecting a `wc_agent_*` value for a
-user/runtime CLI token is diagnosed locally where possible and remains a
-server-side 403.
-
-## `wc_pair_xxx` (pairing code)
-
-`wc_pair_xxx` is a short-lived, one-time pairing code created server-side by
-`webcodex pairing create`. Copy only this code to the enrolling client; the
-client redeems it with `webcodex login <server-url> --code <code>`. It is not a
-long-lived API token and expires.
+After verification, WebCodex keeps the non-secret authorization metadata it needs internally. It is not another credential the user needs to copy or manage.
 
 ## OAuth2
 
-When OAuth2 is enabled (`WEBCODEX_OAUTH2_ENABLED=true`), GPT Actions / MCP
-clients can use the authorization-code flow and receive delegated `wc_oat_*`
-access tokens. OAuth credentials have their own roles:
+OAuth lets MCP/GPT clients use the authorization-code flow instead of storing a long-lived PAT in the client. Register the exact callback URL required by the client and follow the connection output from `webcodex share --auth oauth` or `webcodex connect --auth oauth`.
 
-- **client id** — identifies the OAuth client (`wc_client_...`).
-- **client secret** — returned once at client creation; only its hash is
-  stored.
-- **access token** (`wc_oat_*`) — issued after consent, delegated from the
-  authorizing user's scopes.
-- **refresh token** — authorization-server metadata advertises `offline_access`
-  as a protocol-level refresh-token scope; it grants no extra WebCodex permission
-  and should not be added to the client's `allowed_scopes`.
+The user-facing OAuth concepts are:
 
-The server supports the authorization-code grant, token revocation, and OAuth
-metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
-device-code flow are not implemented. OAuth setup steps are in
-[Deployment](DEPLOYMENT.md#oauth2).
+- **client id** — public identifier for the OAuth client;
+- **client secret** — secret returned when the client is created;
+- **access token** — delegated credential used by the client;
+- **refresh token** — protocol credential used to refresh access; `offline_access` adds no WebCodex permission by itself;
+- **allowed scopes** — the maximum WebCodex permissions that client may request.
 
-An OAuth client's `allowed_scopes` is a registration-time delegation ceiling and
-is never automatically widened when WebCodex adds a new permission such as
-`computer:control` or `computer:launch`. The omitted-or-empty default is the
-explicit closed legacy permission set that existed before application launch; it
-does not track the global supported-scope registry. `session:collaborate`,
-`computer:launch`, and future permission scopes therefore require explicit opt-in. First-party operators may explicitly replace an active client's
-complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
-atomically revokes that client's existing access tokens, refresh tokens, and
-outstanding authorization codes, so the client must complete OAuth authorization
-again before using the new scope set.
-`computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` follow that rule: all are outside the frozen legacy default and are available only through explicit client scope opt-in.
+WebCodex never silently expands an existing OAuth client's allowed permissions when new scopes are introduced. Changing the allow-list is an explicit administrative action and invalidates old grants so the client must authorize again.
 
-`webcodex connect <server> --auth oauth` is the ordinary hosted shared-key OAuth bridge. The OAuth client is owned by the direct shared key's SHA-256 group hash, and authorization codes, access tokens, and refresh tokens carry that same `shared_key_hash` subject binding. Direct shared-key bearer authority remains the explicit baseline `runtime:read`, `session:collaborate`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`. A fresh ordinary OAuth client starts with that full baseline, while an existing protected client may legitimately carry any non-empty unique subset of that baseline. `--oauth-computer-permissions` changes only the OAuth client ceiling by appending the fixed closed set `computer:launch`, `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` to the client's existing baseline subset; it never restores a baseline scope that was previously absent. A Computer-enabled ceiling is valid only when it contains the complete five-scope optional set, has at least one baseline scope, and contains no scope outside those two explicit closed universes. It never derives from the global OAuth registry and never includes `account:manage`, `admin`, `job:detach`, any `agent:*` transport scope, or future scopes. A ceiling is not a grant: all five optional Computer permissions are unchecked on the WebCodex authorize page, and the authorization code receives only baseline scopes present in the current OAuth request, optional scopes explicitly selected through the fixed permission bundles, and protocol-only `offline_access` when requested. Access tokens and refresh rotation preserve that exact grant set. Launch selection requires the request to contain both `computer:read` and `computer:launch`; the launch permission bundle itself still adds only `computer:launch`. Other optional permissions likewise require their complete runtime request prerequisites, and WebCodex never fills in a missing requested scope. Reconnect without the flag never widens an existing baseline client; revoked/missing-client replacement preserves the protected baseline subset recorded in `previous_allowed_scopes`. If explicit opt-in actually changes an existing shared-key-owned client's ceiling, WebCodex atomically revokes its access tokens, refresh tokens, and outstanding codes so browser authorization must run again. The Runner continues using the direct shared key, OAuth access tokens remain forbidden on Agent transport, and `--auth managed-oauth` remains the separate managed-user flow.
+For ordinary hosted shared-key OAuth, `webcodex connect ... --auth oauth` keeps the Runner on its shared key and gives the MCP client a separate OAuth credential. `--oauth-computer-permissions` explicitly enables the additional Computer permissions offered by that flow; `--oauth-local-mcp` explicitly enables access to configured Runner-owned local MCP providers. Managed-user OAuth remains a separate advanced flow (`--auth managed-oauth`).
 
-The shared-key authorize page evaluates optional Computer availability only for an exact shared-key-owned client whose `owner_shared_key_hash` matches the submitted key and whose matching Runner group is online. Each permission is considered available only when one same online Runner advertises the full capability requirement; capabilities are never unioned across Runners. POST recomputes that availability, so a capability loss between GET and consent fails closed without creating a code. These checks are backend capability checks only: authorization performs no hidden display observation, pointer/clipboard effect, launch, or OS-permission probe. Native/OS preflight remains the runtime tool call's responsibility. For OAuth-authenticated MCP callers, `tools/list` is projected through the same runtime scope policy as `tools/call`, so high-privilege Computer tools are absent when the actual token grant lacks their required scopes; the runtime gate remains authoritative even for a forged direct call.
+Server configuration is in [Deployment](DEPLOYMENT.md#oauth2); MCP client setup is in [MCP](MCP.md#oauth2).
 
-`mcp:local` is a separate explicit authority for the built-in local MCP gateway. It is outside the direct shared-key, project credential, open-anonymous, and frozen legacy OAuth defaults. The hosted shared-key OAuth flow adds it only when `connect` is run with `--oauth-local-mcp`; existing client ceilings are never widened implicitly. That scope deliberately grants class-level access to the same shared-key Runner group's current and future configured local MCP providers, avoiding per-provider/per-instance OAuth. A real ceiling change uses the existing atomic grant revocation path, so old access/refresh tokens and authorization codes cannot inherit the new authority.
+## Scopes and authority
 
-The MCP Protected Resource Metadata intentionally omits `scopes_supported`
-because pre-registered clients can have different delegation ceilings. An MCP
-client can therefore omit the authorization request's `scope`; WebCodex then
-defaults to that client's registered `allowed_scopes`. OAuth Authorization Server
-Metadata continues to advertise server-level capabilities such as
-`account:manage` and `offline_access`.
+Authentication answers **who the caller is**. Scopes answer **which classes of operation that caller may request**. Project/path checks, Session guards, Runner capabilities, and the Server's authority mode remain separate checks.
 
-## Scope enforcement and credential surfaces
+A token having a scope does not bypass project boundaries or native safety checks. Conversely, knowing a Project/Session/Job identifier does not create the missing scope.
 
-WebCodex treats scope permission and credential identity as separate checks.
-For ordinary runtime principals, a declared runtime/project/job/Computer scope is
-enforced from the authenticated `AuthContext` whether the caller arrived through
-a PAT, OAuth access token, direct shared key, or open-anonymous mode.
-Bootstrap/admin remains the explicit superuser exception. Credential-specific
-capabilities keep their own narrower authorization layer: Runner tokens remain
-Agent-transport-only, account credentials remain account-control-only, OAuth
-access tokens cannot use Agent transport, and project credentials remain bounded
-to the Connector/project surface and its operation-level authorization.
-
-`account:manage` is required for a PAT before any account or token-management
-route reaches its handler-level identity checks. The scope does not grant
-cross-user authority: a normal user PAT remains self-only, while bootstrap/admin
-retains its explicit superuser role. Account credentials remain account-control-only
-under their credential-specific boundary.
-
-The direct shared-key quick-start profile includes `computer:read` and
-`computer:control` so existing Computer observation/control remains available through
-direct key authentication, but it deliberately does **not** include `computer:launch`.
-Application launch therefore requires a principal that was explicitly granted that
-scope. The shared-key profile also does not implicitly gain `account:manage` or `admin`. Unknown authenticated routes and runtime tools
-fail closed for ordinary principals until a scope policy is declared; bootstrap
-retains setup/superuser compatibility.
-The direct shared-key profile, open-anonymous contexts, and project credentials do not include `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, or `computer:clipboard_write`; full-display, pointer, and global clipboard authority are never inherited from their existing Computer/project authority. Ordinary shared-key OAuth keeps the same baseline by default and can expose those optional scopes only through the explicit `--oauth-computer-permissions` client ceiling plus browser consent described above.
-
-Scope-denial wire formatting remains credential-aware. OAuth access tokens use
-the OAuth `insufficient_scope` response and `WWW-Authenticate` challenge. Other
-Bearer principals receive a normal WebCodex `403` without being represented as
-an OAuth error. This changes only response framing, not the required scope.
+The Server's `WEBCODEX_AUTHORITY_MODE` is also separate from authentication. It controls whether consequential operations auto-execute after hard safety checks or require the configured human-authorization path; it does not change credential identity or scope membership. See [Authority model](agent/permission-model.md) for maintainer-level detail.
 
 ## Computer observation and control authorization
 
-`computer:read` is the dedicated scope for read-only Computer observation.
-It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
-`computer_list_applications`, `computer_accessibility_status`, `computer_accessibility_tree`,
-`computer_find_elements`, `computer_element_state`, and `computer_snapshot` tools; it is separate from
-`runtime:read`, `project:read`, `job:run`, `computer:control`, and `computer:launch`,
-and none of those scopes imply it.
+Computer Use permissions are intentionally separate from ordinary project/runtime access. Read-only Computer observation requires `computer:read`; effectful control requires `computer:control`; launching applications uses `computer:launch`. Full-display, pointer, and global clipboard operations have additional explicit scopes and are not silently inherited by older credentials.
 
-`computer_save_snapshot` is intentionally not a read-only Computer tool even though its capture phase is observational. It persists a bounded image into a project and therefore requires **both** `computer:read` and `project:write`. The Server reuses the exact Computer snapshot capability checks for the source Runner and independently requires the target project Runner to retain `file_write` at write admission. The operation is create-only; a lost response after possible artifact dispatch is `outcome_unknown` and is reconciled against the exact project/path with `read_project_artifact_metadata` and the expected digest, byte count, and MIME before any retry.
+OAuth clients receive these optional permissions only through explicit operator/user opt-in. The runtime still rechecks the current Runner capability and native OS permission at the moment of the call. See [Computer Use](COMPUTER_USE.md) for the product-facing feature overview.
 
-`computer_list_targets` closes the target-discovery loop without widening
-`runtime:read`: it returns only caller-visible Runners that advertise a supported
-Computer observation/application capability, projected to minimum client identity,
-connection state, and bounded capability facts including `computer_observe`,
-`computer_snapshot_region`, `computer_accessibility_observe`,
-`computer_application_discovery`, and `computer_application_launch`. These fields
-are additive and independent; missing old-Runner fields deserialize false and are
-not inferred from platform, observation, or control.
-The same projection includes the independent `computer_display_observe`, `computer_pointer_control`, `computer_clipboard_read`, and `computer_clipboard_write` facts without exposing native display topology, pointer mapping, or clipboard content/state. These capability booleans do not grant authority; runtime calls still enforce their scopes. The projection does not expose
-the broader projects, policy, jobs, host, or provider inventory from `list_runners`.
+## Public compatibility names you may still see
 
-`computer:display_read` is a separate, wider privacy authority for full-display observation. Both `computer_list_displays` and `computer_snapshot_display` require **both** `computer:read` and `computer:display_read`; neither scope implies the other. Both tools also require the independent `computer_display_observe` Runner capability, which is missing/default false and is not inferred from window observation, region snapshots, or platform identity. Exact native Windows and macOS backends advertise that capability; unsupported or unproven platforms remain false.
+Some compatibility-facing names remain because changing them would break stored configuration or wire compatibility:
 
-Display discovery returns only fresh process-local opaque `display_id`, display-relative width/height, primary status, count, and truncation. Native monitor identity/device paths, global origin, scale/DPI, and topology remain Runner-private. Snapshot revalidates the exact private native display identity and source geometry around capture, accepts no global coordinates or region, and returns bounded image metadata plus a positive process-local `snapshot_generation`. macOS binds a ColorSync display UUID and bounded CoreGraphics device identity to the discovery-time native display id, uses only the no-UI Screen Recording preflight, and rejects identity ambiguity, replacement, geometry change, or capture races. These operations are read-only observations and never enter effect/outcome-unknown retry semantics.
+- `wc_agent_*` — Runner token;
+- `agent:<client_id>:<project_id>` — runtime Project address;
 
-`computer:pointer_control` is an additional consequential authority for `computer_pointer_move` and `computer_pointer_click`. Each pointer tool requires **all four** scopes: `computer:read`, `computer:display_read`, `computer:control`, and `computer:pointer_control`, plus the independent `computer_pointer_control` Runner capability. Neither ordinary Computer control nor display observation implies pointer authority. The scope is excluded from the frozen legacy OAuth default, direct shared-key quick-start, open-anonymous, and project credentials. Ordinary shared-key OAuth can grant it only on an explicitly Computer-enabled client, and its `pointer` consent bundle grants `computer:display_read` plus `computer:pointer_control` only when the OAuth request already contains all four runtime prerequisites.
+These do **not** refer to WebCodex's separate Durable Agent / Conversation / Agent Task domain. Other process/protocol compatibility fields remain implementation details. New documentation should say **Runner** unless it is quoting one of the public compatibility-facing names above.
 
-`computer:clipboard_read` and `computer:clipboard_write` are separate global clipboard authorities. `computer_read_clipboard` requires **both** `computer:read` and `computer:clipboard_read`, plus the independent `computer_clipboard_read` Runner capability. `computer_write_clipboard` requires **both** `computer:control` and `computer:clipboard_write`, plus the independent `computer_clipboard_write` capability. Read does not imply write and write does not imply read. Both scopes are excluded from the frozen legacy client default, direct shared-key quick-start, open-anonymous contexts, and project credentials. Ordinary shared-key OAuth may grant either one independently only through its explicit Computer-enabled client ceiling and corresponding browser checkbox; read never implies write and write never implies read. The two capability fields are additive, missing/default false, mutually independent, and advertised only by the native Windows and macOS Runner implementations.
+## Where credentials are stored
 
-The clipboard surface exposes only bounded native plain Unicode text: `CF_UNICODETEXT` on Windows and `NSPasteboardTypeString` on the macOS general pasteboard. Read is a pure observation with a 16 KiB UTF-8 result ceiling and no truncation; it never enumerates or returns rich or non-text formats. Write is a global replacement effect. Windows completes UTF-16 allocation and Runner-owned hidden non-NULL HWND preparation before the first successful `EmptyClipboard` state-change boundary. macOS completes caller validation and native string/object preparation before calling `clearContents`; after that boundary it requires `setString(_:forType:)` success and unchanged pasteboard ownership change count to prove completion. Any definite pre-boundary failure is `not_started`; uncertainty after native clear is `outcome_unknown`. Neither path borrows a foreground window, pastes, focuses/activates a window, retries, restores previous formats, or performs hidden body readback. A caller may explicitly reconcile an unknown write with `computer_read_clipboard` only when that caller separately has clipboard-read authority. Clipboard text/raw bytes/body hashes/native handles/change counts are excluded from durable audit; successful model-facing read text is returned only because `computer:clipboard_read` explicitly authorizes that data plane.
-
-Pointer input is implemented natively on macOS and Windows and uses only a latest unspent `snapshot_generation` bound to the exact process-local display identity and source geometry. Public `x`/`y` are display-local source coordinates; native monitor/display identity, global desktop bounds/origin, rotation, DPI/scale, current cursor coordinates, shared input state, event-source details, and the private transform never leave the Runner. A generation is consumed once native effect admission begins. Pre-admission validation/construction failures do not consume it; a final post-admission fence may report definite `not_started` only before any native pointer post, while any unprovable outcome after a native post is `outcome_unknown`. Spent generations are never restored. Pointer uncertainty must be reconciled with a fresh `computer_snapshot_display` and is never blindly retried. The four-scope authority and independent `computer_pointer_control` capability remain unchanged across both native platforms.
-
-`computer:launch` is a separate consequential Computer authority for
-`computer_launch_application`; neither `computer:read` nor `computer:control` implies it.
-The launch tool requires the independent `computer_application_launch` Runner capability,
-while read-only `computer_list_applications` requires `computer:read` plus the independent
-`computer_application_discovery` capability. The model supplies only `client_id` and a fresh
-opaque `application_id` produced by bounded discovery. No executable/path, argv, cwd,
-environment, shell/script, URL/protocol launcher, or generic process launcher is authorized.
-A native Windows Runner keeps and revalidates the exact AppsFolder PIDL. A native macOS
-Runner keeps and revalidates a canonical application URL plus bounded bundle and
-filesystem identity obtained only from Foundation-defined application roots; same-path
-replacement fails stale. macOS submits that exact private URL once through public
-`NSWorkspace` with activation, prompt/error UI, forced-new-instance, hide/hide-others,
-alternate-install substitution, arguments, environment, document/URL target, and custom
-Apple-event payload disabled or empty. These implementation-private identities and launch
-configuration never widen the caller-visible authorization or enter model output/audit.
-A stale or otherwise pre-native failure is `not_started` with `state_changed=false`; after
-native dispatch may have occurred, loss/ambiguity/inconsistent success metadata is
-`outcome_unknown` and must be reconciled with fresh `computer_list_windows` before another
-launch is considered. Launch success does not imply a new process/window or window readiness,
-and WebCodex performs no implicit activation/focus.
-
-`computer:control` is the separate effect scope for `computer_activate_window`,
-`computer_control`, `computer_scroll_to_element`, `computer_key_input`, and `computer_input_text`.
-`computer_activate_window` may activate/raise only an exact previously observed
-`surface_id`; it cannot select or launch an application by name, PID, bundle,
-executable, path, or command. `computer_control` remains deliberately closed to
-native macOS Accessibility or Windows UI Automation press and focus actions. On
-Windows, press is only UIA `InvokePattern`; the first Windows focus slice is
-closed to an exact normalized `AXTextField` on an already-foreground surface and
-uses only exact-element `SetFocus`, with `GetFocusedElement`/`CompareElements`
-read-back. Unsupported roles, protected or disabled targets, and background-
-surface focus targets fail closed before the effect. `computer_scroll_to_element`
-is a separate semantic effect that revalidates one exact observed element and
-uses native AX scroll-to-visible on macOS or UIA `ScrollItemPattern::ScrollIntoView`
-on Windows only when that element supports it; callers do not supply wheel
-deltas, direction, distance, or coordinates. `computer_key_input`
-is a separate closed effect for Enter, Escape, Tab, arrows, paging/home/end plus
-bounded modifiers. The exact `surface_id` must still be the frontmost focused
-window, and the Runner does not focus or activate it implicitly. On Windows,
-`option` maps to Alt while `command` fails closed before input. Ordinary text,
-arbitrary characters/keycodes, repeat counts, or held-key state are not accepted.
-`computer_input_text` writes bounded text through native AXValue or Windows UIA ValuePattern only to an already
-focused, enabled, writable, empty, non-secure, unprotected supported text element; Windows also requires the exact surface to already be foreground.
-There is no coordinate-click, generic wheel, open-ended key input, dragging, AppleScript, shell, paste, generic process launch, or implicit-focus fallback in this semantic control contract. Clipboard is not a fallback here: bounded native Windows/macOS clipboard access is the separately scoped global read/write surface described above, and application launch is the separate bounded `computer:launch` surface described above. A
-lost response after an effect may have been dispatched is reported as an
-unknown outcome and must be reconciled by observing current UI state before any
-retry. On macOS a native key press is delivered as two adjacent PID-targeted
-Quartz key-down/key-up posts after all preflight work is complete; termination
-between them is a partial `outcome_unknown`. On Windows the complete modifier/key
-sequence is prepared first and sent in one `SendInput` call only after the exact
-foreground window and bounded UIA focused-element ancestry are revalidated;
-the Runner rejects an already-held Shift/Control/Alt/Windows/target key before
-injection because `SendInput` shares the interactive desktop keyboard state. A
-zero inserted-event return is a definite no-effect failure; partial insertion
-remains `outcome_unknown`. This preflight bounds shared-desktop input but does
-not provide concurrent-user desktop isolation.
-
-Scopes are only one layer of the check. After target discovery, observation and
-effect calls name one exact Runner `client_id`, and the Server also requires
-caller access/ownership for that Runner plus the independently advertised
-capabilities for the requested operation: `computer_application_discovery` for bounded
-application discovery, `computer_application_launch` for exact opaque-ID application launch,
-`computer_observe` for window observation and all window snapshots, with `computer_snapshot_region`
-additionally required for snapshot requests that add a surface-relative region
-and/or output dimension bound; `computer_accessibility_observe` for Accessibility tree observation,
-`computer_element_state` for normalized state of one exact observed
-element, `computer_window_activate` for exact window activation/raise,
-`computer_control` for press/focus, `computer_scroll_to_element` for native
-semantic scroll-to-visible, `computer_key_input` for closed focused-window key
-input, and `computer_text_input` for bounded text input.
-Element-state observation re-resolves the existing ephemeral handle and
-returns no AXValue; protected/secure elements suppress even `value_empty`. These
-capability checks are independent of OAuth consent. The canonical Connector surface
-still does not expose the full operator Computer tool set; on `adaptive_runtime` and
-`full_operator_runtime`, OAuth `tools/list` is additionally projected by the token's
-actual runtime scope grant.
-
-## `client_id`
-
-`client_id` is the stable logical identifier of one Runner/device, such as:
-
-```text
-ubuntu-client
-alice-macbook
-ci-runner-1
-```
-
-A Runner token is bound to an allowed `client_id`, preventing a token minted
-for one client from registering as a different client.
-
-## `agent_instance_id`
-
-`agent_instance_id` identifies one live Runner **process** — one incarnation
-of a `client_id`. `webcodex-runner` generates it at startup and reuses it for
-the whole process lifetime, including WebSocket reconnects. The Server treats
-it as the active lease identity: a second process with the same `client_id`
-but a different `agent_instance_id` is rejected while the first is online, and
-a stale/replaced instance can no longer poll or submit results. It is not a
-secret.
-
-In short: `client_id` is the stable logical Runner/device identity (runtime
-project ids, token binding); `agent_instance_id` is the per-process
-incarnation used for transport, recovery, and fencing.
-
-## Runtime project ids
-
-Agent-backed runtime project ids use the shape:
-
-```text
-agent:<client_id>:<project_id>
-```
-
-Examples:
-
-```text
-agent:ubuntu-client:webcodex
-agent:alice-macbook:my-repo
-```
-
-The `<project_id>` comes from a top-level `id` field in an agent
-`project-registry/*.toml` file:
-
-```toml
-id = "webcodex"
-path = "/srv/webcodex/projects/webcodex"
-```
-
-Do not use server-side `[projects.<id>]` syntax in agent `project-registry/*.toml`
-files.
-
-## Hash storage
-
-For user-created PATs and Runner tokens, the server stores token hashes, not
-plaintext `wc_pat_xxx` or `wc_agent_xxx` values. Plaintext tokens are shown
-once at creation time and must be stored by the user or agent host.
-
-## Where each credential lives
-
-| Credential | Location (default) |
+| Credential | Typical location |
 | --- | --- |
-| `WEBCODEX_TOKEN` | server env file (`/etc/webcodex/webcodex.env`) |
-| Shared key `wck_...` | top-level `token` field in `~/.config/webcodex/clients/<profile>/runner.toml` (owner-only) |
-| Project Credential | project private state dir (owner-only files) |
-| `wc_acct_...` | given once by `users create --issue-credential` |
-| `wc_pat_...` (`webcodex-user-token`) | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |
-| `wc_agent_...` | inline inside `~/.config/webcodex/<server-slug>/<user>/runner.toml` |
+| `WEBCODEX_TOKEN` | Server env file, commonly `/etc/webcodex/webcodex.env` |
+| Managed user PAT | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |
+| Managed Runner token | inline in the matching `runner.toml` |
+| Hosted shared key | protected hosted profile `runner.toml` |
+| Project Credential | protected project-private state |
+| OAuth client secret | returned at client creation; store it in the client/operator's secret store |
 
-The per-(server, user) directory layout under `~/.config/webcodex/` is:
-
-```text
-~/.config/webcodex/
-  <server-slug>/
-    <user>/
-      server.toml               canonical server URL, username, device
-      runner.toml                the agent token lives here, inline
-      webcodex-user-token
-      project-registry/
-```
-
-Server identity is the canonical URL, not the directory name; the slug is a
-lossy index for humans only. When an AI agent needs a credential value, have it
-tell the human exactly which file to copy rather than echoing the file's
-contents into chat.
+For command-specific setup and recovery paths, use [CLI](CLI.md) and [Troubleshooting](TROUBLESHOOTING.md). Internal identity and continuity formats are intentionally omitted from this user-facing reference.

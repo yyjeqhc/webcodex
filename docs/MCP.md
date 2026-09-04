@@ -82,102 +82,31 @@ advanced identity flow.
 
 ## Advanced / reference
 
-### Runtime exposure and MCP model surfaces
+### Runtime surface selection
 
-WebCodex has one startup-selected `RuntimeExposure`. General runtime exposure is
-`Runtime(ModelSurface)`, where the model surface is `local_coding`,
-`adaptive_runtime`, or `full_operator_runtime`. The project-first `webcodex run`
-/ `webcodex share` path instead starts a Server with the separate
-`project_connector` exposure and ConnectorTask capability contract;
-ProjectConnector is not a ModelSurface. `webcodex connect <server>` uses the
-exposure selected by that existing Server. Without Connector configuration, the
-default is `local_coding`. Operators may explicitly select `adaptive_runtime` with
-`WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1`, or `full_operator_runtime` with
-`WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1`. `adaptive_runtime` keeps a small
-high-frequency coding core directly typed in `tools/list` and exposes one
-`call_runtime_tool` gateway for discovered long-tail runtime tools. Repeated-loop
-primitives such as `read_files`, `run_process`, and `observe_jobs` stay direct;
-less frequent convenience tools such as `list_projects`, `project_overview`,
-`run_script`, `validation_summary`, and `git_status` stay behind the gateway. After
-compact discovery, `tool_manifest(tool_name="<exact-name>")` returns exactly one
-tool's description, input schema, annotations, and current runtime ModelSurface routing
-without expanding its output schema. `availability` is `direct`, `gateway`, or
-`unavailable`; `gateway_tool` is `call_runtime_tool` only for the gateway case.
-These fields describe invocation routing, not authorization or feature readiness.
-The selected target still uses its normal OAuth scope, project authority,
-permission gate, argument validation, effect semantics, and explicit Session/ACK
-handling. These names describe
-protocol/tool contracts; a first-time user does not need to choose among them.
+A Server chooses its model-facing MCP surface at startup. Ordinary users do not need to select or understand the internal routing names; use the tools shown by the connected Server. Maintainers who intentionally change that surface should use the internal architecture/configuration contract; routing never changes the target tool's normal authentication, project, or safety checks.
 
-Model-facing failures may add a small recovery-control vocabulary without replacing existing subsystem fields. `error_kind` identifies what failed. `failure_kind`, when present, retains execution/effect/validation semantics such as `not_started`, `timeout`, or `outcome_unknown`. `recovery_kind` is the closed class of the next safe action: `fix_input`, `retry_same`, `reobserve`, `reconcile`, `wait`, `user_action`, or `none`. `recovery_tool`, when present, is a bounded public WebCodex tool for an explicit re-observation or reconciliation step; it never grants authority or triggers execution. `outcome_unknown` is not retry permission. `retry_same` is reserved for an exact idempotent replay contract and must not be interpreted as an ordinary repeat of an effect.
+### Tool result framing
 
-### Tool result framing (v0.4 contract)
+Machine-readable MCP tool results are returned in `structuredContent`; `content` is a concise human-readable/protocol-native fallback. Clients that need fields should consume `structuredContent` rather than parse text.
 
-Starting with `v0.4.0`, `structuredContent` is the authoritative machine-readable
-result for WebCodex `tools/call` responses. Ordinary text content is a compact
-human-readable fallback and must not be treated as a second serialized copy of
-the tool result. A successful call may therefore return text such as
-`WebCodex tool completed successfully.` while the actual fields are present only
-in `structuredContent`. Clients that need tool data must consume
-`structuredContent` rather than parse `content.text`.
-
-The default failure projection follows the same layering rule. It keeps facts
-that can change the caller's next safe action, including failure/recovery kind,
-`not_started` / `outcome_unknown`, exit state and bounded process output, Job
-handoff identifiers, permission denials, and reconciliation hints. Recorder and
-diagnostic telemetry that has already served its audit purpose is omitted from
-ordinary failures: for example auto-approved permission envelopes, Session
-recorder ids, and `run_process` / `run_script` executor, cwd, duration, declared
-purpose, and command/script summary.
-
-When the Server explicitly runs with full tool-request tracing, an eligible
-failed call from an `admin` caller on a Stateless MCP 2026 operator-capable
-surface may additionally contain one opaque `trace_ref`. `read_tool_trace` is a
-ModelHidden, admin-only, bounded forensic reader for that Server-hosted trace;
-it is directly projected by `full_operator_runtime` and is a long-tail target
-behind `call_runtime_tool` in `adaptive_runtime`. It is unavailable on Local
-Coding, legacy MCP protocol eras, and ordinary HTTP runtime calls. Callers should
-list the trace payload index first and select one payload only when needed. The
-reader never returns native trace paths, does not recursively capture its own
-raw result, and raw payload bodies are not copied into the durable Workflow
-Session ledger.
-
-This is an intentional `0.3.x -> 0.4.0` cleanup boundary and applies across the
-WebCodex-supported `2025-06-18`, `2025-11-25`, and `2026-07-28` MCP protocol
-eras. Supporting those protocol versions does not preserve the pre-0.4 duplicate
-JSON-in-text result representation. The `v0.4.0` framing above is the compatibility
-floor for `0.4.x`: machine-readable result fields remain in `structuredContent`,
-while `content` remains available for concise text or protocol-native content
-blocks such as images and resource links. When MCP-specific framing transforms a
-structured result, the MCP-facing output schema describes that post-framing
-`structuredContent` shape.
-
-Hosted clients need public HTTPS. `share` supplies a temporary Cloudflare Quick
-Tunnel by default; `connect` uses an existing hosted Server; self-hosted
-deployments provide their own stable HTTPS origin. Do not use bootstrap/admin
-tokens, Runner tokens, or the persistent project-first Connector credential as
-a public sharing secret.
+Recovery fields in a result describe the next safe **explicit** call. They never grant authority and never trigger a hidden retry. In particular, an uncertain outcome must be reconciled before repeating an effect.
 
 ### Built-in local MCP gateway
 
-A hosted WebCodex Server can also expose Runner-owned local stdio MCP providers through the same stable `/mcp` endpoint. The top-level catalog remains fixed: authorized callers see one `mcp_tool` meta-tool rather than one top-level tool per upstream provider. `mcp_tool` supports `list`, `describe`, and `call`. Provider ids and upstream tool names are logical identities; Runner/process/provider-instance identities and schema revision tokens stay internal. A successful `describe` records a bounded server-side schema observation. `call` resolves the current exact Runner/provider instance once, rechecks the current tool schema on that same persistent provider session, and refuses the effectful call when the schema changed. Provider replacement is reported separately and is never silently retargeted or replayed.
+A hosted Server can expose Runner-owned local stdio MCP providers through the same `/mcp` endpoint. Authorized callers use the single `mcp_tool` entry to list, describe, and call configured providers; provider process/instance identities and schema-revision state stay internal.
 
-No-argument `mcp_tool(action=list)` reports whether a registered logical provider id is uniquely routable (`resolvable` versus `ambiguous`); it is not a provider health check. `list(server=...)` and `describe` perform provider interaction. The outer `/mcp` endpoint's 2025/2026 support is separate from the Runner-to-provider gateway V1 compatibility contract: configured local providers currently use the bounded 2025-06-18 stdio tool subset documented in [Runner](RUNNER.md#provider-side-gateway-v1-compatibility), not an arbitrary/latest transparent MCP bridge. Outer caller request `_meta` is intentionally not forwarded to local providers.
-
-Configure providers on the Runner in `[mcp]`; no additional daemon, sidecar, public resource URL, or per-provider ChatGPT App is required. Local MCP access is guarded by the explicit `mcp:local` scope. Direct shared-key, project, open-anonymous, and legacy OAuth defaults do not acquire that scope. For ordinary hosted shared-key OAuth, `webcodex connect ... --auth oauth --oauth-local-mcp` explicitly adds the class-level authority for current and future local MCP providers in that same shared-key Runner group. A real ceiling change revokes existing grants and requires browser authorization again. Adding or replacing a provider later therefore does not require a new OAuth client/App, but only credentials that previously opted into `mcp:local` may use it.
+Configure local providers on the Runner under `[mcp]`. Access requires the explicit `mcp:local` permission; hosted OAuth clients opt in with `webcodex connect ... --oauth-local-mcp`. See [Runner](RUNNER.md#provider-side-gateway-v1-compatibility) for provider compatibility details.
 
 ### OAuth2
 
-When OAuth is enabled on a managed/self-hosted Server, or by `webcodex share --auth oauth`, MCP clients can use
-the authorization-code flow instead of a static token. Register the exact
-ChatGPT callback URL as an OAuth client redirect URI; keep `offline_access`
-enabled when offered (it is a protocol-level refresh-token scope and grants no
-extra permission). Server-side OAuth setup is in
-[Deployment](DEPLOYMENT.md#oauth2).
+When OAuth is enabled, MCP clients can use the authorization-code flow instead of a static token. Register the client's exact callback URL, keep `offline_access` when the host requests refresh-token support, and follow the connection values produced by `share --auth oauth` or `connect --auth oauth`. Server setup is in [Deployment](DEPLOYMENT.md#oauth2).
 
-For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Runner transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
+For ordinary hosted `connect --auth oauth`, the Runner keeps its hosted credential while the MCP client receives a separate OAuth credential. Add `--oauth-computer-permissions` or `--oauth-local-mcp` only when those optional capabilities are needed. Existing clients are not silently widened; a real permission change requires reauthorization.
 
-For an existing hosted Server, ordinary `connect --auth oauth` uses the shared-key OAuth bridge. The OAuth client and every code/access/refresh grant remain bound to the same `shared_key_hash` that groups the direct shared-key Runner/projects/jobs. Direct shared-key bearer authority stays fixed at `runtime:read`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`. A fresh OAuth client starts with that full baseline, but a protected existing client may retain a narrower valid baseline subset. `--oauth-computer-permissions` appends only `computer:launch`, `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` to that existing baseline subset; it never restores an absent baseline scope. The browser consent page leaves every optional permission unchecked and grants only selected permissions that the OAuth request actually requested. Launch consent requires both `computer:read` and `computer:launch`; display requires `computer:read` plus `computer:display_read`; pointer requires `computer:read`, `computer:control`, `computer:display_read`, and `computer:pointer_control`; clipboard read/write likewise require their baseline read/control prerequisite plus the matching optional scope. Missing request prerequisites are unavailable rather than auto-added, so consent, token projection, and runtime scope gates remain statically aligned. A real ceiling change revokes prior grants. `account:manage`, `admin`, `job:detach`, every `agent:*` transport scope, and future scopes remain outside this bridge. `offline_access` is protocol-only. Consent-page Runner capability is evaluated per same connected Runner and is rechecked on POST; it is backend availability, not a promise of OS/native permission or call success. At runtime, OAuth `tools/list` hides tools whose required scopes are absent, while direct `tools/call` authorization and live Runner/native checks remain authoritative. The managed-user flow remains separate as `connect --auth managed-oauth`.
+Project-first `share --auth oauth` remains bound to that temporary share environment. Managed-user OAuth is a separate advanced flow (`connect --auth managed-oauth`). OAuth credentials are never valid on Runner transport.
+
+For the credential and scope model, see [Authentication](AUTH_MODEL.md#oauth2).
 
 ### Grok custom connector (OAuth)
 
@@ -253,12 +182,7 @@ current Grok Custom MCP UI and availability.
 
 ## The ProjectConnector exposure
 
-When the Server is started with project-first Connector configuration, the
-top-level RuntimeExposure is `project_connector` and MCP `tools/list` contains
-exactly these fourteen operations. This is the project-first contract used by
-`webcodex run` and `webcodex share`; a generic hosted/self-hosted Server without
-Connector context uses a runtime ModelSurface: `local_coding` by default, or
-explicit `adaptive_runtime` / `full_operator_runtime`:
+`webcodex run` and `webcodex share` bind one configured repository and expose a small task-oriented MCP surface:
 
 ```text
 task_start
@@ -277,53 +201,9 @@ task_finish
 code_impact
 ```
 
-The Connector context already binds the configured repository. Start with
-`task_start`; do not call project-discovery, session, or runtime tools, and do
-not put a runtime project id in the prompt. On Stateless MCP 2026, each
-`tools/call` is application-stateless with respect to chat/window continuity:
-`task_start` returns a durable `task_id`, and a later `task_start` begins
-independent work even if the client sends a legacy `Mcp-Session-Id`. Continue
-exact existing work explicitly with `task_resume(task_id)`; use `task_list` to
-recover a task identity when needed. Do not infer continuity from the same chat,
-connection, credential, project, or transport header. Older stateful adapter
-contracts may expose a stable `ClientWindow`, but that is not a general MCP
-property and is not Workflow Session or model-context identity.
+Start with `task_start`. The Connector already knows the project, so prompts do not need runtime project ids or project discovery. A returned `task_id` is the durable handle for that Connector task; use `task_resume(task_id)` when you explicitly want to continue it. Do not assume that the same chat, HTTP/MCP connection, or credential automatically resumes prior work.
 
-### Stateless MCP 2026 Tasks extension
-
-For the `project_connector` RuntimeExposure, `server/discover` advertises the official
-`io.modelcontextprotocol/tasks` extension. Support is negotiated per request via
-`_meta.io.modelcontextprotocol/clientCapabilities.extensions`; no capability is
-remembered from an earlier request or from `Mcp-Session-Id`.
-
-Only `commands_run` and `checks_run` use task-augmented execution, and only when
-the existing bounded quick-yield returns an execution that is still active. A
-Tasks-capable client receives `resultType: "task"` only after that exact durable
-execution is materialized as an MCP Task; its execution ID is the `taskId`.
-Once materialized, an exact `operation_id` replay resolves to the same task
-handle even after the execution becomes terminal. If an execution reaches
-terminal state before it was ever materialized, or the request does not
-advertise the Tasks extension, the normal `CallToolResult` shape is unchanged.
-
-Poll with `tasks/get`. `working` is derived from the durable execution. At the
-terminal transition, a materialized Task durably finalizes the bounded/redacted
-Connector result inputs, including the same bounded stdout/stderr tail used by
-the ordinary synchronous result. Terminal polls reconstruct only from that
-durable snapshot, so repeated polls remain stable across Server/database reopen
-and later Runner Job-log loss. `tasks/update` is accepted for protocol
-compatibility, but Connector execution Tasks never enter `input_required`, so
-unknown/already-satisfied input responses are ignored. `tasks/cancel` delegates
-to the existing Connector cancellation path: its ACK means the cancel request
-was accepted, not that cancellation is already terminal; continue polling until
-the task reports a terminal status. There is no `tasks/list` and no task
-notification/subscription surface in this Connector integration.
-
-Task access is re-authorized on every request against the bound project and
-owner, and only execution IDs that were actually materialized as MCP Tasks are
-accepted by task methods. Task IDs do not grant cross-user or cross-project
-access, do not encode a Workflow Session/window/credential, and do not consume terminal-continuation
-delivery state. `ttlMs` is `null` (no fabricated expiry authority) and
-`pollIntervalMs` is an advisory two seconds.
+The exact MCP Tasks-extension materialization/polling protocol is an implementation compatibility detail and is intentionally omitted from this user-facing guide.
 
 ## Golden coding loop
 
@@ -353,12 +233,6 @@ cannot downgrade to `read_only`: finish or reject the writable task, then start 
 new `read_only` task. Any isolated writable result requires structured checks
 before `task_finish`, independent of the persisted mode label.
 
-The pre-0.4 `inspect` mode is retired. There is no executable alias and no
-OS-specific restricted-shell replacement. Existing durable pre-0.4 inspect tasks
-remain reviewable/rejectable but cannot execute or mutate; start a new `read_only`
-or `normal` task instead. This contract is the same on Linux, macOS, and Windows.
-
-
 - `files_list` answers "what is in this project" from the Git index, so
   ignored directories never appear. Call it before guessing paths.
 - `code_navigate` provides read-only language-server status, document/workspace
@@ -377,8 +251,7 @@ or `normal` task instead. This contract is the same on Linux, macOS, and Windows
   fallback. It is available in normal and read-only tasks.
 - `edits_apply` is the guarded edit tool; `commands_run` is the bounded escape
   hatch for commands that need a shell.
-- `checks_run` validates. Use a stable `operation_id` so an exact retry reuses
-  the operation.
+- `checks_run` performs structured validation. Follow its returned retry/status guidance rather than rebuilding internal operation identity by hand.
 - `task_finish` produces a stable result; a human reviews and accepts or
   rejects it locally with `webcodex task accept <id>` / `webcodex task reject
   <id>`. The model can never accept its own work.
@@ -408,14 +281,7 @@ surface, call `task_review` with `after_cursor` / `wait_ms` (and
 terminal; use `task_cancel` to stop it. Do not re-run an operation merely to
 poll it.
 
-The broader `local_coding` and `full_operator_runtime` MCP surfaces expose raw
-Job tools such as `job_status`, `job_log`, `validation_summary`, and
-`stop_job`; those tools are not part of the fourteen Connector capabilities.
-Return `job_log` / `observe_jobs` observation tokens unchanged: the first call
-returns a bounded baseline, later cursor-aware calls return only new log output,
-and `reset` returns a bounded recovery tail when continuity (including across a
-Server restart) cannot be proved. The token is observation state, never Job
-identity, retry authority, or execution identity.
+On regular runtime surfaces, long-running work may instead be exposed as a WebCodex Job. Use the Job observation/recovery guidance returned by the connected Server rather than starting another copy. Opaque observation tokens should be returned unchanged; they are read cursors, not credentials or execution authority.
 
 ## First safe prompt
 

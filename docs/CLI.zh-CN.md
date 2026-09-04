@@ -35,9 +35,9 @@ Server API 完成。
 | `webcodex run` | 启动 project-bound loopback Server 与本地 Runner | local-only/手动工作流；前台运行，Ctrl-C 同时停止两者。 |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | 移除一个 hosted 项目注册 | 是该仓库 `connect` 的精确逆操作；绝不删除仓库或 `.git`。 |
 
-`webcodex share --auth query-token` 是给无法配置 Bearer header 的 MCP client 使用的显式临时 share 兼容模式。它只在 `/mcp?token=...` 接受当前 share 的精确 Project Credential，输出经过 URL 编码的敏感 MCP URL，并让 client 选择 No authentication。普通 Server/runtime 请求不会因此启用 query auth，PAT/OAuth/shared-key/Agent credential 也不能通过这个 query 路径回退认证；`--tunnel openai` 会拒绝该模式。整条 URL 都必须当作 credential，因为 query 可能被 client、proxy、剪贴板或 access log 留存。默认仍是 `--auth bearer`。
+`webcodex share --auth query-token` 是给无法配置 Bearer header 的 MCP client 使用的显式临时 share 兼容模式。它只在 `/mcp?token=...` 接受当前 share 的精确 Project Credential，输出经过 URL 编码的敏感 MCP URL，并让 client 选择 No authentication。普通 Server/runtime 请求不会因此启用 query auth，PAT/OAuth/shared-key/Runner credential 也不能通过这个 query 路径回退认证；`--tunnel openai` 会拒绝该模式。整条 URL 都必须当作 credential，因为 query 可能被 client、proxy、剪贴板或 access log 留存。默认仍是 `--auth bearer`。
 
-`webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；authorization code、access token、refresh token 与临时 Project Credential 则都被 fenced 到当前 `share` 进程。重启 `share` 会让旧 OAuth grant 失效，但不会改变 Connector 的稳定 project identity。OAuth access token 永远不能用于 Runner transport。
+`webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；临时 OAuth grant 只在当前 `share` 运行期间有效。重启 `share` 会让旧 OAuth grant 失效，但不会改变项目。OAuth access token 永远不能用于 Runner transport。
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
@@ -47,14 +47,13 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 面向受监督的 machine integration，可使用 `webcodex share --json --stop-on-stdin-eof`。它仍保持原有前台生命周期，但会把 supervising parent 关闭 stdin 视为停止请求，使 Desktop 或其他 structured process owner 可以让 `share` 自己清理临时 Server、Runner 与 Tunnel，而不需要拼 shell signal 命令。该 flag 在非 `--json` 模式下会被拒绝。
 
-`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是普通 hosted connect 面向 ChatGPT 的 OAuth 路径。它继续使用 Runner 的同一个 `wck_*` shared-key 身份，并保持 direct shared-key baseline 不变：`runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。fresh OAuth client 从完整 baseline 开始，但已有受保护 client 可以合法持有更窄的 baseline subset。只有显式增加 `--oauth-computer-permissions`，client ceiling 才在**现有 baseline subset**上追加固定的 `computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`；不会恢复此前缺失的 baseline scope，该 flag 本身也不会 grant optional scope。WebCodex authorize 页面只把当前合法且可用的 Additional Computer permissions 以默认未勾选 checkbox 展示，真正进入 authorization code/access/refresh grant 的只有用户选择项。Launch consent 要求本次 OAuth request 同时包含 `computer:read` 与 `computer:launch`；缺失 prerequisite 时页面会禁用，而不是由 Server 偷偷补 scope。client ceiling 真正扩大时会撤销旧 grant 并要求重新授权；普通 reconnect 不会静默扩大 baseline client。`account:manage`、`admin`、`job:detach`、任何 `agent:*` 与未来新增 scope 永远不进入 picker。授权页显示的 Runner capability 只表示当前 backend support，不保证 OS/native permission 一定成功；runtime 调用仍会实时重新检查 capability 与 native preflight。OAuth access token 仍不能用于 Agent transport。
-如需让同一个 Connector 访问 Runner-owned 本地 MCP provider，必须额外显式传 `--oauth-local-mcp`。它只把 `mcp:local` 加入该 shared-key-owned OAuth client 的 ceiling；旧 client/credential 不会因版本升级自动获得该 scope。ceiling 真正变化会撤销旧 grant 并要求重新授权。
+`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是普通 hosted OAuth 路径。Runner 保持原有 hosted credential，MCP client 使用 OAuth。只有真正需要额外能力时才增加 `--oauth-computer-permissions` 或 `--oauth-local-mcp`；它们属于显式权限变更，可能要求重新授权。Client 设置见 [MCP](MCP.zh-CN.md#oauth2)，安全模型见[认证](AUTH_MODEL.zh-CN.md#oauth2)。
 
 高级 managed identity 流程仍保留为 `--auth managed-oauth --oauth-redirect-uri <精确回调地址>`，它才要求先 `webcodex login`；`--user` 也只用于该模式。
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行
-带 fencing 的 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
+执行 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
 匹配的本地项目 registration。其他项目、profile credential 和 `runner.toml` 都会保留。
 
 接入 MCP coding client 后，可阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，了解 canonical
@@ -181,37 +180,14 @@ credential；admin token management 也使用相同的 plural namespace。
 
 ## 术语
 
-### 人员与机器
+- **Server** —— 认证调用方、保存共享 runtime 状态并路由工作。
+- **Runner** —— 在持有代码的机器上执行仓库工作。
+- **Project** —— 由 Runner 注册的一个仓库/工作区。
+- **Task** —— 一个可审查的有界 project-first 工作单元。
+- **Job** —— 发起调用返回后仍继续运行的命令或 validation。
+- **Workflow Session** —— runtime 用于 coding evidence/continuity 的有界状态。普通用户通常不需要管理其内部协议字段。
 
-- **Server** —— 负责认证调用方并路由工具请求的 `webcodex-server` 进程。
-- **CLI** —— 本文档介绍的 `webcodex` 命令。
-- **Runner** —— 运行在持有仓库机器上的 `webcodex-runner` 进程，执行实际工作。
-- **profile** —— 用户 WebCodex 配置目录下的一个命名客户端配置（路径、
-  `runner.toml`、令牌）。`webcodex connect` 会创建一个；
-  `webcodex runner ... --profile <name>` 指向它。
-- **client_id** —— 一个 Runner/设备的稳定逻辑标识（如 `workstation` 或
-  `alice-macbook`）。它是 runtime project id 的一部分，也是 Runner 令牌所绑定
-  的对象。
-- **agent_instance_id** —— `webcodex-runner` 启动时生成的进程级身份，整个进程
-  生命周期（包括 WebSocket 重连）复用。Server 把它当作活跃租约身份：同
-  `client_id` 但不同 `agent_instance_id` 的第二个进程在第一个在线时会被拒绝，
-  过期/被替换的实例不能再 poll 或提交结果。它不是 secret。
-- **Connector** —— 已配置本地项目暴露出的 project-bound coding surface。
-  Connector 把一个逻辑项目绑定到其注册的执行器，因此模型无需管理 project id。
-
-### 项目与工作
-
-- **project_id** —— agent 在其 `project-registry` 注册表中注册的项目 id。
-- **runtime project id** —— 完整的 `agent:<client_id>:<project_id>`，用于定位
-  已注册项目。project-bound Connector 内部会解析它；普通用户不需要输入。
-- **Task** —— 模型创建、人工审查的一个有界项目工作单元。Task 有稳定 id
-  （`task_...`）与审查结果。
-- **Job** —— 在发起调用返回后仍继续运行的长命令或校验。Job 有 id 与有界日志，
-  可以停止。
-- **Workflow Session** —— 运维 runtime 中一个长期 coding 会话的有界证据账本。
-  Connector 用户不需要管理 session id；其连续性来自 project-bound task context。
-- **request / operation id** —— 模型使用的关联与重试标识（`operation_id`、
-  `request_id`、`execution_id`、`result_id`）。它们属于内部机制，普通用户无需管理。
+部分兼容名称仍保留 `agent`，主要是 `wc_agent_*` 与 `agent:<client_id>:<project_id>`。它们属于 Runner 时代的兼容名称，不是独立 Durable Agent domain；其它 process/protocol identifier 继续留在内部。新文档除引用这些公开名称外应统一写 **Runner**。
 
 ## 凭据：我到底需要哪个令牌？
 
@@ -229,69 +205,15 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 | Runner 令牌 | `wc_agent_...` | `webcodex runner-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
 | OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
 
-### Hosted 共享 key（`wck_...`）
+### 实际使用规则
 
-- 未提供 `--key` 或 `--key-file` 时由 `webcodex connect` 生成。
-- 仅在首次创建时完整显示；profile 保存后，重复 `connect` 会复用而不再次打印。
-- 保存在 owner-only profile 配置下：
-  `~/.config/webcodex/clients/<profile>/runner.toml`（或
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/runner.toml`），即顶层
-  `token = "wck_..."` 字段。
-- 如需人工恢复该值，请复制那个 `token` 字段。status 与 log 命令故意不打印它。
-  不存在 `show-token` 命令。AI agent 应定位 profile 并把文件位置告诉人类，而不是
-  回显该值。
-- 重复 `connect` 复用 profile 且不再次打印 key。
-- 不要把 `wck_` 当作 managed `wc_*` 使用；shared-key 认证永远不会回退到
-  managed identity。
-
-### Project Credential
-
-- 由 `webcodex setup` 为选定的 Git root 与 profile 创建，保存在 owner-only
-  私有文件中（Connector credential 文件与生成的 Runner 配置）。
-- 丢失时请恢复两个匹配的私有文件。不存在就地 rotate 命令；若无法恢复，请停止
-  runtime 并显式重建私有 project-state profile（这也会同时作废该 profile 的本地
-  task 历史）。
-
-### `WEBCODEX_TOKEN`
-
-- Server bootstrap/admin 凭据，由 `webcodex server init` 创建，存储在 server
-  env 文件中（通常 `/etc/webcodex/webcodex.env`），变量名为 `WEBCODEX_TOKEN`。
-- 它不是 MCP、Runner 或日常令牌。只用于初始设置、建用户、pairing 与紧急管理。
-- 如需确认 env 文件与变量名，请查看 Server 服务单元或服务加载的 env 文件。
-  读取令牌值属于会泄露密钥的人工操作；不要粘贴到客户端或提交。
-
-### `wc_pat_*`（个人 API 令牌）
-
-- 由 `webcodex tokens create-local` 本地生成的 managed user token；Server 只存
-  hash。
-- `webcodex login` 会把它写入该 server/user 登录目录下名为 `webcodex-user-token`
-  的文件。
-- 用 `--token-file <path>` 提供给命令，而不是 `--token`，避免进入 shell 历史。
-- 如需粘贴到 MCP 客户端，只读取那一个 `webcodex-user-token` 文件，不要回显整个
-  配置文件。
-
-### `wc_agent_*`（Runner 令牌）
-
-- 由 `webcodex runner-tokens create-local` 本地生成并绑定 `client_id` 的 Runner
-  传输令牌。
-- `webcodex login` 只会把它**内联**写进生成的 `runner.toml`（位于
-  `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的
-  `webcodex-runner-token` 文件。这是 canonical managed enrollment 布局。
-- 只被 Runner 传输 endpoint 接受；用在 MCP/REST 上会返回 403。不要当作
-  MCP/API 令牌。
-
-### `wc_pair_*`（pairing code）
-
-- 由 `webcodex pairing create` 在服务端创建的短期一次性 code。
-- 只把该 code 传给要接入的客户端；客户端用 `webcodex login <server-url> --code <code>`
-  兑换。
-- 它不是长期 API 令牌，过期后无法使用。
-
-### OAuth
-
-当 Server 启用 OAuth 时，MCP/GPT 客户端可以使用 authorization-code 流程而非
-静态 PAT。client id、client secret 与 `wc_oat_*` 访问令牌属于委派凭据；见
-[AUTH_MODEL.md](AUTH_MODEL.zh-CN.md#oauth2) 与 [MCP.md](MCP.zh-CN.md#oauth2)。
+- 普通 managed setup：`webcodex login` 会创建本地 user/API 与 Runner 凭据；直接使用它报告的路径和 MCP 连接值。
+- 已有 shared-key Server：使用 operator 提供的 `wck_...` 配合 `webcodex connect`。
+- Project-first/manual setup：Project Credential 只留在受保护的项目私有状态里，不要当作通用 user/admin token。
+- `WEBCODEX_TOKEN` 只留在 Server；它不是 MCP 或 Runner 凭据。
+- `wc_agent_*` 只用于 Runner transport；`wc_pat_*` 才是普通 managed user API token。
+- 优先使用 `--token-file`，不要把完整配置文件粘贴进聊天。
+- OAuth client 应走 OAuth flow，而不是人工复制 access token。见[认证](AUTH_MODEL.zh-CN.md#oauth2)与 [MCP](MCP.zh-CN.md#oauth2)。
 
 ## 常用示例
 

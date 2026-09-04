@@ -76,81 +76,31 @@ OAuth 仍是独立的高级身份路径。
 
 ## Advanced / reference
 
-### Runtime exposure 与 MCP model surface
+### Runtime surface selection
 
-WebCodex 在启动时只选择一个顶层 `RuntimeExposure`。通用 runtime exposure 是
-`Runtime(ModelSurface)`，其中 ModelSurface 只有 `local_coding`、`adaptive_runtime`、
-`full_operator_runtime`。project-first 的 `webcodex run` / `webcodex share` 则使用独立的
-`project_connector` exposure 与 ConnectorTask capability contract；ProjectConnector 不是
-ModelSurface。`webcodex connect <server>` 使用已有 Server 选择的 exposure；没有 Connector
-配置时默认是 `local_coding`。operator 可通过
-`WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1` 显式选择 `adaptive_runtime`，或通过
-`WEBCODEX_MCP_MODEL_SURFACE=full-operator-v1` 选择 `full_operator_runtime`。`adaptive_runtime`
-只把高频 coding core 直接放进 `tools/list`，低频 runtime tool 则通过
-`call_runtime_tool` gateway 调用。`read_files`、`run_process`、`observe_jobs` 这类反复出现在
-coding loop 中的原语保持 direct；`list_projects`、`project_overview`、`run_script`、
-`validation_summary`、`git_status` 这类低频便利工具放在 gateway 后面。compact discovery 后可用
-`tool_manifest(tool_name="<exact-name>")` 只读取一个工具的 description、input schema、
-annotations 与当前 runtime ModelSurface routing，不展开庞大的 output schema。`availability` 明确为
-`direct`、`gateway` 或 `unavailable`；只有 `gateway` 时 `gateway_tool` 才是
-`call_runtime_tool`。这些字段只描述调用路由，不代表授权或 feature readiness；目标 tool 原有的
-OAuth scope、project authority、permission gate、参数校验、effect 与 Session/ACK 语义保持不变。这些名称描述 protocol/tool contract；第一次用户不需要先做选择。
+Server 启动时会选择 model-facing MCP surface。普通用户不需要选择或理解内部 routing 名称，直接使用当前 Server 展示的工具即可。需要调整该 surface 的 maintainer 应查看内部 architecture/configuration contract；routing 不会改变目标工具原有的 authentication、project 或 safety checks。
 
-### Tool result framing（v0.4 contract）
+### Tool result framing
 
-从 `v0.4.0` 起，WebCodex `tools/call` 返回中的 `structuredContent` 是
-authoritative machine-readable result。普通 text content 只保留简短的人类可读 fallback，
-不再作为同一 tool result 的第二份 JSON 序列化副本。因此一次成功调用可以只在
-`content.text` 中返回 `WebCodex tool completed successfully.`，真正的结果字段只存在于
-`structuredContent`。需要读取 tool data 的 client 必须消费 `structuredContent`，不能依赖
-解析 `content.text`。
+MCP tool 的 machine-readable 结果位于 `structuredContent`；`content` 只保留简短的人类可读或 protocol-native fallback。需要结构化字段的 client 应读取 `structuredContent`，不要解析文本。
 
-默认 failure projection 也遵循同一分层原则：会保留真正影响下一步安全动作的事实，例如
-failure/recovery kind、`not_started` / `outcome_unknown`、exit state 与有界 process output、
-Job handoff identifier、permission denial 和 reconciliation hint。已经完成审计用途的 recorder /
-diagnostic telemetry 不再默认回给模型，例如 auto-approved permission envelope、Session recorder
-id，以及 `run_process` / `run_script` 的 executor、cwd、duration、declared purpose 与
-command/script summary。
-
-当 Server 显式开启 full tool-request trace 时，Stateless MCP 2026 operator-capable surface
-上的 `admin` caller 在符合条件的失败结果中还可能收到一个 opaque `trace_ref`。
-`read_tool_trace` 是 ModelHidden、admin-only、强制有界的 Server-hosted forensic reader；
-`full_operator_runtime` 会直接投影它，`adaptive_runtime` 则把它作为
-`call_runtime_tool` 后面的 long-tail target。Local Coding、旧 MCP protocol era 与普通 HTTP
-runtime call 都不能使用它。调用方应先读取 payload index，再按需选择单个 payload；reader
-不会返回 native trace path，不会递归 capture 自己的 raw result，raw payload body 也不会被
-复制到 durable Workflow Session ledger。
-
-这是一次有意的 `0.3.x -> 0.4.0` cleanup boundary，并同时适用于 WebCodex 支持的
-`2025-06-18`、`2025-11-25` 与 `2026-07-28` MCP protocol era。继续支持这些 protocol
-version 不代表继续保留 0.4 之前“在 text 中重复整份 JSON”的 result representation。
-上述 `v0.4.0` framing 是 `0.4.x` 的 compatibility floor：machine-readable result field
-继续位于 `structuredContent`；`content` 用于简短文本或 image、resource link 等
-protocol-native content block。若 MCP-specific framing 会转换 structured result，则
-MCP-facing output schema 描述的是转换后的 `structuredContent` shape。
-
-Hosted client 需要公网 HTTPS：`share` 默认提供临时 Cloudflare Quick Tunnel，`connect` 使用
-已有 hosted Server，自托管部署则提供自己的稳定 HTTPS origin。不要把 bootstrap/admin token、
-Runner token 或持久 project-first Connector credential 当作公网 share secret。
+Result 中的 recovery 字段只描述下一次**显式**调用的安全建议，不授予 authority，也不会触发 hidden retry。尤其是 uncertain outcome，必须先 reconcile，再决定是否重复 effect。
 
 ### 内建 local MCP gateway
 
-hosted WebCodex Server 可以继续通过同一个稳定 `/mcp` 暴露 Runner-owned 本地 stdio MCP provider。顶层 catalog 保持固定：有权限的 caller 只看到一个 `mcp_tool` meta-tool，而不是把每个 upstream tool 动态摊平到顶层。`mcp_tool` 支持 `list`、`describe`、`call`。provider id 与 upstream tool name 是逻辑 identity；Runner/process/provider-instance identity 与 schema revision token 都只在内部使用。成功 `describe` 会在 Server 记录有界 schema observation；`call` 只解析一次当前 exact Runner/provider instance，并在同一个 persistent provider session 上重新检查当前 tool schema。schema 已变化时不会发送 effectful call；provider replacement 则作为不同错误返回，也不会静默 retarget 或 replay。
+hosted Server 可以通过同一个 `/mcp` 暴露 Runner-owned 本地 stdio MCP provider。有权限的 caller 使用单一 `mcp_tool` 来 list、describe、call 已配置 provider；provider process/instance identity 与 schema-revision state 都留在内部。
 
-不带参数 `server` 的 `mcp_tool(action=list)` 只报告已注册逻辑 provider id 是否可唯一路由（`resolvable` 或 `ambiguous`），不是 provider health check；`list(server=...)` 与 `describe` 才会真实与 provider 交互。对外 `/mcp` 的 2025/2026 protocol support 与 Runner-to-provider gateway V1 compatibility 是两层不同 contract：configured local provider 当前使用 [Runner 文档](RUNNER.zh-CN.md#provider-side-gateway-v1-compatibility)所述 bounded 2025-06-18 stdio tool subset，不承诺任意/最新 MCP server 的无损透明桥接。outer caller request `_meta` 不会转发给 local provider。
-
-Runner 在 `[mcp]` 中配置 provider；不需要额外 daemon/sidecar、第二个公网 resource URL 或 per-provider ChatGPT App。local MCP 使用显式 `mcp:local` scope；direct shared-key、project、open-anonymous 与 legacy OAuth 默认权限都不会自动获得它。普通 hosted shared-key OAuth 必须使用 `webcodex connect ... --auth oauth --oauth-local-mcp` 显式加入“同一 shared-key Runner group 内当前及未来本地 MCP provider”的 class-level authority。ceiling 真正变化会撤销旧 grant 并要求重新走浏览器授权。因此以后新增/替换 provider 不需要新建 OAuth client/App，但只有此前明确 opt in `mcp:local` 的 credential 才能访问。
+在 Runner 的 `[mcp]` 中配置 provider。访问需要显式 `mcp:local` permission；hosted OAuth client 通过 `webcodex connect ... --oauth-local-mcp` opt in。Provider compatibility 细节见 [Runner](RUNNER.zh-CN.md#provider-side-gateway-v1-compatibility)。
 
 ### OAuth2
 
-当 managed/自托管 Server 启用 OAuth，或使用 `webcodex share --auth oauth` 时，MCP 客户端可以使用 authorization-code
-流程而非静态 token。把精确的 ChatGPT callback URL 注册为 OAuth client redirect
-URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-token scope，不授予
-额外权限）。服务端 OAuth 设置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
+启用 OAuth 后，MCP client 可以使用 authorization-code flow，而不是静态 token。注册 client 实际要求的精确 callback URL；host 要求 refresh-token support 时保留 `offline_access`；连接参数以 `share --auth oauth` 或 `connect --auth oauth` 的输出为准。Server 配置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
-对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Runner transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
+普通 hosted `connect --auth oauth` 中，Runner 保持原 hosted credential，MCP client 获得独立 OAuth credential。只有真正需要额外能力时才增加 `--oauth-computer-permissions` 或 `--oauth-local-mcp`。已有 client 不会被静默扩权；真实权限变化要求重新授权。
 
-对于已有 hosted Server，普通 `connect --auth oauth` 使用 shared-key OAuth bridge。OAuth client 以及 code/access/refresh grant 都绑定到 direct shared-key Runner/projects/jobs 所使用的同一个 `shared_key_hash`。direct shared-key bearer authority 始终固定为 `runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。fresh OAuth client 从完整 baseline 开始，但已有受保护 client 可以保留合法的窄 baseline subset。`--oauth-computer-permissions` 只在该现有 baseline subset 上追加 `computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`，不会恢复缺失的 baseline scope。浏览器授权页仍默认全部未勾选，并且只能 grant 本次 OAuth request 实际请求且用户选择的 permission。Launch consent 要求 `computer:read` + `computer:launch`；display 要求 `computer:read` + `computer:display_read`；pointer 要求 `computer:read`、`computer:control`、`computer:display_read`、`computer:pointer_control`；clipboard read/write 也分别要求 baseline read/control prerequisite 与对应 optional scope。缺失的 request prerequisite 会 unavailable，而不是自动补齐，因此 consent、token projection 与 runtime scope gate 静态一致。ceiling 真正变化会撤销旧 grant。`account:manage`、`admin`、`job:detach`、任何 `agent:*` 与未来 scope 始终在 bridge 之外；`offline_access` 仍只是协议 scope。授权页按同一个在线 Runner 判断 capability，并在 POST 重新计算；这只代表 backend 当前可用，不保证 OS/native permission 或调用一定成功。runtime 中 OAuth `tools/list` 会隐藏 token scope 不足的工具，直接 `tools/call` scope gate 与 Runner/native 实时检查仍是最终 authority。managed-user identity 仍单独使用 `connect --auth managed-oauth`。
+Project-first `share --auth oauth` 仍绑定本次临时 share 环境。Managed-user OAuth 是另一条高级流程（`connect --auth managed-oauth`）。OAuth credential 永远不能用于 Runner transport。
+
+Credential 与 scope 模型见[认证](AUTH_MODEL.zh-CN.md#oauth2)。
 
 ### Grok Custom Connector（OAuth）
 
@@ -221,11 +171,7 @@ Grok Custom MCP UI 与可用范围以 xAI 的
 
 ## ProjectConnector exposure
 
-Server 以 project-first Connector 配置启动时，顶层 RuntimeExposure 是
-`project_connector`，MCP `tools/list` 恰好包含以下十四个操作。这是 `webcodex run` 与
-`webcodex share` 使用的 project-first contract；没有 Connector context 的普通
-hosted/self-hosted Server 使用 runtime ModelSurface：默认 `local_coding`，也可显式选择
-`adaptive_runtime` 或 `full_operator_runtime`：
+`webcodex run` 与 `webcodex share` 会绑定一个已经配置好的仓库，并暴露一组较小的 task-oriented MCP 工具：
 
 ```text
 task_start
@@ -244,46 +190,9 @@ task_finish
 code_impact
 ```
 
-Connector context 已绑定配置的仓库。用 `task_start` 开始；不要调用项目发现、
-session 或 runtime 工具，也不要在 prompt 里放 runtime project id。在 Stateless
-MCP 2026 中，每次 `tools/call` 对聊天/窗口连续性而言都是应用层无状态请求：
-`task_start` 会返回 durable `task_id`，后续再次 `task_start` 会开始独立工作，即使
-客户端仍发送旧的 `Mcp-Session-Id` 也不能形成隐藏连续性。要继续现有工作，必须显式
-调用 `task_resume(task_id)`；需要恢复 task identity 时可使用 `task_list`。不要从同一
-聊天、连接、credential、project 或 transport header 推断连续性。旧的 stateful
-adapter 契约可以显式提供 stable `ClientWindow`，但这不是 MCP 的普遍属性，也不是
-Workflow Session 或 model-context identity。
+从 `task_start` 开始。Connector 已经知道当前 Project，因此 prompt 不需要 runtime project id 或 project discovery。返回的 `task_id` 是该 Connector task 的 durable handle；明确继续旧工作时使用 `task_resume(task_id)`。不要假设同一个 chat、HTTP/MCP connection 或 credential 会自动 resume 之前的任务。
 
-### Stateless MCP 2026 Tasks extension
-
-对于 `project_connector` RuntimeExposure，`server/discover` 会声明官方
-`io.modelcontextprotocol/tasks` extension。能力只按**当前请求**的
-`_meta.io.modelcontextprotocol/clientCapabilities.extensions` 协商；不会从前一次请求、
-`Mcp-Session-Id` 或其他隐藏状态记住能力。
-
-只有 `commands_run` 与 `checks_run` 会使用 task-augmented execution，并且仅限现有的
-有界 quick-yield 返回后 execution 仍处于 active 状态。只有当这个 exact durable
-execution 已经被持久化标记为 MCP Task 后，支持 Tasks 的客户端才会收到
-`resultType: "task"`；execution ID 直接作为 `taskId`。一旦 materialized，相同
-`operation_id` 的精确 replay 即使发生在 execution terminal 之后，也仍返回同一个 task
-handle。若 execution 在从未 materialize 为 MCP Task 前已经 terminal，或者当前请求没有
-声明 Tasks extension，则原有 `CallToolResult` 形状完全不变。
-
-使用 `tasks/get` 轮询。`working` 直接来自 durable execution truth。materialized Task
-进入 terminal 的同一持久化边界会固化有界、脱敏的 Connector result 输入，其中包括与
-普通同步结果相同的 bounded stdout/stderr tail；terminal poll 只从该 durable snapshot
-重建，因此在 Server/数据库 reopen，甚至后续 Runner Job log 已丢失后仍保持稳定。
-`tasks/update` 为协议兼容而接受，但 Connector execution Task 不会进入
-`input_required`，因此未知或已经满足的 input response 会被忽略。`tasks/cancel` 复用
-现有 Connector cancellation：ACK 只表示取消请求已接受，不代表已经 terminal；客户端
-仍应继续轮询直到出现 terminal status。本集成不提供 `tasks/list`，也不实现 task
-notification/subscription。
-
-每次 task 请求都会重新按绑定 project 与 owner 做授权，并且 task method 只接受真正
-materialized 为 MCP Task 的 execution ID。`taskId` 不能提供跨用户或跨 project 权限，
-也不编码 Workflow Session、window、credential，更不会消费 terminal
-continuation delivery state。`ttlMs` 为 `null`（不伪造 expiry/retry authority），
-`pollIntervalMs` 建议为 2 秒。
+精确的 MCP Tasks-extension materialization/polling 协议属于 implementation compatibility detail，有意不放在这份 user-facing guide 中。
 
 ## 黄金 coding 循环
 
@@ -312,12 +221,6 @@ task_start
 任何 isolated writable result 在 `task_finish` 前都必须有 structured checks，不能依赖
 持久化 mode 字符串绕过。
 
-pre-0.4 `inspect` mode 已退休：没有 executable alias，也没有 OS-specific restricted-shell
-替代模式。已有的 durable pre-0.4 inspect task 仍可 review/reject，但不能继续执行或修改；
-需要分析请新建 `read_only` task，需要修改/执行/验证请新建 `normal` task。Linux、macOS 与
-Windows 使用相同的这套 contract。
-
-
 - `files_list` 从 Git index 回答"项目里有什么"，因此被忽略的目录不会出现。猜测
   路径前先调用它。
 - `code_navigate` 提供只读的语言服务器状态、document/workspace symbols、
@@ -333,7 +236,7 @@ Windows 使用相同的这套 contract。
   不支持时会显式失败，不回退到 grep 或 AST。normal 与 read-only task 均可调用。
 - `edits_apply` 是受保护的编辑工具；`commands_run` 是需要 shell 的命令的有界
   逃生口。
-- `checks_run` 做校验。使用稳定 `operation_id`，让精确重试复用同一操作。
+- `checks_run` 做 structured validation。按照它返回的 retry/status guidance 继续，不需要手工重建内部 operation identity。
 - `task_finish` 生成稳定结果；由人工在本地用 `webcodex task accept <id>` /
   `webcodex task reject <id>` 接受或拒绝。模型永远不能接受自己的工作。
 
@@ -360,14 +263,7 @@ validator 返回非零是断言失败。
 直到 execution 进入 terminal；需要停止时调用 `task_cancel`。不要为了轮询而重新
 执行同一个操作。
 
-`local_coding` 与 `full_operator_runtime` MCP surface 会直接暴露
-`job_status`、`job_log`、`validation_summary`、`stop_job` 等原始 Job 工具；
-`adaptive_runtime` 则把其中的低频工具保留在 `call_runtime_tool` gateway 后面。这些
-工具都不属于十四个 Connector capability。
-`job_log` / `observe_jobs` 返回的 observation token 必须原样回传：首次调用返回
-有界 baseline；后续 cursor-aware 调用只返回新增日志；如果无法证明连续性（包括
-Server 重启），`reset` 会返回有界 recovery tail。该 token 只是 observation
-state，绝不是 Job identity、retry authority 或 execution identity。
+在普通 runtime surface 上，长时间工作也可能作为 WebCodex Job 暴露。使用当前 Server 返回的 Job observation/recovery guidance，不要再启动一个副本。Opaque observation token 原样回传即可；它只是 read cursor，不是 credential 或 execution authority。
 
 ## 第一个安全 prompt
 

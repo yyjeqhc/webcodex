@@ -7,7 +7,7 @@ conceptual overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOY
 and [Authentication](AUTH_MODEL.md) guides cover the operational details.
 
 For a short definition of the terms, see the terminology sections in
-[CLI](CLI.md#terminology) and [Runner](RUNNER.md#server-cli-runner-agent).
+[CLI](CLI.md#terminology) and [Runner](RUNNER.md#core-terms).
 
 ## Client → Server → Runner → project
 
@@ -28,41 +28,19 @@ The Server never scans your filesystem and never reads project files directly.
 Projects are registered by Runners; the Server addresses them by runtime
 project id `agent:<client_id>:<project_id>`.
 
-## Surfaces
+## Product surfaces
 
-WebCodex exposes the same runtime through several thin adapters:
+WebCodex exposes the same Server/Runner runtime through several user-facing adapters:
 
-- **MCP** — a startup-selected model-facing `RuntimeExposure`. General runtime
-  exposure is `Runtime(ModelSurface)` where `ModelSurface` is one of
-  `local_coding`, `adaptive_runtime`, or `full_operator_runtime`. A complete
-  project-first Connector configuration instead selects the separate
-  `project_connector` exposure with its fourteen Connector capabilities;
-  ProjectConnector is not a `ModelSurface`. `adaptive_runtime` keeps a small
-  typed coding core plus one long-tail runtime gateway, while
-  `full_operator_runtime` remains the explicitly expanded runtime surface.
-- **GPT Actions** — `/openapi.json` follows the Server mode: a configured
-  Connector returns the project-bound Connector schema, while a generic Server
-  returns the standard runtime OpenAPI schema.
-- **REST** — the Server's HTTP runtime API.
-- **CLI** — the operator/developer command-line interface.
-- **Console** — the Server-hosted operator browser surface for runtime readiness, Workflow Session collaboration, and bounded durable Agent/Conversation interaction. Its mutations use the same Server authority paths rather than a second state store.
+- **MCP** — the recommended model-facing integration for ChatGPT, Claude, and other MCP clients.
+- **GPT Actions** — the OpenAPI integration for Custom GPTs that do not use MCP directly.
+- **REST** — the Server HTTP runtime API.
+- **CLI** — operator/developer setup, lifecycle, and diagnostics.
+- **Console** — the Server-hosted operator browser surface.
 
-All adapters share the same Server, project registration, authentication, and
-policy boundaries. A regular Server is the normal long-lived coding runtime and
-exposes its configured runtime `ModelSurface`. The project-bound Connector is the
-separate `ProjectConnector` RuntimeExposure used by flows such as `webcodex run`
-and `webcodex share`; it is intentionally a different, narrower execution
-contract rather than another runtime-tool surface.
+For daily use, a regular Server + Runner exposes the configured coding tools for registered Projects. `webcodex share` / `webcodex run` instead create a project-first Connector bound to one repository and use a smaller task-oriented workflow. These are product choices, not identities or credentials.
 
-The canonical Connector has two execution modes. `normal` requires write
-authority and uses a WebCodex-managed isolated Git worktree; edits, commands, and
-validation run there until `task_finish` produces a stable result for host-local
-human accept/reject. Isolation preparation is a hard boundary: failure never
-falls back to a writable target checkout. `read_only` uses the target workspace
-for observation and semantic navigation but rejects structured writes, commands,
-and checks. The pre-0.4 `inspect` mode and its Linux-only filesystem write-filter
-restricted-shell stack are retired; no OS-specific replacement mode exists, so this mode contract
-is uniform across Linux, macOS, and Windows.
+Internal type names used to route these adapters are maintainer implementation details; ordinary users should follow the tools and connection instructions returned by the current Server.
 
 ## Project registration
 
@@ -79,47 +57,23 @@ is the id registered by that Runner in its `project-registry` registry.
 `allowed_roots` controls where projects may be registered or created (default
 `$HOME`; an explicit list narrows it).
 
-## Durable Agent identity and asynchronous work
+## Durable Agent and asynchronous work
 
-The Server also owns a durable Agent communication domain. A durable Agent uses a
-Server-minted `wc_dagent_*` identity and is deliberately independent from a browser
-window, MCP connection, credential, Runtime Project, or Workflow Session. The
-`agent:` prefix in `agent:<client_id>:<project_id>` is Runner-address syntax and is
-not a durable Agent identity.
+The Server also owns a durable Agent/Conversation domain for communication and asynchronous work. A Durable Agent is separate from a Runner/device, browser window, credential, Project, and Workflow Session.
 
-Today this domain includes Agent profiles, replaceable Endpoint attachments,
-Conversations, append-only Messages, recipient Deliveries/Inbox state, and durable
-Wake Intents with Endpoint/generation-fenced delivery attempts. Conversation
-membership and Agent identity grant communication authority only; they do not grant
-Project, Runner, filesystem, Job, or Workflow Session authority.
+This separation matters because the historical `agent:` prefix still appears in some Runner/runtime compatibility identifiers. That prefix does not turn a Runner or runtime Project into a Durable Agent.
 
-The next asynchronous-work boundary is an **Agent Task** plus an exact fenced
-**Agent TaskAttempt**. An Agent Task represents accepted work that can outlive a
-model turn or Endpoint. It is intentionally separate from both the existing
-Connector Task continuity model and Workflow Session todos. WebCodex is not defined
-as a swarm scheduler: worker pools, runnable-frontier scheduling, graph execution,
-and autonomous delegation remain optional later capabilities.
+Conversation membership and Durable Agent identity grant only the communication/workflow authority defined by that domain; they do not grant repository, Runner, filesystem, Job, or Workflow Session access.
 
-See [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md)
-and the current [Agent/Conversation/Wake implementation contract](architecture/durable-agent-conversation.md).
+Maintainer-level lifecycle and Agent Task/TaskAttempt details live in [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md) and [Durable Agent/Conversation/Wake contract](architecture/durable-agent-conversation.md).
 
-## Connector Task / Job / Workflow Session continuity
+## Task, Job, and Workflow Session continuity
 
-- **Connector Task** — the existing bounded project-first continuity unit used by
-  `task_start` / `task_resume`. Connector Tasks are durable and can be resumed. A
-  project-bound Connector may bind an active Connector Task only when its exact
-  adapter/protocol supplies a stable `ClientWindow`. Stateless MCP 2026 has no
-  hidden window continuity: each `task_start` is independent and existing work
-  continues explicitly with its durable `task_id` through `task_resume`. A
-  Connector Task is not an Agent Task.
-- **Job** — a long-running command or validation that continues after the
-  initiating call returns. A single execution is promoted to a Job with the
-  same `job_id` when it outlives the synchronous grace period; it is never
-  restarted. Jobs have bounded logs and can be stopped.
-- **Workflow Session** — the operator runtime's bounded evidence ledger for a
-  long-lived coding session. It records tool names, status, project ids,
-  validation summaries, and permission decisions — never raw secrets or full
-  file contents. Connector users do not manage session ids.
+- **Connector Task** — project-first work created by the task-oriented Connector. It can be explicitly resumed by its task handle.
+- **Job** — a long-running command or validation that continues after the initiating call returns. Observe the same Job instead of starting another copy.
+- **Workflow Session** — bounded coding evidence/continuity used by the regular runtime for review, validation, collaboration, and closeout. It is not a credential.
+
+These objects have different lifecycles and are never inferred from one another merely because requests share a user, credential, project, or chat window. Their exact continuity protocols are maintainer details.
 
 ## Runner execution boundary
 
@@ -160,30 +114,9 @@ See [SECURITY.md](../SECURITY.md) and [AUTH_MODEL.md](AUTH_MODEL.md).
 
 ## Persistence and recovery
 
-The Server persists users, tokens, projects, audit entries, OAuth rows, Connector
-Task history, and the durable Agent/Conversation/Delivery/Wake domain in SQLite.
-Per-repository Connector window mappings exist only for adapters that explicitly
-provide a stable `ClientWindow`; they are not inferred from credentials,
-connections, or project identity. Process-local
-"currently viewed project" state is deliberately discarded on restart.
-Stateless MCP 2026 restores no hidden Connector window mapping: callers continue
-exact Connector work with an explicit durable Connector task id. A stateful adapter may restore only its exact
-window/repository mapping under that adapter's own contract.
+The Server persists managed accounts, OAuth state, project/task history, and durable Agent/Conversation state. Workflow/task continuity is restored from its own durable identifiers; WebCodex does not invent continuity from a credential or current browser window.
 
-Runner Job state is reconciled from the Runner's inventory on reconnect.
-Ordinary Jobs remain owned by the Runner process, so a Runner process restart
-cannot recover those old child processes and they become `lost`. Explicit
-`run_detached_process` Jobs use a separate bounded durable supervisor handoff;
-when the exact supervisor and execution identity survive, a replacement Runner
-can reconcile the same logical Job without adopting ordinary `ManagedChild`
-processes.
-
-`client_id` is the stable logical identity of a Runner/device; each live
-process additionally carries an `agent_instance_id` (generated at startup)
-that the Server uses as the active lease identity: a second process with the
-same `client_id` but a different `agent_instance_id` is rejected while the
-first is online, and a stale/replaced instance can no longer poll or submit
-results.
+Runner Jobs are reconciled when the same live Runner process reconnects. Ordinary child processes cannot be adopted by an unrelated replacement Runner; specialized detached execution has its own explicit durable ownership path. The stable Runner `client_id` and the current process lease are separate, but the exact lease field is an internal wire detail.
 
 ## Module map
 

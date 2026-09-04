@@ -18,35 +18,22 @@ Runner 运行在持有仓库的机器上。它主动连接 WebCodex Server，注
 Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显式 shell profile
 配置它，而不是继承宽泛的交互式 shell 状态。
 
-## Server、CLI、Runner 与兼容标识
+## 核心术语
 
 | 术语 | 含义 |
 | --- | --- |
-| **Server** | `webcodex-server` 进程：认证、路由、持久化。 |
-| **CLI** | 运维与开发者使用的 `webcodex` 命令。 |
+| **Server** | 认证调用方、保存共享 runtime 状态并路由工作。 |
+| **CLI** | 运维/开发者使用的 `webcodex` 命令。 |
 | **Runner** | 在仓库机器上执行工作的 `webcodex-runner` 进程。 |
-| **Runner CLI 命名空间** | `webcodex runner ...`，管理 `webcodex-runner` 的生命周期和服务。 |
-| **profile** | 一个命名的本地客户端配置（`runner.toml`、令牌、路径）。 |
-| **client_id** | 一个 Runner/设备的稳定逻辑标识。 |
-| **agent_instance_id** | `webcodex-runner` 启动时生成的进程级身份；Server 把它当作活跃租约身份（见「重连与恢复」）。 |
-| **project_id** | Runner 在其项目注册表中注册的项目 id。 |
-| **runtime project id** | `agent:<client_id>:<project_id>` —— Server 定位已注册项目的方式。 |
-| **Connector** | 已配置本地项目的 project-bound coding surface；把一个项目绑定到其执行器。 |
+| **profile** | 一组命名的本地 Runner/client 配置。 |
+| **client_id** | 一个 Runner/设备的稳定逻辑名称。 |
+| **Project** | 由该 Runner 注册的一个仓库/工作区。 |
+
+部分 compatibility-facing value 仍使用历史 `agent` 名称，例如 Runner token 的 `wc_agent_*` 前缀与 `agent:<client_id>:<project_id>` runtime Project address。它们不属于 WebCodex 独立的 Durable Agent domain；普通用户也不需要理解 Runner recovery 背后的进程级 lease identifier。
 
 ### Runner 配置文件名兼容
 
-0.4 的规范 Runner 配置文件名是 `runner.toml`。新的 `runner init`、`login`、
-`connect`、profile 与 service layout 都使用它。pre-0.4 目录如果只有旧
-`agent.toml`，仍可继续读取并原地使用，不会自动生成第二份配置。如果同一权威配置
-目录同时存在 `runner.toml` 与 `agent.toml`，WebCodex 会 fail closed，要求运维者先
-消除歧义；两者都不存在时，初始化目标是 `runner.toml`。
-
-显式 `--config PATH` 始终按精确路径处理，因此显式指定旧 `agent.toml` 仍有效。
-`WEBCODEX_RUNNER_CONFIG` 是规范的默认路径覆盖变量；`WEBCODEX_AGENT_CONFIG` 作为
-旧 alias 保留；仅当没有显式 `--config` 或 `--profile` 选择配置时，两者同时设置才会
-报错。本次文件名迁移不会改名 `client_id`、
-`agent_instance_id`、`agent:<client_id>:<project_id>`、agent token 或 Server/Runner
-wire field。
+`runner.toml` 是 canonical config filename。只有旧 `agent.toml` 的历史目录仍可继续读取；同一配置目录同时存在两种文件名时 WebCodex 会 fail closed，要求 operator 先消除歧义。`WEBCODEX_RUNNER_CONFIG` 是当前 path override，旧 `WEBCODEX_AGENT_CONFIG` 只作为兼容 alias 保留。
 
 ## 连接 Server
 
@@ -60,45 +47,19 @@ Runner 主动向外连接 Server，使用四种传输之一，由 `runner.toml` 
 | WebSocket | `websocket` | 无 UDP 场景的稳定 fallback。 |
 | Polling | `polling` | 受限网络的最后手段。 |
 
-Runner 使用 agent token（或在 hosted quick-start 模式中使用直接共享 key）认证。
-该令牌只是 Runner 传输凭据，不用于 MCP、REST 或 GPT Actions。
+Runner 使用 Runner token（兼容前缀 `wc_agent_*`）认证；hosted shared-key 模式则使用对应 shared key。这个 credential 只用于 Runner transport，不用于 MCP、REST 或 GPT Actions。
 
 WebSocket 与 polling 都使用 `Authorization: Bearer <token>` 认证 first-party
 Runner；Runner query-string credential 不再接受。QUIC 把凭据限制在
-transport-specific v1 首个注册帧中，共享 agent envelope 不再携带凭据。
+transport-specific v1 首个注册帧中，共享 Runner envelope 不再携带凭据。
 
 ### Server/Runner 兼容
 
-WebCodex 不保证与 v0.3.9 及更早 Server/Runner 二进制的滚动兼容。v0.3.9 之后的
-修改可以有意移除旧 wire 或认证兼容面，因此跨越这些修改时应同步升级 first-party
-Server 与 Runner。只有当前合同明确保留的兼容面才属于受支持范围。
+从 pre-0.4 升级时应同步升级 first-party Server 与 Runner。`0.4.x` 内保持稳定 protocol baseline，新 optional capability 通过显式 capability 增量加入；旧但兼容的 Runner 缺少某项 capability 时，该功能 fail closed，而不是猜测或模拟支持。
 
-从 `v0.3.9` 及更早版本跨到 `v0.4` 时，应同步升级 first-party Server 与 Runner。
-在 `v0.4.x` 内，generation 2 是 compatibility floor：first-party Server/Runner
-应保持滚动互操作，新功能优先通过 additive capability 演进。缺少增量 capability
-时，仅该功能不可用/fail closed；不应因此把一个原本有效的 `v0.4` Runner 整体判为
-不兼容。patch release 不扩大 generation-2 baseline-required capability set；新增要求使用
-additive `RegistrationRequired` capability。这一承诺不向 pre-0.4 二进制提供滚动兼容保证。
+精确的 protocol-generation field、baseline capability list、registration grammar 与 compatibility test matrix 属于 maintainer/wire contract，有意不放在这份运维指南中。
 
-当前 first-party Runner 注册只接受 protocol generation 2。顶层
-`agent_protocol_generation` 字段是必填项且必须精确为 `2`；它属于协议 identity，
-不是 capability bit。`capabilities` 也必须显式存在，其中 `shell` 必须明确提供，不能再
-继承 pre-0.4“字段缺失即 `true`”的注册语义。缺失 generation/capabilities/shell、
-generation `1` 或未知值都会在创建 Runner record 前 fail closed。generation 2 的 22 个
-baseline capability bool 是协议事实；缺失或与 baseline 矛盾时直接拒绝注册，而不是
-降级成 unavailable。RegistrationRequired 的增量 capability 仍保持显式声明，省略时按
-不可用处理。
-
-在 `v0.4` 中，protocol generation 是 Runner 唯一的协议版本 identity。transport
-作为独立 ingress 事实（`polling`、`websocket` 或 `quic`）存在；项目清单在注册后统一
-使用有界 paged synchronization。pre-0.4 的 `polling-v1/v2`、`websocket-v1/v2`、
-`quic-v1/v2` label 与 inline registration inventory 不再跨这一破坏性边界兼容；
-跨版本升级时应同步升级 first-party Server 与 Runner。
-
-QUIC 升级注意：`[quic].keepalive_interval_secs` 现在会真实配置 Quinn transport
-keepalive；默认仍为 20 秒，有效范围为 `1..=25`。历史上大于 25 的值虽然能够被接受，
-但该设置当时实际是 no-op；升级前必须调整。Runner 对越界值直接拒绝，不做 silent
-clamp。
+使用 QUIC 时保持 Server/Runner QUIC 配置一致。`[quic].keepalive_interval_secs` 默认 20 秒，允许 `1..=25`；非法值会被拒绝，不会 silent clamp。
 
 ## 注册项目
 
@@ -116,46 +77,13 @@ kind = "repo"
 allow_patch = true
 ```
 
-`kind` 是可选的项目/用户分类 metadata。它有意保持为开放字符串（例如 `repo`、`rust`），
-不是 lifecycle 或 registration provenance 枚举。
+真正重要的是 `id` 与 `path`；`kind` 只属于可选描述 metadata。Registry directory
+用于保存 Project record，本身不是 workspace root。
 
-`registration_source` 是由 WebCodex 拥有并解释的独立描述性注册来源。普通持久记录属于
-`explicit` 注册；由于这是安全默认值，可以省略该字段。Runner 通过 path resolution 自动注册
-项目时，不再伪造项目 `kind`，而是持久化例如：
-
-```toml
-id = "example-repo-abcd1234"
-path = "/srv/example-repo"
-name = "example-repo"
-registration_source = "auto_registered"
-allow_patch = true
-```
-
-`registration_source` 只描述 registry provenance，不授予执行 authority 或 permission。
-
-Runner project registry 的兼容 contract 明确采用 fail-closed：
-
-| 情况 | 行为 |
-| --- | --- |
-| 只有 `project-registry/` | 使用 `project-registry/`。 |
-| 只有旧 `projects.d/` | 继续使用 `projects.d/`，不做隐式迁移。 |
-| 两个目录都不存在 | 新安装选择/创建 `project-registry/`。 |
-| 两个目录同时存在 | 直接报 actionable error；不会静默 merge，也不会任选一个。 |
-| 配置只有 `project_registry_dir` | 使用显式 Runner project registry 路径。 |
-| 配置只有旧 `projects_dir` | 作为兼容 alias 接受，并归一化成 effective project registry path。 |
-| 两个配置字段同时出现 | 直接失败，不猜 precedence。 |
-
-CLI 同样遵守该规则：优先使用 `--project-registry-dir`；旧 `--projects-dir` 作为 deprecated alias 继续接受，但两个 flag 同时提供会报错。每条 project registration record TOML 中的 `path` 才是实际 workspace/project 目录；registry directory 本身不是 workspace root。
-
-顶层 `id` 与 `path` 是必需的。旧的 `[projects.<id>]` 服务端嵌套格式不能用于
-`project-registry`。
-
-为兼容 cleanup 之前的 registry，当 `registration_source` 缺失且恰好存在历史
-`kind = "auto_registered"` sentinel 时，Runner 仍把它解释为自动注册来源。新的
-`registration_source` 一旦存在即为 authoritative，即使旧 sentinel 同时存在也一样；仅仅读取
-旧记录不会重写文件。其他 `kind` 值不会被解释为注册来源。尤其是旧
-`kind = "managed_temporary"` 记录仍可作为普通 explicit registration 读取，但当前产品不会恢复
-managed-temporary 创建或 lifecycle 行为。
+新配置使用 `project-registry/` 与 `project_registry_dir`。历史安装如果只有
+`projects.d/` / `projects_dir` 仍可读取；如果新旧 location/field 同时存在，WebCodex
+会 fail closed，而不是 merge 或猜 precedence。新的 CLI 命令使用
+`--project-registry-dir`。
 
 Runtime project id 形如 `agent:<client_id>:<project_id>`，例如
 `agent:workstation:my-repo`。project-bound Connector 会在内部解析它；普通用户
@@ -174,13 +102,6 @@ Runner policy 中的 `allowed_roots` 控制项目可以在哪里注册或创建�
 allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
-
-### 旧临时项目配置
-
-managed temporary project 创建在 v0.4 compatibility floor 前已退休。当前工作流使用
-`work_on_project` / `register_project` 处理已有目录，使用显式 `create_project` 创建新项目。
-pre-0.4 的 `temporary_projects_root` 键在一个兼容窗口内仍会被解析：Runner 继续校验其原有
-absolute-path 形状，然后给出 deprecation warning 并忽略该值。当前 Runner config 应删除该键。
 
 ### 运行时注册项目
 
@@ -205,28 +126,24 @@ env_from_env = { GITHUB_TOKEN = "GITHUB_TOKEN", PATH = "PATH", HOME = "HOME" }
 timeout_secs = 30
 ```
 
-`executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径。`cwd` 会原样交给 `Command::current_dir`，没有 fallback；非法配置在加载时拒绝，不可用目录则在 provider child spawn 前失败。`[mcp]` 仍是 restart-required 配置，不增加 hot reload 或 live provider replacement。
+`executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径；非法路径会 fail closed。`[mcp]` 属于 restart-required 配置，不支持 provider hot reload。
 
-provider 永远不会整体继承 Runner 环境：`env_clear()` 始终保留。`env_from_env` 是显式的 **provider 环境变量名 -> Runner 进程环境变量名** mapping，只复制明确列出的变量；source 不存在时不会静默 omit，而是在 provider spawn 前以 `not_started` 失败。`WEBCODEX_TOKEN`、`WEBCODEX_AGENT_TOKEN`、`WEBCODEX_USER_TOKEN`、`AUTHORIZATION` 等 WebCodex sensitive transport/account key 不允许映射。环境变量名必须为 ASCII，mapping 数量也有边界；Windows destination name 按大小写不敏感语义判断冲突，Unix 保持大小写敏感。WebCodex 自身不会把 mapped environment value 投影到 provider inventory、Server wire metadata、error body 或 audit/log metadata。
+provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出的变量，WebCodex 自己的 sensitive transport/account credential 变量不允许映射；配置的 source variable 缺失时会在 provider 启动前失败。
 
 把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebCodex 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
 
-provider 在第一次真实交互时 lazy start，完成 MCP initialize 后持久复用。Runner restart 后逻辑 `id` 可以保持不变，但内部 provider instance 会变化；Server dispatch 绑定 exact Runner/provider instance，因此 stale request 不会被重定向或 replay。registration 只向 Server 投影 provider `id`/`name` 与内部 instance fencing metadata，不投影 executable、argv、cwd、环境 mapping/value、PID、stderr 或 Runner credential。因此不带 `server` 的 `mcp_tool(action=list)` 只表示 registration routing 是否 **resolvable**，不是 provider process health；`list(server=...)` 与 `describe` 才会真实与 provider 交互。
+provider 在第一次真实交互时启动并复用。Server 只看到逻辑 provider `id`/`name`，不会拿到 executable path、环境 value、PID、stderr 或 Runner credential。`mcp_tool(action=list)` 只表示 provider id 是否可路由；`list(server=...)` 与 `describe` 才会与 provider 交互。
 
 ### Provider-side gateway V1 compatibility
 
-WebCodex 对外 `/mcp` 有自己已经文档化的 2025/2026 protocol support；这不代表任意或最新 MCP server 都能被无损透明桥接。Runner 到 configured local provider 的内建 gateway V1 有意限制为 bounded stdio tool subset：
+Runner 到 configured local provider 的内建 gateway 有意限制为 bounded stdio tool subset，并不是所有 MCP feature 的透明 bridge：
 
-- 单一 persistent stdio provider connection，使用 `initialize` 后发送 `notifications/initialized`；
-- provider-side 行为目前基于 MCP `2025-06-18` tool semantics；
-- 只支持 `tools/list` 与 `tools/call`；provider callback 不支持并 fail closed；
-- provider notification 只做 bounded consume，不 relay 给 outer MCP caller；
-- 不支持 `tools/list` pagination；
-- tool result `content` 目前只支持 text；bounded optional `structuredContent` 会保留；
-- image/audio content、resource link、embedded resource 不支持并 fail closed；
-- outer request `_meta`（包括 progress token、client info、protocol version、capabilities 或 custom metadata）不会转发给 local provider。provider 在 `tools/list` descriptor 中返回的 `_meta` 属于相反方向的独立字段，仍然保留。
+- provider-side tool 行为基于 MCP `2025-06-18`；
+- 支持 `tools/list` 与 `tools/call`；
+- 不支持 callback、list pagination、media/resource 与端到端 progress forwarding；
+- 支持 text tool result 与有界 `structuredContent`。
 
-不支持的 protocol/content shape 会 fail closed，而不是静默转换。provider-side stateless 2026 bridge、callback、pagination、media/resource forwarding 与端到端 progress relay 都不属于 V1 contract。
+不支持的 protocol/content shape 会 fail closed，而不是静默转换。
 
 ## Shell profile
 
@@ -334,10 +251,7 @@ Runner 断连是 liveness 事实，不等于工作丢失。已接受的活跃 Jo
 恢复。替换的 Runner 实例不会继承旧实例的 Job；它们会变成 `lost`。Runner 进程重启
 无法恢复其旧的子进程。
 
-每个 Runner 进程携带自己的 `agent_instance_id`（启动时生成），把它与设备跨重启
-保留的稳定 `client_id` 区分开。Server 把 `agent_instance_id` 当作活跃租约身份：
-同 `client_id` 但不同 `agent_instance_id` 的第二个进程在第一个在线时会被拒绝，
-过期/被替换的实例不能再 poll 或提交结果。
+Server 会把稳定的 Runner `client_id` 与当前 live process lease 分开。stale/replacement process 不能继续使用旧 lease 提交结果，普通 child-process Job 也不会被 replacement Runner 接管。精确 lease identifier 属于内部 wire detail。
 
 重连以短延迟自动进行。认证失败等致命错误会停止 Runner，而不是无限重试。
 
@@ -350,38 +264,6 @@ user 或 system 服务，并把令牌放进服务环境。
 机器重启后，hosted `connect` profile 通过重新运行 `webcodex connect` 或
 `webcodex runner start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
 启动。
-
-## macOS 本地 dogfood 签名
-
-macOS 的屏幕录制、辅助功能等隐私授权不应在每次本地 Runner 重编译后都绑定到新生成的
-ad-hoc `cdhash`。computer-use 本地开发使用一套与 npm/release 安装分离的开发签名身份和
-binary；下面的 helper 不接入公开 release 打包流程。
-
-只需在“钥匙串访问”里创建一次签名身份：
-
-1. 打开 **证书助理 -> 创建证书**。
-2. 名称填写 `WebCodex Local Development`。
-3. 身份类型选择 **自签名根证书（Self Signed Root）**，证书类型选择 **代码签名（Code Signing）**。
-4. 勾选 **让我覆盖默认设置（Let me override defaults）**，填写一个唯一序列号和证书要求的
-   基本信息，然后接受其余默认值。
-5. 保留该证书及其私钥；后续 rebuild 不要重新创建证书。
-
-之后构建、签名到独立开发路径，并让 hosted `connect` profile 使用这一个 binary：
-
-```bash
-cargo build --release --bin webcodex --bin webcodex-runner
-scripts/macos_sign_local_runner.sh
-target/release/webcodex runner restart --profile <profile> \
-  --bin "$HOME/.local/lib/webcodex-dev/webcodex-runner"
-```
-
-签名 helper 要求钥匙串中恰好存在一个有效的同名 code-signing identity，并固定使用
-`dev.webcodex.runner.local` identifier。它会写入显式 designated requirement，使其锚定到
-该本地证书；如果结果仍退化为绑定单个 binary 的 `cdhash`，helper 会直接失败。以后本地
-Runner rebuild 后继续使用同一证书和 identifier 重新签名，再 restart profile 即可。
-
-npm 安装的 Runner 仍保留在 npm package 的 `vendor/bin` 下，本流程不会修改它。未来正式
-macOS release 可以使用独立的 distribution identity，不与本地开发授权混用。
 
 ## SSH 会话资源（高级）
 

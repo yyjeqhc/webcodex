@@ -42,6 +42,10 @@ Start with the goal that matches what you are trying to do.
 
 ## I want to contribute or release WebCodex
 
+The `docs/agent/` pages below are maintainer/internal contracts. They intentionally
+contain protocol fields, compatibility names, and implementation invariants that
+ordinary users should not need to learn.
+
 - [AGENTS.md](../AGENTS.md) — repository instructions for coding/AI agents
 - [Maintenance](MAINTENANCE.md) — maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
 - [Testing](TESTING.md) — testing strategy

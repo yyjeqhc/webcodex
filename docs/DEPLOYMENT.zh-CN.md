@@ -60,7 +60,7 @@ webcodex runner run --config <login-reported-runner-config>
 
 如果 Server 与 Runner 位于不同机器，把 loopback URL 替换为 Server 可访问的 HTTPS URL，并按下文配置 Server listener/public URL 与受信任的反向代理或 tunnel。不要把 Server bootstrap token 或 env 文件复制到 Runner 机器。Windows 仍不支持 `webcodex server install/start/stop/restart/logs/uninstall` 与 `webcodex runner install`；Ctrl-C 或 Ctrl-Break 会结束前台 runtime。
 
-如果希望 Windows Server 保持 loopback-only，同时让 ChatGPT 通过 OpenAI Secure MCP Tunnel 访问，并把独立 Runner 当作普通长期 Runner 使用，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。该文档用于高级配置和排障，记录了一次真实端到端 dogfood，包括 Windows + Clash 环境下 control-plane 直连失败及代理修复；普通用户不需要先读它才能理解完整使用流程。
+如果希望 Windows Server 保持 loopback-only，同时让 ChatGPT 通过 OpenAI Secure MCP Tunnel 访问，并把独立 Runner 当作普通长期 Runner 使用，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。该文档用于高级配置和排障；普通用户不需要先读它才能理解完整使用流程。
 
 ## 把仓库接入已有的 shared-key Server
 
@@ -106,7 +106,7 @@ sudo webcodex server init \
   --public-url https://your-domain.example
 ```
 
-`server init` 会创建所选 data directory 与 server 侧 bootstrap/admin token；它不创建 user API token 或 agent token。后续 guidance 会保留上面实际传入的 env/data 路径。
+`server init` 会创建所选 data directory 与 server 侧 bootstrap/admin token；它不创建 user API token 或 Runner token。后续 guidance 会保留上面实际传入的 env/data 路径。
 
 安装并启动受管 systemd socket/service pair：
 
@@ -151,8 +151,7 @@ boundary：installer 会 fail closed，避免与旧进程争抢地址。先停�
 
 ### Tool invocation trace
 
-`WEBCODEX_TOOL_REQUEST_TRACE` 提供三种 operator 模式。默认关闭；`true` 保持历史
-metadata-only lifecycle trace，而 `full` 显式开启 Server 侧 forensic payload capture：
+Tool-request trace 是 **operator diagnostic**，默认关闭。轻量排障使用 metadata 模式；只有明确需要 request/response payload capture 时才使用 `full`：
 
 ```text
 WEBCODEX_TOOL_REQUEST_TRACE=full
@@ -161,48 +160,9 @@ WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
 WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
 ```
 
-`metadata`（以及兼容值 `true`、`1`、`yes`、`on`）只记录
-`server_trace_id`、tool/method、status、duration、response size 等 lifecycle
-metadata。`full` 还会保存解析后的 inbound tool request/raw arguments、经过
-wrapper/session normalization 后 Server 实际使用的 effective arguments、发生派发时
-Server 真正发出的 typed Runner request、相关联的 Runner reply/Job update，以及存在
-有界 JSON body 时的最终 tool response。完整
-payload 以 JSON + zstd 存在 `<trace-dir>/<server_trace_id>/`，不会作为 BLOB 写入
-canonical runtime database。full-mode 持久化由有界后台 writer 执行，因此 trace I/O
-与压缩不会反压 tool request；这些 capture 是 best-effort 诊断数据。writer queue 饱和时，
-对应记录会被省略，Server 会记录 `tool_trace_capture_omitted` 和
-`trace_writer_queue_full`。
+`full` 可能包含源码、patch、command/script 输入输出、user message，以及本身就出现在 tool payload 中的 secret。应像保护其它敏感诊断数据一样保护 trace 目录，并设置有界 retention/budget。Trace capture 只用于诊断；trace 写入失败不会改变 tool execution。
 
-大 payload 不会静默截断。如果清理过期/最旧 trace 后仍无法在总磁盘预算内完整保存，
-本次 capture 会被省略，并记录 `trace_disk_budget_exceeded`。`full` 是显式的自托管诊断模式，目录里可能包含源码、
-patch、script/stdin、命令输出、user message 或其他 tool payload，应按敏感诊断数据
-保护该目录。trace path 不会读取 WebCodex ingress HTTP `Authorization` header；但
-如果 token、key 或其他 secret 本身出现在 tool argument、script/stdin、Runner request
-或 Runner response 中，那么它就是 payload 的一部分，`full` 模式会照常 capture。
-trace 写盘、压缩、清理或 correlation 失败只产生 `tool_trace_capture_failed`，不会改变
-tool execution correctness。
-
-开启 `full` 后，只有 Stateless MCP 2026 operator-capable surface 上的 `admin` caller，
-才可能在符合条件的失败结果中收到 opaque `trace_ref`。ModelHidden `read_tool_trace`
-读取对应的 Server-hosted store：Full Operator Runtime 直接投影该工具，Adaptive Runtime
-则通过 `call_runtime_tool` 调用；普通 runtime scope、Local Coding、旧 MCP protocol era 与
-HTTP runtime call 都不能使用。reader 会先返回有界 payload metadata，再按 index 读取单个
-raw payload；它不接受或返回 native trace path，会重新检查 owned trace directory/index、
-payload size 与 SHA-256。一次最多向模型返回 256 KiB 的未压缩 JSON，并额外限制压缩文件
-不超过 512 KiB；更大的已保留 payload 只返回 metadata，不返回 body。`read_tool_trace`
-不会递归持久化自己读取出的 raw payload，其 Workflow Session audit 也只记录 trace metadata。
-
-当 tool 派发到 Runner 时，Server 会记录 `server_trace_id` 到现有
-`runner_request_id` 的映射，以及 Runner client/instance、transport 和注册时报告的
-build version/commit；full store 还会把 exact typed Runner request 记录为
-`runner_request`。Server 只用有界内存索引等待后续 Runner result/Job update；
-raw Runner payload 仍只保存在 Server trace directory。若 Runner 环境也启用了同一
-trace 模式，Runner journal 会追加按 `runner_request_id` 关联的 dispatch/result
-lifecycle 日志，但不会再持久化第二份 raw payload。
-
-`tool_handler_returned` 只证明 WebCodex 已把 response 交给 HTTP framework，不证明
-client 已收到。排查 delivery 时，应再用 `server_trace_id` 和请求时间去关联 reverse
-proxy 的 status/body-bytes/request-time 日志。
+精确的 trace 文件布局、correlation id、model-facing forensic reader、queue/compression 与 payload validation 规则属于 implementation/maintainer detail，有意不放在这份部署指南中。
 
 ### 公网 HTTPS
 
@@ -242,7 +202,7 @@ webcodex pairing create \
 ```
 
 只把短期 `wc_pair_*` code 传给客户端。不要跨机器复制 `WEBCODEX_TOKEN`、user API
-token、agent token、env 文件或完整 `runner.toml`。每个用户使用唯一 `username`。
+token、Runner token、env 文件或完整 `runner.toml`。每个用户使用唯一 `username`。
 
 ## Runner 服务 scope
 
@@ -350,9 +310,9 @@ package 时默认将其设为 private；维护者
 | 设置 | 说明 |
 | --- | --- |
 | `server_url` | 公网 WebCodex URL。 |
-| `token` | Agent token。不要提交或打印。 |
+| `token` | Runner credential。不要提交或打印。 |
 | `client_id` | 用于 `agent:<client_id>:<project_id>` 的稳定 id。 |
-| `owner` | 该 agent 的 owner principal。 |
+| `owner` | 该 Runner 的 owner principal。 |
 | `transport` | 配置 `[quic]` 时优先用 `auto`。 |
 | `project_registry_dir` | 项目注册文件目录。 |
 | `[policy]` | 本地执行边界（`allowed_roots` 等）。 |
@@ -360,7 +320,7 @@ package 时默认将其设为 private；维护者
 | `[ssh.resources.<name>]` | 可选命名 SSH 目标，用于 Session 绑定的 `run_shell` / `run_job`。 |
 
 Policy 默认：`allowed_roots` 缺失或为空时默认 `$HOME`；显式 `allowed_roots`
-覆盖默认值。用显式 roots 收窄 agent，例如只允许一个工作区：
+覆盖默认值。用显式 roots 收窄 Runner，例如只允许一个工作区：
 
 ```toml
 [policy]
@@ -406,7 +366,7 @@ webcodex connect https://your-domain.example --auth oauth \
   --oauth-computer-permissions --project .
 ```
 
-Runner 继续使用 hosted shared key，其 model-facing authority 始终保持固定 baseline（runtime/project/job 加 `computer:read`、`computer:control`）。`connect` 创建绑定该 shared-key hash 的独立 OAuth client。fresh client 从完整 baseline 开始；历史受保护 client 可以合法保留更窄的 baseline subset。`--oauth-computer-permissions` 只在该现有 subset 上追加固定的 launch/full-display/pointer/clipboard-read/clipboard-write scopes，不会恢复此前缺失的 baseline scope，本身也不 grant。WebCodex authorize 页面中的这些 permission 默认全部未勾选，browser selection 按固定 bundle 映射且受本次 OAuth request 限制。Launch 只有在 request 已同时包含 `computer:read` 与 `computer:launch` 时才可选择，Server 不会补缺失 prerequisite。普通 reconnect 永远不会静默扩大已有 baseline client；revoked/missing client rotation 也保留同一个受保护 baseline subset。显式 ceiling 真正变化会原子撤销旧 access/refresh/code grant，必须重新授权。picker 永远不包含 account/admin/Agent、`job:detach` 或未来 scope。页面只显示安全的“同一个在线 Runner” capability availability，不执行任何隐藏 Computer observation/effect；OS/native permission 与当前 capability 仍由 runtime 调用实时检查。shared key 只输入 WebCodex authorize 页面，ChatGPT 不会获得它，OAuth access token 仍不能用于 Agent transport。
+Runner 继续使用原有 hosted credential，MCP client 获得独立 OAuth credential。`--oauth-computer-permissions` 与 `--oauth-local-mcp` 都是 optional capability 的显式 opt-in；普通 reconnect 不会静默增加这些权限。真实 OAuth 权限变化需要 client 重新授权。ChatGPT 不会得到 Runner/shared-key credential，OAuth token 也不能用于 Runner transport。
 
 只有明确需要 managed-user OAuth identity 时，才使用高级 `webcodex login` 流程，再执行 `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`；`--user` 仅用于该模式。
 
@@ -419,38 +379,9 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
   -d '{"name":"ChatGPT MCP","redirect_uris":["https://chatgpt.com/connector/oauth/<callback-id>"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
 
-`allowed_scopes` 是该 OAuth client 持久化的委派权限上限。Computer 只读观察需要
-`computer:read`；会产生 UI effect 的 Computer 工具还需要 `computer:control`。新增
-scope 时，Server **不会**静默扩大历史 client 的 allowlist。若要给既有 client 显式
-增加 Computer control，请把期望保留的**完整、非空** scope 列表提交到 first-party
-管理接口：
+`allowed_scopes` 限制 OAuth client 最多可以请求哪些权限。WebCodex 新增 permission 时不会静默扩大已有 client。要修改现有 client，请把期望保留的完整、非空 allow-list 提交到 `POST /api/oauth/clients/update_scopes`。真实变化会让旧 OAuth grant 失效并要求重新授权；提交相同 canonical list 是 no-op。安全模型见[认证](AUTH_MODEL.zh-CN.md#oauth2)。
 
-```bash
-curl -fsS -X POST https://your-domain.example/api/oauth/clients/update_scopes \
-  -H "Authorization: Bearer $WEBCODEX_PAT" \
-  -H "Content-Type: application/json" \
-  -d '{"client_id":"wc_client_<server-generated-id>","allowed_scopes":["runtime:read","project:read","project:write","job:run","computer:read","computer:control"]}'
-```
-
-allowlist 真正变化时，Server 会在同一事务中撤销该 client 现有的 access token、
-refresh token 与尚存的 authorization code；OAuth 宿主随后必须重新授权并取得新
-令牌。这对扩权和降权都适用。重复提交相同的 canonical allowlist 是 no-op，不会
-撤销现有 grants。
-
-ChatGPT MCP 的宿主文件导入使用独立的 operator trust anchor，因为宿主提供的临时
-下载 URL 不受 GPT Action `files.oaiusercontent.com` hostname policy 限制。正常创建
-ChatGPT OAuth client 后，取创建接口返回的 server-generated `wc_client_*` ID，并把
-这个精确 ID 配入下列设置；多个可信 client 用逗号分隔：
-
-```text
-WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS=wc_client_<server-generated-id>
-```
-
-服务端要求当前 OAuth access token 的 `allowed_client_id` 精确命中该 allowlist，且
-对应 OAuth client record 仍为 active。Redirect URI 与 client display name 都不是
-trust identity。重新创建 ChatGPT OAuth client 会产生新的 client ID，因此属于显式的
-trust rotation，operator 必须同步更新此设置。普通 API token/raw MCP caller 仍不能
-使用该下载路径。
+如果启用 ChatGPT MCP host-file import，请把精确的 server-generated OAuth client id 配入 `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS`。重新创建 client 会生成新 id，因此应把更新这个设置作为一次显式 trust rotation。Client display name 与 redirect URI 不能替代该精确 client id。
 
 用 `POST /api/oauth/clients/list` 与 `POST /api/oauth/clients/revoke` 列出与
 撤销 client。OAuth 使用 authorization-code 流程；动态 client 注册、OIDC 与

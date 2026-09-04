@@ -323,6 +323,9 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
 }
 pub const RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
 pub const RUNNER_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
+/// Runner-owned native Tool Plugin gateway and explicit dynamic reload support.
+/// Missing on older Runners is false and is never inferred from MCP inventory.
+pub const RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS: &str = "native_tool_plugins";
 /// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
 /// These explicit bools remain wire facts shared by Server and Runner, but a
 /// missing/false baseline bit rejects registration. Downstream consumers may
@@ -646,6 +649,11 @@ pub struct RunnerCapabilities {
     /// Optional and never inferred from shell/MCP.
     #[serde(default, skip_serializing_if = "is_false")]
     pub coding_agent_runs: bool,
+    /// Runner-owned native Tool Plugin lifecycle and typed Plugin gateway.
+    /// This remains useful even when the startup Plugin inventory is empty,
+    /// because `plugin_tool reload` can activate a dynamic provider later.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_tool_plugins: bool,
 }
 
 /// Bounded, non-secret status for the Runner's active configuration generation.
@@ -735,6 +743,7 @@ impl Default for RunnerCapabilities {
             computer_text_input: false,
             job_state_reconciliation: false,
             coding_agent_runs: false,
+            native_tool_plugins: false,
         }
     }
 }
@@ -948,6 +957,12 @@ pub struct RunnerPolicySummary {
     /// are never projected to the Server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
+    /// Frozen, bounded, sanitized startup native Tool Plugin catalog. This is
+    /// registration-time first-class inventory only; executable paths, argv,
+    /// cwd, prepared environment, PIDs, stderr, and credentials never cross
+    /// the Runner boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_providers: Option<Vec<crate::plugin::StartupPluginProvider>>,
 }
 
 impl Default for RunnerPolicySummary {
@@ -961,6 +976,7 @@ impl Default for RunnerPolicySummary {
             shell_profiles: None,
             tool_providers: None,
             mcp_gateway_providers: None,
+            plugin_providers: None,
         }
     }
 }
@@ -1666,6 +1682,10 @@ pub struct RunnerRequest {
     /// separate from shell/file fields and never carries arbitrary JSON-RPC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_gateway: Option<crate::mcp_gateway::McpGatewayRequest>,
+    /// Closed typed Runner-owned native Plugin operation. It is deliberately
+    /// distinct from MCP, shell fields, and arbitrary JSON-RPC transport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_gateway: Option<crate::plugin::PluginGatewayRequest>,
     /// Closed typed ACP CodingAgentRun operation. Raw ACP JSON-RPC stays local
     /// to the Runner and is never accepted through this transport.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1730,6 +1750,10 @@ pub struct RunnerResultPayload {
     /// `mcp_gateway` field was present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_gateway: Option<crate::mcp_gateway::McpGatewayResponse>,
+    /// Typed native Plugin gateway result. Present only for a request whose
+    /// `plugin_gateway` field was present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_gateway: Option<crate::plugin::PluginGatewayResponse>,
     /// Typed CodingAgentRun result. Present only for a request whose
     /// `coding_agent` field was present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1742,6 +1766,7 @@ impl From<RunnerResultRequest> for RunnerResultPayload {
             result,
             command_execution_state: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         }
     }
@@ -3185,6 +3210,7 @@ mod envelope_tests {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         }
@@ -3249,6 +3275,7 @@ mod envelope_tests {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         }
@@ -3809,6 +3836,7 @@ mod envelope_tests {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -4302,6 +4330,7 @@ mod envelope_tests {
                 },
                 command_execution_state: Some(ShellCommandExecutionState::Completed),
                 mcp_gateway: None,
+                plugin_gateway: None,
                 coding_agent: None,
             },
         };

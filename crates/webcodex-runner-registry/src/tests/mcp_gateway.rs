@@ -403,6 +403,7 @@ async fn typed_bridge_result_is_correlated_once() {
         mcp_gateway: Some(McpGatewayResponse::success(
             McpGatewayResponsePayload::Tools { tools: Vec::new() },
         )),
+        plugin_gateway: None,
         coding_agent: None,
     };
     registry.complete(payload.clone()).await.unwrap();

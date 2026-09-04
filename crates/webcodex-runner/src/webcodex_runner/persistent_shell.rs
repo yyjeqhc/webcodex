@@ -1175,6 +1175,7 @@ mod tests {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: Some(PersistentShellRequest {
                 action: action.to_string(),
@@ -1567,6 +1568,7 @@ mod windows_tests {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: Some(PersistentShellRequest {
                 action: action.to_string(),

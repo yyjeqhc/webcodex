@@ -220,6 +220,7 @@ fn runner_request(kind: &str, root: &Path, path: &str, content: Option<Value>) -
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }

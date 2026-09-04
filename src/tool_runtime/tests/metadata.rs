@@ -394,6 +394,7 @@ async fn register_agent_projects_for_auth(
                         computer_text_input: false,
                         job_state_reconciliation: false,
                         coding_agent_runs: false,
+                        native_tool_plugins: false,
                     },
                 ),
                 policy: None,
@@ -1128,6 +1129,7 @@ async fn list_projects_shows_shell_profile_resolution() {
         shell_profiles: Some(summary),
         tool_providers: None,
         mcp_gateway_providers: None,
+        plugin_providers: None,
     };
     let mut configured = registered_project("rust-proj", "/root/git/rust");
     configured.shell_profile = Some("rust".to_string());
@@ -1277,6 +1279,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
                 shell_profiles: Some(summary),
                 tool_providers: None,
                 mcp_gateway_providers: None,
+                plugin_providers: None,
             }),
         })
         .await
@@ -2688,6 +2691,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
             config_reload: RunnerConfigReloadStatus::default(),
         }),
         mcp_gateway_providers: None,
+        plugin_providers: None,
     });
     registry.register(registration).await.unwrap();
     let current_provider = ToolProvidersStatus {
@@ -3121,6 +3125,7 @@ async fn list_runners_includes_sanitized_policy_summary() {
         shell_profiles: None,
         tool_providers: None,
         mcp_gateway_providers: None,
+        plugin_providers: None,
     });
     registry.register(registration).await.unwrap();
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));

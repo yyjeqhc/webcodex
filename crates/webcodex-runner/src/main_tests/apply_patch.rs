@@ -42,6 +42,7 @@ fn apply_patch_request_with_strict(
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }

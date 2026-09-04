@@ -329,6 +329,8 @@ mod job_log_wait;
 mod lsp;
 #[path = "tests/mcp_gateway.rs"]
 mod mcp_gateway;
+#[path = "tests/plugin_gateway.rs"]
+mod plugin_gateway;
 #[path = "tests/polling.rs"]
 mod polling;
 #[path = "tests/project_inventory.rs"]

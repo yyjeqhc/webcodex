@@ -26,6 +26,7 @@ fn request(kind: &str, payload: &str) -> RunnerRequest {
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }

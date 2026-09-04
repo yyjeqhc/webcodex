@@ -912,6 +912,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: Some(job_context),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1313,6 +1314,7 @@ impl RunnerRegistry {
                 lsp: None,
                 job_context: None,
                 mcp_gateway: None,
+                plugin_gateway: None,
                 coding_agent: None,
                 persistent_shell: None,
             };
@@ -1846,6 +1848,7 @@ impl RunnerRegistry {
                     lsp: None,
                         job_context: None,
                     mcp_gateway: None,
+                    plugin_gateway: None,
                     coding_agent: None,
                     persistent_shell: None,
                 };

@@ -214,6 +214,7 @@ async fn complete_process_lifecycle(
             },
             command_execution_state: Some(state),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         })
         .await

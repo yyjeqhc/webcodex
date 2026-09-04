@@ -33,6 +33,7 @@ mod models;
 mod oauth_http;
 mod openapi;
 mod pairing_http;
+mod plugin_gateway;
 mod project_entry;
 mod projects;
 mod route_metadata;

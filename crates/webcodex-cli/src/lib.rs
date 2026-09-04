@@ -395,6 +395,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     let mut oauth_redirect_uri = None;
     let mut oauth_computer_permissions = false;
     let mut oauth_local_mcp = false;
+    let mut oauth_local_plugins = false;
     let mut oauth_coding_agent = false;
     let mut username = None;
     let mut project = PathBuf::from(".");
@@ -437,6 +438,7 @@ fn parse_connect(args: &[String]) -> CliAction {
             },
             "--oauth-computer-permissions" => oauth_computer_permissions = true,
             "--oauth-local-mcp" => oauth_local_mcp = true,
+            "--oauth-local-plugins" => oauth_local_plugins = true,
             "--oauth-coding-agent" => oauth_coding_agent = true,
             "--user" => match take(&mut index) {
                 Some(value) => username = Some(value),
@@ -509,6 +511,9 @@ fn parse_connect(args: &[String]) -> CliAction {
             if oauth_local_mcp {
                 return cli_parse_error("--oauth-local-mcp requires --auth oauth".to_string());
             }
+            if oauth_local_plugins {
+                return cli_parse_error("--oauth-local-plugins requires --auth oauth".to_string());
+            }
             if oauth_coding_agent {
                 return cli_parse_error("--oauth-coding-agent requires --auth oauth".to_string());
             }
@@ -534,6 +539,9 @@ fn parse_connect(args: &[String]) -> CliAction {
             }
             if oauth_local_mcp {
                 return cli_parse_error("--oauth-local-mcp requires --auth oauth".to_string());
+            }
+            if oauth_local_plugins {
+                return cli_parse_error("--oauth-local-plugins requires --auth oauth".to_string());
             }
             if oauth_coding_agent {
                 return cli_parse_error("--oauth-coding-agent requires --auth oauth".to_string());
@@ -566,6 +574,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         oauth_redirect_uri,
         oauth_computer_permissions,
         oauth_local_mcp,
+        oauth_local_plugins,
         oauth_coding_agent,
         username,
         project,

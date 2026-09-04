@@ -54,6 +54,7 @@ pub enum RunnerFeature {
     ComputerElementState,
     JobStateReconciliation,
     CodingAgentRuns,
+    NativeToolPlugins,
     ComputerControl,
     ComputerScrollToElement,
     ComputerKeyInput,
@@ -61,7 +62,7 @@ pub enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 51] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 52] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -108,6 +109,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 51] = [
     RunnerFeature::ComputerElementState,
     RunnerFeature::JobStateReconciliation,
     RunnerFeature::CodingAgentRuns,
+    RunnerFeature::NativeToolPlugins,
     RunnerFeature::ComputerControl,
     RunnerFeature::ComputerScrollToElement,
     RunnerFeature::ComputerKeyInput,
@@ -188,6 +190,7 @@ impl RunnerFeature {
             Self::ComputerElementState => wire::RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE,
             Self::JobStateReconciliation => wire::RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION,
             Self::CodingAgentRuns => wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS,
+            Self::NativeToolPlugins => wire::RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS,
             Self::ComputerControl => wire::RUNNER_CAPABILITY_COMPUTER_CONTROL,
             Self::ComputerScrollToElement => wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
             Self::ComputerKeyInput => wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
@@ -252,6 +255,7 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE => Self::ComputerElementState,
             wire::RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION => Self::JobStateReconciliation,
             wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS => Self::CodingAgentRuns,
+            wire::RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS => Self::NativeToolPlugins,
             wire::RUNNER_CAPABILITY_COMPUTER_CONTROL => Self::ComputerControl,
             wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT => Self::ComputerScrollToElement,
             wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT => Self::ComputerKeyInput,
@@ -309,6 +313,7 @@ impl RunnerFeature {
             | Self::ComputerElementState
             | Self::JobStateReconciliation
             | Self::CodingAgentRuns
+            | Self::NativeToolPlugins
             | Self::ComputerControl
             | Self::ComputerScrollToElement
             | Self::ComputerKeyInput
@@ -369,6 +374,7 @@ impl RunnerFeature {
             Self::ComputerElementState => capabilities.computer_element_state,
             Self::JobStateReconciliation => capabilities.job_state_reconciliation,
             Self::CodingAgentRuns => capabilities.coding_agent_runs,
+            Self::NativeToolPlugins => capabilities.native_tool_plugins,
             Self::ComputerControl => capabilities.computer_control,
             Self::ComputerScrollToElement => capabilities.computer_scroll_to_element,
             Self::ComputerKeyInput => capabilities.computer_key_input,

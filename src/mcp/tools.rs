@@ -127,7 +127,9 @@ fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -
     if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME || is_adaptive_runtime_direct_tool(target) {
         return false;
     }
-    if target == crate::mcp_gateway::MCP_TOOL_NAME {
+    if target == crate::mcp_gateway::MCP_TOOL_NAME
+        || target == crate::plugin_gateway::PLUGIN_TOOL_NAME
+    {
         return true;
     }
     adaptive_runtime_gateway_target_specs(stateless_2026)
@@ -569,6 +571,11 @@ pub(super) fn handle_list(
             if crate::mcp_gateway::authorized(auth) {
                 if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
                     tools.push(crate::mcp_gateway::tool_spec());
+                }
+            }
+            if crate::plugin_gateway::authorized(auth) {
+                if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                    tools.push(crate::plugin_gateway::tool_spec());
                 }
             }
             result
@@ -1180,6 +1187,31 @@ pub(super) async fn handle_call(
             lc.capture_payload("effective_arguments", &params.arguments);
         }
         let result = crate::mcp_gateway::call(runtime, params.arguments, auth).await;
+        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+        }
+        return McpOutcome::Ok(rpc_result(
+            id,
+            if stateless_2026 {
+                mcp_stateless_result(result, false)
+            } else {
+                result
+            },
+        ));
+    }
+    if params.name == crate::plugin_gateway::PLUGIN_TOOL_NAME {
+        if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_PLUGIN_LOCAL) {
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_failed("forbidden");
+                lc.dispatch_finished(false, Some(false), "forbidden");
+            }
+            return outcome;
+        }
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload("effective_arguments", &params.arguments);
+        }
+        let result = crate::plugin_gateway::call(runtime, params.arguments, auth).await;
         let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
         if let Some(lc) = lifecycle.as_deref() {
             lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });

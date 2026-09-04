@@ -361,6 +361,7 @@ fn shell_job_request(cwd: &Path, command: &str) -> RunnerRequest {
         lsp: None,
         job_context: Some(test_job_context(cwd, Vec::new())),
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }
@@ -507,6 +508,7 @@ fn json_file_op_request(
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }
@@ -1199,6 +1201,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
         lsp: None,
         job_context: Some(test_job_context(tmp.path(), Vec::new())),
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     };
@@ -1299,6 +1302,7 @@ fn project_request(kind: &str, payload: serde_json::Value) -> RunnerRequest {
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }

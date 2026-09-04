@@ -9,6 +9,7 @@ use webcodex_core::coding_agent::{
     CodingAgentProvider, CodingAgentResponse, CodingAgentRunInventory,
 };
 use webcodex_core::mcp_gateway::McpGatewayResponse;
+use webcodex_core::plugin::{PluginGatewayResponse, PluginPlane};
 use webcodex_core::runner_protocol::{
     PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
     RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState, ShellJobActivity,
@@ -238,6 +239,12 @@ pub(super) struct CodingAgentDispatchFence {
     pub(super) provider_instance_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct PluginGatewayDispatchFence {
+    pub(super) runner_instance_id: String,
+    pub(super) provider: Option<(String, String, PluginPlane)>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ShellJobVisibility {
     #[default]
@@ -367,6 +374,10 @@ pub(super) struct RunnerRegistryInner {
     /// separate from shell stdout/stderr so bridge calls cannot become a raw
     /// result tunnel.
     pub(super) mcp_gateway_waiters: HashMap<String, oneshot::Sender<McpGatewayResponse>>,
+    /// Independent typed native Plugin gateway result channels. Provider
+    /// identities stay internal and are fenced separately from MCP/ACP.
+    pub(super) plugin_gateway_waiters: HashMap<String, oneshot::Sender<PluginGatewayResponse>>,
+    pub(super) plugin_gateway_fences: HashMap<String, PluginGatewayDispatchFence>,
     /// Waiters and exact process/provider dispatch fences for CodingAgentRun
     /// operations. They are independent from shell/Job/MCP result channels.
     pub(super) coding_agent_waiters: HashMap<String, oneshot::Sender<CodingAgentResponse>>,

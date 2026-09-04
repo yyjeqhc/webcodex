@@ -687,6 +687,7 @@ async fn coding_run_executes_then_reconciles_from_reopened_db_and_fresh_runtime(
             },
             command_execution_state: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: Some(CodingAgentResponse::success(
                 CodingAgentResponsePayload::Start {
                     run: running.clone(),

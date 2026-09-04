@@ -105,6 +105,7 @@ impl ValidationTerminalReconciliationTestHook {
 pub struct ToolRuntime {
     pub runner_registry: Arc<RunnerRegistry>,
     pub(crate) mcp_gateway: Arc<crate::mcp_gateway::McpGatewayRuntime>,
+    pub(crate) plugin_gateway: Arc<crate::plugin_gateway::PluginGatewayRuntime>,
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
     runtime_exposure: crate::model_surface::RuntimeExposure,
@@ -168,6 +169,7 @@ impl ToolRuntime {
         Self {
             runner_registry,
             mcp_gateway: Arc::new(crate::mcp_gateway::McpGatewayRuntime::default()),
+            plugin_gateway: Arc::new(crate::plugin_gateway::PluginGatewayRuntime::default()),
             coding_agent_runs: Arc::new(super::coding_agent::CodingAgentServerState::default()),
             runtime_info,
             runtime_exposure: crate::model_surface::RuntimeExposure::Runtime(

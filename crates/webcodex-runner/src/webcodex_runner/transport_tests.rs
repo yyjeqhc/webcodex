@@ -723,6 +723,7 @@ fn sync_file_request(request_id: &str) -> RunnerRequest {
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }
@@ -755,6 +756,7 @@ fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> Runne
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }
@@ -3241,6 +3243,7 @@ fn start_job_request(cwd: &Path, command: &str) -> RunnerRequest {
         lsp: None,
         job_context: Some(crate::test_job_context(cwd, Vec::new())),
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }

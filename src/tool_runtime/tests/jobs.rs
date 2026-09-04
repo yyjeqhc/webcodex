@@ -240,6 +240,7 @@ async fn run_shell_via_agent_lifecycle_error(
             },
             command_execution_state: Some(execution_state),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         })
         .await
@@ -1062,6 +1063,7 @@ async fn run_shell_runner_timeout_preserves_known_timeout_state() {
             },
             command_execution_state: Some(ShellCommandExecutionState::TimedOut),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         })
         .await

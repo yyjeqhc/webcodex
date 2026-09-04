@@ -6,7 +6,8 @@ use super::jobs::{
 #[cfg(test)]
 use super::projects::RunnerLookupError;
 use super::state::{
-    CodingAgentDispatchFence, PendingShellRequest, RunnerRegistryInner, SkillStoreDispatchFence,
+    CodingAgentDispatchFence, PendingShellRequest, PluginGatewayDispatchFence, RunnerRegistryInner,
+    SkillStoreDispatchFence,
 };
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
@@ -24,6 +25,10 @@ use webcodex_core::lsp_bridge::{RunnerLspPayload, RunnerLspRequest, AGENT_LSP_RE
 use webcodex_core::mcp_gateway::{
     validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
     McpGatewayResponse,
+};
+use webcodex_core::plugin::{
+    validate_request as validate_plugin_gateway_request, PluginDispatchState, PluginGatewayRequest,
+    PluginGatewayResponse, PluginPlane,
 };
 use webcodex_core::runner_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
@@ -263,6 +268,22 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
                 },
             ));
         }
+        if let Some(waiter) = inner.plugin_gateway_waiters.remove(&request_id) {
+            let state = if pending.dispatched {
+                PluginDispatchState::OutcomeUnknown
+            } else {
+                PluginDispatchState::NotStarted
+            };
+            let _ = waiter.send(PluginGatewayResponse::error(
+                state,
+                "runner_unavailable",
+                if pending.dispatched {
+                    "Runner transport failed after Plugin dispatch; downstream outcome is unknown and the call must not be retried automatically"
+                } else {
+                    "Runner transport failed before Plugin dispatch; request was not started"
+                },
+            ));
+        }
         if let Some(waiter) = inner.coding_agent_waiters.remove(&request_id) {
             let state = if pending.dispatched {
                 CodingAgentDispatchState::OutcomeUnknown
@@ -282,6 +303,7 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
             ));
         }
         inner.coding_agent_fences.remove(&request_id);
+        inner.plugin_gateway_fences.remove(&request_id);
         inner.persistent_waiters.remove(&request_id);
     }
 }
@@ -396,6 +418,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -456,6 +479,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -530,6 +554,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -613,6 +638,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -712,6 +738,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -801,6 +828,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -889,6 +917,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -969,6 +998,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1054,6 +1084,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1129,6 +1160,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1213,6 +1245,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1302,6 +1335,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: ssh_context,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1363,6 +1397,10 @@ impl RunnerRegistry {
                             .get(&pending.request.request_id)
                             .is_some_and(tokio::sync::oneshot::Sender::is_closed)
                         || inner
+                            .plugin_gateway_waiters
+                            .get(&pending.request.request_id)
+                            .is_some_and(tokio::sync::oneshot::Sender::is_closed)
+                        || inner
                             .coding_agent_waiters
                             .get(&pending.request.request_id)
                             .is_some_and(tokio::sync::oneshot::Sender::is_closed))
@@ -1372,6 +1410,8 @@ impl RunnerRegistry {
         for request_id in &abandoned {
             inner.persistent_waiters.remove(request_id);
             inner.mcp_gateway_waiters.remove(request_id);
+            inner.plugin_gateway_waiters.remove(request_id);
+            inner.plugin_gateway_fences.remove(request_id);
             inner.coding_agent_waiters.remove(request_id);
             inner.coding_agent_fences.remove(request_id);
             remove_pending_request_locked(&mut inner, request_id);
@@ -1387,6 +1427,8 @@ impl RunnerRegistry {
         let mut inner = self.inner.lock().await;
         inner.persistent_waiters.remove(request_id);
         inner.mcp_gateway_waiters.remove(request_id);
+        inner.plugin_gateway_waiters.remove(request_id);
+        inner.plugin_gateway_fences.remove(request_id);
         inner.coding_agent_waiters.remove(request_id);
         inner.coding_agent_fences.remove(request_id);
         remove_pending_request_locked(&mut inner, request_id).map(|pending| pending.dispatched)
@@ -1437,6 +1479,7 @@ impl RunnerRegistry {
             job_context: None,
             persistent_shell: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1532,6 +1575,7 @@ impl RunnerRegistry {
             job_context: None,
             persistent_shell: None,
             mcp_gateway: Some(operation),
+            plugin_gateway: None,
             coding_agent: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1578,6 +1622,119 @@ impl RunnerRegistry {
         pending.expected_mcp_gateway_provider_id = Some(expected_provider_id);
         pending.expected_mcp_gateway_provider_instance_id = Some(expected_provider_instance_id);
         inner.mcp_gateway_waiters.insert(request_id.clone(), tx);
+        notify_runner_locked(&inner, client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue one closed native Plugin operation for one exact live Runner.
+    /// Startup bindings are additionally fenced against immutable registration;
+    /// dynamic provider bindings remain exact Runner-owned identities.
+    pub async fn enqueue_plugin_gateway(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: PluginGatewayRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<PluginGatewayResponse>), String> {
+        validate_plugin_gateway_request(&operation)
+            .map_err(|_| "invalid Plugin gateway request".to_string())?;
+        let provider_binding =
+            operation
+                .provider_binding()
+                .map(|(provider_id, provider_instance_id, plane)| {
+                    (
+                        provider_id.to_string(),
+                        provider_instance_id.to_string(),
+                        plane,
+                    )
+                });
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = RunnerRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.to_string(),
+            kind: "plugin_gateway".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 120,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            job_context: None,
+            persistent_shell: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(operation),
+            coding_agent: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_runner_access(auth, runner)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if runner.runner_instance_id != expected_runner_instance_id {
+            return Err("stale Runner identity; request was not started".to_string());
+        }
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::NativeToolPlugins)
+        {
+            return Err("exact Runner does not support native Tool Plugins".to_string());
+        }
+        if let Some((provider_id, provider_instance_id, PluginPlane::Startup)) =
+            provider_binding.as_ref()
+        {
+            let provider_is_current = runner
+                .policy
+                .as_ref()
+                .and_then(|policy| policy.plugin_providers.as_ref())
+                .is_some_and(|providers| {
+                    providers.iter().any(|provider| {
+                        provider.provider_id == *provider_id
+                            && provider.provider_instance_id == *provider_instance_id
+                    })
+                });
+            if !provider_is_current {
+                return Err(
+                    "stale startup Plugin provider identity; request was not started".to_string(),
+                );
+            }
+        }
+        if now_ts().saturating_sub(runner.last_seen) > super::RUNNER_ONLINE_WINDOW_SECS {
+            return Err("exact Runner is offline; request was not started".to_string());
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            None,
+            None,
+        )?;
+        inner.plugin_gateway_fences.insert(
+            request_id.clone(),
+            PluginGatewayDispatchFence {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+                provider: provider_binding,
+            },
+        );
+        inner.plugin_gateway_waiters.insert(request_id.clone(), tx);
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }
@@ -1635,6 +1792,7 @@ impl RunnerRegistry {
             job_context: None,
             persistent_shell: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: Some(operation),
         };
         let mut inner = self.inner.lock().await;
@@ -1760,6 +1918,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: job_context.clone(),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: Some(request),
         };
@@ -1867,6 +2026,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -1968,6 +2128,7 @@ impl RunnerRegistry {
             lsp: None,
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };
@@ -2049,6 +2210,7 @@ impl RunnerRegistry {
             lsp: Some(payload),
             job_context: None,
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
             persistent_shell: None,
         };

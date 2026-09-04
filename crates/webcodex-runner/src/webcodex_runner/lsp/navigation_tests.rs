@@ -45,6 +45,7 @@ fn shell_lsp_request(payload: RunnerLspPayload) -> RunnerRequest {
         lsp: Some(payload),
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     }
@@ -668,6 +669,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         }),
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     };
@@ -1666,6 +1668,7 @@ fn missing_lsp_payload_returns_structured_error() {
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     };
@@ -1714,6 +1717,7 @@ fn lsp_request_ignores_command_field() {
         }),
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     };

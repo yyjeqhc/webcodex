@@ -12,6 +12,10 @@ use webcodex_core::coding_agent::{
 use webcodex_core::mcp_gateway::{
     validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
 };
+use webcodex_core::plugin::{
+    validate_response as validate_plugin_gateway_response, PluginDispatchState,
+    PluginGatewayResponse, PluginPlane,
+};
 use webcodex_core::runner_protocol::{
     RunnerPersistentShellResultRequest, RunnerPollRequest, RunnerRequest, RunnerResultPayload,
     ShellCommandExecutionState, ShellRunResponse,
@@ -180,6 +184,103 @@ impl RunnerRegistry {
                         },
                     ));
                 }
+                inner.persistent_waiters.remove(&request_id);
+                continue;
+            }
+            let stale_plugin_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
+                let Some(operation) = pending.request.plugin_gateway.as_ref() else {
+                    return None;
+                };
+                let Some(fence) = inner.plugin_gateway_fences.get(&request_id) else {
+                    return Some((
+                        "stale_plugin_fence",
+                        "native Plugin exact dispatch fence is missing".to_string(),
+                    ));
+                };
+                let operation_binding = operation.provider_binding();
+                let fence_binding = fence.provider.as_ref().map(|(provider, instance, plane)| {
+                    (provider.as_str(), instance.as_str(), *plane)
+                });
+                if operation_binding != fence_binding {
+                    return Some((
+                        "stale_plugin_provider",
+                        "native Plugin provider binding changed before dispatch".to_string(),
+                    ));
+                }
+                let Some(runner) = inner.runners.get(&body.client_id) else {
+                    return Some((
+                        "stale_runner",
+                        "native Plugin target Runner disappeared before dispatch".to_string(),
+                    ));
+                };
+                if runner.runner_instance_id != fence.runner_instance_id {
+                    return Some((
+                        "stale_runner",
+                        "native Plugin target Runner changed before dispatch".to_string(),
+                    ));
+                }
+                if !runner
+                    .runner_features
+                    .supports(RunnerFeature::NativeToolPlugins)
+                {
+                    return Some((
+                        "plugin_capability_unavailable",
+                        "native Plugin capability changed before dispatch".to_string(),
+                    ));
+                }
+                if let Some((provider_id, provider_instance_id, PluginPlane::Startup)) =
+                    operation_binding
+                {
+                    let provider_is_current = runner
+                        .policy
+                        .as_ref()
+                        .and_then(|policy| policy.plugin_providers.as_ref())
+                        .is_some_and(|providers| {
+                            providers.iter().any(|provider| {
+                                provider.provider_id == provider_id
+                                    && provider.provider_instance_id == provider_instance_id
+                            })
+                        });
+                    if !provider_is_current {
+                        return Some((
+                            "stale_plugin_provider",
+                            "startup Plugin provider changed before dispatch".to_string(),
+                        ));
+                    }
+                }
+                None
+            });
+            if let Some((code, message)) = stale_plugin_error {
+                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+                    continue;
+                };
+                if let Some(waiter) = pending.waiter.take() {
+                    let _ = waiter.send(ShellRunResponse {
+                        success: false,
+                        request_id: request_id.clone(),
+                        client_id: body.client_id.clone(),
+                        cwd: pending.request.cwd.clone(),
+                        command_preview: request_preview(&pending.request),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: None,
+                        error: Some(message.clone()),
+                        request_dispatched: Some(false),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                    });
+                }
+                if let Some(waiter) = inner.plugin_gateway_waiters.remove(&request_id) {
+                    let _ = waiter.send(PluginGatewayResponse::error(
+                        PluginDispatchState::NotStarted,
+                        code,
+                        "Exact native Plugin dispatch target changed before dispatch; request was not started",
+                    ));
+                }
+                inner.plugin_gateway_fences.remove(&request_id);
+                inner.mcp_gateway_waiters.remove(&request_id);
+                inner.coding_agent_waiters.remove(&request_id);
+                inner.coding_agent_fences.remove(&request_id);
                 inner.persistent_waiters.remove(&request_id);
                 continue;
             }
@@ -447,6 +548,9 @@ impl RunnerRegistry {
         if pending.request.mcp_gateway.is_none() && payload.mcp_gateway.is_some() {
             return Err("unexpected MCP gateway result for non-bridge request".to_string());
         }
+        if pending.request.plugin_gateway.is_none() && payload.plugin_gateway.is_some() {
+            return Err("unexpected Plugin gateway result for non-Plugin request".to_string());
+        }
         self.telemetry
             .runner_result_accepted(&body.request_id, &payload);
         let trace_request_id = body.request_id.clone();
@@ -454,6 +558,7 @@ impl RunnerRegistry {
             result: body,
             command_execution_state,
             mcp_gateway,
+            plugin_gateway,
             coding_agent,
         } = payload;
         let Some(mut pending) = take_pending_request_locked(&mut inner, &body.request_id) else {
@@ -490,6 +595,43 @@ impl RunnerRegistry {
                 ),
             };
             let waiter = inner.mcp_gateway_waiters.remove(&body.request_id);
+            if let Some(waiter) = waiter {
+                let _ = waiter.send(response);
+            }
+            self.telemetry.runner_result_finalized(&trace_request_id);
+            return Ok(());
+        }
+        if pending.request.plugin_gateway.is_some() {
+            let response = match plugin_gateway {
+                Some(response)
+                    if command_execution_state.is_none()
+                        && mcp_gateway.is_none()
+                        && coding_agent.is_none()
+                        && body.exit_code.is_none()
+                        && body.stdout.is_none()
+                        && body.stderr.is_none()
+                        && body.duration_ms.is_none()
+                        && body.error.is_none()
+                        && validate_plugin_gateway_response(&response).is_ok() =>
+                {
+                    response
+                }
+                _ => PluginGatewayResponse::error(
+                    if pending.dispatched {
+                        PluginDispatchState::OutcomeUnknown
+                    } else {
+                        PluginDispatchState::NotStarted
+                    },
+                    "invalid_runner_response",
+                    if pending.dispatched {
+                        "Runner returned an invalid Plugin response after dispatch; downstream outcome is unknown and must not be retried automatically"
+                    } else {
+                        "Runner returned an invalid Plugin response before provider dispatch"
+                    },
+                ),
+            };
+            let waiter = inner.plugin_gateway_waiters.remove(&body.request_id);
+            inner.plugin_gateway_fences.remove(&body.request_id);
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);
             }

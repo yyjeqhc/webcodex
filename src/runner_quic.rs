@@ -614,6 +614,7 @@ mod tests {
             computer_text_input: false,
             job_state_reconciliation: false,
             coding_agent_runs: false,
+            native_tool_plugins: false,
         });
         QuicRegisterFrame::new(
             RunnerRegisterRequest {

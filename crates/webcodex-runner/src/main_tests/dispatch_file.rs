@@ -215,6 +215,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
         lsp: None,
         job_context: None,
         mcp_gateway: None,
+        plugin_gateway: None,
         coding_agent: None,
         persistent_shell: None,
     };

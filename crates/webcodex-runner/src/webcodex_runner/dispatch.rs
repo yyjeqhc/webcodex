@@ -181,6 +181,35 @@ pub(crate) fn dispatch_request(
             .submit_result_with_metadata(request.request_id, result, config, runtime)
             .map(|_| true);
     }
+    if request.kind == "plugin_gateway" {
+        let request_id = request.request_id.clone();
+        let response = match request.plugin_gateway {
+            Some(operation) => runtime.plugins().handle(operation),
+            None => webcodex_core::plugin::PluginGatewayResponse::error(
+                webcodex_core::plugin::PluginDispatchState::NotStarted,
+                "invalid_plugin_request",
+                "Typed native Plugin operation is required; request was not started",
+            ),
+        };
+        return sink
+            .submit_plugin_gateway_result(request_id, response)
+            .map(|_| true);
+    }
+    if request.plugin_gateway.is_some() {
+        let result = CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "invalid_request: plugin_gateway payload is valid only for plugin_gateway requests; command was not started"
+                    .to_string(),
+            ),
+        };
+        return sink
+            .submit_result_with_metadata(request.request_id, result, config, runtime)
+            .map(|_| true);
+    }
     if request.kind == "skill_store" {
         let request_id = request.request_id.clone();
         let result = handle_skill_store_request(

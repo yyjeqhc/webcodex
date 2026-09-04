@@ -706,6 +706,7 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
             },
             command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
             mcp_gateway: None,
+            plugin_gateway: None,
             coding_agent: None,
         })
         .await

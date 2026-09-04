@@ -320,7 +320,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Observe 1 to 8 existing Jobs with bounded baseline/delta logs and isolated item errors. Optionally performs one shared wait for the batch and returns when any relevant Job changes; final items are non-waiting snapshots. Return each opaque observation token unchanged on follow-up. This tool only observes: it never launches, retries, stops, or subscribes to Jobs.",
+            "Observe 1 to 8 existing Jobs with bounded baseline/delta logs and isolated item errors. Optionally performs one shared wait for the batch and returns when any relevant Job changes; final items are non-waiting snapshots. Return each opaque observation token unchanged on follow-up. unknown_job exposes recovery_tool=list_jobs for direct caller-visible Job re-observation. Never launches, retries, stops, or subscribes.",
             observe_jobs_input_schema,
         ),
         80,
@@ -328,27 +328,30 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
 ];
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
-    model_spec(
-        def(
-            "list_jobs",
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            None,
-            TOOL_PROVIDER_NATIVE,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "list_jobs",
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                None,
+                TOOL_PROVIDER_NATIVE,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+            ),
+            "List bounded lifecycle metadata for caller-visible Jobs. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. stdout/stderr bodies are never included.",
+            list_jobs_input_schema,
         ),
-        "List bounded lifecycle metadata for caller-visible Jobs. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. stdout/stderr bodies are never included.",
-        list_jobs_input_schema,
+        85,
     ),
     def(
         "job_tail",

@@ -73,6 +73,36 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         apply_patch.adaptive_runtime_direct_rank()
             < apply_text_edits.adaptive_runtime_direct_rank()
     );
+
+    for (name, expected_rank, expected_authority) in [
+        ("list_jobs", 85, RUNTIME_READ),
+        ("git_diff_hunks", 125, PROJECT_READ),
+    ] {
+        let definition = derived
+            .iter()
+            .copied()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("{name} must be adaptive-direct"));
+        assert_eq!(
+            definition.adaptive_runtime_direct_rank(),
+            Some(expected_rank)
+        );
+        assert_eq!(definition.metadata.effect, ToolEffect::Observe);
+        assert_eq!(definition.metadata.risk, ToolRisk::Read);
+        assert_eq!(definition.metadata.approval, ToolApprovalPolicy::None);
+        assert_eq!(definition.metadata.idempotency, ToolIdempotency::PureRead);
+        assert_eq!(
+            definition.metadata.authority,
+            ToolAuthorityPolicy::Require(expected_authority)
+        );
+    }
+
+    let git_review = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "git_review_summary")
+        .expect("git_review_summary ToolSpec");
+    assert!(git_review.description.contains("git_diff_hunks/read_files"));
+    assert!(!git_review.description.contains("git_diff_hunks/read_file "));
 }
 
 #[test]

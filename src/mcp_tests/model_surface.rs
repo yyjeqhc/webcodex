@@ -301,9 +301,11 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         direct_names.iter().map(String::as_str).collect::<Vec<_>>()
     );
     let serialized_tools_bytes = serde_json::to_vec(tools).unwrap().len();
-    // Measured migration baseline: 417,613 bytes. Keep ~12.8% schema-growth
-    // headroom without turning the current tool count into an architectural lock.
-    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 460 * 1024;
+    // P5 intentionally admits two directly actionable high-frequency recovery
+    // targets (list_jobs and git_diff_hunks). Measured post-admission baseline:
+    // ~479,442 bytes (~468.2 KiB). Preserve the prior ~12.8% schema-growth headroom without
+    // turning the exact direct-tool count into an architectural lock.
+    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 528 * 1024;
     assert!(
         serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES,
         "adaptive tools/list schema cost {serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES} bytes"

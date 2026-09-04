@@ -2087,8 +2087,8 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
         "target-a",
         &completed_request.request_id,
         0,
-        "done",
-        "",
+        "LIST_JOBS_PRIVATE_STDOUT",
+        "LIST_JOBS_PRIVATE_STDERR",
     )
     .await;
 
@@ -2106,6 +2106,18 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
     assert!(by_project.success, "{:?}", by_project.error);
     assert_eq!(by_project.output["matched_count"], 3);
     assert_eq!(by_project.output["count"], 3);
+    let serialized = serde_json::to_string(&by_project.output).unwrap();
+    for forbidden in [
+        "LIST_JOBS_PRIVATE_STDOUT",
+        "LIST_JOBS_PRIVATE_STDERR",
+        "stdout",
+        "stderr",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "list_jobs leaked log body/key {forbidden}: {serialized}"
+        );
+    }
 
     let running = runtime
         .dispatch_with_auth(

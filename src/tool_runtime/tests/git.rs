@@ -3080,6 +3080,14 @@ fn show_changes_diff_respects_max_hunks() {
         output["diff_review_handoff"]["suggested_call"]["max_hunks"],
         30
     );
+    let suggested_call = output["diff_review_handoff"]["suggested_call"].clone();
+    ToolCall::from_tool_name("git_diff_hunks", suggested_call)
+        .expect("show_changes suggested_call must be directly reusable as git_diff_hunks input");
+    assert!(
+        crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+            output["diff_review_handoff"]["tool"].as_str().unwrap()
+        )
+    );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
         .iter()

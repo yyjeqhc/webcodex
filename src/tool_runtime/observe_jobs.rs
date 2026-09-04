@@ -510,6 +510,11 @@ mod tests {
         assert_eq!(missing["error_kind"], "unknown_job");
         assert_eq!(missing["recovery_kind"], "reobserve");
         assert_eq!(missing["recovery_tool"], "list_jobs");
+        assert!(
+            crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+                missing["recovery_tool"].as_str().unwrap()
+            )
+        );
 
         let invalid_token = batch_item(ObservedJob {
             index: 1,

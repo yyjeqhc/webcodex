@@ -248,10 +248,12 @@ mod tests {
         "apply_text_edits",
         "run_process",
         "observe_jobs",
+        "list_jobs",
         "cargo_check",
         "cargo_test",
         "go_test",
         "git_review_summary",
+        "git_diff_hunks",
         "show_changes",
         "workspace_hygiene_check",
         "finish_coding_task",
@@ -267,6 +269,49 @@ mod tests {
                 crate::tool_runtime::tool_definition::is_model_visible_tool_name(&spec.name),
                 "{} must be model-visible",
                 spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_runtime_structured_action_targets_are_directly_actionable() {
+        for (source_tool, edge, target_tool) in [
+            ("observe_jobs", "recovery_tool", "list_jobs"),
+            ("show_changes", "diff_review_handoff.tool", "git_diff_hunks"),
+            (
+                "finish_coding_task",
+                "changes.show_changes.diff_review_handoff.tool",
+                "git_diff_hunks",
+            ),
+            ("apply_patch", "recovery.action", "read_files"),
+        ] {
+            assert_eq!(
+                ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(source_tool),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "structured action source {source_tool}.{edge} must itself be Adaptive direct"
+            );
+            assert_eq!(
+                ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(target_tool),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "{source_tool}.{edge} points to non-direct Adaptive target {target_tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_handoff_promotions_preserve_local_and_full_operator_routes() {
+        for tool_name in ["list_jobs", "git_diff_hunks"] {
+            assert_eq!(
+                ModelSurface::LocalCoding.runtime_tool_invocation_route(tool_name),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "{tool_name} was already Local Coding direct"
+            );
+        }
+        for tool_name in ["list_jobs", "git_diff_hunks"] {
+            assert_eq!(
+                ModelSurface::FullOperatorRuntime.runtime_tool_invocation_route(tool_name),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "Full Operator must remain direct for {tool_name}"
             );
         }
     }

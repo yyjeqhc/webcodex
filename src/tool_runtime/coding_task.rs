@@ -2893,6 +2893,13 @@ mod startup_runner_tests {
         assert!(actions
             .iter()
             .any(|action| action == "continue the diff review with git_diff_hunks"));
+        assert!(
+            crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+                output["changes"]["show_changes"]["diff_review_handoff"]["tool"]
+                    .as_str()
+                    .unwrap()
+            )
+        );
         assert!(!actions
             .iter()
             .any(|action| action == "review workspace changes with show_changes"));

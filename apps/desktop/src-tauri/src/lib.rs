@@ -36,7 +36,10 @@ pub fn run() {
         .expect("failed to build WebCodex Desktop");
 
     app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
             let state = app_handle.state::<AppState>();
             tauri::async_runtime::block_on(state.shutdown());
         }

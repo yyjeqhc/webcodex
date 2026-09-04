@@ -75,6 +75,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     );
 
     for (name, expected_rank, expected_authority) in [
+        ("session_discussion_summary", 15, RUNTIME_READ),
         ("list_jobs", 85, RUNTIME_READ),
         ("git_diff_hunks", 125, PROJECT_READ),
     ] {

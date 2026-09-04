@@ -320,9 +320,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         PERMISSION_RISK_WRITE,
     )),
-    requires_explicit_business_session(model_spec(
-        def(
-            "session_discussion_summary",
+    adaptive_runtime_direct(
+        requires_explicit_business_session(model_spec(
+            def(
+                "session_discussion_summary",
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -340,8 +341,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
         ),
         "Return a bounded structured aggregate of session-local discussion from the recorded session ledger. Does not call an LLM or generate natural-language summaries.",
-        session_discussion_summary_input_schema,
-    )),
+            session_discussion_summary_input_schema,
+        )),
+        15,
+    ),
     requires_explicit_business_session(model_spec(
         def(
             "session_handoff_summary",

@@ -240,6 +240,7 @@ mod tests {
 
     const EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES: &[&str] = &[
         "work_on_project",
+        "session_discussion_summary",
         "runtime_status",
         "tool_manifest",
         "search_project_texts",
@@ -276,6 +277,11 @@ mod tests {
     #[test]
     fn adaptive_runtime_structured_action_targets_are_directly_actionable() {
         for (source_tool, edge, target_tool) in [
+            (
+                "read_files",
+                "session_hint.suggested_next_tool",
+                "session_discussion_summary",
+            ),
             ("observe_jobs", "recovery_tool", "list_jobs"),
             ("show_changes", "diff_review_handoff.tool", "git_diff_hunks"),
             (

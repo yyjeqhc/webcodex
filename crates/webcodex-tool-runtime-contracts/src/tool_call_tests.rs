@@ -1406,3 +1406,20 @@ fn create_project_rejects_retired_managed_temporary_field() {
     .expect_err("retired managed-temporary field must not be model/API reachable");
     assert!(error.contains("managed_temporary_project"), "{error}");
 }
+
+#[test]
+fn create_project_rejects_retired_allow_existing_empty_with_migration_hint() {
+    let error = ToolCall::from_tool_name(
+        "create_project",
+        json!({
+            "client_id":"oe",
+            "id":"hello",
+            "name":"Hello",
+            "path":"/root/git/hello",
+            "allow_existing_empty":true
+        }),
+    )
+    .expect_err("retired empty-directory adoption field must fail closed");
+    assert!(error.contains("allow_existing_empty"), "{error}");
+    assert!(error.contains("adopt_existing_empty"), "{error}");
+}

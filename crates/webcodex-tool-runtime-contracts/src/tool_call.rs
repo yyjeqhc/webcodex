@@ -2361,6 +2361,16 @@ impl ToolCall {
                     .to_string(),
             );
         }
+        if name == "create_project"
+            && arguments
+                .as_object()
+                .is_some_and(|object| object.contains_key("allow_existing_empty"))
+        {
+            return Err(
+                "invalid arguments for tool 'create_project': field 'allow_existing_empty' is no longer supported; use 'adopt_existing_empty' to explicitly adopt an existing empty directory"
+                    .to_string(),
+            );
+        }
         // Reject unknown tool names up front with a helpful message that lists
         // every accepted tool and points the caller at listRuntimeTools. This
         // avoids leaking a raw serde "unknown variant" error and gives custom

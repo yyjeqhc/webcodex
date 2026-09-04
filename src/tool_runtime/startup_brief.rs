@@ -257,10 +257,14 @@ fn semantic_navigation_projection(value: &Value) -> Value {
             .get("status")
             .cloned()
             .unwrap_or_else(|| json!("probe_failed")),
+        // Preserve an indeterminate startup observation as null. Coercing a
+        // timed-out status probe to false would turn "not observed" into a
+        // false semantic-navigation unavailability claim.
         "available": value
             .get("available")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+            .filter(|available| available.is_boolean() || available.is_null())
+            .cloned()
+            .unwrap_or(Value::Null),
         "provider": value.get("server").cloned().unwrap_or(Value::Null),
         "capability": if value
             .get("supported")
@@ -1408,6 +1412,24 @@ mod tests {
     use crate::tool_runtime::project_instructions::LoadedInstructionCandidate;
     use crate::tool_runtime::sessions::SessionGuards;
     use crate::tool_runtime::{SessionMode, ToolRuntime};
+
+    #[test]
+    fn semantic_navigation_projection_preserves_probe_timeout_as_unknown() {
+        let source = json!({
+            "supported": true,
+            "available": Value::Null,
+            "status": "probe_timeout",
+            "server": Value::Null,
+            "reason_code": "status_probe_timed_out",
+        });
+        let projection = semantic_navigation_projection(&source);
+        assert_eq!(projection["supported"], true);
+        assert_eq!(projection["available"], Value::Null);
+        assert_eq!(projection["status"], "probe_timeout");
+        assert_eq!(projection["provider"], Value::Null);
+        assert_eq!(projection["capability"], "lsp_read_only_navigation");
+        assert_eq!(projection["reason_code"], "status_probe_timed_out");
+    }
 
     #[test]
     fn repository_scan_projection_keeps_only_fixed_fields() {

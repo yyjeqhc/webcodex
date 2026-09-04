@@ -359,12 +359,16 @@ async fn coding_task_semantic_navigation_timeout_uses_one_budget_and_cancels_wai
     let semantic = &result.output["semantic_navigation"];
     assert_eq!(semantic["status"], "probe_timeout");
     assert_eq!(semantic["reason_code"], "status_probe_timed_out");
-    assert!(result.output["warnings"]
+    assert_eq!(semantic["supported"], true);
+    assert_eq!(semantic["available"], Value::Null);
+    assert_eq!(semantic["provider"], Value::Null);
+    assert_eq!(semantic["capability"], "lsp_read_only_navigation");
+    assert!(!result.output["warnings"]
         .as_array()
         .unwrap()
         .iter()
         .any(|warning| warning == "semantic_navigation_unavailable"));
-    assert_eq!(result.output["startup_verdict"]["status"], "warn");
+    assert_eq!(result.output["startup_verdict"]["status"], "pass");
 
     let expired = runtime
         .runner_registry

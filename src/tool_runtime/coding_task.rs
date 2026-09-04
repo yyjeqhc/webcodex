@@ -1831,7 +1831,7 @@ struct WorkOnProjectProjectProjection {
 struct WorkOnProjectSemanticNavigationProjection {
     #[serde(default)]
     supported: bool,
-    available: bool,
+    available: WorkOnProjectRequiredNullable<bool>,
     status: String,
     capability: WorkOnProjectRequiredNullable<String>,
     reason_code: WorkOnProjectRequiredNullable<String>,

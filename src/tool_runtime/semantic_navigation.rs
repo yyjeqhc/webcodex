@@ -90,7 +90,11 @@ pub(crate) enum SemanticNavigationReasonCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct SemanticNavigationStartupSummary {
     supported: bool,
-    available: bool,
+    /// `None` means the bounded startup status probe did not complete, so the
+    /// Server has no fresh executable/slot availability fact. This is
+    /// intentionally distinct from `Some(false)`, which is reserved for a
+    /// positive unavailable observation.
+    available: Option<bool>,
     recommended: bool,
     status: SemanticNavigationStartupStatus,
     language: Option<&'static str>,
@@ -109,7 +113,7 @@ impl SemanticNavigationStartupSummary {
     ) -> Self {
         Self {
             supported: false,
-            available: false,
+            available: Some(false),
             recommended: false,
             status,
             language: None,
@@ -128,7 +132,7 @@ impl SemanticNavigationStartupSummary {
     ) -> Self {
         Self {
             supported: true,
-            available: false,
+            available: Some(false),
             recommended: false,
             status,
             language: None,
@@ -143,10 +147,31 @@ impl SemanticNavigationStartupSummary {
         }
     }
 
+    fn probe_timeout() -> Self {
+        Self {
+            supported: true,
+            available: None,
+            recommended: false,
+            status: SemanticNavigationStartupStatus::ProbeTimeout,
+            language: None,
+            server: None,
+            position_encoding: None,
+            tools: SEMANTIC_NAVIGATION_TOOLS.to_vec(),
+            preferred_flow: Vec::new(),
+            limitations: vec![
+                "read_only",
+                "workspace_only",
+                "no_dependency_navigation",
+                "full_text_sync_only",
+            ],
+            reason_code: Some(SemanticNavigationReasonCode::StatusProbeTimedOut),
+        }
+    }
+
     fn rust_not_detected() -> Self {
         Self {
             supported: true,
-            available: false,
+            available: Some(false),
             recommended: false,
             status: SemanticNavigationStartupStatus::NotApplicable,
             language: None,
@@ -272,7 +297,7 @@ impl SemanticNavigationStartupSummary {
 
         Ok(Self {
             supported: true,
-            available,
+            available: Some(available),
             recommended,
             status,
             language: Some(language),
@@ -342,12 +367,7 @@ impl ToolRuntime {
         )
         .await;
         let (request_id, receiver) = match enqueued {
-            Err(_) => {
-                return SemanticNavigationStartupSummary::supported_failure(
-                    SemanticNavigationStartupStatus::ProbeTimeout,
-                    SemanticNavigationReasonCode::StatusProbeTimedOut,
-                )
-            }
+            Err(_) => return SemanticNavigationStartupSummary::probe_timeout(),
             Ok(Err(error)) => return SemanticNavigationStartupSummary::from_enqueue_error(&error),
             Ok(Ok(request)) => request,
         };
@@ -355,10 +375,7 @@ impl ToolRuntime {
         let response = match tokio::time::timeout_at(deadline, receiver).await {
             Err(_) => {
                 self.runner_registry.cancel_request(&request_id).await;
-                return SemanticNavigationStartupSummary::supported_failure(
-                    SemanticNavigationStartupStatus::ProbeTimeout,
-                    SemanticNavigationReasonCode::StatusProbeTimedOut,
-                );
+                return SemanticNavigationStartupSummary::probe_timeout();
             }
             Ok(Err(_)) => {
                 self.runner_registry.cancel_request(&request_id).await;

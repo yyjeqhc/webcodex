@@ -227,33 +227,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing tool spec: {name}"))
         };
 
-        for name in [
-            "run_process",
-            "run_script",
-            "run_shell",
-            "open_session_shell",
-            "run_job",
-            "stop_job",
-            "job_status",
-            "job_log",
-            "observe_jobs",
-            "list_jobs",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
-            "register_project",
-            "unregister_project",
-            "create_project",
-            "list_runners",
-            "runtime_status",
-            "work_on_project",
-        ] {
-            let description = &find(name).description;
+        for spec in &specs {
             assert!(
-                description.chars().count() <= 220,
-                "{name} description is too diffuse ({} chars): {description}",
-                description.chars().count()
+                spec.description.chars().count() <= crate::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
+                "{} description exceeds the hard model budget ({} > {} chars): {}",
+                spec.name,
+                spec.description.chars().count(),
+                crate::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
+                spec.description
             );
         }
 

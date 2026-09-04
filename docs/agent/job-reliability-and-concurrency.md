@@ -171,13 +171,16 @@ choices, and any lifecycle fact that changes retry safety. Put detailed numeric
 bounds, wire rules, and field-specific behavior on the relevant input/output
 schema instead of repeating them in every top-level description.
 
-For ordinary tools, aim for roughly 80–220 characters of high-signal text. This
-is a review target rather than a wire limit; longer descriptions need a concrete
-selection reason. Avoid naming sibling tools merely to restate implementation or
-fallback details, because exact-name discovery may otherwise retrieve unrelated
-tools whose descriptions happen to mention the queried name. Prefer capability
-phrasing such as “shell command tool”, “structured validation”, or “asynchronous
-execution” unless the sibling tool name is itself needed to choose correctly.
+For ordinary tools, keep the top-level description as short as its selection and
+lifecycle semantics allow. There is no secondary numeric density limit below the
+repository hard ceiling (`MODEL_TOOL_DESCRIPTION_MAX_CHARS`, currently 600);
+using more of that budget is appropriate when it preserves selection, authority,
+retry, continuation, uncertainty, safety, or recovery semantics. Avoid naming
+sibling tools merely to restate implementation or fallback details, because
+exact-name discovery may otherwise retrieve unrelated tools whose descriptions
+happen to mention the queried name. Prefer capability phrasing such as “shell
+command tool”, “structured validation”, or “asynchronous execution” unless the
+sibling tool name is itself needed to choose correctly.
 
 Generic lifecycle words such as `Job` should be concentrated on actual Job
 creation/observation tools. Structured validators and process adapters can say

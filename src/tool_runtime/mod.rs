@@ -84,12 +84,8 @@ mod validation_events;
 pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
 
-/// Hard repository ceiling for model-facing ToolSpec and OpenAPI operation descriptions.
-/// Keep descriptions accurate, self-contained, and reasonably concise; use the full budget when
-/// needed to preserve selection, authority, effect, retry, continuation, uncertainty, safety, or
-/// recovery semantics.
 #[cfg(test)]
-pub(crate) const MODEL_TOOL_DESCRIPTION_MAX_CHARS: usize = 600;
+pub(crate) use webcodex_tool_contracts::MODEL_TOOL_DESCRIPTION_MAX_CHARS;
 
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]

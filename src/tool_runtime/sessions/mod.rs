@@ -84,18 +84,11 @@ pub(crate) use webcodex_workflow_session::root_test_support::{
 };
 
 #[cfg(test)]
-pub(crate) mod util {
-    pub(crate) use webcodex_workflow_session::redact_and_bound_instruction;
-}
-
-#[cfg(test)]
 pub(crate) mod events {
     use serde_json::Value;
+    pub(crate) use webcodex_workflow_session::normalize_observed_project_path;
     pub(crate) use webcodex_workflow_session::root_test_support::{
         observed_paths_for_successful_result, session_input_summary_for_tool,
-    };
-    pub(crate) use webcodex_workflow_session::{
-        canonical_tool_call_finished_events, normalize_observed_project_path,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -122,10 +115,8 @@ pub(crate) mod events {
 #[cfg(test)]
 pub(crate) mod model {
     pub(crate) use webcodex_workflow_session::root_test_support::{
-        PersistedSessionLedger, MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS,
-        MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
+        PersistedSessionLedger, MAX_OBSERVED_PATHS_PER_EVENT, SESSION_LEDGER_VERSION,
     };
-    pub(crate) use webcodex_workflow_session::{SessionLifecycle, MAX_CODING_INSTRUCTION_CHARS};
 }
 
 #[cfg(test)]

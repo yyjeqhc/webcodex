@@ -325,18 +325,6 @@ impl ToolRuntime {
         self
     }
 
-    /// Replace the in-memory session store with one capped at `max_events_per_session`
-    /// events, so tests can exercise ledger truncation without recording hundreds of
-    /// events. Sessions are still durable-exact within the in-memory store.
-    #[cfg(test)]
-    pub(crate) fn with_session_event_cap(mut self, max_events_per_session: usize) -> Self {
-        self.sessions = sessions::SessionStore::new_in_memory(
-            sessions::DEFAULT_MAX_SESSIONS,
-            max_events_per_session,
-        );
-        self
-    }
-
     /// Replace the permission evaluator (tests: mode matrix / single-eval counters).
     #[cfg(test)]
     pub(crate) fn with_permission_evaluator(mut self, evaluator: PermissionEvaluator) -> Self {

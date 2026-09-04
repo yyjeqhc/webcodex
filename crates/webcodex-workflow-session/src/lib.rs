@@ -4,8 +4,12 @@ mod assignment;
 mod closeout;
 mod console;
 mod continuation;
+#[cfg(test)]
+mod continuation_tests;
 mod events;
 mod handoff_brief;
+#[cfg(test)]
+mod handoff_brief_tests;
 mod messages;
 mod model;
 mod persistence;
@@ -19,6 +23,12 @@ mod assignment_tests;
 mod collaboration_tests;
 #[cfg(test)]
 mod message_mutation_tests;
+#[cfg(test)]
+mod session_context_tests;
+#[cfg(test)]
+mod session_lifecycle_tests;
+#[cfg(test)]
+mod session_store_tests;
 
 pub use closeout::closeout_work_projection;
 pub use console::{

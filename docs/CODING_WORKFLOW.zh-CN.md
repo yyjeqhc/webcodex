@@ -127,6 +127,12 @@ WebCodex 0.4 要求 Runner 在任何 `apply_patch` dispatch 前显式声明
 校验 Runner 的 success match metadata；success metadata 缺失或互相矛盾时返回
 `outcome_unknown`，不会把它当成 clean success。
 
+对于确定性的 zero-write `context_mismatch`，当前 Runner 还可能返回不含正文的
+`match_diagnostic`。Server 会用已解析的 patch 校验后才暴露它。若结果包含
+`recovery.action=read_files`，把 `recovery.items` 传给同一项目的 `read_files`，读取该 bounded
+当前源码窗口，再重新生成整份 patch。`outcome_unknown` 不属于这条恢复路径，必须先
+reconcile workspace。
+
 **优先 structured validation。** 当 `cargo_test`、`go_test` 或其他 structured validation
 能够表达目标检查时，优先使用它们；只有结构化 surface 无法覆盖时才用 shell。结构化
 结果能给 Session ledger 更安全的 evidence，而不必解析任意 command text。

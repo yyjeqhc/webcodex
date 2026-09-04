@@ -866,11 +866,13 @@ fn apply_patch_context_mismatch_recovery(
     }
 
     Some(json!({
-        "action": "read_file",
+        "action": "read_files",
         "reason": "context_mismatch",
-        "path": path,
-        "start_line": start_line,
-        "limit": limit,
+        "items": [{
+            "path": path,
+            "start_line": start_line,
+            "limit": limit,
+        }],
         "change_index": change_index,
         "chunk_index": chunk_index,
     }))
@@ -2384,11 +2386,15 @@ mod tests {
         let result = apply_patch_agent_stdout_result(&valid.to_string(), &patch, false, true);
         assert!(!result.success);
         assert_eq!(result.output["match_diagnostic"]["closest_start_line"], 5);
-        assert_eq!(result.output["recovery"]["action"], "read_file");
+        let recovery_action = result.output["recovery"]["action"].as_str().unwrap();
+        assert_eq!(recovery_action, "read_files");
+        assert!(
+            crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(recovery_action)
+        );
         assert_eq!(result.output["recovery"]["reason"], "context_mismatch");
-        assert_eq!(result.output["recovery"]["path"], "file.txt");
-        assert_eq!(result.output["recovery"]["start_line"], 1);
-        assert_eq!(result.output["recovery"]["limit"], 10);
+        assert_eq!(result.output["recovery"]["items"][0]["path"], "file.txt");
+        assert_eq!(result.output["recovery"]["items"][0]["start_line"], 1);
+        assert_eq!(result.output["recovery"]["items"][0]["limit"], 10);
         assert_eq!(result.output["recovery"]["change_index"], 0);
         assert_eq!(result.output["recovery"]["chunk_index"], 0);
         assert!(result.output.get("future_body_field").is_none());
@@ -2452,8 +2458,8 @@ mod tests {
             &schema,
         )
         .unwrap_or_else(|error| panic!("apply_patch recovery must match output schema: {error}"));
-        assert_eq!(result.output["recovery"]["start_line"], 122);
-        assert_eq!(result.output["recovery"]["limit"], 21);
+        assert_eq!(result.output["recovery"]["items"][0]["start_line"], 122);
+        assert_eq!(result.output["recovery"]["items"][0]["limit"], 21);
 
         let near_start = apply_patch_agent_stdout_result(
             &context_mismatch_payload(5, 1, 20, Some(1)).to_string(),
@@ -2461,8 +2467,8 @@ mod tests {
             false,
             false,
         );
-        assert_eq!(near_start.output["recovery"]["start_line"], 1);
-        assert_eq!(near_start.output["recovery"]["limit"], 20);
+        assert_eq!(near_start.output["recovery"]["items"][0]["start_line"], 1);
+        assert_eq!(near_start.output["recovery"]["items"][0]["limit"], 20);
 
         let eof_partial = apply_patch_agent_stdout_result(
             &context_mismatch_payload(5, 11, 2, Some(12)).to_string(),
@@ -2470,7 +2476,7 @@ mod tests {
             false,
             false,
         );
-        let recovery = &eof_partial.output["recovery"];
+        let recovery = &eof_partial.output["recovery"]["items"][0];
         assert_eq!(recovery["start_line"], 4);
         assert_eq!(recovery["limit"], 9);
         assert_eq!(
@@ -2486,7 +2492,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            large.output["recovery"]["limit"],
+            large.output["recovery"]["items"][0]["limit"],
             crate::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
         );
 
@@ -2501,7 +2507,7 @@ mod tests {
             false,
             false,
         );
-        let recovery = &distant_mismatch.output["recovery"];
+        let recovery = &distant_mismatch.output["recovery"]["items"][0];
         assert_eq!(recovery["start_line"], 134);
         assert_eq!(
             recovery["limit"],
@@ -2545,8 +2551,13 @@ mod tests {
         let serialized = serde_json::to_string(&result.output).unwrap();
         assert!(!serialized.contains("SOURCE_PRIVATE_TOKEN"));
         assert!(!serialized.contains("PATCH_PRIVATE_TOKEN"));
-        assert_eq!(result.output["recovery"]["path"], "file.txt");
-        assert!(result.output["recovery"]["limit"].as_u64().unwrap() <= 64);
+        assert_eq!(result.output["recovery"]["items"][0]["path"], "file.txt");
+        assert!(
+            result.output["recovery"]["items"][0]["limit"]
+                .as_u64()
+                .unwrap()
+                <= 64
+        );
     }
 
     #[test]

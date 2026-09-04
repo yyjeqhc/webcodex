@@ -304,10 +304,11 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
     assert_eq!(recovery["additionalProperties"], false);
     assert_eq!(
         recovery["properties"]["action"]["enum"],
-        json!(["read_file"])
+        json!(["read_files"])
     );
+    assert_eq!(recovery["properties"]["items"]["maxItems"], 1);
     assert_eq!(
-        recovery["properties"]["limit"]["maximum"],
+        recovery["properties"]["items"]["items"]["properties"]["limit"]["maximum"],
         webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
     );
     let patch_files = &patch_output["files"];

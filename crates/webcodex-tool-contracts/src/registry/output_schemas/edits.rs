@@ -90,16 +90,28 @@ fn apply_patch_recovery_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "Server-derived, body-free ready-to-call reread window for a validated deterministic apply_patch context mismatch. It is emitted only when the failed target and structural diagnostic prove a no-write reread is safe; the Runner cannot choose the tool, path, or arguments.",
+        "description": "Server-derived, body-free reread hint for a validated deterministic apply_patch context mismatch. Copy `items` into the direct `read_files` tool for the same project. It is emitted only when the failed target and structural diagnostic prove a no-write reread is safe; the Runner cannot choose the tool, path, or arguments.",
         "properties": {
-            "action": {"type": "string", "enum": ["read_file"]},
+            "action": {"type": "string", "enum": ["read_files"]},
             "reason": {"type": "string", "enum": ["context_mismatch"]},
-            "path": {"type": "string", "minLength": 1},
-            "start_line": {"type": "integer", "minimum": 1},
-            "limit": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "start_line": {"type": "integer", "minimum": 1},
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
+                        }
+                    },
+                    "required": ["path", "start_line", "limit"]
+                }
             },
             "change_index": {
                 "type": "integer",
@@ -113,7 +125,7 @@ fn apply_patch_recovery_schema() -> Value {
             }
         },
         "required": [
-            "action", "reason", "path", "start_line", "limit", "change_index", "chunk_index"
+            "action", "reason", "items", "change_index", "chunk_index"
         ]
     })
 }

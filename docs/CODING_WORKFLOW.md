@@ -156,6 +156,13 @@ placement instead of silently downgrading. The Server validates successful
 Runner match metadata against its parsed patch; missing or contradictory
 success metadata is surfaced as `outcome_unknown`, not as clean success.
 
+For a deterministic zero-write `context_mismatch`, a current Runner may also
+return a body-free `match_diagnostic`. The Server validates it against the parsed
+patch before exposing it. When the result includes `recovery.action=read_files`,
+pass `recovery.items` to `read_files` for the same project, inspect that bounded
+current-source window, then regenerate the whole patch. Do not use this recovery
+path for `outcome_unknown`; reconcile the workspace first.
+
 **Prefer structured validation.** Use focused tools such as `cargo_test`,
 `go_test`, or other structured validation when they express the check you need.
 Use a shell only when the structured surface does not cover the validation.

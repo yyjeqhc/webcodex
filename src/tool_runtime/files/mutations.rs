@@ -1096,6 +1096,8 @@ fn sanitize_apply_patch_strict_rejection(
             "match_diagnostic",
             "capability",
             "recovery_action",
+            "recovery_kind",
+            "recovery_tool",
             "retry_guidance",
             "error",
         ] {
@@ -3096,11 +3098,15 @@ mod tests {
             "items": [{"path": "SOURCE_PRIVATE_TOKEN", "start_line": 1, "limit": 999999}]
         });
         payload["strict_match_diagnostic"] = json!({"source": "SOURCE_PRIVATE_TOKEN"});
+        payload["recovery_kind"] = json!("reobserve");
+        payload["recovery_tool"] = json!("list_jobs");
 
         let result = apply_patch_agent_stdout_result(&payload.to_string(), &patch, false, true);
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(!serialized.contains("SOURCE_PRIVATE_TOKEN"));
         assert!(!serialized.contains("PATCH_PRIVATE_TOKEN"));
+        assert!(result.output.get("recovery_kind").is_none());
+        assert!(result.output.get("recovery_tool").is_none());
         assert_eq!(result.output["recovery"]["items"][0]["path"], "file.txt");
     }
 

@@ -5,6 +5,7 @@ mod support;
 mod agent_tasks;
 mod apply_text_edits;
 mod assignment_fence;
+mod builtin_coding_workflow;
 mod checkpoint;
 mod coding_task;
 mod coding_task_semantic_navigation;

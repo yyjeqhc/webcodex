@@ -65,6 +65,10 @@ const activityKeys: Record<ActivityEntry["event_kind"], MessageKey> = {
   regular_tunnel_ready: "activity.regularTunnelReady",
   regular_tunnel_stopped: "activity.regularTunnelStopped",
   runtime_stopped: "activity.runtimeStopped",
+  operation_started: "activity.operationStarted",
+  operation_cancel_requested: "activity.operationCancelRequested",
+  operation_cancelled: "activity.operationCancelled",
+  operation_failed: "activity.operationFailed",
 };
 
 export function activityMessage(entry: ActivityEntry, t: Translate) {
@@ -137,6 +141,9 @@ export function desktopErrorPresentation(error: DesktopError, t: Translate): Err
   if (processErrors.has(error.code)) return { title: t("error.processTitle"), action: t("error.processAction") };
   if (error.code === "webcodex_contract_invalid") return { title: t("error.contractTitle"), action: t("error.contractAction") };
   if (error.code === "unsupported_topology" || error.code === "quick_share_provider_invalid") return { title: t("error.topologyTitle"), action: t("error.topologyAction") };
+  if (error.code === "desktop_operation_busy" || error.code === "desktop_operation_not_cancellable") return { title: t("error.operationBusyTitle"), action: t("error.operationBusyAction") };
+  if (error.code === "desktop_operation_not_current") return { title: t("error.operationStaleTitle"), action: t("error.operationStaleAction") };
+  if (error.code === "desktop_operation_cancelled") return { title: t("error.operationCancelledTitle"), action: t("error.operationCancelledAction") };
   return { title: t("error.fallbackTitle"), action: t("error.fallbackAction") };
 }
 

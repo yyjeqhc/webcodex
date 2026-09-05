@@ -118,6 +118,26 @@ export interface RegularTunnelState {
   ready_for_chatgpt: boolean;
 }
 
+export type DesktopOperationKind =
+  | "local_setup"
+  | "remote_setup"
+  | "quick_share_start"
+  | "quick_share_stop"
+  | "regular_tunnel_start"
+  | "regular_tunnel_stop"
+  | "local_runtime_stop"
+  | "runtime_refresh";
+
+export type DesktopOperationPhase = "running" | "cancelling";
+
+export interface DesktopOperation {
+  id: string;
+  kind: DesktopOperationKind;
+  phase: DesktopOperationPhase;
+  started_at_ms: number;
+  cancellable: boolean;
+}
+
 export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
@@ -125,6 +145,7 @@ export interface DesktopState {
   binaries?: BinaryInfo | null;
   quick_share?: QuickShareState | null;
   regular_tunnel?: RegularTunnelState | null;
+  current_operation?: DesktopOperation | null;
   activity_sequence: number;
   openai_tunnel_configured: boolean;
   regular_tunnel_available: boolean;
@@ -158,7 +179,11 @@ export interface ActivityEntry {
     | "regular_tunnel_starting"
     | "regular_tunnel_ready"
     | "regular_tunnel_stopped"
-    | "runtime_stopped";
+    | "runtime_stopped"
+    | "operation_started"
+    | "operation_cancel_requested"
+    | "operation_cancelled"
+    | "operation_failed";
   message: string;
 }
 

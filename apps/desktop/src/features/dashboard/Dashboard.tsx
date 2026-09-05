@@ -25,6 +25,7 @@ export function Dashboard({
 }: DashboardProps) {
   const { t } = useLocale();
   const isQuickShare = state.topology?.experience === "quick_share";
+  const operationBusy = Boolean(state.current_operation);
   const summary = readinessSummary(state.readiness.summary_kind, state.readiness.summary, t);
   const nextAction = readinessNextAction(
     state.readiness.next_action_kind,
@@ -47,7 +48,7 @@ export function Dashboard({
         <button
           className="secondary-button"
           onClick={onRefresh}
-          disabled={refreshing}
+          disabled={refreshing || operationBusy}
           data-webcodex-action="refresh-runtime"
         >
           {refreshing ? t("home.checking") : t("home.refresh")}
@@ -102,14 +103,14 @@ export function Dashboard({
             {state.quick_share.mcp_url && <code>{state.quick_share.mcp_url}</code>}
             <span>{quickShareClipboardLabel(state.quick_share.clipboard_state, state.quick_share.clipboard_contains, t)}</span>
           </div>
-          <button className="danger-button" onClick={onStopQuickShare} data-webcodex-action="stop-quick-share">{t("home.stopShare")}</button>
+          <button className="danger-button" onClick={onStopQuickShare} disabled={operationBusy} data-webcodex-action="stop-quick-share">{t("home.stopShare")}</button>
         </div>
       )}
 
       {!isQuickShare && state.topology && (
         <div className="runtime-actions">
           <span>{t("home.runtimeOwnership")}</span>
-          <button className="secondary-button" onClick={onStopRuntime} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
+          <button className="secondary-button" onClick={onStopRuntime} disabled={operationBusy} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
         </div>
       )}
     </section>

@@ -32,6 +32,10 @@ export const desktopApi = {
   startRegularTunnel: () => invoke<DesktopState>("start_regular_tunnel"),
   stopRegularTunnel: () => invoke<DesktopState>("stop_regular_tunnel"),
   stopLocalRuntime: () => invoke<DesktopState>("stop_local_runtime"),
+  cancelOperation: (operationId: string) =>
+    invoke<DesktopState>("cancel_desktop_operation", {
+      request: { operationId },
+    }),
   activity: () => invoke<ActivityEntry[]>("get_bounded_activity"),
 };
 

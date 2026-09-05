@@ -23,8 +23,10 @@ export function ConnectionPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const topology = state.topology;
+  const mutationBusy = busy || Boolean(state.current_operation);
 
   const run = async (operation: () => Promise<DesktopState>) => {
+    if (state.current_operation) return;
     setBusy(true);
     setError(null);
     try {
@@ -74,7 +76,7 @@ export function ConnectionPanel({
     <section
       className="page-section"
       aria-labelledby="connection-title"
-      aria-busy={busy}
+      aria-busy={mutationBusy}
       data-webcodex-page="connection"
     >
       <PageHeading />
@@ -97,11 +99,11 @@ export function ConnectionPanel({
           </div>
           <button
             className="danger-button"
-            disabled={busy}
+            disabled={mutationBusy}
             onClick={() => void run(desktopApi.stopRegularTunnel)}
             data-webcodex-action="stop-regular-tunnel"
           >
-            {busy ? t("common.checking") : t("connection.stopTunnel")}
+            {mutationBusy ? t("common.checking") : t("connection.stopTunnel")}
           </button>
         </article>
       ) : (
@@ -121,7 +123,7 @@ export function ConnectionPanel({
               onChange={setProvider}
               title={t("common.localOnly")}
               description={t("connection.localDescription")}
-              disabled={busy}
+              disabled={mutationBusy}
             />
             <ProviderOption
               id="regular-provider-openai"
@@ -130,7 +132,7 @@ export function ConnectionPanel({
               onChange={setProvider}
               title="OpenAI Secure Tunnel"
               description={state.openai_tunnel_configured ? t("connection.openaiDescription") : t("connection.openaiNotConfigured")}
-              disabled={busy || !state.openai_tunnel_configured}
+              disabled={mutationBusy || !state.openai_tunnel_configured}
             />
             <ProviderOption
               id="regular-provider-cloudflare"
@@ -151,21 +153,21 @@ export function ConnectionPanel({
             <button
               className="primary-button"
               type="submit"
-              disabled={busy || !canStart}
+              disabled={mutationBusy || !canStart}
               data-webcodex-action="start-regular-tunnel"
             >
-              {busy ? t("connection.tunnelStarting") : t("connection.startTunnel")}
+              {mutationBusy ? t("connection.tunnelStarting") : t("connection.startTunnel")}
             </button>
           )}
           {provider === "local" && state.regular_tunnel && (
             <button
               className="secondary-button"
               type="button"
-              disabled={busy}
+              disabled={mutationBusy}
               onClick={() => void run(desktopApi.stopRegularTunnel)}
               data-webcodex-action="stop-regular-tunnel"
             >
-              {busy ? t("common.checking") : t("connection.useLocalOnly")}
+              {mutationBusy ? t("common.checking") : t("connection.useLocalOnly")}
             </button>
           )}
         </form>

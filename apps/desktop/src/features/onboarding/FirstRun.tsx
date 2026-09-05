@@ -38,6 +38,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
   const [provider, setProvider] = useState<QuickShareProvider>("cloudflare");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const mutationBusy = busy || Boolean(state.current_operation);
   const canReuseRemoteEnrollment = Boolean(
     mode === "remote" &&
       project?.runtime_project_id &&
@@ -62,7 +63,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
   };
 
   const run = async () => {
-    if (!mode || !project) return;
+    if (!mode || !project || state.current_operation) return;
     setBusy(true);
     setError(null);
     try {
@@ -120,14 +121,14 @@ export function FirstRun({ state, onState }: FirstRunProps) {
     <form
       className="setup-shell"
       aria-labelledby="setup-title"
-      aria-busy={busy}
+      aria-busy={mutationBusy}
       data-webcodex-page="setup"
       onSubmit={(event) => {
         event.preventDefault();
         void run();
       }}
     >
-      <button type="button" className="back-button" onClick={() => !busy && setMode(null)} data-webcodex-action="show-setup-options">
+      <button type="button" className="back-button" onClick={() => setMode(null)} data-webcodex-action="show-setup-options">
         {t("setup.back")}
       </button>
       <div className="eyebrow">{modeLabel(mode, t)}</div>
@@ -144,7 +145,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
               value={serverUrl}
               onChange={(event) => setServerUrl(event.target.value)}
               placeholder="https://webcodex.example.com"
-              disabled={busy}
+              disabled={mutationBusy}
               aria-describedby="setup-server-url-help"
               aria-invalid={serverInvalid || undefined}
               aria-errormessage={serverInvalid ? "setup-error" : undefined}
@@ -168,7 +169,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
                 placeholder="wc_pair_…"
                 autoComplete="off"
                 spellCheck={false}
-                disabled={busy}
+                disabled={mutationBusy}
                 aria-describedby="setup-pairing-code-help"
                 aria-invalid={pairingInvalid || undefined}
                 aria-errormessage={pairingInvalid ? "setup-error" : undefined}
@@ -194,7 +195,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
                 value={value}
                 checked={provider === value}
                 onChange={() => setProvider(value)}
-                disabled={busy}
+                disabled={mutationBusy}
                 aria-describedby={`quick-share-provider-${value}-description`}
                 data-webcodex-control={`quick-share-provider-${value}`}
               />
@@ -220,7 +221,7 @@ export function FirstRun({ state, onState }: FirstRunProps) {
             </span>
           )}
         </div>
-        <button type="button" className="secondary-button" onClick={chooseProject} disabled={busy} data-webcodex-action="choose-project">
+        <button type="button" className="secondary-button" onClick={chooseProject} disabled={mutationBusy} data-webcodex-action="choose-project">
           {project ? t("setup.changeFolder") : t("setup.chooseFolder")}
         </button>
       </div>
@@ -249,17 +250,17 @@ export function FirstRun({ state, onState }: FirstRunProps) {
           type="submit"
           className="primary-button"
           disabled={
-            busy ||
+            mutationBusy ||
             !project ||
             (mode === "remote" &&
               (!serverUrl.trim() || (!canReuseRemoteEnrollment && !pairingCode.trim())))
           }
           data-webcodex-action={mode === "local" ? "configure-local" : mode === "remote" ? "configure-remote" : "start-quick-share"}
         >
-          {busy ? t("common.checking") : actionLabel(mode, canReuseRemoteEnrollment, t)}
+          {mutationBusy ? t("common.checking") : actionLabel(mode, canReuseRemoteEnrollment, t)}
         </button>
         <span className="action-help">
-          {busy ? t("setup.verifying") : t("setup.noTerminal")}
+          {mutationBusy ? t("setup.verifying") : t("setup.noTerminal")}
         </span>
       </div>
     </form>

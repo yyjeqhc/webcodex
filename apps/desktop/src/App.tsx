@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { desktopApi } from "./lib/desktop-api";
-import type { ActivityEntry, DesktopError, DesktopState } from "./models/topology";
+import type {
+  ActivityEntry,
+  DesktopError,
+  DesktopOperationKind,
+  DesktopState,
+} from "./models/topology";
 import { FirstRun } from "./features/onboarding/FirstRun";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { ProjectsPanel } from "./features/projects/ProjectsPanel";
@@ -13,6 +18,7 @@ import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presenta
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
 const REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS = 1_500;
+const ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS = 1_000;
 
 export default function App() {
   const { locale, setLocale, t } = useLocale();
@@ -21,40 +27,74 @@ export default function App() {
   const [navigation, setNavigation] = useState<Navigation>("home");
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const [cancelSubmittingId, setCancelSubmittingId] = useState<string | null>(null);
+  const stateVersionRef = useRef(0);
   const hasRegularTunnel = Boolean(state?.regular_tunnel);
+  const hasCurrentOperation = Boolean(state?.current_operation);
+  const hasLoadedState = Boolean(state);
 
-  const load = useCallback(async () => {
-    const initial = await desktopApi.getState();
-    const next = initial.topology ? await desktopApi.refresh().catch(() => initial) : initial;
+  const commitState = useCallback((next: DesktopState) => {
+    stateVersionRef.current += 1;
     setState(next);
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const initial = await desktopApi.getState();
+        if (cancelled) return;
+        commitState(initial);
+        if (!initial.topology || initial.current_operation) return;
+
+        const observedVersion = stateVersionRef.current;
+        setRefreshing(true);
+        try {
+          const next = await desktopApi.refresh();
+          if (!cancelled && stateVersionRef.current === observedVersion) {
+            commitState(next);
+          }
+        } catch {
+          // Startup probing is best-effort. The fast published snapshot remains
+          // usable while an external status probe is slow or unavailable.
+        } finally {
+          if (!cancelled) setRefreshing(false);
+        }
+      } catch (value) {
+        if (!cancelled) setError(normalizeDesktopError(value));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [commitState]);
 
   useEffect(() => {
-    if (!hasRegularTunnel) return;
+    if (!hasLoadedState) return;
 
     let cancelled = false;
     let timeoutId: number | undefined;
+    const interval = hasCurrentOperation || refreshing
+      ? ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS
+      : REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS;
 
     const scheduleObservation = () => {
       timeoutId = window.setTimeout(() => {
         void (async () => {
+          const observedVersion = stateVersionRef.current;
           try {
             const next = await desktopApi.getState();
-            if (!cancelled) {
-              setState((current) => (current?.regular_tunnel ? next : current));
+            if (!cancelled && stateVersionRef.current === observedVersion) {
+              commitState(next);
             }
           } catch {
-            // Ownership observation is best-effort. A transient invoke failure
-            // must not create an error storm or a second concurrent observer.
+            // Observation is best-effort. A transient invoke failure must not
+            // create an error storm or a second concurrent observer.
           } finally {
             if (!cancelled) scheduleObservation();
           }
         })();
-      }, REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS);
+      }, interval);
     };
 
     scheduleObservation();
@@ -62,18 +102,18 @@ export default function App() {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [hasRegularTunnel]);
+  }, [commitState, hasCurrentOperation, hasLoadedState, hasRegularTunnel, refreshing]);
 
   useEffect(() => {
     if (navigation === "activity") {
-      void desktopApi.activity().then(setActivity);
+      void desktopApi.activity().then(setActivity).catch(() => undefined);
     }
   }, [navigation, state?.activity_sequence]);
 
   const runStateOperation = async (operation: () => Promise<DesktopState>) => {
     setError(null);
     try {
-      setState(await operation());
+      commitState(await operation());
     } catch (value) {
       setError(normalizeDesktopError(value));
     }
@@ -85,6 +125,20 @@ export default function App() {
       await runStateOperation(desktopApi.refresh);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const cancelCurrentOperation = async () => {
+    const observed = state?.current_operation;
+    if (!observed || !observed.cancellable || observed.phase === "cancelling") return;
+    setCancelSubmittingId(observed.id);
+    setError(null);
+    try {
+      commitState(await desktopApi.cancelOperation(observed.id));
+    } catch (value) {
+      setError(normalizeDesktopError(value));
+    } finally {
+      setCancelSubmittingId((current) => current === observed.id ? null : current);
     }
   };
 
@@ -133,9 +187,44 @@ export default function App() {
       </aside>
 
       <main className="main-content">
+        {state.current_operation && (
+          <section
+            className={`operation-status ${state.current_operation.phase}`}
+            role="status"
+            aria-live="polite"
+            aria-label={t("operation.statusLabel")}
+            data-webcodex-operation={state.current_operation.kind}
+          >
+            <div>
+              <span className="section-kicker">
+                {state.current_operation.phase === "cancelling"
+                  ? t("operation.cancelling")
+                  : t("operation.running")}
+              </span>
+              <strong>{operationLabel(state.current_operation.kind, t)}</strong>
+              <span>{t("operation.cancelNote")}</span>
+            </div>
+            {state.current_operation.cancellable && (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={
+                  state.current_operation.phase === "cancelling" ||
+                  cancelSubmittingId === state.current_operation.id
+                }
+                onClick={() => void cancelCurrentOperation()}
+                data-webcodex-action="cancel-desktop-operation"
+              >
+                {state.current_operation.phase === "cancelling"
+                  ? t("operation.cancelling")
+                  : t("operation.cancel")}
+              </button>
+            )}
+          </section>
+        )}
         {error && <AppError error={error} />}
         {navigation === "home" && (needsSetup ? (
-          <FirstRun state={state} onState={setState} />
+          <FirstRun state={state} onState={commitState} />
         ) : (
           <Dashboard
             state={state}
@@ -146,12 +235,28 @@ export default function App() {
           />
         ))}
         {navigation === "projects" && <ProjectsPanel state={state} />}
-        {navigation === "connection" && <ConnectionPanel state={state} onState={setState} />}
+        {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "settings" && <SettingsPanel state={state} />}
       </main>
     </div>
   );
+}
+
+function operationLabel(
+  kind: DesktopOperationKind,
+  t: ReturnType<typeof useLocale>["t"],
+) {
+  switch (kind) {
+    case "local_setup": return t("operation.localSetup");
+    case "remote_setup": return t("operation.remoteSetup");
+    case "quick_share_start": return t("operation.quickShareStart");
+    case "quick_share_stop": return t("operation.quickShareStop");
+    case "regular_tunnel_start": return t("operation.regularTunnelStart");
+    case "regular_tunnel_stop": return t("operation.regularTunnelStop");
+    case "local_runtime_stop": return t("operation.localRuntimeStop");
+    case "runtime_refresh": return t("operation.runtimeRefresh");
+  }
 }
 
 function AppError({ error }: { error: DesktopError }) {

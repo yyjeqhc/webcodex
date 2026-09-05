@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   stopLocalRuntime: vi.fn(),
   startRegularTunnel: vi.fn(),
   stopRegularTunnel: vi.fn(),
+  cancelOperation: vi.fn(),
   inspectProject: vi.fn(),
 }));
 
@@ -83,6 +84,51 @@ const firstRunState: DesktopState = {
   openai_tunnel_configured: true,
   regular_tunnel_available: true,
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function setupState(): DesktopState {
+  return {
+    ...readyState,
+    readiness: {
+      ...readyState.readiness,
+      server: "stopped",
+      runner: "stopped",
+      exposure: "disabled",
+      project: "configured",
+      runtime_ready: false,
+      ready_for_chatgpt: false,
+      summary: "WebCodex Service needs attention",
+      summary_kind: "service_needs_attention",
+      next_action: "Start or reconnect the WebCodex Service.",
+      next_action_kind: "start_or_reconnect_service",
+    },
+    current_operation: null,
+  };
+}
+
+function localSetupOperationState(
+  phase: "running" | "cancelling" = "running",
+  activitySequence = 1,
+): DesktopState {
+  return {
+    ...setupState(),
+    activity_sequence: activitySequence,
+    current_operation: {
+      id: "desktop-operation-a",
+      kind: "local_setup",
+      phase,
+      started_at_ms: 1_000,
+      cancellable: true,
+    },
+  };
+}
 
 function renderApp() {
   return render(
@@ -236,6 +282,125 @@ describe("semantic Desktop UI", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "安全隧道已建立，连接信息需要处理" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动安全隧道" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止安全隧道" })).toBeInTheDocument();
+  });
+
+  it("keeps navigation and Activity usable while a pending setup is globally observable", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial = setupState();
+      const running = localSetupOperationState("running", 1);
+      const runningWithNewActivity = localSetupOperationState("running", 2);
+      const setupResult = deferred<DesktopState>();
+      api.getState
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValueOnce(running)
+        .mockResolvedValueOnce(runningWithNewActivity)
+        .mockResolvedValue(runningWithNewActivity);
+      api.refresh.mockResolvedValue(initial);
+      api.configureLocal.mockReturnValue(setupResult.promise);
+      api.activity.mockResolvedValue([]);
+
+      const view = renderApp();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+      expect(api.configureLocal).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500);
+      });
+
+      const operationStatus = screen.getByRole("status", { name: "当前 Desktop 操作" });
+      expect(operationStatus).toHaveTextContent("正在配置本机 WebCodex");
+      expect(operationStatus).toHaveTextContent("停止当前操作不会自动重复执行尚未确认的步骤");
+
+      fireEvent.click(screen.getByRole("button", { name: "活动" }));
+      expect(screen.getByRole("heading", { level: 1, name: "最近的运行活动" })).toBeInTheDocument();
+      expect(api.activity).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(api.activity).toHaveBeenCalledTimes(2);
+
+      setupResult.resolve(readyState);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole("status", { name: "当前 Desktop 操作" })).not.toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels only the observed operation id and presents the cancelling phase", async () => {
+    const running = localSetupOperationState("running", 1);
+    const cancelling = localSetupOperationState("cancelling", 2);
+    api.getState.mockResolvedValueOnce(running).mockResolvedValue(cancelling);
+    api.cancelOperation.mockResolvedValue(cancelling);
+
+    renderApp();
+    const cancel = await screen.findByRole("button", { name: "停止当前操作" });
+    fireEvent.click(cancel);
+
+    await waitFor(() => {
+      expect(api.cancelOperation).toHaveBeenCalledWith("desktop-operation-a");
+    });
+    const cancellingStatus = screen.getByRole("status", { name: "当前 Desktop 操作" });
+    expect(cancellingStatus).toHaveTextContent("正在停止当前操作…");
+    const disabledCancel = screen.getByRole("button", { name: "正在停止当前操作…" });
+    expect(disabledCancel).toBeDisabled();
+    fireEvent.click(disabledCancel);
+    expect(api.cancelOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let an older polling response resurrect a completed operation", async () => {
+    vi.useFakeTimers();
+    try {
+      const running = localSetupOperationState("running", 1);
+      const stalePoll = deferred<DesktopState>();
+      const terminal = { ...readyState, current_operation: null, activity_sequence: 2 };
+      api.getState
+        .mockResolvedValueOnce(running)
+        .mockReturnValueOnce(stalePoll.promise)
+        .mockResolvedValue(terminal);
+      api.cancelOperation.mockResolvedValue(terminal);
+
+      const view = renderApp();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("status", { name: "当前 Desktop 操作" })).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(api.getState).toHaveBeenCalledTimes(2);
+
+      fireEvent.click(screen.getByRole("button", { name: "停止当前操作" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole("status", { name: "当前 Desktop 操作" })).not.toBeInTheDocument();
+
+      stalePoll.resolve(running);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole("status", { name: "当前 Desktop 操作" })).not.toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("revokes stale connected state from background tunnel ownership observation without manual refresh", async () => {

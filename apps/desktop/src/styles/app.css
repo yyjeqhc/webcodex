@@ -107,6 +107,11 @@ button:disabled { opacity: .48; cursor: default; }
 .error-card details { margin-top: 4px; }
 .error-card details p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .app-error { width: min(960px, 100%); margin: 0 auto 16px; }
+.operation-status { width: min(960px, 100%); margin: 0 auto 16px; padding: 14px 16px; border: 1px solid #d6dcde; border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: space-between; gap: 18px; box-shadow: 0 1px 2px rgba(22,26,29,.025); }
+.operation-status > div { min-width: 0; display: grid; gap: 4px; }
+.operation-status strong { font-size: 12px; }
+.operation-status > div > span:last-child { color: #7d858a; font-size: 10px; line-height: 1.45; }
+.operation-status.cancelling { background: #fafafa; border-color: #dfe3e5; }
 
 .page-heading-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
 .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -166,7 +171,7 @@ button:disabled { opacity: .48; cursor: default; }
   .app-shell { grid-template-columns: 190px minmax(0, 1fr); }
   .main-content { padding: 34px 24px 56px; }
   .status-grid, .two-column-grid, .form-card, .provider-row { grid-template-columns: 1fr; }
-  .readiness-banner, .runtime-actions, .handoff-card, .project-picker-card { align-items: flex-start; flex-direction: column; }
+  .readiness-banner, .runtime-actions, .handoff-card, .project-picker-card, .operation-status { align-items: flex-start; flex-direction: column; }
   .readiness-banner > span { text-align: left; }
   .setting-row { grid-template-columns: 1fr; }
 }

@@ -11,6 +11,7 @@ use super::tool_inputs::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
+use webcodex_core::apply_patch_shared::ApplyPatchMatchingMode;
 use webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN;
 use webcodex_core::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
@@ -699,7 +700,7 @@ pub enum ToolCall {
         #[serde(default)]
         dry_run: Option<bool>,
         #[serde(default)]
-        strict_matching: Option<bool>,
+        matching_mode: Option<ApplyPatchMatchingMode>,
         #[serde(default)]
         session_id: Option<String>,
     },

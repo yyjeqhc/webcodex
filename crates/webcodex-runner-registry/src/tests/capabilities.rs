@@ -87,6 +87,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::StructuredCargoTestExecutionPolicy,
         RunnerFeature::ApplyTextEditLineScope,
         RunnerFeature::ApplyPatchMatchMetadata,
+        RunnerFeature::ApplyPatchMatchingMode,
         RunnerFeature::ApplyPatchStrictMatching,
         RunnerFeature::SshShell,
         RunnerFeature::PersistentShell,
@@ -150,6 +151,19 @@ async fn patch_contract_capabilities_require_their_prerequisites() {
     assert_eq!(
         error,
         "apply_patch_strict_matching capability requires apply_patch_match_metadata capability"
+    );
+
+    let mut registration =
+        runner_registration("matching-mode-without-metadata", "inst-c", Vec::new());
+    registration.capabilities = with_wire_feature(
+        &with_wire_feature(&v2_baseline_capabilities(), RunnerFeature::ApplyPatch, true),
+        RunnerFeature::ApplyPatchMatchingMode,
+        true,
+    );
+    let error = registry.register(registration).await.unwrap_err();
+    assert_eq!(
+        error,
+        "apply_patch_matching_mode capability requires apply_patch_match_metadata capability"
     );
 }
 

@@ -228,8 +228,11 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // The current patch success metadata contract is runtime-only and
             // must be advertised by the binary that actually implements it.
             apply_patch_match_metadata: false,
+            // Enum-based matching semantics are runtime-only and current
+            // Servers require an explicit registration capability.
+            apply_patch_matching_mode: false,
             // Strict patch matching is also runtime-only and must be explicitly
-            // advertised by a binary that enforces it before mutation.
+            // advertised for rolling compatibility with older Servers.
             apply_patch_strict_matching: false,
             git: true,
             jobs: true,

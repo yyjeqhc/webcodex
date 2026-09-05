@@ -7,12 +7,14 @@ use crate::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
     restore_apply_text_line_endings,
 };
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub const MAX_CODEX_PATCH_BYTES: usize = 256 * 1024;
 pub const MAX_CODEX_PATCH_FILE_CHANGES: usize = 64;
 pub const MAX_CODEX_PATCH_CHUNKS_PER_FILE: usize = 256;
 pub const MAX_CODEX_PATCH_RECOVERY_READ_LINES: usize = 64;
+pub const MAX_CODEX_PATCH_CANDIDATE_POSITIONS: usize = 4;
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
@@ -81,6 +83,7 @@ pub enum CodexPatchMatchMode {
     Exact,
     TrimEnd,
     Trim,
+    Normalized,
 }
 
 impl CodexPatchMatchMode {
@@ -89,7 +92,32 @@ impl CodexPatchMatchMode {
             Self::Exact => "exact",
             Self::TrimEnd => "trim_end",
             Self::Trim => "trim",
+            Self::Normalized => "normalized",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyPatchMatchingMode {
+    FirstMatch,
+    Unique,
+    ExactUnique,
+}
+
+impl ApplyPatchMatchingMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FirstMatch => "first_match",
+            Self::Unique => "unique",
+            Self::ExactUnique => "exact_unique",
+        }
+    }
+}
+
+impl Default for ApplyPatchMatchingMode {
+    fn default() -> Self {
+        Self::Unique
     }
 }
 
@@ -110,14 +138,20 @@ impl CodexPatchMatchSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CodexPatchStrictMatchRejection {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexPatchMatchRejection {
+    pub requested_matching_mode: ApplyPatchMatchingMode,
     pub match_mode: CodexPatchMatchMode,
     pub match_source: CodexPatchMatchSource,
-    /// One-based source line where the rejected match candidate starts.
+    /// One-based selected position. This is authoritative only when the selected
+    /// tier has one candidate (for example an exact_unique fuzzy rejection).
     pub matched_start_line: usize,
     /// Number of candidates at this selected match tier.
     pub candidate_count: usize,
+    /// Bounded, ascending candidate positions for recovery observation. These
+    /// are equal candidates, never a winner/preference signal.
+    pub candidate_start_lines: Vec<usize>,
+    pub candidate_positions_truncated: bool,
     /// One-based first candidate position considered for this match tier.
     pub search_start_line: usize,
     /// Number of source lines in the canonicalized file used for matching.
@@ -134,12 +168,15 @@ pub struct CodexPatchChunkMatch {
     /// Number of candidates at the selected match mode for match_source.
     /// Append operations do not perform text matching and report None.
     pub candidate_count: Option<usize>,
+    /// True only when every textual positioning decision for this chunk was
+    /// unique at its selected tier. Unanchored append is unique-safe.
+    pub unique_match: bool,
     /// True only when every text match used to position this chunk was exact
     /// and unique. Unanchored append performs no text match and is strict-safe.
     pub strict_match: bool,
-    /// The specific non-strict component that caused strict positioning to fail.
+    /// The positioning decision that violates the requested matching mode.
     /// Ambiguity is preferred over a unique fuzzy component when both exist.
-    pub strict_rejection: Option<CodexPatchStrictMatchRejection>,
+    pub match_rejection: Option<CodexPatchMatchRejection>,
 }
 
 /// Body-free structural hint for a failed apply_patch text search.
@@ -504,52 +541,85 @@ pub fn parse_codex_patch(patch: &str) -> Result<CodexPatch, CodexPatchError> {
     Ok(CodexPatch { hunks })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SequenceMatch {
     index: usize,
     mode: CodexPatchMatchMode,
     candidate_count: usize,
+    candidate_positions: Vec<usize>,
+    search_start: usize,
 }
 
 impl SequenceMatch {
-    fn is_exact_unique(self) -> bool {
+    fn is_unique(&self) -> bool {
+        self.candidate_count == 1
+    }
+
+    fn is_exact_unique(&self) -> bool {
         self.mode == CodexPatchMatchMode::Exact && self.candidate_count == 1
     }
 }
 
-fn strict_match_rejection_fact(
-    matched: SequenceMatch,
+fn match_rejection_fact(
+    matched: &SequenceMatch,
+    requested_matching_mode: ApplyPatchMatchingMode,
     match_source: CodexPatchMatchSource,
-    search_start: usize,
     source_line_count: usize,
     pattern_len: usize,
-) -> Option<CodexPatchStrictMatchRejection> {
-    if matched.is_exact_unique() || pattern_len == 0 || pattern_len > source_line_count {
+) -> Option<CodexPatchMatchRejection> {
+    let satisfied = match requested_matching_mode {
+        ApplyPatchMatchingMode::FirstMatch => true,
+        ApplyPatchMatchingMode::Unique => matched.is_unique(),
+        ApplyPatchMatchingMode::ExactUnique => matched.is_exact_unique(),
+    };
+    if satisfied || pattern_len == 0 || pattern_len > source_line_count {
         return None;
     }
-    let last_start = source_line_count.checked_sub(pattern_len)?;
-    let effective_start = search_start.min(last_start);
-    Some(CodexPatchStrictMatchRejection {
+    Some(CodexPatchMatchRejection {
+        requested_matching_mode,
         match_mode: matched.mode,
         match_source,
         matched_start_line: matched.index.checked_add(1)?,
         candidate_count: matched.candidate_count,
-        search_start_line: effective_start.checked_add(1)?,
+        candidate_start_lines: matched
+            .candidate_positions
+            .iter()
+            .map(|index| index + 1)
+            .collect(),
+        candidate_positions_truncated: matched.candidate_count > matched.candidate_positions.len(),
+        search_start_line: matched.search_start.checked_add(1)?,
         source_line_count,
     })
 }
 
-fn select_strict_match_rejection(
-    first: Option<CodexPatchStrictMatchRejection>,
-    second: Option<CodexPatchStrictMatchRejection>,
-) -> Option<CodexPatchStrictMatchRejection> {
+fn select_match_rejection(
+    first: Option<CodexPatchMatchRejection>,
+    second: Option<CodexPatchMatchRejection>,
+) -> Option<CodexPatchMatchRejection> {
     let candidates = [first, second];
     candidates
         .iter()
         .flatten()
         .find(|candidate| candidate.candidate_count > 1)
-        .copied()
+        .cloned()
         .or_else(|| candidates.into_iter().flatten().next())
+}
+
+fn normalize_codex_patch_match_text(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|character| match character {
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+            '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
+            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
+            | '\u{3000}' => ' ',
+            other => other,
+        })
+        .collect()
 }
 
 fn seek_sequence(
@@ -557,12 +627,16 @@ fn seek_sequence(
     pattern: &[String],
     start: usize,
     eof: bool,
+    matching_mode: ApplyPatchMatchingMode,
 ) -> Option<SequenceMatch> {
     if pattern.is_empty() {
+        let index = start.min(lines.len());
         return Some(SequenceMatch {
-            index: start.min(lines.len()),
+            index,
             mode: CodexPatchMatchMode::Exact,
             candidate_count: 1,
+            candidate_positions: vec![index],
+            search_start: index,
         });
     }
     if pattern.len() > lines.len() {
@@ -579,6 +653,10 @@ fn seek_sequence(
                 CodexPatchMatchMode::Exact => candidate == expected,
                 CodexPatchMatchMode::TrimEnd => candidate.trim_end() == expected.trim_end(),
                 CodexPatchMatchMode::Trim => candidate.trim() == expected.trim(),
+                CodexPatchMatchMode::Normalized => {
+                    normalize_codex_patch_match_text(candidate)
+                        == normalize_codex_patch_match_text(expected)
+                }
             })
     };
 
@@ -586,12 +664,27 @@ fn seek_sequence(
         CodexPatchMatchMode::Exact,
         CodexPatchMatchMode::TrimEnd,
         CodexPatchMatchMode::Trim,
+        CodexPatchMatchMode::Normalized,
     ] {
-        let mut selected_index = (eof && matches_at(last_start, mode)).then_some(last_start);
+        // Unique treats the EOF marker as a structural eligibility fence: only
+        // the trailing candidate participates in uniqueness. FirstMatch keeps
+        // the legacy/Codex-like tail preference while retaining the ordinary
+        // search range; ExactUnique preserves the existing strict observable
+        // candidate-count semantics.
+        let structural_eof = eof && matching_mode == ApplyPatchMatchingMode::Unique;
+        let effective_start = if structural_eof { last_start } else { start };
+        let mut selected_index = (eof
+            && matching_mode != ApplyPatchMatchingMode::Unique
+            && matches_at(last_start, mode))
+        .then_some(last_start);
         let mut candidate_count = 0usize;
-        for index in start..=last_start {
+        let mut candidate_positions = Vec::with_capacity(MAX_CODEX_PATCH_CANDIDATE_POSITIONS);
+        for index in effective_start..=last_start {
             if matches_at(index, mode) {
                 candidate_count = candidate_count.saturating_add(1);
+                if candidate_positions.len() < MAX_CODEX_PATCH_CANDIDATE_POSITIONS {
+                    candidate_positions.push(index);
+                }
                 if selected_index.is_none() {
                     selected_index = Some(index);
                 }
@@ -602,6 +695,8 @@ fn seek_sequence(
                 index,
                 mode,
                 candidate_count,
+                candidate_positions,
+                search_start: effective_start,
             });
         }
     }
@@ -692,6 +787,20 @@ pub fn derive_codex_patch_update_with_matches(
     path: &str,
     chunks: &[CodexPatchChunk],
 ) -> Result<CodexPatchUpdate, CodexPatchError> {
+    derive_codex_patch_update_with_matching_mode(
+        original,
+        path,
+        chunks,
+        ApplyPatchMatchingMode::FirstMatch,
+    )
+}
+
+pub fn derive_codex_patch_update_with_matching_mode(
+    original: &str,
+    path: &str,
+    chunks: &[CodexPatchChunk],
+    matching_mode: ApplyPatchMatchingMode,
+) -> Result<CodexPatchUpdate, CodexPatchError> {
     let line_ending = detect_apply_text_line_ending(original).map_err(|message| {
         CodexPatchError::new("unsupported_file", None, format!("{path}: {message}"))
     })?;
@@ -712,13 +821,13 @@ pub fn derive_codex_patch_update_with_matches(
     let mut line_index = 0usize;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         let mut context_match = None;
-        let context_search_start = line_index;
         if let Some(context) = chunk.change_context.as_ref() {
             let Some(matched_context) = seek_sequence(
                 &original_lines,
                 std::slice::from_ref(context),
                 line_index,
                 false,
+                matching_mode,
             ) else {
                 return Err(CodexPatchError::new(
                     "context_mismatch",
@@ -733,8 +842,8 @@ pub fn derive_codex_patch_update_with_matches(
                     CodexPatchMatchSource::ChangeContext,
                 )));
             };
-            context_match = Some(matched_context);
             line_index = matched_context.index + 1;
+            context_match = Some(matched_context);
         }
 
         if chunk.old_lines.is_empty() {
@@ -744,41 +853,59 @@ pub fn derive_codex_patch_update_with_matches(
                 original_lines.len()
             };
             replacements.push((insertion_index, 0, chunk.new_lines.clone()));
-            let strict_rejection = context_match.and_then(|matched| {
-                strict_match_rejection_fact(
+            let match_rejection = context_match.as_ref().and_then(|matched| {
+                match_rejection_fact(
                     matched,
+                    matching_mode,
                     CodexPatchMatchSource::ChangeContext,
-                    context_search_start,
                     original_lines.len(),
                     1,
                 )
             });
+            let unique_match = context_match.as_ref().is_none_or(SequenceMatch::is_unique);
+            let strict_match = context_match
+                .as_ref()
+                .is_none_or(SequenceMatch::is_exact_unique);
             chunk_matches.push(CodexPatchChunkMatch {
                 chunk_index,
-                match_mode: context_match.map(|matched| matched.mode),
+                match_mode: context_match.as_ref().map(|matched| matched.mode),
                 match_source: if chunk.change_context.is_some() {
                     CodexPatchMatchSource::ChangeContext
                 } else {
                     CodexPatchMatchSource::Append
                 },
                 matched_start_line: insertion_index + 1,
-                candidate_count: context_match.map(|matched| matched.candidate_count),
-                strict_match: strict_rejection.is_none(),
-                strict_rejection,
+                candidate_count: context_match
+                    .as_ref()
+                    .map(|matched| matched.candidate_count),
+                unique_match,
+                strict_match,
+                match_rejection,
             });
             continue;
         }
 
-        let old_lines_search_start = line_index;
         let mut pattern = chunk.old_lines.as_slice();
         let mut replacement = chunk.new_lines.as_slice();
-        let mut found = seek_sequence(&original_lines, pattern, line_index, chunk.is_end_of_file);
+        let mut found = seek_sequence(
+            &original_lines,
+            pattern,
+            line_index,
+            chunk.is_end_of_file,
+            matching_mode,
+        );
         if found.is_none() && pattern.last().is_some_and(String::is_empty) {
             pattern = &pattern[..pattern.len() - 1];
             if replacement.last().is_some_and(String::is_empty) {
                 replacement = &replacement[..replacement.len() - 1];
             }
-            found = seek_sequence(&original_lines, pattern, line_index, chunk.is_end_of_file);
+            found = seek_sequence(
+                &original_lines,
+                pattern,
+                line_index,
+                chunk.is_end_of_file,
+                matching_mode,
+            );
         }
         let Some(found) = found else {
             return Err(CodexPatchError::new(
@@ -796,36 +923,43 @@ pub fn derive_codex_patch_update_with_matches(
         };
         let start = found.index;
         replacements.push((start, pattern.len(), replacement.to_vec()));
-        let context_rejection = context_match.and_then(|matched| {
-            strict_match_rejection_fact(
+        let context_rejection = context_match.as_ref().and_then(|matched| {
+            match_rejection_fact(
                 matched,
+                matching_mode,
                 CodexPatchMatchSource::ChangeContext,
-                context_search_start,
                 original_lines.len(),
                 1,
             )
         });
-        let old_lines_rejection = strict_match_rejection_fact(
-            found,
+        let old_lines_rejection = match_rejection_fact(
+            &found,
+            matching_mode,
             CodexPatchMatchSource::OldLines,
-            old_lines_search_start,
             original_lines.len(),
             pattern.len(),
         );
-        let strict_rejection =
-            select_strict_match_rejection(context_rejection, old_lines_rejection);
+        let match_rejection = select_match_rejection(context_rejection, old_lines_rejection);
+        let unique_match =
+            context_match.as_ref().is_none_or(SequenceMatch::is_unique) && found.is_unique();
+        let strict_match = context_match
+            .as_ref()
+            .is_none_or(SequenceMatch::is_exact_unique)
+            && found.is_exact_unique();
         chunk_matches.push(CodexPatchChunkMatch {
             chunk_index,
             match_mode: Some(
                 context_match
+                    .as_ref()
                     .map(|matched_context| matched_context.mode.max(found.mode))
                     .unwrap_or(found.mode),
             ),
             match_source: CodexPatchMatchSource::OldLines,
             matched_start_line: start + 1,
             candidate_count: Some(found.candidate_count),
-            strict_match: strict_rejection.is_none(),
-            strict_rejection,
+            unique_match,
+            strict_match,
+            match_rejection,
         });
         line_index = start + pattern.len();
     }
@@ -1025,7 +1159,7 @@ mod tests {
 
     #[test]
     fn strict_rejection_fact_prefers_ambiguity_across_context_and_old_lines() {
-        let context_ambiguous = derive_codex_patch_update_with_matches(
+        let context_ambiguous = derive_codex_patch_update_with_matching_mode(
             "ctx\n foo \nctx\nother\n",
             "file.txt",
             &[CodexPatchChunk {
@@ -1034,9 +1168,13 @@ mod tests {
                 new_lines: vec!["new".to_string()],
                 is_end_of_file: false,
             }],
+            ApplyPatchMatchingMode::ExactUnique,
         )
         .unwrap();
-        let rejection = context_ambiguous.chunk_matches[0].strict_rejection.unwrap();
+        let rejection = context_ambiguous.chunk_matches[0]
+            .match_rejection
+            .clone()
+            .unwrap();
         assert_eq!(rejection.match_source, CodexPatchMatchSource::ChangeContext);
         assert_eq!(rejection.match_mode, CodexPatchMatchMode::Exact);
         assert_eq!(rejection.candidate_count, 2);
@@ -1044,7 +1182,7 @@ mod tests {
         assert_eq!(rejection.search_start_line, 1);
         assert_eq!(rejection.source_line_count, 4);
 
-        let old_lines_ambiguous = derive_codex_patch_update_with_matches(
+        let old_lines_ambiguous = derive_codex_patch_update_with_matching_mode(
             " ctx \ndup\nother\ndup\n",
             "file.txt",
             &[CodexPatchChunk {
@@ -1053,10 +1191,12 @@ mod tests {
                 new_lines: vec!["new".to_string()],
                 is_end_of_file: false,
             }],
+            ApplyPatchMatchingMode::ExactUnique,
         )
         .unwrap();
         let rejection = old_lines_ambiguous.chunk_matches[0]
-            .strict_rejection
+            .match_rejection
+            .clone()
             .unwrap();
         assert_eq!(rejection.match_source, CodexPatchMatchSource::OldLines);
         assert_eq!(rejection.match_mode, CodexPatchMatchMode::Exact);
@@ -1100,6 +1240,248 @@ mod tests {
         assert_eq!(updated.chunk_matches[0].matched_start_line, 2);
         assert_eq!(updated.chunk_matches[0].candidate_count, Some(1));
         assert!(updated.chunk_matches[0].strict_match);
+    }
+
+    #[test]
+    fn unique_accepts_each_matching_tier_when_the_eligible_candidate_is_unique() {
+        for (name, original, old_line, expected_mode) in [
+            ("exact", "target\n", "target", CodexPatchMatchMode::Exact),
+            (
+                "trim_end",
+                "target  \n",
+                "target",
+                CodexPatchMatchMode::TrimEnd,
+            ),
+            ("trim", "  target  \n", "target", CodexPatchMatchMode::Trim),
+            (
+                "normalized_dash",
+                "alpha—beta\n",
+                "alpha-beta",
+                CodexPatchMatchMode::Normalized,
+            ),
+            (
+                "normalized_quote",
+                "it’s “quoted”\n",
+                "it's \"quoted\"",
+                CodexPatchMatchMode::Normalized,
+            ),
+            (
+                "normalized_space",
+                "alpha\u{00a0}beta\u{3000}gamma\n",
+                "alpha beta gamma",
+                CodexPatchMatchMode::Normalized,
+            ),
+        ] {
+            let update = derive_codex_patch_update_with_matching_mode(
+                original,
+                "file.txt",
+                &[CodexPatchChunk {
+                    old_lines: vec![old_line.to_string()],
+                    new_lines: vec!["changed".to_string()],
+                    ..Default::default()
+                }],
+                ApplyPatchMatchingMode::Unique,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            let matched = &update.chunk_matches[0];
+            assert_eq!(matched.match_mode, Some(expected_mode), "{name}");
+            assert_eq!(matched.candidate_count, Some(1), "{name}");
+            assert!(matched.unique_match, "{name}");
+            assert!(matched.match_rejection.is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn unique_rejects_duplicate_candidates_at_every_selected_tier() {
+        for (name, original, old_line, expected_mode) in [
+            (
+                "exact",
+                "target\nother\ntarget\n",
+                "target",
+                CodexPatchMatchMode::Exact,
+            ),
+            (
+                "trim_end",
+                "target  \nother\ntarget\t\n",
+                "target",
+                CodexPatchMatchMode::TrimEnd,
+            ),
+            (
+                "trim",
+                " target \nother\n\ttarget\t\n",
+                "target",
+                CodexPatchMatchMode::Trim,
+            ),
+            (
+                "normalized",
+                "alpha—beta\nother\nalpha–beta\n",
+                "alpha-beta",
+                CodexPatchMatchMode::Normalized,
+            ),
+        ] {
+            let update = derive_codex_patch_update_with_matching_mode(
+                original,
+                "file.txt",
+                &[CodexPatchChunk {
+                    old_lines: vec![old_line.to_string()],
+                    new_lines: vec!["changed".to_string()],
+                    ..Default::default()
+                }],
+                ApplyPatchMatchingMode::Unique,
+            )
+            .unwrap();
+            let rejection = update.chunk_matches[0]
+                .match_rejection
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name}: expected ambiguity"));
+            assert_eq!(rejection.match_mode, expected_mode, "{name}");
+            assert_eq!(rejection.candidate_count, 2, "{name}");
+            assert_eq!(rejection.candidate_start_lines.len(), 2, "{name}");
+            assert!(!rejection.candidate_positions_truncated, "{name}");
+            assert!(!update.chunk_matches[0].unique_match, "{name}");
+        }
+    }
+
+    #[test]
+    fn unique_exact_tier_beats_an_earlier_fuzzy_candidate() {
+        let update = derive_codex_patch_update_with_matching_mode(
+            " target \ntarget\n",
+            "file.txt",
+            &[CodexPatchChunk {
+                old_lines: vec!["target".into()],
+                new_lines: vec!["changed".into()],
+                ..Default::default()
+            }],
+            ApplyPatchMatchingMode::Unique,
+        )
+        .unwrap();
+        assert_eq!(update.content, " target \nchanged\n");
+        assert_eq!(
+            update.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Exact)
+        );
+        assert_eq!(update.chunk_matches[0].matched_start_line, 2);
+        assert!(update.chunk_matches[0].unique_match);
+        assert!(update.chunk_matches[0].match_rejection.is_none());
+    }
+
+    #[test]
+    fn unique_rejects_ambiguous_change_context_even_when_first_context_old_lines_are_unique() {
+        let update = derive_codex_patch_update_with_matching_mode(
+            "ctx\nold\nctx\nother\n",
+            "file.txt",
+            &[CodexPatchChunk {
+                change_context: Some("ctx".into()),
+                old_lines: vec!["old".into()],
+                new_lines: vec!["new".into()],
+                ..Default::default()
+            }],
+            ApplyPatchMatchingMode::Unique,
+        )
+        .unwrap();
+        let rejection = update.chunk_matches[0].match_rejection.as_ref().unwrap();
+        assert_eq!(rejection.match_source, CodexPatchMatchSource::ChangeContext);
+        assert_eq!(rejection.candidate_count, 2);
+        assert!(!update.chunk_matches[0].unique_match);
+    }
+
+    #[test]
+    fn eof_constraint_is_structurally_unique_only_for_unique_mode() {
+        let chunk = CodexPatchChunk {
+            old_lines: vec!["same".into()],
+            new_lines: vec!["last".into()],
+            is_end_of_file: true,
+            ..Default::default()
+        };
+        let unique = derive_codex_patch_update_with_matching_mode(
+            "same\nmid\nsame\n",
+            "file.txt",
+            std::slice::from_ref(&chunk),
+            ApplyPatchMatchingMode::Unique,
+        )
+        .unwrap();
+        assert_eq!(unique.content, "same\nmid\nlast\n");
+        assert_eq!(unique.chunk_matches[0].candidate_count, Some(1));
+        assert!(unique.chunk_matches[0].unique_match);
+        assert!(unique.chunk_matches[0].match_rejection.is_none());
+
+        let exact_unique = derive_codex_patch_update_with_matching_mode(
+            "same\nmid\nsame\n",
+            "file.txt",
+            &[chunk],
+            ApplyPatchMatchingMode::ExactUnique,
+        )
+        .unwrap();
+        let rejection = exact_unique.chunk_matches[0]
+            .match_rejection
+            .as_ref()
+            .unwrap();
+        assert_eq!(rejection.match_mode, CodexPatchMatchMode::Exact);
+        assert_eq!(rejection.candidate_count, 2);
+    }
+
+    #[test]
+    fn exact_unique_rejects_unique_trim_and_normalized_candidates() {
+        for (original, old_line, expected_mode) in [
+            (" target \n", "target", CodexPatchMatchMode::Trim),
+            (
+                "alpha—beta\n",
+                "alpha-beta",
+                CodexPatchMatchMode::Normalized,
+            ),
+        ] {
+            let update = derive_codex_patch_update_with_matching_mode(
+                original,
+                "file.txt",
+                &[CodexPatchChunk {
+                    old_lines: vec![old_line.into()],
+                    new_lines: vec!["changed".into()],
+                    ..Default::default()
+                }],
+                ApplyPatchMatchingMode::ExactUnique,
+            )
+            .unwrap();
+            let rejection = update.chunk_matches[0].match_rejection.as_ref().unwrap();
+            assert_eq!(rejection.match_mode, expected_mode);
+            assert_eq!(rejection.candidate_count, 1);
+            assert!(!update.chunk_matches[0].strict_match);
+        }
+    }
+
+    #[test]
+    fn first_match_is_deterministic_and_keeps_tier_priority() {
+        let repeated = derive_codex_patch_update_with_matching_mode(
+            "same\nmid\nsame\n",
+            "file.txt",
+            &[CodexPatchChunk {
+                old_lines: vec!["same".into()],
+                new_lines: vec!["first".into()],
+                ..Default::default()
+            }],
+            ApplyPatchMatchingMode::FirstMatch,
+        )
+        .unwrap();
+        assert_eq!(repeated.content, "first\nmid\nsame\n");
+        assert_eq!(repeated.chunk_matches[0].candidate_count, Some(2));
+        assert!(repeated.chunk_matches[0].match_rejection.is_none());
+
+        let tiered = derive_codex_patch_update_with_matching_mode(
+            " target \ntarget\n",
+            "file.txt",
+            &[CodexPatchChunk {
+                old_lines: vec!["target".into()],
+                new_lines: vec!["exact".into()],
+                ..Default::default()
+            }],
+            ApplyPatchMatchingMode::FirstMatch,
+        )
+        .unwrap();
+        assert_eq!(tiered.content, " target \nexact\n");
+        assert_eq!(
+            tiered.chunk_matches[0].match_mode,
+            Some(CodexPatchMatchMode::Exact)
+        );
+        assert_eq!(tiered.chunk_matches[0].matched_start_line, 2);
     }
 
     #[test]

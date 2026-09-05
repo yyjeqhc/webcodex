@@ -357,6 +357,7 @@ async fn register_agent_projects_for_auth(
                         apply_text_edit_line_scope: false,
                         apply_patch: false,
                         apply_patch_match_metadata: false,
+                        apply_patch_matching_mode: false,
                         apply_patch_strict_matching: false,
                         git: true,
                         jobs: true,

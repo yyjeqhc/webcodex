@@ -55,7 +55,7 @@ export const SAFE_DELETE_TOOL = {
   annotations: {
     readOnlyHint: false,
     destructiveHint: true,
-    idempotentHint: true,
+    idempotentHint: false,
     openWorldHint: true,
   },
 };
@@ -513,11 +513,30 @@ export function safeDelete(
     );
   }
   if (backendResult.state !== "success") {
+    try {
+      if (!targetStillExists(target.target)) {
+        return failed(
+          displayPath,
+          backendResult.backend,
+          "trash_operation_unknown",
+          "The Trash backend reported a failure but the original path is now absent. Its effect is unknown; inspect the path and Trash before retrying.",
+          "unknown",
+        );
+      }
+    } catch {
+      return failed(
+        displayPath,
+        backendResult.backend,
+        "trash_postcondition_unknown",
+        "The Trash backend reported a failure and safe_delete could not verify whether the original path still exists. Inspect the path and Trash before retrying.",
+        "unknown",
+      );
+    }
     return failed(
       displayPath,
       backendResult.backend,
       "trash_operation_failed",
-      "The system Trash/Recycle Bin backend reported a failure; safe_delete did not use a permanent-delete fallback.",
+      "The system Trash/Recycle Bin backend reported a failure and the original path is still present; safe_delete did not use a permanent-delete fallback.",
     );
   }
 

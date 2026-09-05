@@ -12,9 +12,10 @@
 - 绝对路径、`..` traversal、权限根本身、解析后逃出权限根的路径、symlink/junction，
   以及普通文件/目录以外的对象全部 fail closed。
 - 每次调用只处理一个路径；没有 batch，也没有 `force`。
-- 目标已经不存在时返回成功 no-op。这样客户端响应不确定后的重试不会误删另一个对象。
-- backend timeout 或无法验证最终状态时返回 `outcome=unknown`；再次调用前应先检查路径
-  和回收站。
+- 目标已经不存在时返回成功 no-op，但整个工具会明确标记为**非幂等**：未知结果之后，
+  同一个相对路径可能已经出现了新的对象，因此不能盲目重试。
+- backend timeout、backend 报错但原路径已经消失，或无法验证最终状态时返回
+  `outcome=unknown`；再次调用前应先检查路径和回收站。
 - **绝不对请求目标 fallback 到永久删除**。Plugin 不会用 `rm`、`unlink`、
   `Remove-Item` 或等价操作处置用户要求删除的文件或目录。
 

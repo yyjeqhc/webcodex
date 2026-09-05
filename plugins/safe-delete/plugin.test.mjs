@@ -27,6 +27,7 @@ test("tool definition marks the operation destructive and single-path", () => {
   assert.equal(SAFE_DELETE_TOOL.name, "safe_delete");
   assert.equal(SAFE_DELETE_TOOL.annotations.destructiveHint, true);
   assert.equal(SAFE_DELETE_TOOL.annotations.readOnlyHint, false);
+  assert.equal(SAFE_DELETE_TOOL.annotations.idempotentHint, false);
   assert.deepEqual(SAFE_DELETE_TOOL.inputSchema.required, ["path"]);
   assert.equal(SAFE_DELETE_TOOL.inputSchema.additionalProperties, false);
 });
@@ -43,7 +44,7 @@ test("absolute paths, root deletion, and parent traversal are rejected", () => {
   }
 });
 
-test("missing target is an idempotent no-op and never invokes a backend", () => {
+test("missing target is a safe no-op and never invokes a backend", () => {
   const root = tempRoot();
   let calls = 0;
   try {
@@ -265,6 +266,32 @@ test("backend failure never removes the target or exposes raw backend stderr", (
     assert.equal(fs.readFileSync(target, "utf8"), "keep");
     assert.equal(JSON.stringify(value).includes(root), false);
     assert.equal(JSON.stringify(value).includes("secret:"), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backend failure after the target disappears is outcome unknown", () => {
+  const root = tempRoot();
+  const target = path.join(root, "victim.txt");
+  fs.writeFileSync(target, "maybe trashed");
+  try {
+    const value = safeDelete(
+      { path: "victim.txt" },
+      {
+        root,
+        platform: "linux",
+        env: { XDG_DATA_HOME: "relative-not-usable" },
+        spawnSync: () => {
+          fs.unlinkSync(target);
+          return { status: 9 };
+        },
+      },
+    );
+    assert.equal(value.isError, true);
+    assert.equal(value.structuredContent.outcome, "unknown");
+    assert.equal(value.structuredContent.errorCode, "trash_operation_unknown");
+    assert.match(value.content[0].text, /inspect/i);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

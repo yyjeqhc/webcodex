@@ -17,10 +17,12 @@ local capability.
   closed.
 - One call handles exactly one path. There is no batch mode and no `force`
   option.
-- An already-absent path is a successful no-op. This makes a retry after an
-  uncertain client response converge without deleting another object.
-- Backend timeout or an unverifiable postcondition returns `outcome=unknown`;
-  inspect the path and Trash before retrying.
+- An already-absent path is a successful no-op, but the tool is deliberately
+  **not** declared idempotent: after an uncertain result, a new object may have
+  been created at the same relative path. Never retry an unknown result blindly.
+- Backend timeout, a backend failure after the original path disappears, or an
+  unverifiable postcondition returns `outcome=unknown`; inspect the path and
+  Trash before retrying.
 - There is **no permanent-delete fallback for the requested path**. The Plugin never
   uses `rm`, `unlink`, `Remove-Item`, or an equivalent operation to dispose of
   the requested file or directory.

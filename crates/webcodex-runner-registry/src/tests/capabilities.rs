@@ -98,6 +98,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::CodingAgentRuns,
         RunnerFeature::SkillStoreRead,
         RunnerFeature::SkillStoreManage,
+        RunnerFeature::ManagedSshResources,
     ] {
         assert_eq!(
             feature.inference(),
@@ -237,6 +238,7 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
         RunnerFeature::ComputerTextInput,
         RunnerFeature::JobStateReconciliation,
         RunnerFeature::CodingAgentRuns,
+        RunnerFeature::ManagedSshResources,
     ] {
         assert_eq!(
             feature.inference(),

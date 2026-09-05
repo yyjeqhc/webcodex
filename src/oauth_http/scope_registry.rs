@@ -26,6 +26,7 @@ const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_COMPUTER_CLIPBOARD_WRITE,
     scopes::SCOPE_MCP_LOCAL,
     scopes::SCOPE_PLUGIN_LOCAL,
+    scopes::SCOPE_SSH_LOCAL,
     scopes::SCOPE_CODING_AGENT_RUN,
     scopes::SCOPE_ACCOUNT_MANAGE,
 ];

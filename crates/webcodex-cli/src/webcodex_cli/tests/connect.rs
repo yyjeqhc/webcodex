@@ -70,6 +70,7 @@ fn connect_parses_shared_key_and_managed_oauth_modes() {
     assert!(!ordinary.oauth_computer_permissions);
     assert!(!ordinary.oauth_local_mcp);
     assert!(!ordinary.oauth_local_plugins);
+    assert!(!ordinary.oauth_local_ssh);
 
     let computer_enabled = parsed(&[
         "connect",
@@ -106,6 +107,18 @@ fn connect_parses_shared_key_and_managed_oauth_modes() {
     ]);
     assert_eq!(local_plugins_enabled.auth, ConnectAuth::SharedKeyOAuth);
     assert!(local_plugins_enabled.oauth_local_plugins);
+
+    let local_ssh_enabled = parsed(&[
+        "connect",
+        "https://example.test",
+        "--auth",
+        "oauth",
+        "--oauth-redirect-uri",
+        "https://client.example/callback",
+        "--oauth-local-ssh",
+    ]);
+    assert_eq!(local_ssh_enabled.auth, ConnectAuth::SharedKeyOAuth);
+    assert!(local_ssh_enabled.oauth_local_ssh);
 
     let managed = parsed(&[
         "connect",
@@ -252,6 +265,7 @@ fn connect_help_is_a_top_level_quick_start() {
     assert!(help.contains("--oauth-computer-permissions"));
     assert!(help.contains("--oauth-local-mcp"));
     assert!(help.contains("--oauth-local-plugins"));
+    assert!(help.contains("--oauth-local-ssh"));
     assert!(help.contains("--project PATH"));
     let top = cli_exit(["--help"]).unwrap();
     assert!(top.contains("connect"));
@@ -313,6 +327,7 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
         oauth_computer_permissions: false,
         oauth_local_mcp: false,
         oauth_local_plugins: false,
+        oauth_local_ssh: false,
         oauth_coding_agent: false,
         username: None,
         project: tmp.path().join("missing"),

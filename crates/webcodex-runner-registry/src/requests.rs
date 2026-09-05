@@ -44,6 +44,7 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 use webcodex_core::skill_store::SkillStoreRequest;
+use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnqueueLspError {
@@ -174,6 +175,7 @@ pub(super) fn enqueue_pending_request_locked(
             expected_mcp_gateway_runner_instance_id: None,
             expected_mcp_gateway_provider_id: None,
             expected_mcp_gateway_provider_instance_id: None,
+            expected_ssh_resource_runner_instance_id: None,
             skill_store_fence: None,
             dispatched: false,
         },
@@ -1735,6 +1737,97 @@ impl RunnerRegistry {
             },
         );
         inner.plugin_gateway_waiters.insert(request_id.clone(), tx);
+        notify_runner_locked(&inner, client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue one closed Runner-local managed SSH resource operation for one
+    /// exact live Runner process. The destination may be present in the transient
+    /// request body for `register`, but is never projected into registry metadata.
+    pub async fn enqueue_ssh_resource(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: SshResourceRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        operation
+            .validate()
+            .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
+        let content = serde_json::to_string(&operation)
+            .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
+        if content.len() > SSH_RESOURCE_REQUEST_MAX_BYTES {
+            return Err("ssh_resource_invalid: request was not started".to_string());
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = RunnerRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.to_string(),
+            kind: "ssh_resource".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: Some(content),
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 60,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            job_context: None,
+            persistent_shell: None,
+            mcp_gateway: None,
+            plugin_gateway: None,
+            coding_agent: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_runner_access(auth, runner)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if runner.runner_instance_id != expected_runner_instance_id {
+            return Err("runner_replaced: request was not started".to_string());
+        }
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::ManagedSshResources)
+        {
+            return Err(
+                "ssh_resource_registry_unavailable: Runner does not support managed SSH resources"
+                    .to_string(),
+            );
+        }
+        if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
+            return Err("exact Runner is offline; request was not started".to_string());
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("SSH resource request was just enqueued")
+            .expected_ssh_resource_runner_instance_id =
+            Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }

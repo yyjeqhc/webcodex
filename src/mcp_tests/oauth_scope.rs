@@ -279,6 +279,61 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
 }
 
 #[tokio::test]
+async fn oauth2_managed_ssh_resource_surface_requires_explicit_ssh_local_scope() {
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read project:write job:run");
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(!body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME));
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+            "arguments": {"action": "list", "runner": "runner-a"}
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_SSH_LOCAL),
+    );
+
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read ssh:local");
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME));
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+            "arguments": {"action": "list", "runner": "runner-a"}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["result"]["isError"], true);
+    assert_eq!(
+        body["result"]["structuredContent"]["error"]["code"],
+        "ssh_resource_registry_unavailable"
+    );
+}
+
+#[tokio::test]
 async fn oauth2_first_class_startup_plugin_visibility_and_direct_spoof_require_plugin_scope() {
     let tool_name = "oauth_plugin_echo";
     let (_tmp, service, token) =

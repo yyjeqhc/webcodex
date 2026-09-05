@@ -359,5 +359,7 @@ mod shared_key_limits;
 mod shared_key_ttl;
 #[path = "tests/skill_store.rs"]
 mod skill_store;
+#[path = "tests/ssh_resource.rs"]
+mod ssh_resource;
 #[path = "tests/structured_file_delete.rs"]
 mod structured_file_delete;

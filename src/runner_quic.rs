@@ -615,6 +615,7 @@ mod tests {
             job_state_reconciliation: false,
             coding_agent_runs: false,
             native_tool_plugins: false,
+            managed_ssh_resources: false,
         });
         QuicRegisterFrame::new(
             RunnerRegisterRequest {

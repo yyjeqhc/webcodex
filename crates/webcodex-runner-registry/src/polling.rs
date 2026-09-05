@@ -90,6 +90,68 @@ impl RunnerRegistry {
             let Some(request_id) = request_id else {
                 return Ok(None);
             };
+            let stale_ssh_resource_error =
+                inner.pending_by_id.get(&request_id).and_then(|pending| {
+                    match (
+                        pending.request.kind.as_str(),
+                        pending.expected_ssh_resource_runner_instance_id.as_deref(),
+                    ) {
+                        ("ssh_resource", Some(expected_runner)) => {
+                            let Some(runner) = inner.runners.get(&body.client_id) else {
+                                return Some((
+                                    "runner_replaced",
+                                    "Exact Runner disappeared before SSH resource dispatch"
+                                        .to_string(),
+                                ));
+                            };
+                            if runner.runner_instance_id != expected_runner {
+                                return Some((
+                                    "runner_replaced",
+                                    "Exact Runner changed before SSH resource dispatch".to_string(),
+                                ));
+                            }
+                            (!runner
+                                .runner_features
+                                .supports(RunnerFeature::ManagedSshResources))
+                            .then_some((
+                                "ssh_resource_registry_unavailable",
+                                "Managed SSH resource capability changed before dispatch"
+                                    .to_string(),
+                            ))
+                        }
+                        ("ssh_resource", None) => Some((
+                            "runner_replaced",
+                            "SSH resource exact Runner fence is missing".to_string(),
+                        )),
+                        (_, Some(_)) => Some((
+                            "runner_replaced",
+                            "SSH resource exact Runner fence is inconsistent".to_string(),
+                        )),
+                        _ => None,
+                    }
+                });
+            if let Some((code, message)) = stale_ssh_resource_error {
+                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+                    continue;
+                };
+                if let Some(waiter) = pending.waiter.take() {
+                    let _ = waiter.send(ShellRunResponse {
+                        success: false,
+                        request_id: request_id.clone(),
+                        client_id: body.client_id.clone(),
+                        cwd: None,
+                        command_preview: String::new(),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: None,
+                        error: Some(format!("{code}: {message}")),
+                        request_dispatched: Some(false),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                    });
+                }
+                continue;
+            }
             let stale_bridge_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (

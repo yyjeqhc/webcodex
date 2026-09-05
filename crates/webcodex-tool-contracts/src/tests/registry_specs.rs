@@ -211,7 +211,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "structured validation",
         "edit tools",
         "longer work",
-        "open_session_shell + session_shell_exec",
+        "persistent shell",
+        "ssh_resource",
+        "runner restart",
     ] {
         assert!(
             run_shell_desc.contains(phrase),
@@ -223,7 +225,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     for phrase in [
         "isolated one-shot native executable",
         "literal argv",
-        "open_session_shell + session_shell_exec",
+        "persistent shell",
+        "ssh_resource",
+        "one-shot/no-persistence ssh",
     ] {
         assert!(
             run_process_desc.contains(phrase),
@@ -237,6 +241,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "update_session_context",
         "no per-shell host/resource parameter",
         "does not need webcodex runner",
+        "ssh_resource",
+        "restart the runner",
     ] {
         assert!(
             open_shell_desc.contains(phrase),
@@ -245,7 +251,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
 
     let update_context_desc = desc("update_session_context");
-    for phrase in ["runner-local named ssh resource", "open_session_shell"] {
+    for phrase in [
+        "active runner-local named ssh resource",
+        "open_session_shell",
+        "ssh_resource",
+        "restart the runner",
+    ] {
         assert!(
             update_context_desc.contains(phrase),
             "update_session_context description should mention {phrase}: {update_context_desc}"

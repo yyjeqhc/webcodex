@@ -219,12 +219,11 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     for phrase in [
         "if the user gives an exact runner client_id",
         "runtime_status/list_projects for that runner",
-        "persistent shell: for shared-state sequences",
-        "runner-local named ssh resource",
-        "update_session_context for remote work",
-        "not an arbitrary ssh host",
-        "targets need no webcodex runner",
-        "keep run_process for isolated one-shot native argv",
+        "persistent shell: use an active runner-local ssh resource",
+        "ssh_resource list/register persists it",
+        "restart runner, list again",
+        "bind with update_session_context",
+        "explicit one-shot/no-persistence ssh",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
         "edit: prefer apply_patch for model-generated contextual",
@@ -285,10 +284,17 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     assert!(persistent.tools.contains(&"run_process"));
     assert!(persistent
         .summary
-        .contains("Runner-local named SSH resource"));
-    assert!(persistent.summary.contains("not an arbitrary SSH host"));
-    assert!(persistent.summary.contains("no WebCodex Runner"));
-    assert!(persistent.summary.contains("isolated one-shot native argv"));
+        .contains("active Runner-local SSH resource"));
+    assert!(persistent.summary.contains("ssh_resource list/register"));
+    assert!(persistent.summary.contains("restart Runner"));
+    assert!(persistent.summary.contains("one-shot/no-persistence SSH"));
+    assert!(persistent
+        .manifest_purpose
+        .contains("SSH target does not run WebCodex Runner"));
+    assert!(persistent.manifest_purpose.contains("ssh_resource list"));
+    assert!(persistent
+        .manifest_purpose
+        .contains("ssh_resource register"));
     for tool in [
         "update_session_context",
         "open_session_shell",

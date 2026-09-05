@@ -195,6 +195,8 @@ mod project_connector;
 mod protocol;
 #[path = "mcp_tests/runtime_tools.rs"]
 mod runtime_tools;
+#[path = "mcp_tests/ssh_resource.rs"]
+mod ssh_resource;
 #[path = "mcp_tests/tools.rs"]
 mod tools;
 

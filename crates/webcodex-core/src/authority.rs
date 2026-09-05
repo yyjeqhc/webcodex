@@ -23,6 +23,7 @@ pub const SCOPE_COMPUTER_CLIPBOARD_READ: &str = "computer:clipboard_read";
 pub const SCOPE_COMPUTER_CLIPBOARD_WRITE: &str = "computer:clipboard_write";
 pub const SCOPE_MCP_LOCAL: &str = "mcp:local";
 pub const SCOPE_PLUGIN_LOCAL: &str = "plugin:local";
+pub const SCOPE_SSH_LOCAL: &str = "ssh:local";
 pub const SCOPE_CODING_AGENT_RUN: &str = "coding_agent:run";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
@@ -120,6 +121,7 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_DISPLAY_READ,
     SCOPE_MCP_LOCAL,
     SCOPE_PLUGIN_LOCAL,
+    SCOPE_SSH_LOCAL,
     SCOPE_CODING_AGENT_RUN,
     SCOPE_ACCOUNT_MANAGE,
     SCOPE_AGENT_REGISTER,

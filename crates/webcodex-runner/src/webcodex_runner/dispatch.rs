@@ -210,6 +210,40 @@ pub(crate) fn dispatch_request(
             .submit_result_with_metadata(request.request_id, result, config, runtime)
             .map(|_| true);
     }
+    if request.kind == "ssh_resource" {
+        let request_id = request.request_id.clone();
+        let response = runtime
+            .managed_ssh()
+            .handle_wire(&config.static_ssh, request.content.as_deref());
+        let result = CommandResult {
+            exit_code: Some(0),
+            stdout: Some(
+                serde_json::to_string(&response)
+                    .expect("managed SSH resource response serialization is infallible"),
+            ),
+            stderr: None,
+            duration_ms: Some(0),
+            error: None,
+        };
+        return sink
+            .submit_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind.starts_with("ssh_resource") {
+        let result = CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "ssh_resource_invalid: unsupported managed SSH resource request; command was not started"
+                    .to_string(),
+            ),
+        };
+        return sink
+            .submit_result_with_metadata(request.request_id, result, config, runtime)
+            .map(|_| true);
+    }
     if request.kind == "skill_store" {
         let request_id = request.request_id.clone();
         let result = handle_skill_store_request(

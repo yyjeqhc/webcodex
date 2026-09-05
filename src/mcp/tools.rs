@@ -131,6 +131,7 @@ fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -
     }
     if target == crate::mcp_gateway::MCP_TOOL_NAME
         || target == crate::plugin_gateway::PLUGIN_TOOL_NAME
+        || target == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
     {
         return true;
     }
@@ -158,6 +159,7 @@ fn startup_plugin_reserved_tool_names() -> &'static BTreeSet<String> {
         names.insert(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
         names.insert(crate::mcp_gateway::MCP_TOOL_NAME.to_string());
         names.insert(crate::plugin_gateway::PLUGIN_TOOL_NAME.to_string());
+        names.insert(crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME.to_string());
         names
     })
 }
@@ -669,6 +671,11 @@ pub(super) async fn handle_list(
                     tools.push(crate::plugin_gateway::tool_spec());
                 }
             }
+            if crate::ssh_resource_gateway::authorized(auth) {
+                if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                    tools.push(crate::ssh_resource_gateway::tool_spec());
+                }
+            }
             result
         }
     };
@@ -1156,7 +1163,14 @@ pub(super) async fn handle_call(
         }
     };
     if let Some(lc) = lifecycle.as_deref() {
-        lc.capture_payload("raw_arguments", &params.arguments);
+        if params.name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+            lc.capture_payload(
+                "raw_arguments",
+                &crate::ssh_resource_gateway::audit_arguments(&params.arguments),
+            );
+        } else {
+            lc.capture_payload("raw_arguments", &params.arguments);
+        }
     }
     if runtime.runtime_exposure() == RuntimeExposure::ProjectConnector {
         let connector = connector.expect("validated ProjectConnector runtime state");
@@ -1303,6 +1317,34 @@ pub(super) async fn handle_call(
             lc.capture_payload("effective_arguments", &params.arguments);
         }
         let result = crate::plugin_gateway::call(runtime, params.arguments, auth).await;
+        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+        }
+        return McpOutcome::Ok(rpc_result(
+            id,
+            if stateless_2026 {
+                mcp_stateless_result(result, false)
+            } else {
+                result
+            },
+        ));
+    }
+    if params.name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+        if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_SSH_LOCAL) {
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_failed("forbidden");
+                lc.dispatch_finished(false, Some(false), "forbidden");
+            }
+            return outcome;
+        }
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload(
+                "effective_arguments",
+                &crate::ssh_resource_gateway::audit_arguments(&params.arguments),
+            );
+        }
+        let result = crate::ssh_resource_gateway::call(runtime, params.arguments, auth).await;
         let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
         if let Some(lc) = lifecycle.as_deref() {
             lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });

@@ -241,6 +241,7 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_owner_prs_run_complete_linux_ci_before_merge(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        release_build = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
 
         def job_block(name: str, next_name: str) -> str:
             start = workflow.index(f"  {name}:\n")
@@ -265,11 +266,70 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("runner: macos-15-intel", macos)
         self.assertIn("rust_host: x86_64-apple-darwin", macos)
         self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", macos)
+        self.assertIn("cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner", macos)
+        self.assertIn("--bin-dir target/dogfood", macos)
+        windows_desktop = job_block("test-windows-desktop", "test-windows-arm64")
+        self.assertIn("cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner", windows_desktop)
+        self.assertIn('Join-Path "target\\dogfood"', windows_desktop)
         windows_arm64 = job_block("test-windows-arm64", "test-windows")
         self.assertIn("runs-on: windows-11-arm", windows_arm64)
         self.assertIn("aarch64-pc-windows-msvc", windows_arm64)
         self.assertIn("cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner", windows_arm64)
-        self.assertIn("if: always()", aggregate)
+        windows_aggregate = job_block("test-windows", "test-native")
+        native_aggregate = workflow[workflow.index("  test-native:\n"):]
+        for required_aggregate in (aggregate, windows_aggregate, native_aggregate):
+            self.assertIn("if: always()", required_aggregate)
+        self.assertIn("FULL_NATIVE_REQUESTED", windows_aggregate)
+        self.assertIn("requested Windows CI lane failed or was unexpectedly skipped", windows_aggregate)
+        self.assertIn("fast owner PR expected every heavy Windows lane to be intentionally skipped", windows_aggregate)
+        self.assertIn("FULL_NATIVE_REQUESTED", native_aggregate)
+        self.assertIn("requested native CI lane failed or was unexpectedly skipped", native_aggregate)
+        self.assertIn("fast owner PR native lane shape was not the intentional policy skip", native_aggregate)
+        self.assertIn("cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner", release_build)
+
+    def test_ci_native_policy_truth_table(self) -> None:
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        expression = "FULL_NATIVE_REQUESTED: ${{ github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner || contains(github.event.pull_request.labels.*.name, 'run-ci') }}"
+        self.assertIn(expression, workflow)
+
+        def full_native_requested(event_name: str, actor: str, owner: str, labels: set[str]) -> bool:
+            return event_name == "push" or actor != owner or "run-ci" in labels
+
+        scenarios = (
+            ("owner PR without run-ci", "pull_request", "owner", "owner", set(), False),
+            ("owner PR with run-ci", "pull_request", "owner", "owner", {"run-ci"}, True),
+            ("external PR", "pull_request", "contributor", "owner", set(), True),
+            ("main push", "push", "owner", "owner", set(), True),
+        )
+        for name, event_name, actor, owner, labels, expected in scenarios:
+            with self.subTest(name=name):
+                self.assertEqual(full_native_requested(event_name, actor, owner, labels), expected)
+
+        def windows_aggregate_ok(full_native: bool, contract: str, lanes: tuple[str, ...]) -> bool:
+            expected = "success" if full_native else "skipped"
+            return contract == "success" and all(result == expected for result in lanes)
+
+        def native_aggregate_ok(
+            full_native: bool,
+            contract: str,
+            linux_arm64: str,
+            macos: str,
+            windows: str,
+        ) -> bool:
+            if contract != "success":
+                return False
+            if full_native:
+                return (linux_arm64, macos, windows) == ("success", "success", "success")
+            return (linux_arm64, macos, windows) == ("skipped", "skipped", "success")
+
+        skipped_windows = ("skipped",) * 5
+        successful_windows = ("success",) * 5
+        self.assertTrue(windows_aggregate_ok(False, "success", skipped_windows))
+        self.assertTrue(native_aggregate_ok(False, "success", "skipped", "skipped", "success"))
+        self.assertTrue(windows_aggregate_ok(True, "success", successful_windows))
+        self.assertTrue(native_aggregate_ok(True, "success", "success", "success", "success"))
+        self.assertFalse(windows_aggregate_ok(True, "success", ("skipped",) + successful_windows[1:]))
+        self.assertFalse(native_aggregate_ok(True, "success", "success", "skipped", "success"))
 
     def test_macos_ci_host_check_does_not_use_quiet_grep_under_pipefail(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

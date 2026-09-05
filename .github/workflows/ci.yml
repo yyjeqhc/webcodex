@@ -14,6 +14,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Full native CI is mandatory for main, external contributors, and explicit
+  # owner opt-in. Owner PRs without run-ci stay on the required Linux fast path.
+  FULL_NATIVE_REQUESTED: ${{ github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner || contains(github.event.pull_request.labels.*.name, 'run-ci') }}
 
 jobs:
   contract:
@@ -249,9 +252,9 @@ jobs:
           version="$(node -p "require('./npm/webcodex/package.json').version")"
           built_at="$(git show -s --format=%ct HEAD)"
           export WEBCODEX_BUILT_AT="$built_at"
-          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           for name in webcodex webcodex-server webcodex-runner; do
-            binary="target/release/$name"
+            binary="target/dogfood/$name"
             actual="$($binary --version)"
             expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
             test "$actual" = "$expected"
@@ -269,7 +272,7 @@ jobs:
           set -euo pipefail
           stage="$RUNNER_TEMP/webcodex-desktop-${{ matrix.platform }}-bundle"
           python3 scripts/prepare_desktop_bundle_macos.py \
-            --bin-dir target/release \
+            --bin-dir target/dogfood \
             --version "${{ steps.desktop_runtime.outputs.version }}" \
             --source-sha "${{ steps.desktop_runtime.outputs.source }}" \
             --built-at "${{ steps.desktop_runtime.outputs.built_at }}" \
@@ -435,10 +438,10 @@ jobs:
           $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
           $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
           $env:WEBCODEX_BUILT_AT = "$builtAt"
-          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "WebCodex runtime build failed" }
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
-            $binary = Join-Path "target\release" "$name.exe"
+            $binary = Join-Path "target\dogfood" "$name.exe"
             $output = @(& $binary --version)
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0 -or $output.Count -eq 0 -or -not $output[0]) {
@@ -459,7 +462,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $stage = Join-Path $env:GITHUB_WORKSPACE "target\desktop-ci-bundle"
           & .\scripts\prepare_desktop_bundle.ps1 `
-            -BinDir "target\release" `
+            -BinDir "target\dogfood" `
             -Version "${{ steps.runtime.outputs.version }}" `
             -SourceSha "${{ steps.runtime.outputs.source }}" `
             -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
@@ -518,20 +521,14 @@ jobs:
 
   test-windows:
     needs: [contract, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop, test-windows-arm64]
-    # Preserve the historical required Windows status while moving the expensive
-    # work into parallel VMs. Eligible heavy runs inspect every lane even after a
-    # failure so branch protection cannot see a false-success aggregate.
-    if: >-
-      always() &&
-      (
-        github.event_name == 'push' ||
-        github.event.pull_request.user.login != github.repository_owner ||
-        contains(github.event.pull_request.labels.*.name, 'run-ci')
-      )
+    # Preserve the historical required Windows context in both modes. Full-native
+    # runs require every eligible lane to succeed; fast owner PRs instead prove
+    # that every heavy Windows lane was intentionally skipped by policy.
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require successful Windows lanes
+      - name: Validate Windows lane policy
         env:
           CONTRACT_RESULT: ${{ needs.contract.result }}
           CORE_RESULT: ${{ needs.test-windows-core.result }}
@@ -540,47 +537,64 @@ jobs:
           DESKTOP_RESULT: ${{ needs.test-windows-desktop.result }}
           ARM64_RESULT: ${{ needs.test-windows-arm64.result }}
         run: |
-          echo "contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
-          if [ "$CONTRACT_RESULT" != success ] || \
-             [ "$CORE_RESULT" != success ] || \
-             [ "$RUNNER_RESULT" != success ] || \
-             [ "$PACKAGE_RESULT" != success ] || \
-             [ "$DESKTOP_RESULT" != success ] || \
-             [ "$ARM64_RESULT" != success ]; then
-            echo "required Windows CI lane did not succeed" >&2
+          echo "full_native=$FULL_NATIVE_REQUESTED contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
+          if [ "$CONTRACT_RESULT" != success ]; then
+            echo "contract CI did not succeed" >&2
             exit 1
+          fi
+          if [ "$FULL_NATIVE_REQUESTED" = true ]; then
+            if [ "$CORE_RESULT" != success ] || \
+               [ "$RUNNER_RESULT" != success ] || \
+               [ "$PACKAGE_RESULT" != success ] || \
+               [ "$DESKTOP_RESULT" != success ] || \
+               [ "$ARM64_RESULT" != success ]; then
+              echo "requested Windows CI lane failed or was unexpectedly skipped" >&2
+              exit 1
+            fi
+          else
+            if [ "$CORE_RESULT" != skipped ] || \
+               [ "$RUNNER_RESULT" != skipped ] || \
+               [ "$PACKAGE_RESULT" != skipped ] || \
+               [ "$DESKTOP_RESULT" != skipped ] || \
+               [ "$ARM64_RESULT" != skipped ]; then
+              echo "fast owner PR expected every heavy Windows lane to be intentionally skipped" >&2
+              exit 1
+            fi
           fi
 
   test-native:
     needs: [contract, test-linux-arm64, test-macos, test-windows]
-    # Always publish one stable native-coverage result. Owner-authored PRs may
-    # still start cheaply, but skipped native lanes remain visibly unsatisfied
-    # until the PR opts into the heavy matrix with `run-ci`.
+    # Keep a stable required native aggregate. Fast owner PRs accept only the
+    # exact intentional-skip shape; full-native invocations require every heavy
+    # aggregate to succeed, so an eligible lane that is unexpectedly skipped is red.
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require successful native lanes
+      - name: Validate native lane policy
         env:
           CONTRACT_RESULT: ${{ needs.contract.result }}
           LINUX_ARM64_RESULT: ${{ needs.test-linux-arm64.result }}
           MACOS_RESULT: ${{ needs.test-macos.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
         run: |
-          echo "contract=$CONTRACT_RESULT linux_arm64=$LINUX_ARM64_RESULT macos=$MACOS_RESULT windows=$WINDOWS_RESULT"
+          echo "full_native=$FULL_NATIVE_REQUESTED contract=$CONTRACT_RESULT linux_arm64=$LINUX_ARM64_RESULT macos=$MACOS_RESULT windows=$WINDOWS_RESULT"
           if [ "$CONTRACT_RESULT" != success ]; then
             echo "contract CI did not succeed" >&2
             exit 1
           fi
-          if [ "$LINUX_ARM64_RESULT" = skipped ] || \
-             [ "$MACOS_RESULT" = skipped ] || \
-             [ "$WINDOWS_RESULT" = skipped ]; then
-            echo "native CI was skipped; owner-authored PRs must add the run-ci label before merge" >&2
-            exit 1
-          fi
-          if [ "$LINUX_ARM64_RESULT" != success ] || \
-             [ "$MACOS_RESULT" != success ] || \
-             [ "$WINDOWS_RESULT" != success ]; then
-            echo "required native CI lane did not succeed" >&2
-            exit 1
+          if [ "$FULL_NATIVE_REQUESTED" = true ]; then
+            if [ "$LINUX_ARM64_RESULT" != success ] || \
+               [ "$MACOS_RESULT" != success ] || \
+               [ "$WINDOWS_RESULT" != success ]; then
+              echo "requested native CI lane failed or was unexpectedly skipped" >&2
+              exit 1
+            fi
+          else
+            if [ "$LINUX_ARM64_RESULT" != skipped ] || \
+               [ "$MACOS_RESULT" != skipped ] || \
+               [ "$WINDOWS_RESULT" != success ]; then
+              echo "fast owner PR native lane shape was not the intentional policy skip" >&2
+              exit 1
+            fi
           fi

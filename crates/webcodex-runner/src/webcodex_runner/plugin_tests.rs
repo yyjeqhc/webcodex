@@ -222,6 +222,19 @@ fn schema_change_is_not_started_and_never_dispatches_effect() {
 }
 
 #[test]
+fn schema_preflight_and_effect_share_one_provider_timeout_budget() {
+    let fixture = Fixture::new("split_timeout", 1);
+    let response = fixture.call();
+    assert_eq!(response.dispatch_state, PluginDispatchState::OutcomeUnknown);
+    assert_eq!(response.error.as_ref().unwrap().code, "plugin_timeout");
+    assert_eq!(
+        fixture.marker_count("call"),
+        1,
+        "the effect starts only with the time remaining after schema preflight"
+    );
+}
+
+#[test]
 fn crash_after_effect_send_is_outcome_unknown_and_instance_is_retired() {
     let fixture = Fixture::new("crash", 2);
     let first = fixture.call();

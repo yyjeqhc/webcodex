@@ -75,6 +75,9 @@ fn main() -> io::Result<()> {
             "tools/list" => {
                 lists += 1;
                 append(marker, "list\n")?;
+                if scenario == "split_timeout" && lists >= 2 {
+                    thread::sleep(Duration::from_millis(750));
+                }
                 if scenario == "malformed" {
                     send(&mut writer, "{not-json")?;
                     continue;
@@ -116,6 +119,10 @@ fn main() -> io::Result<()> {
                 match scenario {
                     "crash" => return Ok(()),
                     "timeout" => thread::sleep(Duration::from_secs(3)),
+                    "split_timeout" => {
+                        thread::sleep(Duration::from_millis(750));
+                        send_result(&mut writer, id, calls)?;
+                    }
                     "slow" => {
                         thread::sleep(Duration::from_millis(750));
                         send_result(&mut writer, id, calls)?;

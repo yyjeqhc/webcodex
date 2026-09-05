@@ -481,6 +481,7 @@ impl ProviderEntry {
         expected_schema: &PluginSchemaObservation,
     ) -> Result<PluginToolResult, ProviderFailure> {
         self.with_connection(|connection, timeout| {
+            let started = Instant::now();
             let tools = connection.tools_list(timeout)?;
             let Some(tool) = tools.iter().find(|tool| tool.name == name) else {
                 return Err(ProviderFailure {
@@ -496,7 +497,21 @@ impl ProviderEntry {
                     fatal: false,
                 });
             }
-            connection.tools_call(name, arguments, timeout)
+            let Some(remaining) = timeout
+                .checked_sub(started.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+            else {
+                // The schema preflight completed successfully, so the provider
+                // connection is still trustworthy, but the model-requested
+                // effect must not start after the provider's total call budget
+                // has already been consumed.
+                return Err(ProviderFailure {
+                    dispatch_state: PluginDispatchState::NotStarted,
+                    code: "plugin_timeout",
+                    fatal: false,
+                });
+            };
+            connection.tools_call(name, arguments, remaining)
         })
     }
 
@@ -592,14 +607,38 @@ fn prepare_provider(
             return (entry, None, Some("plugin_stdio_unavailable".to_string()));
         }
     };
-    if let Some(stderr) = child.child_mut().stderr.take() {
-        std::thread::spawn(move || {
+    let stderr = match child.child_mut().stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            let _ = child.terminate_tree();
+            entry.retire("plugin_stdio_unavailable");
+            return (entry, None, Some("plugin_stdio_unavailable".to_string()));
+        }
+    };
+    let stderr_thread_name = format!("wc-plugin-stderr-{}", config.id);
+    if std::thread::Builder::new()
+        .name(stderr_thread_name)
+        .spawn(move || {
             let mut stderr = stderr;
             let _ = std::io::copy(&mut stderr, &mut std::io::sink());
-        });
+        })
+        .is_err()
+    {
+        let _ = child.terminate_tree();
+        entry.retire("plugin_reader_unavailable");
+        return (entry, None, Some("plugin_reader_unavailable".to_string()));
     }
     let (sender, incoming) = mpsc::sync_channel(PLUGIN_READER_QUEUE);
-    std::thread::spawn(move || provider_stdout_reader(stdout, sender));
+    let stdout_thread_name = format!("wc-plugin-{}", config.id);
+    if std::thread::Builder::new()
+        .name(stdout_thread_name)
+        .spawn(move || provider_stdout_reader(stdout, sender))
+        .is_err()
+    {
+        let _ = child.terminate_tree();
+        entry.retire("plugin_reader_unavailable");
+        return (entry, None, Some("plugin_reader_unavailable".to_string()));
+    }
     let mut connection = ProviderConnection {
         child,
         stdin,

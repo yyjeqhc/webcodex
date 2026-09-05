@@ -205,6 +205,7 @@ impl Default for McpGatewayConfig {
     }
 }
 
+pub(crate) const PLUGIN_MAX_COMMAND_BYTES: usize = 1_024;
 pub(crate) const PLUGIN_MAX_CWD_BYTES: usize = 4_096;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1562,10 +1563,13 @@ fn validate_plugin_config(config: &PluginConfig, shell: &ShellConfig) -> Result<
         if !ids.insert(provider.id.as_str()) {
             return Err(format!("duplicate plugin provider id '{}'", provider.id));
         }
-        if provider.command.trim().is_empty() || provider.command.contains('\0') {
+        if provider.command.trim().is_empty()
+            || provider.command.len() > PLUGIN_MAX_COMMAND_BYTES
+            || provider.command.contains('\0')
+        {
             return Err(format!(
-                "plugins provider '{}' command must be a non-empty native executable",
-                provider.id
+                "plugins provider '{}' command must be a non-empty native executable of at most {PLUGIN_MAX_COMMAND_BYTES} bytes",
+                provider.id,
             ));
         }
         if provider.args.len() > 64
@@ -1608,6 +1612,38 @@ fn validate_plugin_config(config: &PluginConfig, shell: &ShellConfig) -> Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod plugin_config_tests {
+    use super::*;
+
+    fn provider() -> PluginProviderConfig {
+        PluginProviderConfig {
+            id: "provider".to_string(),
+            name: "Provider".to_string(),
+            command: "node".to_string(),
+            args: Vec::new(),
+            cwd: None,
+            profile: None,
+            timeout_secs: None,
+        }
+    }
+
+    #[test]
+    fn plugin_command_is_bounded() {
+        let mut oversized = provider();
+        oversized.command = "x".repeat(PLUGIN_MAX_COMMAND_BYTES + 1);
+        assert!(validate_plugin_config(
+            &PluginConfig {
+                request_timeout_secs: 30,
+                providers: vec![oversized],
+            },
+            &ShellConfig::default(),
+        )
+        .unwrap_err()
+        .contains("at most 1024 bytes"));
+    }
 }
 
 #[cfg(test)]

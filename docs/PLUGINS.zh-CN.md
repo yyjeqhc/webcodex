@@ -91,12 +91,32 @@ direct call fail closed；不会在同一个 identity 下静默重启。
 Runner 启动后的 Plugin 开发统一走 dynamic plane：
 
 ```text
+plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
 plugin_tool(action="reload", runner="my-runner")
 plugin_tool(action="list", runner="my-runner")
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
     -> { ..., "binding": "wc_pbind_..." }
 plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`check` 是开发时 `reload` 之前推荐使用的预检。Runner 会重新读取当前
+`runner.toml`，只定位 requested provider，使用正常 Plugin runtime 的同一套
+shell/profile environment preparation 和 native executable resolution，**真实启动**配置的
+executable，完成 `initialize`、`tools/list` 与普通 Plugin protocol/bounds validation，随后
+终止整个 disposable candidate process tree。WebCodex 在 check 中绝不会调用 provider
+`tools/call`，也不会把 candidate 提交到 dynamic overlay。由于 Native Plugin 本身就是任意
+本地 executable，其 startup/initialize/list 自身仍可能产生外部副作用，因此 `check` 不是
+纯静态配置 lint。
+
+成功预检返回 `ready=true`，tool summary 只包含 name 和可选 title。坏 candidate 通常仍然
+表示“check 操作成功完成了诊断”，因此返回 `ready=false`、结构化 `phase`、稳定 `code`
+以及有界、由 WebCodex 生成的安全 `detail`，而不是把所有坏 Plugin 都变成
+`plugin_tool isError=true`。Plugin stderr 始终留在 Runner 本机，不会进入 check report。
+
+`startupToolShape.eligible=true` 只表示这个 checked provider 自己的 Tool definitions 满足
+更严格的 provider-local startup Tool bounds；它**不保证**最终成为一级 MCP tool。实际
+startup admission 还受 whole-catalog bounds 影响，而 Server 一级暴露还取决于 reserved
+name 与 caller-visible name uniqueness。
 
 `call` 的 dispatch identity 只有这个 opaque `binding`；call 阶段不再接受
 `runner`、`plugin`、`tool` 作为路由字段。每次 describe 都会创建独立 binding，精确
@@ -105,8 +125,10 @@ plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 
 `reload` 是 Windows、macOS、Linux 都可用的 authoritative reload 入口。Runner
 自己重新读取自己的 `runner.toml`；Server 不会上传 executable、env 或 raw Plugin
-config。reload 管理操作严格串行：如果已经有一个 reload 正在准备 candidate，第二个
-reload 不排队，直接返回 `plugin_reload_busy` + `NotStarted`。
+config。candidate management 在 `check` 与 `reload` 之间共同串行：第二个 check 返回
+`plugin_check_busy`，reload 保持已有 `plugin_reload_busy`；都以 `NotStarted` 明确拒绝，
+不排队等待。candidate 准备期间不会长期持有 current dynamic/provider session，因此
+list/describe/call 与 startup direct tools 仍可继续使用当前已提交 provider。
 
 changed provider 会先准备 candidate，只有 initialize/list 成功后才替换旧 dynamic
 instance；candidate 失败会保留已有可工作的 dynamic instance。被删除的 provider 会从
@@ -116,6 +138,8 @@ dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
 
 ```text
 修改 Plugin code/config
+    -> plugin_tool check
+    -> 修复直到 disposable candidate ready
     -> plugin_tool reload
     -> plugin_tool describe
     -> 收到 opaque binding
@@ -129,6 +153,10 @@ dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
 B，那么直接 `search_symbol(...)` 仍然调用 A；新的 dynamic `describe` 会观察 B，返回的
 binding 也只会调用那个 exact B instance。只有 Runner restart 才能替换一级 startup
 绑定。
+
+在 reload 前运行 `check` 不会替换 A 或当前 dynamic provider，不会改变
+`firstClassRestartRequired`，不会创建 binding，也不会改变 direct MCP tool inventory。
+成功的 check candidate 会被销毁，不会偷偷复用成下一次 reload provider。
 
 ## WebCodex Plugin Protocol v1
 

@@ -185,6 +185,8 @@ mod model_ergonomics;
 mod model_surface;
 #[path = "mcp_tests/oauth_scope.rs"]
 mod oauth_scope;
+#[path = "mcp_tests/plugin_check.rs"]
+mod plugin_check;
 #[path = "mcp_tests/plugin_tools.rs"]
 mod plugin_tools;
 #[path = "mcp_tests/project_connector.rs"]

@@ -99,12 +99,35 @@ the provider under the same identity.
 After startup, Plugin development uses the dynamic plane:
 
 ```text
+plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
 plugin_tool(action="reload", runner="my-runner")
 plugin_tool(action="list", runner="my-runner")
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
     -> { ..., "binding": "wc_pbind_..." }
 plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`check` is the recommended preflight before `reload`. The Runner rereads its
+current `runner.toml`, locates only the requested provider, prepares the same
+shell/profile environment used by the normal Plugin runtime, resolves and
+**really starts** the configured executable, performs `initialize` and
+`tools/list`, validates the normal Plugin protocol/bounds, then terminates that
+candidate process tree. It never calls provider `tools/call` and never commits
+the candidate into the dynamic overlay. Because a Native Plugin is an arbitrary
+local executable, its own startup/initialize/list behavior can still have
+external side effects; `check` is not a purely static config linter.
+
+A successful check returns `ready=true` plus bounded tool summaries containing
+only names and optional titles. A broken candidate is normally a successful
+check operation with `ready=false`, a structured `phase`, a stable error `code`,
+and a bounded WebCodex-generated `detail`. Plugin stderr remains Runner-local and
+is never included in the report.
+
+`startupToolShape.eligible=true` means only that this checked provider's own Tool
+definitions satisfy the stricter per-provider startup Tool bounds. It is **not**
+a guarantee of final first-class MCP exposure: actual startup admission also
+depends on whole-catalog bounds, and Server exposure still depends on reserved
+names and caller-visible name uniqueness.
 
 `call` has one dispatch identity: the opaque `binding` returned by that exact
 `describe`. It does not accept `runner`, `plugin`, or `tool` as call-time
@@ -114,9 +137,12 @@ that moment. The handle does not encode or expose those internal identities.
 
 `reload` is the cross-platform authoritative reload path on Windows, macOS, and
 Linux. The Runner rereads its own `runner.toml`; the Server does not upload an
-executable, environment, or raw Plugin config. Reload management is serialized:
-if another reload is already preparing candidates, the second reload is not
-queued and returns `plugin_reload_busy` with `NotStarted`.
+executable, environment, or raw Plugin config. Candidate management is
+serialized across both `check` and `reload`: a second check returns
+`plugin_check_busy`, while reload keeps the existing `plugin_reload_busy` result.
+Candidate operations are rejected with `NotStarted` instead of being queued.
+This gate does not block list/describe/call or direct startup tools from using the
+currently committed provider while a candidate is being prepared.
 
 A changed provider is initialized and listed successfully before it replaces
 the previous dynamic instance. A failed candidate leaves the previous working
@@ -127,6 +153,8 @@ This creates the normal development loop:
 
 ```text
 edit Plugin code/config
+    -> plugin_tool check
+    -> fix until the disposable candidate is ready
     -> plugin_tool reload
     -> plugin_tool describe
     -> receive opaque binding
@@ -140,6 +168,11 @@ If startup provider A is first-class and reload creates dynamic provider B,
 direct `search_symbol(...)` still calls A. A fresh dynamic `describe` observes B
 and its returned binding calls only that exact B instance. Only a Runner restart
 can replace the first-class startup binding.
+
+Running `check` before that reload does not replace A or the current dynamic
+provider, does not alter `firstClassRestartRequired`, does not create a binding,
+and does not change the direct MCP tool inventory. The successful check candidate
+is disposed instead of being reused by a later reload.
 
 ## WebCodex Plugin Protocol v1
 

@@ -154,21 +154,21 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": PLUGIN_TOOL_NAME,
-        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Plugins are arbitrary local executables using the bounded WebCodex stdio protocol, not MCP servers. action=reload rereads the exact Runner's runner.toml into the dynamic plane; startup first-class tools remain unchanged until Runner restart. Dynamic calls use reload -> describe -> call: describe returns an opaque binding for that exact Runner/provider/schema observation, and call accepts only that binding plus arguments. Stale bindings never retarget or replay; describe again after replacement. Binding handles are not authorization and Runner/provider instance identities stay hidden.",
+        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Plugins are arbitrary local executables using the bounded WebCodex stdio protocol, not MCP servers. Prefer action=check before reload while developing: check rereads the exact Runner's current runner.toml, really starts one disposable candidate through the Runner's normal Plugin environment/protocol path, initializes and lists tools, never calls tools/call, and never changes startup or dynamic Plugin state. action=reload commits validated candidates to the dynamic plane; startup first-class tools remain unchanged until Runner restart. Dynamic calls then use reload -> describe -> call: describe returns an opaque exact binding and call accepts only that binding plus arguments. Stale bindings never retarget or replay. Runner/provider instance identities and Plugin execution configuration stay hidden.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "reload", "describe", "call"]
+                    "enum": ["list", "check", "reload", "describe", "call"]
                 },
                 "runner": {
                     "type": "string",
-                    "description": "Exact caller-visible Runner client id. Optional for list; required for reload and describe; not accepted for call."
+                    "description": "Exact caller-visible Runner client id. Optional for list; required for check, reload, and describe; not accepted for call."
                 },
                 "plugin": {
                     "type": "string",
-                    "description": "Logical Plugin provider id. Required only for describe; not accepted for call."
+                    "description": "Logical Plugin provider id. Required for check and describe; not accepted for call."
                 },
                 "tool": {
                     "type": "string",
@@ -217,6 +217,9 @@ pub(crate) async fn call(
         "list" => list(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::Metadata),
+        "check" => check(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
         "reload" => reload(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::Metadata),
@@ -228,7 +231,7 @@ pub(crate) async fn call(
             .map(GatewaySuccess::ToolResult),
         _ => Err(GatewayError::local(
             "invalid_action",
-            "action must be one of list, reload, describe, or call",
+            "action must be one of list, check, reload, describe, or call",
         )),
     };
     render_gateway_result(result)
@@ -273,6 +276,43 @@ async fn list(
         })
         .collect::<Vec<_>>();
     Ok(json!({"runners": runners}))
+}
+
+async fn check(
+    runtime: &ToolRuntime,
+    args: PluginToolArguments,
+    auth: Option<&AuthContext>,
+) -> Result<Value, GatewayError> {
+    if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "action=check accepts only runner and plugin",
+        ));
+    }
+    let runner_id = required_runner(args.runner.as_deref())?;
+    let plugin_id = required_provider(args.plugin.as_deref())?;
+    let runner = resolve_runner(runtime, runner_id, auth).await?;
+    let response = execute_exact(
+        runtime,
+        &runner,
+        PluginGatewayRequest::Check {
+            provider_id: plugin_id.to_string(),
+        },
+        auth,
+    )
+    .await?;
+    if let Some(error) = response.error {
+        return Err(response_error(response.dispatch_state, error));
+    }
+    match response.payload {
+        Some(PluginGatewayResponsePayload::Checked { report }) => {
+            Ok(sanitize_check_report(&runner.client_id, report))
+        }
+        _ => Err(GatewayError::local(
+            "invalid_plugin_response",
+            "Runner returned an unexpected Plugin check response",
+        )),
+    }
 }
 
 async fn reload(
@@ -769,6 +809,55 @@ fn response_error(state: PluginDispatchState, error: PluginGatewayError) -> Gate
     }
 }
 
+fn sanitize_check_report(runner: &str, report: PluginCheckReport) -> Value {
+    let mut value = json!({
+        "runner": runner,
+        "plugin": report.provider_id,
+        "ready": report.ready,
+        "phase": check_phase_name(report.phase),
+        "toolCount": report.tool_count,
+        "tools": report
+            .tools
+            .into_iter()
+            .map(|tool| {
+                let mut summary = json!({"name": tool.name});
+                if let Some(title) = tool.title {
+                    summary["title"] = Value::String(title);
+                }
+                summary
+            })
+            .collect::<Vec<_>>()
+    });
+    if let Some(code) = report.code {
+        value["code"] = Value::String(code);
+    }
+    if let Some(detail) = report.detail {
+        value["detail"] = Value::String(detail);
+    }
+    if let Some(shape) = report.startup_tool_shape {
+        let mut startup_shape = json!({"eligible": shape.eligible});
+        if let Some(code) = shape.code {
+            startup_shape["code"] = Value::String(code);
+        }
+        value["startupToolShape"] = startup_shape;
+    }
+    value
+}
+
+fn check_phase_name(phase: PluginCheckPhase) -> &'static str {
+    match phase {
+        PluginCheckPhase::Config => "config",
+        PluginCheckPhase::Environment => "environment",
+        PluginCheckPhase::Executable => "executable",
+        PluginCheckPhase::Spawn => "spawn",
+        PluginCheckPhase::Stdio => "stdio",
+        PluginCheckPhase::Initialize => "initialize",
+        PluginCheckPhase::ToolsList => "tools_list",
+        PluginCheckPhase::Validation => "validation",
+        PluginCheckPhase::Ready => "ready",
+    }
+}
+
 fn sanitize_provider_view(provider: PluginProviderView) -> Value {
     json!({
         "plugin": provider.provider_id,
@@ -944,6 +1033,13 @@ mod tests {
         assert_eq!(spec["name"], PLUGIN_TOOL_NAME);
         assert!(spec.get("outputSchema").is_none());
         assert!(spec["inputSchema"]["properties"]["binding"].is_object());
+        assert!(spec["inputSchema"]["properties"]["plugin"].is_object());
+        assert!(spec["inputSchema"]["properties"]["runner"].is_object());
+        assert!(spec["inputSchema"]["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action == "check"));
         assert_eq!(
             spec["inputSchema"]["properties"]["binding"]["pattern"],
             "^wc_pbind_[0-9a-f]{32}$"
@@ -957,6 +1053,6 @@ mod tests {
         assert!(!encoded.contains("revision"));
         assert!(!encoded.contains("command"));
         assert!(!encoded.contains("cwd"));
-        assert!(!encoded.contains("env"));
+        assert!(!encoded.contains("\"env\""));
     }
 }

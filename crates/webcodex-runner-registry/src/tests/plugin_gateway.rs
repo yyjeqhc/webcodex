@@ -5,8 +5,9 @@ use crate::runner_protocol::{
 };
 use serde_json::json;
 use webcodex_core::plugin::{
-    PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
-    PluginPlane, PluginSchemaObservation, PluginTool, StartupPluginProvider,
+    PluginCheckPhase, PluginCheckReport, PluginDispatchState, PluginGatewayRequest,
+    PluginGatewayResponse, PluginGatewayResponsePayload, PluginPlane, PluginSchemaObservation,
+    PluginTool, StartupPluginProvider,
 };
 
 fn plugin_tool() -> PluginTool {
@@ -199,6 +200,83 @@ async fn plugin_reload_can_target_exact_runner_with_zero_startup_plugins() {
     assert!(matches!(
         receiver.await.unwrap().payload,
         Some(PluginGatewayResponsePayload::Reloaded { .. })
+    ));
+}
+
+#[tokio::test]
+async fn plugin_check_targets_exact_runner_without_requiring_startup_provider_identity() {
+    let registry = RunnerRegistry::default();
+    registry
+        .register(plugin_registration(
+            "check-plugin-runner",
+            "check-instance",
+            vec![],
+        ))
+        .await
+        .unwrap();
+    let alice = auth_context(Some("alice"), false);
+    let (_request_id, receiver) = registry
+        .enqueue_plugin_gateway(
+            "check-plugin-runner",
+            "check-instance",
+            PluginGatewayRequest::Check {
+                provider_id: "repo-tools".to_string(),
+            },
+            Some(&alice),
+            "test".to_string(),
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "check-plugin-runner".to_string(),
+            runner_instance_id: "check-instance".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::Check { ref provider_id }) if provider_id == "repo-tools"
+    ));
+    registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: "check-plugin-runner".to_string(),
+                runner_instance_id: "check-instance".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(PluginGatewayResponse::success(
+                PluginGatewayResponsePayload::Checked {
+                    report: PluginCheckReport {
+                        provider_id: "repo-tools".to_string(),
+                        ready: false,
+                        phase: PluginCheckPhase::Config,
+                        code: Some("plugin_not_configured".to_string()),
+                        detail: Some(
+                            "requested Plugin provider is not configured in current runner.toml"
+                                .to_string(),
+                        ),
+                        tool_count: 0,
+                        tools: vec![],
+                        startup_tool_shape: None,
+                    },
+                },
+            )),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        receiver.await.unwrap().payload,
+        Some(PluginGatewayResponsePayload::Checked { .. })
     ));
 }
 

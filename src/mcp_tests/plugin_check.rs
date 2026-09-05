@@ -1,0 +1,408 @@
+use super::*;
+use crate::runner_protocol::{RunnerPolicySummary, RunnerResultPayload};
+use std::sync::Arc;
+use webcodex_core::plugin::{
+    PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary, PluginGatewayRequest,
+    PluginGatewayResponse, PluginGatewayResponsePayload, PluginStartupToolShape, PluginTool,
+    StartupPluginProvider,
+};
+
+fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
+    let mut auth = mcp_export_api_auth("plugin-check-test-pat", "alice");
+    if include_scope {
+        auth.scopes
+            .push(crate::auth::SCOPE_PLUGIN_LOCAL.to_string());
+    }
+    auth
+}
+
+fn direct_tool(name: &str) -> PluginTool {
+    PluginTool {
+        name: name.to_string(),
+        title: Some("Search Symbol".to_string()),
+        description: Some("Search repository symbols".to_string()),
+        input_schema: json!({
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": false
+        }),
+        output_schema: None,
+        annotations: Some(json!({"readOnlyHint": true})),
+    }
+}
+
+async fn register_plugin_runner(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    runner_instance_id: &str,
+    tool_name: &str,
+) {
+    let mut capabilities = RunnerCapabilities::default();
+    capabilities.native_tool_plugins = true;
+    runtime
+        .runner_registry
+        .register(crate::test_support::current_runner_registration(
+            RunnerRegisterRequest {
+                client_id: client_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                display_name: Some(format!("Plugin {client_id}")),
+                owner: Some("alice".to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities,
+                policy: Some(RunnerPolicySummary {
+                    plugin_providers: Some(vec![StartupPluginProvider {
+                        provider_id: "repo-tools".to_string(),
+                        provider_instance_id: format!("startup-{runner_instance_id}"),
+                        name: "Repo Tools".to_string(),
+                        status: "ready".to_string(),
+                        error_code: None,
+                        tools: vec![direct_tool(tool_name)],
+                    }]),
+                    ..Default::default()
+                }),
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+            },
+        ))
+        .await
+        .unwrap();
+}
+
+async fn wait_for_plugin_request(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    runner_instance_id: &str,
+) -> crate::runner_protocol::RunnerRequest {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(request) = runtime
+            .runner_registry
+            .poll(RunnerPollRequest {
+                client_id: client_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Plugin check did not dispatch"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn complete_plugin_request(
+    runtime: &ToolRuntime,
+    request: crate::runner_protocol::RunnerRequest,
+    runner_instance_id: &str,
+    response: PluginGatewayResponse,
+) {
+    runtime
+        .runner_registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: request.client_id,
+                runner_instance_id: runner_instance_id.to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(response),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+}
+
+fn check_call(runner: &str, extra: Value) -> JsonRpcRequest {
+    let mut arguments = json!({
+        "action": "check",
+        "runner": runner,
+        "plugin": "repo-tools"
+    });
+    if let Some(extra) = extra.as_object() {
+        arguments.as_object_mut().unwrap().extend(extra.clone());
+    }
+    rpc(
+        "tools/call",
+        Some(json!(760)),
+        json!({
+            "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+            "arguments": arguments
+        }),
+    )
+}
+
+async fn tools_list(runtime: &ToolRuntime, auth: &crate::auth::AuthContext) -> Value {
+    match handle_mcp_request(
+        runtime,
+        rpc("tools/list", Some(json!(761)), json!({})),
+        Some(auth),
+    )
+    .await
+    {
+        McpOutcome::Ok(value) => value,
+        other => panic!("tools/list failed: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatch() {
+    let spec = crate::plugin_gateway::tool_spec();
+    assert!(spec["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action == "check"));
+    let description = spec["description"].as_str().unwrap();
+    assert!(description.contains("Prefer action=check before reload"));
+    assert!(description.contains("never calls tools/call"));
+
+    let runtime = test_runtime();
+    let no_scope = handle_mcp_request(
+        &runtime,
+        check_call("runner-a", json!({})),
+        Some(&plugin_auth(false)),
+    )
+    .await;
+    match no_scope {
+        McpOutcome::Forbidden { required_scope, .. } => {
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_LOCAL));
+        }
+        other => panic!("check without plugin:local must be forbidden: {other:?}"),
+    }
+
+    let auth = plugin_auth(true);
+    for extra in [
+        json!({"tool":"search_symbol"}),
+        json!({"binding":"wc_pbind_0123456789abcdef0123456789abcdef"}),
+        json!({"arguments":{}}),
+    ] {
+        let outcome =
+            handle_mcp_request(&runtime, check_call("runner-a", extra), Some(&auth)).await;
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("invalid check arguments should render a tool result: {outcome:?}");
+        };
+        assert_eq!(value["result"]["isError"], true);
+        assert_eq!(
+            value["result"]["structuredContent"]["error"]["code"],
+            "invalid_arguments"
+        );
+    }
+
+    let missing_runner = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(762)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"check","plugin":"repo-tools"}
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(missing_runner) = missing_runner else {
+        panic!("missing runner should render a tool result");
+    };
+    assert_eq!(
+        missing_runner["result"]["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+
+    let missing_plugin = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(763)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"check","runner":"runner-a"}
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(missing_plugin) = missing_plugin else {
+        panic!("missing plugin should render a tool result");
+    };
+    assert_eq!(
+        missing_plugin["result"]["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves_direct_inventory()
+{
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(&runtime, "runner-a", "runner-instance-a", "search_symbol").await;
+    register_plugin_runner(&runtime, "runner-b", "runner-instance-b", "other_symbol").await;
+    let before = tools_list(&runtime, &auth).await;
+    assert!(before["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "search_symbol"));
+
+    let task_runtime = Arc::clone(&runtime);
+    let task_auth = auth.clone();
+    let task = tokio::spawn(async move {
+        handle_mcp_request(
+            &task_runtime,
+            check_call("runner-a", json!({})),
+            Some(&task_auth),
+        )
+        .await
+    });
+
+    let request = wait_for_plugin_request(&runtime, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::Check { ref provider_id }) if provider_id == "repo-tools"
+    ));
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-b".to_string(),
+            runner_instance_id: "runner-instance-b".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+    complete_plugin_request(
+        &runtime,
+        request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+            report: PluginCheckReport {
+                provider_id: "repo-tools".to_string(),
+                ready: true,
+                phase: PluginCheckPhase::Ready,
+                code: None,
+                detail: None,
+                tool_count: 1,
+                tools: vec![PluginCheckToolSummary {
+                    name: "search_symbol".to_string(),
+                    title: Some("Search Symbol".to_string()),
+                }],
+                startup_tool_shape: Some(PluginStartupToolShape {
+                    eligible: true,
+                    code: None,
+                }),
+            },
+        }),
+    )
+    .await;
+
+    let McpOutcome::Ok(value) = task.await.unwrap() else {
+        panic!("plugin check failed");
+    };
+    assert_eq!(value["result"]["isError"], false);
+    let report = &value["result"]["structuredContent"];
+    assert_eq!(report["runner"], "runner-a");
+    assert_eq!(report["plugin"], "repo-tools");
+    assert_eq!(report["ready"], true);
+    assert_eq!(report["phase"], "ready");
+    assert_eq!(report["toolCount"], 1);
+    assert_eq!(report["tools"][0]["name"], "search_symbol");
+    assert_eq!(report["startupToolShape"]["eligible"], true);
+    assert!(report.get("binding").is_none());
+    let encoded = serde_json::to_string(report).unwrap();
+    for forbidden in [
+        "runner-instance-a",
+        "provider_instance_id",
+        "runner_instance_id",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+        "pid",
+    ] {
+        assert!(!encoded.contains(forbidden), "check leaked {forbidden}");
+    }
+
+    let after = tools_list(&runtime, &auth).await;
+    assert!(after["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "search_symbol"));
+}
+
+#[tokio::test]
+async fn broken_plugin_candidate_is_a_successful_check_diagnostic_result() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(&runtime, "runner-a", "runner-instance-a", "search_symbol").await;
+    let task_runtime = Arc::clone(&runtime);
+    let task_auth = auth.clone();
+    let task = tokio::spawn(async move {
+        handle_mcp_request(
+            &task_runtime,
+            check_call("runner-a", json!({})),
+            Some(&task_auth),
+        )
+        .await
+    });
+    let request = wait_for_plugin_request(&runtime, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+            report: PluginCheckReport {
+                provider_id: "repo-tools".to_string(),
+                ready: false,
+                phase: PluginCheckPhase::Validation,
+                code: Some("plugin_tools_list_invalid".to_string()),
+                detail: Some(
+                    "Plugin tools/list result violates Tool schema or Plugin bounds".to_string(),
+                ),
+                tool_count: 0,
+                tools: vec![],
+                startup_tool_shape: None,
+            },
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(value) = task.await.unwrap() else {
+        panic!("broken candidate check should still complete as a diagnostic result");
+    };
+    assert_eq!(value["result"]["isError"], false);
+    assert_eq!(value["result"]["structuredContent"]["ready"], false);
+    assert_eq!(
+        value["result"]["structuredContent"]["code"],
+        "plugin_tools_list_invalid"
+    );
+    assert_eq!(value["result"]["structuredContent"]["phase"], "validation");
+    assert!(value["result"]["structuredContent"]
+        .get("binding")
+        .is_none());
+}

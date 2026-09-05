@@ -178,6 +178,9 @@ pub const COMPUTER_DISPLAY_READ: &str = webcodex_core::authority::SCOPE_COMPUTER
 pub const COMPUTER_POINTER_CONTROL: &str = webcodex_core::authority::SCOPE_COMPUTER_POINTER_CONTROL;
 pub const COMPUTER_CLIPBOARD_READ: &str = webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_READ;
 pub const COMPUTER_CLIPBOARD_WRITE: &str = webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_WRITE;
+pub const PLUGIN_INSPECT: &str = webcodex_core::authority::SCOPE_PLUGIN_INSPECT;
+pub const PLUGIN_INVOKE: &str = webcodex_core::authority::SCOPE_PLUGIN_INVOKE;
+pub const PLUGIN_MANAGE: &str = webcodex_core::authority::SCOPE_PLUGIN_MANAGE;
 
 /// Canonical Rust name for tools executed by a Runner. The serialized
 /// provider_id remains the historical `"agent"` compatibility value.

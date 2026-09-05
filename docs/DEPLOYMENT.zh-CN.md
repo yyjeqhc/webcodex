@@ -338,6 +338,11 @@ max_output_bytes = 262144
 调用同一 reload primitive 的兼容 trigger，但 first-class config control 不依赖它。身份、
 server/auth、项目来源、并发、能力与传输等字段在被报告为 restart-only 时仍需要重启。
 
+`[plugins]` 支持 live reload：generic Runner config reload 与 `plugin_tool reload` 共用同一个
+Plugin candidate admission/atomic-commit primitive。Plugin provider Tool 始终是 Runner-local
+capability，只通过 `plugin_tool` 暴露，不会 promotion 到外层 MCP `tools/list`，也不需要为了
+Plugin discovery 重启 Runner。
+
 前台测试可运行 `webcodex-runner --profile workstation`。高级手动生成配置用
 `webcodex runner init`。
 

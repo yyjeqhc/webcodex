@@ -505,6 +505,10 @@ fn manifest_authority(policy: ToolAuthorityPolicy) -> Value {
             "policy": "require",
             "scopes": [scope],
         }),
+        ToolAuthorityPolicy::RequireAny(scopes) => json!({
+            "policy": "require_any",
+            "scopes": scopes,
+        }),
         ToolAuthorityPolicy::RequireAll(scopes) => json!({
             "policy": "require_all",
             "scopes": scopes,

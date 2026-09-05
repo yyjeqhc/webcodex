@@ -41,6 +41,9 @@ fn sample_tool_args_for_spec(spec: &ToolSpec) -> Value {
         "observe_jobs" => {
             args.insert("items".to_string(), json!([{"job_id": "job_123"}]));
         }
+        "plugin_tool" => {
+            args.insert("action".to_string(), json!("list"));
+        }
         _ => {}
     }
     Value::Object(args)
@@ -124,6 +127,7 @@ fn sample_field_value(field: &str) -> Value {
         "head_commit" => json!("b".repeat(40)),
         "expected_head" => json!("a".repeat(40)),
         "expected_revision" => json!(format!("sha256:{}", "a".repeat(64))),
+        "expected_generation" => json!(1),
         "name" => json!("Private Drop"),
         "kind" => json!("note"),
         "message" => json!("hello"),

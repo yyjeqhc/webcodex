@@ -272,7 +272,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
-    guard.capture_payload("raw_request_body", &body);
+    guard.capture_payload("raw_request_body", &tool_call_trace_raw_body(&body));
     let (tool, params) = match extract_tool_call(&body) {
         Ok(pair) => pair,
         Err(msg) => {
@@ -293,7 +293,10 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
     };
     guard.set_tool_name(Some(tool.clone()));
     guard.parsed("ok");
-    guard.capture_payload("effective_arguments", &params);
+    guard.capture_payload(
+        "effective_arguments",
+        &tool_call_trace_effective_arguments(&tool, &params),
+    );
     // dispatch_started only after argument extraction succeeds and immediately
     // before ToolRuntime dispatch.
     guard.dispatch_started();
@@ -436,6 +439,49 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
                 category,
             );
         }
+    }
+}
+
+fn tool_call_trace_raw_body(body: &Value) -> Value {
+    let Some(object) = body.as_object() else {
+        return body.clone();
+    };
+    if object.get(TOOL_CALL_TOOL_FIELD).and_then(Value::as_str)
+        != Some(crate::plugin_gateway::PLUGIN_TOOL_NAME)
+    {
+        return body.clone();
+    }
+    let plugin_arguments = object
+        .get(TOOL_CALL_PARAMS_FIELD)
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| {
+            let mut flattened = serde_json::Map::new();
+            for (key, value) in object {
+                if key == TOOL_CALL_TOOL_FIELD
+                    || key == TOOL_CALL_PARAMS_FIELD
+                    || key == TOOL_CALL_RECORDING_SESSION_ID_FIELD
+                {
+                    continue;
+                }
+                flattened.insert(key.clone(), value.clone());
+            }
+            Value::Object(flattened)
+        });
+    json!({
+        "tool": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+        "arguments": crate::plugin_gateway::audit_arguments(&plugin_arguments),
+        "recording_session_id_present": object
+            .get(TOOL_CALL_RECORDING_SESSION_ID_FIELD)
+            .is_some(),
+    })
+}
+
+fn tool_call_trace_effective_arguments(tool: &str, params: &Value) -> Value {
+    if tool == crate::plugin_gateway::PLUGIN_TOOL_NAME {
+        crate::plugin_gateway::audit_arguments(params)
+    } else {
+        params.clone()
     }
 }
 

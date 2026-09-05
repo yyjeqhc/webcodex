@@ -2085,7 +2085,6 @@ fn build_register_request_with_provider_status(
                 prepared_cache_count,
                 tool_providers,
                 runtime.mcp_gateway().provider_inventory(),
-                runtime.plugins().startup_catalog(),
             )),
             process_started_at: Some(process_started_at()),
             build: Some(runner_build_info()),
@@ -2214,7 +2213,6 @@ fn register_policy_summary(
     prepared_cache_count: usize,
     tool_providers: runner_protocol::ToolProvidersStatus,
     mcp_gateway_providers: Vec<crate::mcp_gateway::McpGatewayProvider>,
-    plugin_providers: Vec<webcodex_core::plugin::StartupPluginProvider>,
 ) -> RunnerPolicySummary {
     RunnerPolicySummary {
         allow_raw_shell: cfg.policy.allow_raw_shell,
@@ -2228,7 +2226,6 @@ fn register_policy_summary(
         )),
         tool_providers: Some(tool_providers),
         mcp_gateway_providers: Some(mcp_gateway_providers),
-        plugin_providers: Some(plugin_providers),
     }
 }
 

@@ -844,6 +844,75 @@ fn extract_tool_call_params_precede_flattened_fields() {
 }
 
 #[test]
+fn extract_tool_call_plugin_tool_preserves_provider_local_tool_inside_params() {
+    let body = json!({
+        "tool": "plugin_tool",
+        "params": {
+            "action": "describe",
+            "runner": "runner-a",
+            "plugin": "repo-tools",
+            "tool": "safe_delete"
+        },
+        TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_plugin_record"
+    });
+    let (tool, params) = extract_tool_call(&body).unwrap();
+    assert_eq!(tool, "plugin_tool");
+    assert_eq!(params["action"], "describe");
+    assert_eq!(params["tool"], "safe_delete");
+    let parsed = ToolCall::from_tool_name(&tool, params).unwrap();
+    assert_eq!(parsed.tool_name(), "plugin_tool");
+    assert!(matches!(parsed, ToolCall::PluginTool(_)));
+    assert_eq!(
+        extract_recording_session_id(&body),
+        Some("wc_sess_plugin_record".to_string())
+    );
+
+    let (tool, params) = extract_tool_call(&json!({
+        "tool": "plugin_tool",
+        "params": {
+            "action": "call",
+            "binding": "wc_pbind_00000000000000000000000000000000",
+            "arguments": {"path": "build/old.bin"}
+        }
+    }))
+    .unwrap();
+    assert!(matches!(
+        ToolCall::from_tool_name(&tool, params).unwrap(),
+        ToolCall::PluginTool(_)
+    ));
+}
+
+#[test]
+fn plugin_tool_api_trace_projection_hides_binding_and_raw_arguments() {
+    let body = json!({
+        "tool": "plugin_tool",
+        "params": {
+            "action": "call",
+            "binding": "wc_pbind_0123456789abcdef0123456789abcdef",
+            "arguments": {"path": "private/target.txt", "secret": "must-not-leak"}
+        },
+        TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_plugin_record"
+    });
+    let raw = tool_call_trace_raw_body(&body);
+    let encoded = serde_json::to_string(&raw).unwrap();
+    assert!(!encoded.contains("wc_pbind_"));
+    assert!(!encoded.contains("private/target.txt"));
+    assert!(!encoded.contains("must-not-leak"));
+    assert_eq!(raw["tool"], "plugin_tool");
+    assert_eq!(raw["arguments"]["binding_present"], true);
+    assert_eq!(raw["arguments"]["arguments_present"], true);
+    assert_eq!(raw["recording_session_id_present"], true);
+
+    let effective = tool_call_trace_effective_arguments("plugin_tool", &body["params"]);
+    let encoded = serde_json::to_string(&effective).unwrap();
+    assert!(!encoded.contains("wc_pbind_"));
+    assert!(!encoded.contains("private/target.txt"));
+    assert!(!encoded.contains("must-not-leak"));
+    assert_eq!(effective["binding_present"], true);
+    assert_eq!(effective["arguments_present"], true);
+}
+
+#[test]
 fn extract_tool_call_rejects_retired_arguments_envelope() {
     for arguments in [json!(null), json!({"project": "right"})] {
         let error = extract_tool_call(&json!({

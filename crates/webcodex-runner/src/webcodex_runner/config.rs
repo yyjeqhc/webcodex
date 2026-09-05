@@ -101,9 +101,9 @@ pub(crate) struct RunnerConfig {
     /// built-in MCP gateway. The public config section is `[mcp]`.
     #[serde(default, rename = "mcp")]
     pub(crate) mcp_gateway: McpGatewayConfig,
-    /// Runner-local native stdio Tool Plugins. Startup admission is frozen for
-    /// this Runner process; explicit plugin reloads use the same section only
-    /// for the dynamic overlay.
+    /// Runner-local native stdio Tool Plugins. Startup initializes the first
+    /// committed provider set; specialized and generic reloads atomically replace
+    /// that committed state through the shared Plugin candidate gate.
     #[serde(default)]
     pub(crate) plugins: PluginConfig,
     /// Startup/restart-owned ACP coding-agent providers. This is independent
@@ -794,24 +794,80 @@ impl ReloadableRunnerConfig {
                 );
             }
         };
-        {
-            let mut routers = lock_unpoison(&self.external_routers);
-            routers.retain(|router| router.strong_count() > 0);
-            routers.push(Arc::downgrade(&next.external_tools));
+        let next_for_commit = Arc::clone(&next);
+        match self
+            .plugins
+            .apply_config_candidate_and_then(&candidate, || {
+                {
+                    let mut routers = lock_unpoison(&self.external_routers);
+                    routers.retain(|router| router.strong_count() > 0);
+                    routers.push(Arc::downgrade(&next_for_commit.external_tools));
+                }
+                // Plugin admission is the first externally meaningful commit
+                // of this candidate. The Plugin candidate gate remains held
+                // through this Hot config swap, so a specialized Plugin reload
+                // cannot interleave and create contradictory active truths.
+                let mut current = self.current.write().unwrap();
+                *current = next_for_commit;
+            }) {
+            Ok(()) => {}
+            Err("plugin_reload_busy") => {
+                return (
+                    active.reload_status(),
+                    config_not_started(
+                        RunnerConfigAction::Reload,
+                        Some(active.generation),
+                        "plugin_reload_busy",
+                    ),
+                );
+            }
+            Err("plugin_manager_stopping") => {
+                return (
+                    active.reload_status(),
+                    config_not_started(
+                        RunnerConfigAction::Reload,
+                        Some(active.generation),
+                        "runner_unavailable",
+                    ),
+                );
+            }
+            Err("plugin_reload_state_failed") => {
+                return (
+                    active.reload_status(),
+                    config_not_started(
+                        RunnerConfigAction::Reload,
+                        Some(active.generation),
+                        "plugin_reload_failed",
+                    ),
+                );
+            }
+            Err(_) => {
+                let status = {
+                    let mut status = active.reload_status.lock().unwrap();
+                    status.last_reload_result = "failure".to_string();
+                    status.last_reload_error_code = Some("plugin_reload_failed".to_string());
+                    status.last_reload_error_field = None;
+                    status.last_reload_error_reason = None;
+                    status.clone()
+                };
+                active.external_tools.configuration_status_changed();
+                eprintln!("webcodex-runner config reload failed: plugin_reload_failed");
+                return (
+                    status,
+                    RunnerConfigOperationResponse {
+                        action: RunnerConfigAction::Reload,
+                        execution_state: RunnerConfigExecutionState::Completed,
+                        valid: Some(false),
+                        current_generation: Some(active.generation),
+                        error_code: Some("plugin_reload_failed".to_string()),
+                        error_field: None,
+                        error_reason: None,
+                        restart_required: false,
+                        restart_required_fields: Vec::new(),
+                    },
+                );
+            }
         }
-        let mut current = self.current.write().unwrap();
-        if self.is_stopping() {
-            let status = current.reload_status();
-            return (
-                status,
-                config_not_started(
-                    RunnerConfigAction::Reload,
-                    Some(current.generation),
-                    "runner_unavailable",
-                ),
-            );
-        }
-        *current = next;
         eprintln!(
             "webcodex-runner config reload {}",
             status.last_reload_result
@@ -926,7 +982,7 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, ssh: _, tool_providers: _, legacy_projects_dir: _,
+                policy: _, shell: _, ssh: _, plugins: _, tool_providers: _, legacy_projects_dir: _,
                 deprecated_temporary_projects_root: _, $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
@@ -944,7 +1000,6 @@ pub(crate) fn restart_required_fields(
         max_concurrent_jobs,
         acp,
         mcp_gateway,
-        plugins,
         owner,
         poll_interval_ms,
         project_registry_dir,

@@ -18,9 +18,8 @@ fn oauth_mcp_service(scopes: &str) -> (tempfile::TempDir, Service, String) {
     oauth_mcp_service_with_surface(scopes, ModelSurface::LocalCoding)
 }
 
-async fn oauth_mcp_service_with_startup_plugin(
+async fn oauth_mcp_service_with_plugin_runner(
     scopes: &str,
-    tool_name: &str,
 ) -> (tempfile::TempDir, Service, String) {
     let config = test_config_oauth2(Some("secret"));
     let (tmp, db) = test_db();
@@ -42,30 +41,7 @@ async fn oauth_mcp_service_with_startup_plugin(
                 hostname: None,
                 host_context: None,
                 capabilities,
-                policy: Some(crate::runner_protocol::RunnerPolicySummary {
-                    plugin_providers: Some(vec![webcodex_core::plugin::StartupPluginProvider {
-                        provider_id: "repo-tools".to_string(),
-                        provider_instance_id: "oauth-plugin-provider-instance".to_string(),
-                        name: "Repo Tools".to_string(),
-                        status: "ready".to_string(),
-                        error_code: None,
-                        catalog_tool_count: 1,
-                        catalog_digest: None,
-                        tools: vec![webcodex_core::plugin::PluginTool {
-                            name: tool_name.to_string(),
-                            title: None,
-                            description: Some("OAuth first-class Plugin test tool".to_string()),
-                            input_schema: json!({
-                                "type": "object",
-                                "properties": {"value": {"type": "string"}},
-                                "additionalProperties": false
-                            }),
-                            output_schema: None,
-                            annotations: None,
-                        }],
-                    }]),
-                    ..Default::default()
-                }),
+                policy: Some(Default::default()),
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -264,9 +240,7 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
             "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
             "arguments": {
                 "action": "call",
-                "runner": "runner-a",
-                "plugin": "repo-tools",
-                "tool": "echo",
+                "binding": "wc_pbind_00000000000000000000000000000000",
                 "arguments": {"value": "hello"}
             }
         }),
@@ -275,8 +249,8 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert_eq!(body["result"]["isError"], true);
     assert_eq!(
-        body["result"]["structuredContent"]["error"]["code"], "invalid_arguments",
-        "the pre-binding call shape must be rejected instead of treated as a describe lookup"
+        body["result"]["structuredContent"]["error"]["code"], "describe_required",
+        "a syntactically valid call must reach binding resolution after plugin:invoke scope"
     );
 
     let (status, body, challenge) = oauth_mcp_request(
@@ -285,7 +259,7 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
         "tools/call",
         json!({
             "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-            "arguments": {"action": "check", "runner": "runner-a"}
+            "arguments": {"action": "check", "runner": "runner-a", "plugin": "repo-tools"}
         }),
     )
     .await;
@@ -353,44 +327,34 @@ async fn oauth2_managed_ssh_resource_surface_requires_explicit_ssh_local_scope()
 }
 
 #[tokio::test]
-async fn oauth2_first_class_startup_plugin_visibility_and_direct_spoof_require_plugin_scope() {
+async fn oauth2_plugin_gateway_visibility_uses_any_plugin_scope_and_provider_names_stay_hidden() {
     let tool_name = "oauth_plugin_echo";
-    let (_tmp, service, token) =
-        oauth_mcp_service_with_startup_plugin("runtime:read", tool_name).await;
+    let (_tmp, service, token) = oauth_mcp_service_with_plugin_runner("runtime:read").await;
     let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
-    assert!(!body["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["name"] == tool_name));
+    let names = listed_tool_names(&body);
+    assert!(!names.contains(crate::plugin_gateway::PLUGIN_TOOL_NAME));
+    assert!(!names.contains(tool_name));
 
-    let (status, body, challenge) = oauth_mcp_request(
-        &service,
-        &token,
-        "tools/call",
-        json!({"name": tool_name, "arguments": {"value": "hidden"}}),
-    )
-    .await;
-    assert_mcp_oauth_scope_rejected(
-        status,
-        &body,
-        challenge.as_deref(),
-        Some(crate::auth::SCOPE_PLUGIN_INVOKE),
-    );
-
-    let (_tmp, service, token) = oauth_mcp_service_with_startup_plugin(
-        "runtime:read plugin:inspect plugin:invoke",
-        tool_name,
-    )
-    .await;
-    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
-    assert_eq!(status, StatusCode::OK, "body: {body:?}");
-    assert!(body["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["name"] == tool_name));
+    for scope in [
+        crate::auth::SCOPE_PLUGIN_INSPECT,
+        crate::auth::SCOPE_PLUGIN_INVOKE,
+        crate::auth::SCOPE_PLUGIN_MANAGE,
+    ] {
+        let scopes = format!("runtime:read {scope}");
+        let (_tmp, service, token) = oauth_mcp_service_with_plugin_runner(&scopes).await;
+        let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "scope={scope}, body={body:?}");
+        let names = listed_tool_names(&body);
+        assert!(
+            names.contains(crate::plugin_gateway::PLUGIN_TOOL_NAME),
+            "scope={scope} must make the stable Plugin gateway visible"
+        );
+        assert!(
+            !names.contains(tool_name),
+            "provider-local names must never become outer MCP tools"
+        );
+    }
 }
 
 #[tokio::test]

@@ -29,7 +29,6 @@ use webcodex_core::coding_agent::{
     CODING_AGENT_MAX_PROVIDER_NAME_BYTES,
 };
 use webcodex_core::mcp_gateway::validate_providers;
-use webcodex_core::plugin::validate_startup_catalog;
 use webcodex_core::runner_protocol::{
     RunnerRegisterRequest, RunnerView, RUNNER_JOB_CONCURRENCY_MAX, RUNNER_JOB_CONCURRENCY_MIN,
 };
@@ -295,28 +294,6 @@ impl RunnerRegistry {
             validate_providers(providers)
                 .map_err(|error| format!("invalid MCP gateway provider inventory: {error}"))?;
         }
-        let plugin_catalog = policy
-            .as_ref()
-            .and_then(|policy| policy.plugin_providers.as_ref());
-        match (
-            runner_features.supports(RunnerFeature::NativeToolPlugins),
-            plugin_catalog,
-        ) {
-            (true, Some(providers)) => validate_startup_catalog(providers)
-                .map_err(|error| format!("invalid native Plugin startup catalog: {error}"))?,
-            (true, None) => {
-                return Err(
-                    "native_tool_plugins capability requires explicit startup Plugin catalog"
-                        .to_string(),
-                )
-            }
-            (false, Some(_)) => {
-                return Err(
-                    "startup Plugin catalog requires native_tool_plugins capability".to_string(),
-                )
-            }
-            (false, None) => {}
-        }
         let now = now_ts();
         // Registration establishes liveness only. Project routing becomes authoritative
         // exclusively through the bounded paged inventory protocol.
@@ -477,19 +454,6 @@ impl RunnerRegistry {
             return Err(
                 "same runner instance cannot change MCP gateway provider inventory".to_string(),
             );
-        }
-        if inner.runners.get(&client_id).is_some_and(|existing| {
-            existing.runner_instance_id == runner_instance_id
-                && existing
-                    .policy
-                    .as_ref()
-                    .and_then(|policy| policy.plugin_providers.as_ref())
-                    != record
-                        .policy
-                        .as_ref()
-                        .and_then(|policy| policy.plugin_providers.as_ref())
-        }) {
-            return Err("same runner instance cannot change startup Plugin catalog".to_string());
         }
         // A successful different-instance registration is an explicit lease
         // takeover. `last_seen` remains a passive liveness grace for temporary

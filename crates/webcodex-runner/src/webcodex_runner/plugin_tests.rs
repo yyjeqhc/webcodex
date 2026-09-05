@@ -6,7 +6,8 @@ use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use tempfile::TempDir;
 use webcodex_core::plugin::{
-    PluginContent, PluginGatewayResponsePayload, PLUGIN_MAX_ARGUMENT_BYTES,
+    PluginContent, PluginGatewayResponsePayload, PluginProviderView, PluginSchemaObservation,
+    PLUGIN_MAX_ARGUMENT_BYTES,
 };
 
 static FAKE_PLUGIN: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
@@ -55,7 +56,8 @@ fn fake_binary() -> Arc<FakeBinary> {
 struct Fixture {
     manager: Arc<PluginManager>,
     marker: PathBuf,
-    provider: StartupPluginProvider,
+    provider: PluginProviderView,
+    schema: Option<PluginSchemaObservation>,
     _fake: Arc<FakeBinary>,
     _temp: TempDir,
 }
@@ -83,11 +85,14 @@ impl Fixture {
             temp.path(),
         );
         let manager = Arc::new(PluginManager::new(&config, temp.path().join("runner.toml")));
-        let provider = manager.startup_catalog().into_iter().next().unwrap();
+        let provider = current_providers(&manager).into_iter().next().unwrap();
+        let schema = (provider.status == "ready")
+            .then(|| current_tools(&manager, &provider)[0].schema_observation());
         Self {
             manager,
             marker,
             provider,
+            schema,
             _fake: fake,
             _temp: temp,
         }
@@ -95,7 +100,6 @@ impl Fixture {
 
     fn list(&self) -> PluginGatewayResponse {
         self.manager.handle(PluginGatewayRequest::ToolsList {
-            plane: PluginPlane::Startup,
             provider_id: self.provider.provider_id.clone(),
             provider_instance_id: self.provider.provider_instance_id.clone(),
         })
@@ -106,14 +110,12 @@ impl Fixture {
     }
 
     fn call_with_arguments(&self, arguments: Value) -> PluginGatewayResponse {
-        let schema = self.provider.tools[0].schema_observation();
         self.manager.handle(PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Startup,
             provider_id: self.provider.provider_id.clone(),
             provider_instance_id: self.provider.provider_instance_id.clone(),
             name: "echo".to_string(),
             arguments,
-            expected_schema: schema,
+            expected_schema: self.schema.clone().expect("ready fixture schema"),
         })
     }
 
@@ -131,6 +133,25 @@ impl Fixture {
             .lines()
             .find_map(|line| line.strip_prefix(prefix)?.parse().ok())
     }
+}
+
+fn current_providers(manager: &PluginManager) -> Vec<PluginProviderView> {
+    let response = manager.handle(PluginGatewayRequest::ProvidersList);
+    let Some(PluginGatewayResponsePayload::Providers { providers }) = response.payload else {
+        panic!("missing providers: {:?}", response.error);
+    };
+    providers
+}
+
+fn current_tools(manager: &PluginManager, provider: &PluginProviderView) -> Vec<PluginTool> {
+    let response = manager.handle(PluginGatewayRequest::ToolsList {
+        provider_id: provider.provider_id.clone(),
+        provider_instance_id: provider.provider_instance_id.clone(),
+    });
+    let Some(PluginGatewayResponsePayload::Tools { tools }) = response.payload else {
+        panic!("missing tools: {:?}", response.error);
+    };
+    tools
 }
 
 fn maximum_bounded_arguments() -> Value {
@@ -192,19 +213,18 @@ fn runner_config(
 }
 
 #[test]
-fn startup_is_eager_persistent_and_reused() {
+fn initial_committed_provider_is_eager_persistent_and_reused() {
     let fixture = Fixture::new("normal", 2);
     assert_eq!(fixture.marker_count("start"), 1);
     assert_eq!(fixture.marker_count("initialize"), 1);
     assert_eq!(
         fixture.marker_count("list"),
         1,
-        "startup admission must list eagerly"
+        "initial provider admission must list eagerly"
     );
     assert_eq!(fixture.provider.status, "ready");
-    assert_eq!(fixture.provider.tools.len(), 1);
-    assert_eq!(fixture.provider.catalog_tool_count, 1);
-    assert!(fixture.provider.catalog_digest.is_some());
+    let tools = current_tools(&fixture.manager, &fixture.provider);
+    assert_eq!(tools.len(), 1);
 
     assert!(fixture.list().error.is_none());
     for expected in ["call-1", "call-2"] {
@@ -233,7 +253,7 @@ fn startup_is_eager_persistent_and_reused() {
 }
 
 #[test]
-fn bad_version_and_invalid_startup_provider_do_not_block_manager() {
+fn bad_version_and_invalid_initial_provider_do_not_block_manager() {
     for (scenario, code) in [
         ("bad_version", "plugin_protocol_version_mismatch"),
         ("invalid_tools", "plugin_tools_list_invalid"),
@@ -247,31 +267,15 @@ fn bad_version_and_invalid_startup_provider_do_not_block_manager() {
             Some(code),
             "{scenario}"
         );
-        assert!(fixture.provider.tools.is_empty());
     }
 }
 
 #[test]
-fn startup_secondary_admission_stays_separate_from_runtime_provider_health() {
+fn provider_catalog_is_not_limited_by_removed_first_class_schema_bound() {
     let fixture = Fixture::new("check_startup_large_schema", 2);
-    assert_eq!(fixture.provider.status, "ready_secondary");
-    assert_eq!(
-        fixture.provider.error_code.as_deref(),
-        Some("plugin_startup_schema_too_large")
-    );
-    assert!(fixture.provider.tools.is_empty());
-    assert_eq!(fixture.provider.catalog_tool_count, 1);
-    assert!(fixture.provider.catalog_digest.is_some());
-
-    let response = fixture.manager.handle(PluginGatewayRequest::ProvidersList);
-    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = response.payload else {
-        panic!("missing provider view: {:?}", response.error);
-    };
-    assert_eq!(providers.len(), 1);
-    assert_eq!(providers[0].status, "ready");
-    assert_eq!(providers[0].plane, PluginPlane::Startup);
-    assert_eq!(providers[0].startup_direct_tool_count, 0);
-    assert_eq!(providers[0].error_code, None);
+    assert_eq!(fixture.provider.status, "ready");
+    assert_eq!(fixture.provider.error_code, None);
+    assert_eq!(current_tools(&fixture.manager, &fixture.provider).len(), 1);
 }
 
 #[test]
@@ -379,16 +383,16 @@ fn shutdown_terminates_process_tree_while_effectful_stdin_write_is_blocked() {
     let fixture = Fixture::new("block_after_preflight_tree", 10);
     let manager = Arc::clone(&fixture.manager);
     let provider = fixture.provider.clone();
+    let schema = fixture.schema.clone().unwrap();
     let arguments = maximum_bounded_arguments();
     let (sender, receiver) = mpsc::channel();
     let request = std::thread::spawn(move || {
         let response = manager.handle(PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Startup,
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
             name: "echo".to_string(),
             arguments,
-            expected_schema: provider.tools[0].schema_observation(),
+            expected_schema: schema,
         });
         let _ = sender.send(response);
     });
@@ -464,7 +468,6 @@ fn stderr_is_diagnostic_only_and_never_enters_catalog_or_result() {
         fixture
             .manager
             .local_stderr_diagnostics(
-                PluginPlane::Startup,
                 &fixture.provider.provider_id,
                 &fixture.provider.provider_instance_id,
             )
@@ -475,7 +478,7 @@ fn stderr_is_diagnostic_only_and_never_enters_catalog_or_result() {
                     .any(|line| line.text == "diagnostic-only-secret-looking-stderr")
             })
     }));
-    let catalog = serde_json::to_string(&fixture.manager.startup_catalog()).unwrap();
+    let catalog = serde_json::to_string(&fixture.list()).unwrap();
     assert!(!catalog.contains("diagnostic-only-secret-looking-stderr"));
     let result = serde_json::to_string(&fixture.call()).unwrap();
     assert!(!result.contains("diagnostic-only-secret-looking-stderr"));
@@ -492,7 +495,6 @@ fn stderr_flood_is_bounded_and_does_not_block_stdout_protocol() {
         fixture
             .manager
             .local_stderr_diagnostics(
-                PluginPlane::Startup,
                 &fixture.provider.provider_id,
                 &fixture.provider.provider_instance_id,
             )
@@ -501,7 +503,6 @@ fn stderr_flood_is_bounded_and_does_not_block_stdout_protocol() {
     let snapshot = fixture
         .manager
         .local_stderr_diagnostics(
-            PluginPlane::Startup,
             &fixture.provider.provider_id,
             &fixture.provider.provider_instance_id,
         )
@@ -512,7 +513,7 @@ fn stderr_flood_is_bounded_and_does_not_block_stdout_protocol() {
         .lines
         .iter()
         .all(|line| line.text.len() <= PLUGIN_STDERR_MAX_LINE_BYTES && line.truncated));
-    let catalog = serde_json::to_string(&fixture.manager.startup_catalog()).unwrap();
+    let catalog = serde_json::to_string(&fixture.list()).unwrap();
     assert!(!catalog.contains("stderr-flood"));
 }
 
@@ -521,14 +522,14 @@ fn provider_busy_is_not_started() {
     let fixture = Fixture::new("slow", 2);
     let manager = Arc::clone(&fixture.manager);
     let provider = fixture.provider.clone();
+    let schema = fixture.schema.clone().unwrap();
     let first = std::thread::spawn(move || {
         manager.handle(PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Startup,
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
             name: "echo".to_string(),
             arguments: json!({"value":"first"}),
-            expected_schema: provider.tools[0].schema_observation(),
+            expected_schema: schema,
         })
     });
     for _ in 0..100 {
@@ -593,7 +594,7 @@ fn prepared_environment_reuses_shell_env_default_profile_and_clears_sensitive_va
     };
     let config = runner_config(plugins, shell, temp.path());
     let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
-    assert_eq!(manager.startup_catalog()[0].status, "ready");
+    assert_eq!(current_providers(&manager)[0].status, "ready");
     let markers = fs::read_to_string(marker).unwrap();
     assert!(markers.contains("profile-env-ok"));
     assert!(markers.contains("sensitive-env-cleared"));
@@ -644,7 +645,7 @@ fn bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
     };
     let config = runner_config(plugins, shell, temp.path());
     let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
-    assert_eq!(manager.startup_catalog()[0].status, "ready");
+    assert_eq!(current_providers(&manager)[0].status, "ready");
     assert_eq!(
         fs::read_to_string(marker)
             .unwrap_or_default()
@@ -688,23 +689,26 @@ fn plugin_profile_init_script_is_captured_into_native_child_environment() {
     };
     let config = runner_config(plugins, shell, temp.path());
     let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
-    assert_eq!(manager.startup_catalog()[0].status, "ready");
+    assert_eq!(current_providers(&manager)[0].status, "ready");
     let markers = fs::read_to_string(marker).unwrap();
     assert!(markers.contains("profile-env-ok"));
 }
 
 #[test]
-fn direct_startup_catalog_remains_frozen_across_dynamic_reload() {
+fn reload_replaces_committed_provider_and_invalidates_old_instance() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");
     let fake = fake_binary();
-    let startup_plugins = PluginConfig {
+    let plugins = PluginConfig {
         request_timeout_secs: 2,
         providers: vec![PluginProviderConfig {
             id: "fake".to_string(),
             name: "Fake Plugin".to_string(),
             command: fake.path.to_string_lossy().into_owned(),
-            args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+            args: vec![
+                "schema_change".to_string(),
+                marker.to_string_lossy().into_owned(),
+            ],
             cwd: Some(temp.path().to_string_lossy().into_owned()),
             profile: None,
             timeout_secs: None,
@@ -712,42 +716,66 @@ fn direct_startup_catalog_remains_frozen_across_dynamic_reload() {
     };
     let config_path = temp.path().join("runner.toml");
     write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
-    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let config = runner_config(plugins, ShellConfig::default(), temp.path());
     let manager = PluginManager::new(&config, config_path);
-    let startup = manager.startup_catalog();
-    let startup_instance = startup[0].provider_instance_id.clone();
+    let before = current_providers(&manager).remove(0);
+    let old_instance = before.provider_instance_id.clone();
     let reloaded = manager.handle(PluginGatewayRequest::Reload);
     let Some(PluginGatewayResponsePayload::Reloaded {
         providers,
-        first_class_restart_required,
-        ..
+        failures,
     }) = reloaded.payload
     else {
         panic!("reload failed: {:?}", reloaded.error);
     };
-    assert!(first_class_restart_required);
-    assert_ne!(providers[0].provider_instance_id, startup_instance);
-    assert_eq!(
-        manager.startup_catalog(),
-        startup,
-        "startup catalog must be immutable"
-    );
-
-    let direct = manager.handle(PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Startup,
+    assert!(failures.is_empty());
+    let new_instance = providers[0].provider_instance_id.clone();
+    assert_ne!(new_instance, old_instance);
+    let stale = manager.handle(PluginGatewayRequest::ToolsList {
         provider_id: "fake".to_string(),
-        provider_instance_id: startup_instance,
+        provider_instance_id: old_instance,
     });
-    assert!(direct.error.is_none());
+    assert_eq!(stale.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_plugin_provider");
+    let current = manager.handle(PluginGatewayRequest::ToolsList {
+        provider_id: "fake".to_string(),
+        provider_instance_id: new_instance,
+    });
+    assert!(current.error.is_none());
 }
 
 #[test]
-fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_reload_wins() {
+fn explicit_reload_restarts_provider_when_config_is_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = super::super::config::load_config(&config_path).unwrap();
+    let manager = PluginManager::new(&config, config_path);
+    let old_instance = current_providers(&manager)[0].provider_instance_id.clone();
+
+    // The executable/script may have changed on disk even though runner.toml
+    // did not. An explicit plugin_tool reload must therefore re-instantiate it.
+    let reloaded = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded {
+        providers,
+        failures,
+    }) = reloaded.payload
+    else {
+        panic!("reload failed: {:?}", reloaded.error);
+    };
+    assert!(failures.is_empty());
+    assert_ne!(providers[0].provider_instance_id, old_instance);
+}
+
+#[test]
+fn concurrent_reload_is_busy_while_existing_calls_continue_and_later_reload_wins() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");
     let release = marker.with_extension("release");
     let fake = fake_binary();
-    let startup_plugins = PluginConfig {
+    let plugins = PluginConfig {
         request_timeout_secs: 2,
         providers: vec![PluginProviderConfig {
             id: "fake".to_string(),
@@ -761,17 +789,11 @@ fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_rel
     };
     let config_path = temp.path().join("runner.toml");
     write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
-    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let config = runner_config(plugins, ShellConfig::default(), temp.path());
     let manager = Arc::new(PluginManager::new(&config, config_path.clone()));
-    let startup = manager.startup_catalog();
-    let expected_schema = startup[0].tools[0].schema_observation();
-
-    let first_reload = manager.handle(PluginGatewayRequest::Reload);
-    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
-    else {
-        panic!("initial dynamic reload failed: {:?}", first_reload.error);
-    };
-    let dynamic_v1 = providers[0].provider_instance_id.clone();
+    let current_v1 = current_providers(&manager).remove(0);
+    let dynamic_v1 = current_v1.provider_instance_id.clone();
+    let expected_schema = current_tools(&manager, &current_v1)[0].schema_observation();
 
     let _ = fs::remove_file(&release);
     write_runner_toml_with_timeout(
@@ -811,12 +833,11 @@ fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_rel
     );
 
     let current = manager.handle(PluginGatewayRequest::ProvidersList);
-    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = current.payload else {
+    let Some(PluginGatewayResponsePayload::Providers { providers }) = current.payload else {
         panic!("current dynamic provider list failed: {:?}", current.error);
     };
     assert_eq!(providers[0].provider_instance_id, dynamic_v1);
     let call_while_reloading = manager.handle(PluginGatewayRequest::ToolsCall {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v1.clone(),
         name: "echo".to_string(),
@@ -825,9 +846,8 @@ fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_rel
     });
     assert!(
         call_while_reloading.error.is_none(),
-        "candidate preparation must not hold the dynamic-state lock or block the current provider"
+        "candidate preparation must not hold the committed-state lock or block the current provider"
     );
-    assert_eq!(manager.startup_catalog(), startup);
 
     fs::write(&release, b"release").unwrap();
     let completed_a = reload_a.join().unwrap();
@@ -861,14 +881,124 @@ fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_rel
         1,
         "reload C must read and prepare the new config after A releases the gate"
     );
-    assert_eq!(manager.startup_catalog(), startup);
-
     let final_view = manager.handle(PluginGatewayRequest::ProvidersList);
-    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = final_view.payload else {
+    let Some(PluginGatewayResponsePayload::Providers { providers }) = final_view.payload else {
         panic!("final provider list failed: {:?}", final_view.error);
     };
     assert_eq!(providers[0].provider_instance_id, dynamic_c);
     manager.shutdown();
+}
+
+#[test]
+fn generic_config_activation_holds_plugin_gate_through_followup_commit() {
+    let fixture = Fixture::new("normal", 2);
+    let plugins = {
+        let committed = fixture
+            .manager
+            .committed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        committed.config.clone()
+    };
+    let candidate = runner_config(plugins, ShellConfig::default(), fixture._temp.path());
+    let manager = Arc::clone(&fixture.manager);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let activation = std::thread::spawn(move || {
+        manager.apply_config_candidate_and_then(&candidate, || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        })
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("generic activation follow-up commit must start");
+    let concurrent = fixture.manager.handle(PluginGatewayRequest::Reload);
+    assert_eq!(concurrent.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        concurrent.error.as_ref().map(|error| error.code.as_str()),
+        Some("plugin_reload_busy")
+    );
+    release_tx.send(()).unwrap();
+    assert!(activation.join().unwrap().is_ok());
+}
+
+#[test]
+fn plugin_committed_environment_ignores_unrelated_shell_runtime_controls() {
+    let fixture = Fixture::new("normal", 2);
+    let plugins = fixture
+        .manager
+        .committed
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .config
+        .clone();
+    let initial = current_providers(&fixture.manager)[0]
+        .provider_instance_id
+        .clone();
+
+    let mut unrelated_shell = ShellConfig::default();
+    unrelated_shell.max_persistent_shells += 1;
+    unrelated_shell.persistent_shell_idle_timeout_secs += 1;
+    let mut unused_profile = super::super::config::ShellProfileConfig::default();
+    unused_profile.env.insert(
+        "WEBCODEX_UNUSED_PLUGIN_PROFILE".to_string(),
+        "v1".to_string(),
+    );
+    unrelated_shell
+        .profiles
+        .insert("unused".to_string(), unused_profile);
+    let unrelated = runner_config(plugins.clone(), unrelated_shell, fixture._temp.path());
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&unrelated, || {})
+        .unwrap();
+    assert_eq!(
+        current_providers(&fixture.manager)[0].provider_instance_id,
+        initial,
+        "generic persistent-shell controls and unreferenced profiles must not replace the Plugin provider"
+    );
+
+    let mut relevant_shell = ShellConfig::default();
+    relevant_shell.default_profile = Some("plugin".to_string());
+    relevant_shell.profiles.insert(
+        "plugin".to_string(),
+        super::super::config::ShellProfileConfig::default(),
+    );
+    let relevant = runner_config(
+        plugins.clone(),
+        relevant_shell.clone(),
+        fixture._temp.path(),
+    );
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&relevant, || {})
+        .unwrap();
+    let profiled = current_providers(&fixture.manager)[0]
+        .provider_instance_id
+        .clone();
+    assert_ne!(
+        profiled, initial,
+        "selecting the default Plugin profile must replace the provider"
+    );
+
+    relevant_shell
+        .profiles
+        .get_mut("plugin")
+        .unwrap()
+        .env
+        .insert("WEBCODEX_PLUGIN_ENV_TEST".to_string(), "v2".to_string());
+    let changed_profile = runner_config(plugins, relevant_shell, fixture._temp.path());
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&changed_profile, || {})
+        .unwrap();
+    assert_ne!(
+        current_providers(&fixture.manager)[0].provider_instance_id,
+        profiled,
+        "referenced Plugin profile changes must create a new provider instance"
+    );
 }
 
 #[test]
@@ -935,11 +1065,11 @@ fn shutdown_during_blocked_reload_does_not_wait_for_gate_or_allow_late_commit() 
 }
 
 #[test]
-fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() {
+fn failed_candidate_keeps_previous_instance_and_removal_has_no_fallback() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");
     let fake = fake_binary();
-    let startup_plugins = PluginConfig {
+    let plugins = PluginConfig {
         request_timeout_secs: 2,
         providers: vec![PluginProviderConfig {
             id: "fake".to_string(),
@@ -953,17 +1083,9 @@ fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() 
     };
     let config_path = temp.path().join("runner.toml");
     write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
-    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let config = runner_config(plugins, ShellConfig::default(), temp.path());
     let manager = PluginManager::new(&config, config_path.clone());
-    let startup_instance = manager.startup_catalog()[0].provider_instance_id.clone();
-
-    let first_reload = manager.handle(PluginGatewayRequest::Reload);
-    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
-    else {
-        panic!("first dynamic reload failed: {:?}", first_reload.error);
-    };
-    let dynamic_instance = providers[0].provider_instance_id.clone();
-    assert_ne!(dynamic_instance, startup_instance);
+    let committed_instance = current_providers(&manager)[0].provider_instance_id.clone();
 
     write_runner_toml(
         &config_path,
@@ -987,8 +1109,8 @@ fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() 
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0].provider_id, "fake");
     assert_eq!(
-        providers[0].provider_instance_id, dynamic_instance,
-        "a failed candidate must not destroy the previous working dynamic instance"
+        providers[0].provider_instance_id, committed_instance,
+        "a failed candidate must not destroy the previous committed instance"
     );
 
     write_runner_toml_without_plugins(&config_path, temp.path());
@@ -998,30 +1120,60 @@ fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() 
     };
     assert!(
         providers.is_empty(),
-        "removed provider must disappear from effective dynamic view"
+        "removed provider must disappear from committed view"
     );
-    let effective_fallback = manager.handle(PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Effective,
+    let stale = manager.handle(PluginGatewayRequest::ToolsList {
         provider_id: "fake".to_string(),
-        provider_instance_id: startup_instance.clone(),
+        provider_instance_id: committed_instance,
     });
     assert_eq!(
-        effective_fallback
-            .error
-            .as_ref()
-            .map(|error| error.code.as_str()),
+        stale.error.as_ref().map(|error| error.code.as_str()),
         Some("stale_plugin_provider"),
-        "dynamic removal tombstone must prevent fallback to startup for plugin_tool"
+        "provider removal must never fall back to an earlier provider instance"
     );
+}
 
-    let direct_startup = manager.handle(PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Startup,
-        provider_id: "fake".to_string(),
-        provider_instance_id: startup_instance,
-    });
-    assert!(
-        direct_startup.error.is_none(),
-        "dynamic removal must not mutate the frozen direct startup plane"
+#[test]
+fn runner_config_reload_and_plugin_state_commit_as_one_active_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = super::super::config::load_config(&config_path).unwrap();
+    let runtime = super::super::config::ReloadableRunnerConfig::new(config, config_path.clone());
+
+    let v1 = current_providers(runtime.plugins())[0].clone();
+    assert_eq!(runtime.snapshot().generation, 1);
+
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "check_v2");
+    let applied = runtime.reload_config(1);
+    assert_eq!(applied.valid, Some(true));
+    assert_eq!(applied.current_generation, Some(2));
+    assert!(!applied.restart_required);
+    assert!(applied.restart_required_fields.is_empty());
+    assert_eq!(runtime.snapshot().generation, 2);
+    let v2 = current_providers(runtime.plugins())[0].clone();
+    assert_ne!(v2.provider_instance_id, v1.provider_instance_id);
+    assert_eq!(current_tools(runtime.plugins(), &v2)[0].name, "echo_v2");
+
+    write_runner_toml(
+        &config_path,
+        temp.path(),
+        &fake.path,
+        &marker,
+        "bad_version",
+    );
+    let rejected = runtime.reload_config(2);
+    assert_eq!(rejected.valid, Some(false));
+    assert_eq!(rejected.current_generation, Some(2));
+    assert_eq!(rejected.error_code.as_deref(), Some("plugin_reload_failed"));
+    assert_eq!(runtime.snapshot().generation, 2);
+    let still_v2 = current_providers(runtime.plugins())[0].clone();
+    assert_eq!(still_v2.provider_instance_id, v2.provider_instance_id);
+    assert_eq!(
+        current_tools(runtime.plugins(), &still_v2)[0].name,
+        "echo_v2"
     );
 }
 

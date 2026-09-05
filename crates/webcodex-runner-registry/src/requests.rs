@@ -28,7 +28,7 @@ use webcodex_core::mcp_gateway::{
 };
 use webcodex_core::plugin::{
     validate_request as validate_plugin_gateway_request, PluginDispatchState, PluginGatewayRequest,
-    PluginGatewayResponse, PluginPlane,
+    PluginGatewayResponse,
 };
 use webcodex_core::runner_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
@@ -1630,8 +1630,8 @@ impl RunnerRegistry {
     }
 
     /// Enqueue one closed native Plugin operation for one exact live Runner.
-    /// Startup bindings are additionally fenced against immutable registration;
-    /// dynamic provider bindings remain exact Runner-owned identities.
+    /// Provider instance identity stays opaque Runner-owned state; the Runner
+    /// validates it against its current committed provider set before dispatch.
     pub async fn enqueue_plugin_gateway(
         &self,
         client_id: &str,
@@ -1645,12 +1645,8 @@ impl RunnerRegistry {
         let provider_binding =
             operation
                 .provider_binding()
-                .map(|(provider_id, provider_instance_id, plane)| {
-                    (
-                        provider_id.to_string(),
-                        provider_instance_id.to_string(),
-                        plane,
-                    )
+                .map(|(provider_id, provider_instance_id)| {
+                    (provider_id.to_string(), provider_instance_id.to_string())
                 });
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
@@ -1698,25 +1694,6 @@ impl RunnerRegistry {
             .supports(RunnerFeature::NativeToolPlugins)
         {
             return Err("exact Runner does not support native Tool Plugins".to_string());
-        }
-        if let Some((provider_id, provider_instance_id, PluginPlane::Startup)) =
-            provider_binding.as_ref()
-        {
-            let provider_is_current = runner
-                .policy
-                .as_ref()
-                .and_then(|policy| policy.plugin_providers.as_ref())
-                .is_some_and(|providers| {
-                    providers.iter().any(|provider| {
-                        provider.provider_id == *provider_id
-                            && provider.provider_instance_id == *provider_instance_id
-                    })
-                });
-            if !provider_is_current {
-                return Err(
-                    "stale startup Plugin provider identity; request was not started".to_string(),
-                );
-            }
         }
         if now_ts().saturating_sub(runner.last_seen) > super::RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());

@@ -139,16 +139,23 @@ fn checked_report(response: PluginGatewayResponse) -> PluginCheckReport {
     report
 }
 
-fn provider_state(manager: &PluginManager) -> (Vec<PluginProviderView>, bool) {
+fn provider_state(manager: &PluginManager) -> Vec<PluginProviderView> {
     let response = manager.handle(PluginGatewayRequest::ProvidersList);
-    let Some(PluginGatewayResponsePayload::Providers {
-        providers,
-        first_class_restart_required,
-    }) = response.payload
-    else {
+    let Some(PluginGatewayResponsePayload::Providers { providers }) = response.payload else {
         panic!("missing provider state: {:?}", response.error);
     };
-    (providers, first_class_restart_required)
+    providers
+}
+
+fn provider_tools(manager: &PluginManager, provider: &PluginProviderView) -> Vec<PluginTool> {
+    let response = manager.handle(PluginGatewayRequest::ToolsList {
+        provider_id: provider.provider_id.clone(),
+        provider_instance_id: provider.provider_instance_id.clone(),
+    });
+    let Some(PluginGatewayResponsePayload::Tools { tools }) = response.payload else {
+        panic!("missing provider tools: {:?}", response.error);
+    };
+    tools
 }
 
 fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
@@ -165,7 +172,6 @@ fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
 #[test]
 fn check_success_is_disposable_and_preserves_committed_plugin_state() {
     let fixture = CheckFixture::new("check_success_tree", 2);
-    let startup_before = fixture.manager.startup_catalog();
     let state_before = provider_state(&fixture.manager);
 
     let report = checked_report(fixture.check());
@@ -173,13 +179,11 @@ fn check_success_is_disposable_and_preserves_committed_plugin_state() {
     assert_eq!(report.phase, PluginCheckPhase::Ready);
     assert_eq!(report.tool_count, 1);
     assert_eq!(report.tools[0].name, "echo");
-    assert!(report.startup_tool_shape.as_ref().unwrap().eligible);
     assert_eq!(
         fixture.marker_count("call"),
         0,
         "check must never call tools/call"
     );
-    assert_eq!(fixture.manager.startup_catalog(), startup_before);
     assert_eq!(provider_state(&fixture.manager), state_before);
 
     let candidate_pid = fixture
@@ -199,16 +203,11 @@ fn check_success_is_disposable_and_preserves_committed_plugin_state() {
 }
 
 #[test]
-fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
+fn check_observes_edited_v2_without_replacing_current_v1() {
     let fixture = CheckFixture::new("normal", 2);
-    let first_reload = fixture.manager.handle(PluginGatewayRequest::Reload);
-    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
-    else {
-        panic!("initial dynamic reload failed: {:?}", first_reload.error);
-    };
-    let dynamic_v1 = providers[0].provider_instance_id.clone();
-    let startup = fixture.manager.startup_catalog();
-    let v1_schema = startup[0].tools[0].schema_observation();
+    let current_v1 = provider_state(&fixture.manager).remove(0);
+    let dynamic_v1 = current_v1.provider_instance_id.clone();
+    let v1_schema = provider_tools(&fixture.manager, &current_v1)[0].schema_observation();
     let state_before_check = provider_state(&fixture.manager);
 
     fixture.rewrite_candidate("check_v2", 2);
@@ -218,7 +217,6 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
     assert_eq!(provider_state(&fixture.manager), state_before_check);
 
     let v1_call = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v1.clone(),
         name: "echo".to_string(),
@@ -227,7 +225,7 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
     });
     assert!(
         v1_call.error.is_none(),
-        "check must not disturb current dynamic v1"
+        "check must not disturb current committed v1"
     );
 
     let reload_v2 = fixture.manager.handle(PluginGatewayRequest::Reload);
@@ -237,7 +235,6 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
     let dynamic_v2 = providers[0].provider_instance_id.clone();
     assert_ne!(dynamic_v2, dynamic_v1);
     let tools = fixture.manager.handle(PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v2.clone(),
     });
@@ -248,7 +245,6 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
 
     let calls_before_stale = fixture.marker_count("call");
     let stale_v1 = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v1,
         name: "echo".to_string(),
@@ -267,7 +263,6 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
     );
 
     let v2_list_again = fixture.manager.handle(PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v2,
     });
@@ -419,7 +414,7 @@ fn check_tool_validation_failures_have_safe_actionable_diagnostics() {
 }
 
 #[test]
-fn check_reports_executable_config_and_startup_shape_without_sensitive_details() {
+fn check_reports_executable_config_and_large_catalog_without_sensitive_details() {
     let fixture = CheckFixture::new("normal", 2);
     write_runner_toml(
         &fixture.config_path,
@@ -445,14 +440,8 @@ fn check_reports_executable_config_and_startup_shape_without_sensitive_details()
     fixture.rewrite_candidate("check_startup_large_schema", 2);
     let shape = checked_report(fixture.check());
     assert!(shape.ready);
-    let startup_shape = shape.startup_tool_shape.unwrap();
-    assert!(!startup_shape.eligible);
-    assert_eq!(
-        startup_shape.code.as_deref(),
-        Some("plugin_startup_schema_too_large")
-    );
-    assert_eq!(startup_shape.tool.as_deref(), Some("echo"));
-    assert_eq!(startup_shape.field.as_deref(), Some("inputSchema"));
+    assert_eq!(shape.tool_count, 1);
+    assert_eq!(shape.tools[0].name, "echo");
 
     fixture.rewrite_candidate("stderr", 2);
     let response = fixture.check();
@@ -489,14 +478,9 @@ fn check_reports_executable_config_and_startup_shape_without_sensitive_details()
 #[test]
 fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers() {
     let fixture = CheckFixture::new("normal", 2);
-    let first_reload = fixture.manager.handle(PluginGatewayRequest::Reload);
-    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
-    else {
-        panic!("initial reload failed: {:?}", first_reload.error);
-    };
-    let dynamic_v1 = providers[0].provider_instance_id.clone();
-    let startup = fixture.manager.startup_catalog();
-    let schema = startup[0].tools[0].schema_observation();
+    let current_v1 = provider_state(&fixture.manager).remove(0);
+    let dynamic_v1 = current_v1.provider_instance_id.clone();
+    let schema = provider_tools(&fixture.manager, &current_v1)[0].schema_observation();
 
     fixture.rewrite_candidate("candidate_block_list_tree", 10);
     let _ = fs::remove_file(fixture.marker.with_extension("release"));
@@ -518,7 +502,6 @@ fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers
     assert_eq!(reload.error.as_ref().unwrap().code, "plugin_reload_busy");
 
     let current_call = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
-        plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v1.clone(),
         name: "echo".to_string(),
@@ -526,15 +509,6 @@ fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers
         expected_schema: schema.clone(),
     });
     assert!(current_call.error.is_none());
-    let direct_startup = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
-        plane: PluginPlane::Startup,
-        provider_id: "fake".to_string(),
-        provider_instance_id: startup[0].provider_instance_id.clone(),
-        name: "echo".to_string(),
-        arguments: json!({"value":"startup-during-check"}),
-        expected_schema: schema,
-    });
-    assert!(direct_startup.error.is_none());
     assert!(fixture
         .manager
         .handle(PluginGatewayRequest::ProvidersList)
@@ -544,7 +518,7 @@ fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers
     fs::write(fixture.marker.with_extension("release"), b"release").unwrap();
     let report = checked_report(check_a.join().unwrap());
     assert!(report.ready);
-    let (providers, _) = provider_state(&fixture.manager);
+    let providers = provider_state(&fixture.manager);
     assert_eq!(providers[0].provider_instance_id, dynamic_v1);
     for pid in fixture.marker_pids("descendant-pid:") {
         assert!(wait_until(Duration::from_secs(2), || {

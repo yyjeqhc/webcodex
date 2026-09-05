@@ -874,6 +874,33 @@ impl ToolRuntime {
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
+        if let ToolCall::PluginTool(plugin) = call {
+            return match crate::plugin_gateway::invoke(
+                self,
+                plugin,
+                recorder_metadata.recording_session_id.as_deref(),
+                auth,
+                transport,
+            )
+            .await
+            {
+                Ok(invocation) => invocation.to_tool_result(),
+                Err(crate::tool_runtime::specialized::SpecializedGovernanceDenial::Scope {
+                    required_scope,
+                    description,
+                }) => ToolResult::err_with_output(
+                    description,
+                    serde_json::json!({
+                        "failure_kind": "insufficient_scope",
+                        "required_scope": required_scope,
+                        "dispatch_certainty": "not_started",
+                    }),
+                ),
+                Err(crate::tool_runtime::specialized::SpecializedGovernanceDenial::Tool(
+                    result,
+                )) => result,
+            };
+        }
         // Kernel requests arrive with the same trusted logical identity already
         // used by the outer recorder. Mark only this concrete ledger path as the
         // authoritative business role; direct/internal dispatch without a kernel
@@ -1360,6 +1387,12 @@ impl ToolRuntime {
 
             call @ (ToolCall::RunnerConfigCheck { .. } | ToolCall::RunnerConfigReload { .. }) => {
                 self.dispatch_runner_config_tool(call, auth).await
+            }
+
+            ToolCall::PluginTool(_) => {
+                unreachable!(
+                    "plugin_tool is dispatched before generic static ToolDefinition policy"
+                )
             }
 
             call @ (ToolCall::StartSession { .. }

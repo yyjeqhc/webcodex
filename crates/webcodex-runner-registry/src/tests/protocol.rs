@@ -502,7 +502,6 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 runner_config_control: true,
             },
             policy: Some(crate::runner_protocol::RunnerPolicySummary {
-                plugin_providers: Some(Vec::new()),
                 ..Default::default()
             }),
         })

@@ -14,7 +14,7 @@ use webcodex_core::mcp_gateway::{
 };
 use webcodex_core::plugin::{
     validate_response_for_request as validate_plugin_gateway_response, PluginDispatchState,
-    PluginGatewayResponse, PluginPlane,
+    PluginGatewayResponse,
 };
 use webcodex_core::runner_protocol::{
     RunnerPersistentShellResultRequest, RunnerPollRequest, RunnerRequest, RunnerResultPayload,
@@ -328,9 +328,10 @@ impl RunnerRegistry {
                     ));
                 };
                 let operation_binding = operation.provider_binding();
-                let fence_binding = fence.provider.as_ref().map(|(provider, instance, plane)| {
-                    (provider.as_str(), instance.as_str(), *plane)
-                });
+                let fence_binding = fence
+                    .provider
+                    .as_ref()
+                    .map(|(provider, instance)| (provider.as_str(), instance.as_str()));
                 if operation_binding != fence_binding {
                     return Some((
                         "stale_plugin_provider",
@@ -357,26 +358,6 @@ impl RunnerRegistry {
                         "plugin_capability_unavailable",
                         "native Plugin capability changed before dispatch".to_string(),
                     ));
-                }
-                if let Some((provider_id, provider_instance_id, PluginPlane::Startup)) =
-                    operation_binding
-                {
-                    let provider_is_current = runner
-                        .policy
-                        .as_ref()
-                        .and_then(|policy| policy.plugin_providers.as_ref())
-                        .is_some_and(|providers| {
-                            providers.iter().any(|provider| {
-                                provider.provider_id == provider_id
-                                    && provider.provider_instance_id == provider_instance_id
-                            })
-                        });
-                    if !provider_is_current {
-                        return Some((
-                            "stale_plugin_provider",
-                            "startup Plugin provider changed before dispatch".to_string(),
-                        ));
-                    }
                 }
                 None
             });

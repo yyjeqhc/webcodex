@@ -110,8 +110,8 @@ pub(crate) use session_context::workflow_session_authority_fingerprint;
 #[cfg(test)]
 pub(crate) use sessions::{SessionCreateOptions, SessionGuards, SessionSummary};
 pub use tool_call::{
-    ObserveJobsItem, ReadFilesItem, SearchPatternMode, SearchProjectTextsQuery, SearchResultMode,
-    ToolCall,
+    ObserveJobsItem, PluginToolCall, ReadFilesItem, SearchPatternMode, SearchProjectTextsQuery,
+    SearchResultMode, ToolCall,
 };
 pub(crate) use tool_call::{
     TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,

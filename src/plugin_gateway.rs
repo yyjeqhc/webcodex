@@ -8,9 +8,11 @@
 pub(crate) use webcodex_core::plugin::*;
 
 use crate::auth::{AuthContext, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE};
-use crate::tool_runtime::specialized::{SpecializedOperationPolicy, SpecializedSource};
-use crate::tool_runtime::ToolRuntime;
-use serde::Deserialize;
+use crate::tool_runtime::sessions::SessionTransport;
+use crate::tool_runtime::specialized::{
+    SpecializedGovernanceDenial, SpecializedOperationPolicy, SpecializedSource,
+};
+use crate::tool_runtime::{PluginToolCall, ToolResult, ToolRuntime};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -97,22 +99,9 @@ pub(crate) struct ResolvedPluginRunner {
     pub(crate) client_id: String,
     pub(crate) runner_instance_id: String,
     pub(crate) display_name: Option<String>,
-    pub(crate) startup_providers: Vec<StartupPluginProvider>,
 }
 
-/// One exact startup Tool binding projected from the current caller-visible
-/// frozen Runner registrations.  The adapter recomputes uniqueness from these
-/// candidates for every list/call; it is not a Server-side Plugin cache.
 #[derive(Debug, Clone)]
-pub(crate) struct StartupPluginToolCandidate {
-    pub(crate) client_id: String,
-    pub(crate) runner_instance_id: String,
-    pub(crate) provider_id: String,
-    pub(crate) provider_instance_id: String,
-    pub(crate) tool: PluginTool,
-}
-
-#[derive(Debug)]
 pub(crate) struct GatewayError {
     code: String,
     message: String,
@@ -136,26 +125,10 @@ impl GatewayError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum GatewaySuccess {
     Metadata(Value),
     ToolResult(PluginToolResult),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PluginToolArguments {
-    action: String,
-    #[serde(default)]
-    runner: Option<String>,
-    #[serde(default)]
-    plugin: Option<String>,
-    #[serde(default)]
-    tool: Option<String>,
-    #[serde(default)]
-    binding: Option<String>,
-    #[serde(default)]
-    arguments: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,33 +187,8 @@ impl PluginOperation {
     }
 }
 
-pub(crate) fn operation_policy(
-    arguments: &Value,
-) -> Result<SpecializedOperationPolicy, &'static str> {
-    let action = arguments
-        .get("action")
-        .and_then(Value::as_str)
-        .ok_or("plugin_tool action is required")?;
-    PluginOperation::parse(action)
-        .map(PluginOperation::policy)
-        .ok_or("plugin_tool action must be one of list, check, reload, describe, or call")
-}
-
-pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
-    auth.is_some_and(|auth| {
-        auth.has_scope(SCOPE_PLUGIN_INSPECT)
-            || auth.has_scope(SCOPE_PLUGIN_INVOKE)
-            || auth.has_scope(SCOPE_PLUGIN_MANAGE)
-    })
-}
-
 pub(crate) fn invoke_authorized(auth: Option<&AuthContext>) -> bool {
     auth.is_some_and(|auth| auth.has_scope(SCOPE_PLUGIN_INVOKE))
-}
-
-fn authorized_for_operation(auth: Option<&AuthContext>, operation: PluginOperation) -> bool {
-    let required = operation.policy().required_scope;
-    auth.is_some_and(|auth| auth.has_scope(required))
 }
 
 /// Bounded model/ledger projection. Arbitrary Plugin arguments and opaque
@@ -250,8 +198,13 @@ pub(crate) fn audit_arguments(arguments: &Value) -> Value {
     let action = object
         .and_then(|o| o.get("action"))
         .and_then(Value::as_str)
-        .and_then(PluginOperation::parse)
-        .map(|operation| operation.policy().operation);
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 16
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        });
     let runner = object
         .and_then(|o| o.get("runner"))
         .and_then(Value::as_str)
@@ -286,12 +239,13 @@ fn bounded_runner_id(value: &str) -> bool {
 /// be resolved without executing the Plugin. The binding value, provider
 /// instance identity, schema observation, and arbitrary arguments stay out of
 /// the projection.
-pub(crate) async fn audit_arguments_with_identity(
+async fn audit_request_with_identity(
     runtime: &ToolRuntime,
-    arguments: &Value,
+    request: &PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Value {
-    let audit = audit_arguments(arguments);
+    let arguments = serde_json::to_value(request).unwrap_or_else(|_| json!({}));
+    let audit = audit_arguments(&arguments);
     if !invoke_authorized(auth) {
         return audit;
     }
@@ -321,116 +275,140 @@ fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBindi
     audit
 }
 
-pub(crate) fn audit_startup_direct(candidate: &StartupPluginToolCandidate) -> Value {
-    json!({
-        "runner": candidate.client_id,
-        "plugin": candidate.provider_id,
-        "tool": candidate.tool.name,
-        "plane": "startup",
-        "arguments_present": true,
-    })
+#[derive(Debug, Clone)]
+pub(crate) struct PluginInvocationResult {
+    operation: PluginOperation,
+    result: Result<GatewaySuccess, GatewayError>,
 }
 
-pub(crate) fn tool_spec() -> Value {
-    json!({
-        "name": PLUGIN_TOOL_NAME,
-        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Canonical discovery is list -> list(runner) -> list(runner, plugin) -> describe -> call: provider-level list observes only the current committed/effective exact provider and returns bounded tool names/titles without creating a binding. Prefer action=check before reload while developing: check rereads runner.toml, starts one disposable candidate, initializes and lists tools, never calls tools/call, and returns bounded WebCodex-generated diagnostics without mutating committed Plugin state. Then use reload -> list(runner, plugin) -> describe -> call; restart the Runner only for startup first-class promotion. list never checks, reloads, or mutates Plugin state. describe creates the opaque exact binding; call accepts only that binding plus arguments. Stale Runner/provider observations never retarget or replay, and Plugin execution configuration stays Runner-local.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list", "check", "reload", "describe", "call"]
-                },
-                "runner": {
-                    "type": "string",
-                    "description": "Exact caller-visible Runner client id. Optional for list; required for list(plugin), check, reload, and describe; not accepted for call."
-                },
-                "plugin": {
-                    "type": "string",
-                    "description": "Logical Plugin provider id. Optional only for list when runner is also present; required for check and describe; not accepted for reload or call."
-                },
-                "tool": {
-                    "type": "string",
-                    "description": "Logical Plugin tool name. Required only for describe; not accepted for call."
-                },
-                "binding": {
-                    "type": "string",
-                    "pattern": "^wc_pbind_[0-9a-f]{32}$",
-                    "description": "Opaque exact-observation handle returned by action=describe. Required for call. It does not grant authorization."
-                },
-                "arguments": {
-                    "type": "object",
-                    "description": "Required for action=call. Arguments must match the schema returned by the describe that created binding."
-                },
-                "recording_session_id": {
-                    "type": "string",
-                    "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                    "description": "Optional explicit Workflow Session used for authority, read-only/guard, permission, and audit governance. It is never inferred from MCP transport identity."
-                }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        },
-        "annotations": {
-            "readOnlyHint": false
-        }
-    })
-}
-
-pub(crate) async fn call(
-    runtime: &ToolRuntime,
-    arguments: Value,
-    auth: Option<&AuthContext>,
-) -> Value {
-    let parsed: PluginToolArguments = match serde_json::from_value(arguments) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            return gateway_error_result(GatewayError::local(
-                "invalid_arguments",
-                "plugin_tool arguments are invalid",
-            ))
-        }
-    };
-    let Some(operation) = PluginOperation::parse(&parsed.action) else {
-        return gateway_error_result(GatewayError::local(
-            "invalid_action",
-            "action must be one of list, check, reload, describe, or call",
-        ));
-    };
-    if !authorized_for_operation(auth, operation) {
-        return gateway_error_result(GatewayError::local(
-            "insufficient_scope",
-            format!(
-                "Plugin operation '{}' requires the {} scope",
-                operation.policy().operation,
-                operation.policy().required_scope
-            ),
-        ));
+impl PluginInvocationResult {
+    pub(crate) fn policy(&self) -> SpecializedOperationPolicy {
+        self.operation.policy()
     }
+
+    pub(crate) fn success(&self) -> bool {
+        match &self.result {
+            Ok(GatewaySuccess::Metadata(_)) => true,
+            Ok(GatewaySuccess::ToolResult(result)) => !result.is_error,
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn dispatch_certainty(&self) -> &'static str {
+        match &self.result {
+            Err(error) => dispatch_state_name(
+                error
+                    .dispatch_state
+                    .unwrap_or(PluginDispatchState::NotStarted),
+            ),
+            Ok(_) => "completed",
+        }
+    }
+
+    pub(crate) fn failure_kind(&self) -> Option<&str> {
+        match &self.result {
+            Ok(GatewaySuccess::ToolResult(result)) if result.is_error => Some("plugin_tool_error"),
+            Err(error) => Some(error.code.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn to_mcp_result(&self) -> Value {
+        render_gateway_result(self.result.clone())
+    }
+
+    pub(crate) fn to_tool_result(&self) -> ToolResult {
+        match &self.result {
+            Ok(GatewaySuccess::Metadata(value)) => ToolResult::ok(value.clone()),
+            Ok(GatewaySuccess::ToolResult(result)) => {
+                let mut output = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
+                if let Some(object) = output.as_object_mut() {
+                    object.insert(
+                        "dispatch_certainty".to_string(),
+                        Value::String("completed".to_string()),
+                    );
+                    if result.is_error {
+                        object.insert(
+                            "failure_kind".to_string(),
+                            Value::String("plugin_tool_error".to_string()),
+                        );
+                    }
+                }
+                if result.is_error {
+                    ToolResult::err_with_output("Plugin tool reported an error", output)
+                } else {
+                    ToolResult::ok(output)
+                }
+            }
+            Err(error) => gateway_error_tool_result(error),
+        }
+    }
+}
+
+/// Canonical action-aware Plugin invocation shared by MCP and the generic Tool
+/// Runtime. This is the only owner of Plugin scope/session/permission lifecycle.
+pub(crate) async fn invoke(
+    runtime: &ToolRuntime,
+    request: PluginToolCall,
+    recording_session_id: Option<&str>,
+    auth: Option<&AuthContext>,
+    transport: SessionTransport,
+) -> Result<PluginInvocationResult, SpecializedGovernanceDenial> {
+    let operation = PluginOperation::parse(&request.action)
+        .expect("PluginToolCall parser admits only the closed action vocabulary");
+    let policy = operation.policy();
+    let audit = audit_request_with_identity(runtime, &request, auth).await;
+    let permit = runtime
+        .govern_specialized_invocation(
+            PLUGIN_TOOL_NAME,
+            policy,
+            transport,
+            recording_session_id,
+            auth,
+            &audit,
+        )
+        .await?;
+
+    let result = execute_business(runtime, operation, request, auth).await;
+    let invocation = PluginInvocationResult { operation, result };
+    runtime.finish_specialized_invocation(
+        permit,
+        invocation.success(),
+        invocation.dispatch_certainty(),
+        invocation.failure_kind(),
+    );
+    Ok(invocation)
+}
+
+async fn execute_business(
+    runtime: &ToolRuntime,
+    operation: PluginOperation,
+    request: PluginToolCall,
+    auth: Option<&AuthContext>,
+) -> Result<GatewaySuccess, GatewayError> {
     let result = match operation {
-        PluginOperation::List => list(runtime, parsed, auth)
+        PluginOperation::List => list(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Check => check(runtime, parsed, auth)
+        PluginOperation::Check => check(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Reload => reload(runtime, parsed, auth)
+        PluginOperation::Reload => reload(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Describe => describe(runtime, parsed, auth)
+        PluginOperation::Describe => describe(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Call => call_plugin(runtime, parsed, auth)
+        PluginOperation::Call => call_plugin(runtime, request, auth)
             .await
             .map(GatewaySuccess::ToolResult),
     };
-    render_gateway_result(result)
+    result
 }
 
 async fn list(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
@@ -451,7 +429,7 @@ async fn list(
             let plugin = required_provider(Some(plugin))?;
             let (provider, tools) =
                 observe_effective_provider_tools(runtime, &runner, plugin, auth).await?;
-            let mut value = sanitize_provider_view_for_runner(&runner, provider);
+            let mut value = sanitize_provider_view(provider);
             value["runner"] = Value::String(runner.client_id.clone());
             value["toolCount"] = Value::from(tools.len());
             value["tools"] = Value::Array(
@@ -464,14 +442,13 @@ async fn list(
         }
         let response =
             execute_exact(runtime, &runner, PluginGatewayRequest::ProvidersList, auth).await?;
-        let (providers, restart_required) = response_providers(response)?;
+        let providers = response_providers(response)?;
         return Ok(json!({
             "runner": runner.client_id,
             "plugins": providers
                 .into_iter()
-                .map(|provider| sanitize_provider_view_for_runner(&runner, provider))
-                .collect::<Vec<_>>(),
-            "firstClassRestartRequired": restart_required
+                .map(sanitize_provider_view)
+                .collect::<Vec<_>>()
         }));
     }
 
@@ -491,7 +468,7 @@ async fn list(
 
 async fn check(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
@@ -528,7 +505,7 @@ async fn check(
 
 async fn reload(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.plugin.is_some()
@@ -551,15 +528,13 @@ async fn reload(
         Some(PluginGatewayResponsePayload::Reloaded {
             providers,
             failures,
-            first_class_restart_required,
         }) => Ok(json!({
             "runner": runner.client_id,
             "plugins": providers
                 .into_iter()
-                .map(|provider| sanitize_provider_view_for_runner(&runner, provider))
+                .map(sanitize_provider_view)
                 .collect::<Vec<_>>(),
-            "failures": failures,
-            "firstClassRestartRequired": first_class_restart_required
+            "failures": failures
         })),
         _ => Err(GatewayError::local(
             "invalid_plugin_response",
@@ -570,7 +545,7 @@ async fn reload(
 
 async fn describe(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.binding.is_some() || args.arguments.is_some() {
@@ -619,7 +594,7 @@ async fn observe_effective_provider_tools(
 ) -> Result<(PluginProviderView, Vec<PluginTool>), GatewayError> {
     let providers_response =
         execute_exact(runtime, runner, PluginGatewayRequest::ProvidersList, auth).await?;
-    let (providers, _) = match response_providers(providers_response) {
+    let providers = match response_providers(providers_response) {
         Ok(value) => value,
         Err(mut error) if matches!(error.code.as_str(), "stale_runner" | "runner_unavailable") => {
             error.code = "plugin_replaced".to_string();
@@ -643,7 +618,6 @@ async fn observe_effective_provider_tools(
         runtime,
         runner,
         PluginGatewayRequest::ToolsList {
-            plane: PluginPlane::Effective,
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
         },
@@ -673,7 +647,7 @@ async fn observe_effective_provider_tools(
 
 async fn call_plugin(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<PluginToolResult, GatewayError> {
     if args.runner.is_some() || args.plugin.is_some() || args.tool.is_some() {
@@ -722,7 +696,6 @@ async fn call_plugin(
         runtime,
         &runner,
         PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Effective,
             provider_id: observed.provider_id.clone(),
             provider_instance_id: observed.provider_instance_id.clone(),
             name: observed.tool_name.clone(),
@@ -806,132 +779,9 @@ pub(crate) async fn visible_plugin_runners(
             client_id: runner.client_id,
             runner_instance_id: runner.runner_instance_id,
             display_name: runner.display_name,
-            startup_providers: runner
-                .policy
-                .and_then(|policy| policy.plugin_providers)
-                .unwrap_or_default(),
         });
     }
     runners
-}
-
-/// Return exact startup Tool candidates from sanitized immutable registration
-/// inventory.  This helper intentionally does not require Plugin invocation authority: call
-/// dispatch uses it before the scope check so a spoofed direct Plugin name is
-/// rejected as forbidden instead of falling through to an unrelated unknown
-/// static tool path. Runner visibility policy remains authoritative.
-pub(crate) async fn startup_tool_candidates(
-    runtime: &ToolRuntime,
-    auth: Option<&AuthContext>,
-) -> Vec<StartupPluginToolCandidate> {
-    let access = crate::runner_http::runner_access_from_auth(auth);
-    let mut candidates = Vec::new();
-    for runner in runtime
-        .runner_registry
-        .list_runners_for_auth(access.as_ref())
-        .await
-    {
-        if !runner.connected
-            || !runner.capabilities.native_tool_plugins
-            || runtime
-                .runner_registry
-                .assert_runner_access(access.as_ref(), &runner.client_id)
-                .await
-                .is_err()
-        {
-            continue;
-        }
-        let Some(providers) = runner
-            .policy
-            .as_ref()
-            .and_then(|policy| policy.plugin_providers.as_ref())
-        else {
-            continue;
-        };
-        for provider in providers {
-            if provider.status != "ready" {
-                continue;
-            }
-            // Failed/secondary-only startup providers have no admitted direct
-            // ToolSpecs. Do not infer process health or fetch tools remotely.
-            for tool in &provider.tools {
-                candidates.push(StartupPluginToolCandidate {
-                    client_id: runner.client_id.clone(),
-                    runner_instance_id: runner.runner_instance_id.clone(),
-                    provider_id: provider.provider_id.clone(),
-                    provider_instance_id: provider.provider_instance_id.clone(),
-                    tool: tool.clone(),
-                });
-            }
-        }
-    }
-    candidates
-}
-
-pub(crate) async fn call_startup_direct(
-    runtime: &ToolRuntime,
-    candidate: &StartupPluginToolCandidate,
-    arguments: Value,
-    auth: Option<&AuthContext>,
-) -> Value {
-    if !invoke_authorized(auth) {
-        return gateway_error_result(GatewayError::local(
-            "insufficient_scope",
-            "direct native Plugin calls require the plugin:invoke scope",
-        ));
-    }
-    if !arguments.is_object() {
-        return gateway_error_result(GatewayError::local(
-            "invalid_arguments",
-            "direct Plugin arguments must be a JSON object",
-        ));
-    }
-    if validate_json_value(&arguments, PLUGIN_MAX_ARGUMENT_BYTES, "tool arguments").is_err() {
-        return gateway_error_result(GatewayError::local(
-            "invalid_arguments",
-            "direct Plugin arguments exceed Plugin bounds",
-        ));
-    }
-    let runner = ResolvedPluginRunner {
-        client_id: candidate.client_id.clone(),
-        runner_instance_id: candidate.runner_instance_id.clone(),
-        display_name: None,
-        startup_providers: Vec::new(),
-    };
-    let response = match execute_exact(
-        runtime,
-        &runner,
-        PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Startup,
-            provider_id: candidate.provider_id.clone(),
-            provider_instance_id: candidate.provider_instance_id.clone(),
-            name: candidate.tool.name.clone(),
-            arguments,
-            expected_schema: candidate.tool.schema_observation(),
-        },
-        auth,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(error) => return gateway_error_result(error),
-    };
-    if let Some(error) = response.error {
-        return gateway_error_result(response_error(response.dispatch_state, error));
-    }
-    match response.payload {
-        Some(PluginGatewayResponsePayload::ToolResult { result }) => serde_json::to_value(result)
-            .unwrap_or_else(|_| {
-                gateway_error_result(GatewayError::local(
-                    "invalid_plugin_result",
-                    "Plugin result could not be encoded",
-                ))
-            }),
-        _ => gateway_error_result(GatewayError::local(
-            "invalid_plugin_result",
-            "Runner returned an unexpected direct Plugin tool result",
-        )),
-    }
 }
 
 pub(crate) async fn resolve_runner(
@@ -1026,15 +876,12 @@ pub(crate) async fn execute_exact(
 
 fn response_providers(
     response: PluginGatewayResponse,
-) -> Result<(Vec<PluginProviderView>, bool), GatewayError> {
+) -> Result<Vec<PluginProviderView>, GatewayError> {
     if let Some(error) = response.error {
         return Err(response_error(response.dispatch_state, error));
     }
     match response.payload {
-        Some(PluginGatewayResponsePayload::Providers {
-            providers,
-            first_class_restart_required,
-        }) => Ok((providers, first_class_restart_required)),
+        Some(PluginGatewayResponsePayload::Providers { providers }) => Ok(providers),
         _ => Err(GatewayError::local(
             "invalid_plugin_response",
             "Runner returned an unexpected Plugin provider response",
@@ -1099,19 +946,6 @@ fn sanitize_check_report(runner: &str, report: PluginCheckReport) -> Value {
         }
         value["diagnostic"] = summary;
     }
-    if let Some(shape) = report.startup_tool_shape {
-        let mut startup_shape = json!({"eligible": shape.eligible});
-        if let Some(code) = shape.code {
-            startup_shape["code"] = Value::String(code);
-        }
-        if let Some(tool) = shape.tool {
-            startup_shape["tool"] = Value::String(tool);
-        }
-        if let Some(field) = shape.field {
-            startup_shape["field"] = Value::String(field);
-        }
-        value["startupToolShape"] = startup_shape;
-    }
     value
 }
 
@@ -1137,40 +971,13 @@ fn sanitize_tool_summary(tool: PluginTool) -> Value {
     summary
 }
 
-fn sanitize_provider_view_for_runner(
-    runner: &ResolvedPluginRunner,
-    provider: PluginProviderView,
-) -> Value {
-    let startup_admission = runner
-        .startup_providers
-        .iter()
-        .find(|startup| startup.provider_id == provider.provider_id);
-    let mut value = json!({
+fn sanitize_provider_view(provider: PluginProviderView) -> Value {
+    json!({
         "plugin": provider.provider_id,
         "name": provider.name,
         "status": provider.status,
-        "errorCode": provider.error_code,
-        "source": match provider.plane {
-            PluginPlane::Startup => "startup",
-            PluginPlane::Effective => "dynamic"
-        },
-        "startupDirectToolCount": provider.startup_direct_tool_count
-    });
-    if let Some(startup) = startup_admission {
-        let admission = match startup.status.as_str() {
-            "ready" => Some("direct"),
-            "ready_secondary" => Some("secondary"),
-            "failed" => Some("failed"),
-            _ => None,
-        };
-        if let Some(admission) = admission {
-            value["startupAdmission"] = Value::String(admission.to_string());
-            if let Some(code) = startup.error_code.as_ref() {
-                value["startupAdmissionCode"] = Value::String(code.clone());
-            }
-        }
-    }
-    value
+        "errorCode": provider.error_code
+    })
 }
 
 fn required_runner(value: Option<&str>) -> Result<&str, GatewayError> {
@@ -1241,6 +1048,24 @@ fn render_gateway_result(result: Result<GatewaySuccess, GatewayError>) -> Value 
         }
         Err(error) => gateway_error_result(error),
     }
+}
+
+fn gateway_error_tool_result(error: &GatewayError) -> ToolResult {
+    let state = error
+        .dispatch_state
+        .unwrap_or(PluginDispatchState::NotStarted);
+    let mut output = json!({
+        "error": {
+            "code": error.code,
+            "message": error.message,
+        },
+        "failure_kind": error.code,
+        "dispatch_certainty": dispatch_state_name(state),
+    });
+    if let Some(recovery) = error.recovery {
+        output["recovery"] = Value::String(recovery.to_string());
+    }
+    ToolResult::err_with_output(error.message.clone(), output)
 }
 
 fn gateway_success_result(value: Value) -> Value {
@@ -1328,11 +1153,15 @@ mod tests {
     }
 
     #[test]
-    fn fixed_plugin_tool_catalog_hides_runtime_identity_and_provider_defined_output_schema() {
-        let spec = tool_spec();
+    fn canonical_plugin_tool_catalog_hides_runtime_identity_and_provider_defined_output_schema() {
+        let spec = webcodex_tool_contracts::registered_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == PLUGIN_TOOL_NAME)
+            .expect("plugin_tool must be a canonical registered ToolSpec");
+        let spec = serde_json::to_value(spec).unwrap();
         let encoded = serde_json::to_string(&spec).unwrap();
         assert_eq!(spec["name"], PLUGIN_TOOL_NAME);
-        assert!(spec.get("outputSchema").is_none());
+        assert!(spec["outputSchema"].is_object());
         assert!(spec["inputSchema"]["properties"]["binding"].is_object());
         assert!(spec["inputSchema"]["properties"]["plugin"].is_object());
         assert!(spec["inputSchema"]["properties"]["runner"].is_object());
@@ -1348,7 +1177,7 @@ mod tests {
         assert!(spec["description"]
             .as_str()
             .unwrap()
-            .contains("call accepts only that binding plus arguments"));
+            .contains("call accepts only binding + arguments"));
         assert!(!encoded.contains("provider_instance_id"));
         assert!(!encoded.contains("runner_instance_id"));
         assert!(!encoded.contains("revision"));

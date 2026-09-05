@@ -371,10 +371,14 @@ User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`
 4. reload 后调用 `runtime_status(client_id=...)`（或 `list_runners`）检查当前运行状态。
 
 `runner_config_reload` 不写 `runner.toml`，只激活磁盘上已经存在的 candidate。policy、
-shell 与静态 SSH resource 中可热加载的字段可以立即生效；`restart_required_fields`
+shell、Native Plugin 与静态 SSH resource 中可热加载的字段可以立即生效；`restart_required_fields`
 报告的字段仍保持 startup-only，重启前不会假装已在线生效。无效 candidate 保留旧 active
 snapshot 与 generation。`ssh_resource` managed mutation 不同：它使用 frozen startup
 snapshot，且只在工具返回 `restart_required=true` 时要求重启 Runner。
+
+Plugin 配置通过与 `plugin_tool reload` 相同的 validated candidate admission/commit primitive
+进行 live apply，因此修改 `[plugins]` 不属于 restart-only 变更。只想 reload Plugin state 时，
+仍使用权限更窄、要求 `plugin:manage` 的 `plugin_tool reload`。
 
 Unix 上 service reload/SIGHUP 仍可作为兼容 trigger，并调用同一个 authoritative reload
 primitive。Windows 与 macOS 直接使用 first-class operation，不模拟信号，也不需要 PID

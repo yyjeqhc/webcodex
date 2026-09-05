@@ -56,6 +56,35 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 }
 
 #[test]
+fn plugin_tool_call_parser_is_typed_bounded_and_closed() {
+    let list = ToolCall::from_tool_name("plugin_tool", json!({"action":"list"})).unwrap();
+    assert_eq!(list.tool_name(), "plugin_tool");
+    assert!(matches!(list, ToolCall::PluginTool(_)));
+    for invalid in [
+        json!({"action":"list","unknown":true}),
+        json!({"action":"list","plugin":"repo-tools"}),
+        json!({"action":"call","binding":"wc_pbind_bad","arguments":{}}),
+        json!({"action":"call","binding":"wc_pbind_00000000000000000000000000000000"}),
+        json!({"action":"describe","runner":"runner-a","plugin":"repo-tools"}),
+    ] {
+        assert!(
+            ToolCall::from_tool_name("plugin_tool", invalid).is_err(),
+            "invalid Plugin gateway arguments must fail closed"
+        );
+    }
+    let call = ToolCall::from_tool_name(
+        "plugin_tool",
+        json!({
+            "action":"call",
+            "binding":"wc_pbind_0123456789abcdef0123456789abcdef",
+            "arguments":{}
+        }),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::PluginTool(_)));
+}
+
+#[test]
 fn tool_definition_metadata_fallback_facade_is_unknown_only() {
     use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
     use crate::tool_runtime::tool_definition::{

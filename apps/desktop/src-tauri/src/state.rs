@@ -1101,13 +1101,15 @@ impl DesktopCore {
         self.publish_snapshot();
         let event_wait = async {
             while let Some(value) = events.recv().await {
-                if value.get("event").and_then(Value::as_str) == Some("ready") {
-                    return Some(value);
+                match value.get("event").and_then(Value::as_str) {
+                    Some("ready") => return Ok(Some(value)),
+                    Some("machine_event_overflow") => return Err(value),
+                    _ => {}
                 }
             }
-            None
+            Ok(None)
         };
-        let event_value = tokio::select! {
+        let event_result = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
                 self.stop_process_until(
@@ -1117,25 +1119,36 @@ impl DesktopCore {
                 return Err(cancelled_error());
             }
             result = tokio::time::timeout_at(deadline.instant(), event_wait) => {
-                result.ok().flatten()
+                result
             }
         };
-        let Some(event_value) = event_value else {
-            let logs = self.process_logs(ProcessKind::QuickShare).await;
-            self.stop_process_until(
-                ProcessKind::QuickShare,
-                Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
-            )
-            .await;
-            return Err(DesktopError::new(
-                "quick_share_not_ready",
-                "Quick Share did not reach verified readiness",
-                "Check Activity and Tunnel prerequisites, then retry.",
-            )
-            .with_details(serde_json::json!({
-                "category": "readiness_timeout",
-                "diagnostic_lines": logs,
-            })));
+        let event_value = match event_result {
+            Ok(Ok(Some(value))) => value,
+            Ok(Err(overflow)) => {
+                self.stop_process_until(
+                    ProcessKind::QuickShare,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                return Err(machine_event_overflow_error(&overflow));
+            }
+            Ok(Ok(None)) | Err(_) => {
+                let logs = self.process_logs(ProcessKind::QuickShare).await;
+                self.stop_process_until(
+                    ProcessKind::QuickShare,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                return Err(DesktopError::new(
+                    "quick_share_not_ready",
+                    "Quick Share did not reach verified readiness",
+                    "Check Activity and Tunnel prerequisites, then retry.",
+                )
+                .with_details(serde_json::json!({
+                    "category": "readiness_timeout",
+                    "diagnostic_lines": logs,
+                })));
+            }
         };
         let event: QuickShareReadyEvent = match serde_json::from_value(event_value) {
             Ok(event) => event,
@@ -1348,13 +1361,15 @@ impl DesktopCore {
         self.publish_snapshot();
         let event_wait = async {
             while let Some(value) = events.recv().await {
-                if value.get("event").and_then(Value::as_str) == Some("ready") {
-                    return Some(value);
+                match value.get("event").and_then(Value::as_str) {
+                    Some("ready") => return Ok(Some(value)),
+                    Some("machine_event_overflow") => return Err(value),
+                    _ => {}
                 }
             }
-            None
+            Ok(None)
         };
-        let event_value = tokio::select! {
+        let event_result = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
                 self.stop_process_until(
@@ -1364,39 +1379,51 @@ impl DesktopCore {
                 return Err(cancelled_error());
             }
             result = tokio::time::timeout_at(deadline.instant(), event_wait) => {
-                result.ok().flatten()
+                result
             }
         };
-        let Some(event_value) = event_value else {
-            let logs = self.process_logs(ProcessKind::RegularTunnel).await;
-            self.stop_process_until(
-                ProcessKind::RegularTunnel,
-                Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
-            )
-            .await;
-            self.snapshot.regular_tunnel = Some(RegularTunnelState {
-                provider: "openai".to_string(),
-                status: RegularTunnelStatus::Error,
-                clipboard_state: "unavailable".to_string(),
-                clipboard_contains: "tunnel_id".to_string(),
-                ready_for_chatgpt: false,
-            });
-            self.snapshot.readiness = aggregate_readiness(
-                ServerReadiness::Ready,
-                RunnerReadiness::Ready,
-                ExposureReadiness::Error,
-                ProjectReadiness::Ready,
-            );
-            apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
-            return Err(DesktopError::new(
-                "tunnel_unavailable",
-                "OpenAI Secure Tunnel did not reach verified readiness",
-                "Check Activity and the canonical Tunnel prerequisites, then retry.",
-            )
-            .with_details(serde_json::json!({
-                "category": "readiness_timeout",
-                "diagnostic_lines": logs,
-            })));
+        let event_value = match event_result {
+            Ok(Ok(Some(value))) => value,
+            Ok(Err(overflow)) => {
+                self.stop_process_until(
+                    ProcessKind::RegularTunnel,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                self.snapshot.regular_tunnel = None;
+                return Err(machine_event_overflow_error(&overflow));
+            }
+            Ok(Ok(None)) | Err(_) => {
+                let logs = self.process_logs(ProcessKind::RegularTunnel).await;
+                self.stop_process_until(
+                    ProcessKind::RegularTunnel,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                self.snapshot.regular_tunnel = Some(RegularTunnelState {
+                    provider: "openai".to_string(),
+                    status: RegularTunnelStatus::Error,
+                    clipboard_state: "unavailable".to_string(),
+                    clipboard_contains: "tunnel_id".to_string(),
+                    ready_for_chatgpt: false,
+                });
+                self.snapshot.readiness = aggregate_readiness(
+                    ServerReadiness::Ready,
+                    RunnerReadiness::Ready,
+                    ExposureReadiness::Error,
+                    ProjectReadiness::Ready,
+                );
+                apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
+                return Err(DesktopError::new(
+                    "tunnel_unavailable",
+                    "OpenAI Secure Tunnel did not reach verified readiness",
+                    "Check Activity and the canonical Tunnel prerequisites, then retry.",
+                )
+                .with_details(serde_json::json!({
+                    "category": "readiness_timeout",
+                    "diagnostic_lines": logs,
+                })));
+            }
         };
         let event: RegularTunnelReadyEvent = match serde_json::from_value(event_value) {
             Ok(event) => event,
@@ -1791,6 +1818,21 @@ fn readiness_timeout_error(
 ) -> DesktopError {
     DesktopError::new(code, message, action)
         .with_details(serde_json::json!({ "category": "readiness_timeout" }))
+}
+
+fn machine_event_overflow_error(event: &Value) -> DesktopError {
+    DesktopError::new(
+        "machine_event_overflow",
+        "Desktop could not retain every critical machine-readiness event",
+        "Retry the operation and inspect Activity if the child keeps emitting excessive machine events.",
+    )
+    .with_details(serde_json::json!({
+        "category": "machine_event_overflow",
+        "dropped_critical": event
+            .get("dropped_critical")
+            .and_then(Value::as_u64)
+            .unwrap_or(1),
+    }))
 }
 
 fn project_snapshot(config: &StoredDesktopConfig) -> Option<ProjectSelection> {

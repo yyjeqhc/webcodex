@@ -4594,6 +4594,7 @@ mod envelope_tests {
                 "job_state_reconciliation",
                 "coding_agent_runs",
                 "native_tool_plugins",
+                "managed_ssh_resources",
                 "computer_control",
                 "computer_scroll_to_element",
                 "computer_key_input",

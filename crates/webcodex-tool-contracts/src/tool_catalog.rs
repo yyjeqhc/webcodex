@@ -297,7 +297,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "persistent_shell",
         summary: "Persistent shell: use an active Runner-local SSH resource. For a new explicit target, ssh_resource list/register persists it; restart Runner, list again, bind with update_session_context, then open/reuse. Keep run_process for explicit one-shot/no-persistence SSH.",
         manifest_purpose:
-            "Persistent shell route: use ssh_resource list to discover safe logical names. If an explicit new SSH target should persist, ssh_resource register it and stop for Runner restart; after restart list again, then update_session_context binds the active logical resource, open_session_shell once, and session_shell_exec reuses it. Use session_shell_status only when needed and close_session_shell when cleanup is useful. Keep run_process for explicit one-shot/no-persistence SSH. Managed resources are Runner-local; the SSH target does not run WebCodex Runner.",
+            "Persistent shell route: use ssh_resource list to discover safe logical names. If an explicit new SSH target should persist, ssh_resource register it and stop for Runner restart; after restart list again, then update_session_context binds the active Runner-local named SSH resource, open_session_shell once, and session_shell_exec reuses it. A managed resource is not an arbitrary host; the SSH target does not run WebCodex Runner. Use session_shell_status only when needed and close_session_shell when cleanup is useful. Keep run_process for explicit one-shot/no-persistence SSH.",
         tools: &[
             "update_session_context",
             "open_session_shell",

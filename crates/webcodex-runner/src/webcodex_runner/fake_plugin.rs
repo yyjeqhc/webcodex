@@ -53,6 +53,16 @@ fn main() -> io::Result<()> {
     }
     if scenario == "stderr" {
         eprintln!("diagnostic-only-secret-looking-stderr");
+    } else if scenario == "stderr_flood" {
+        let mut stderr = io::stderr().lock();
+        for index in 0..256usize {
+            writeln!(
+                stderr,
+                "stderr-flood-{index:03}-{}",
+                "x".repeat(2 * 1024)
+            )?;
+        }
+        stderr.flush()?;
     }
 
     let mut reader = BufReader::new(io::stdin().lock());
@@ -199,6 +209,15 @@ fn main() -> io::Result<()> {
                     )?;
                     continue;
                 }
+                if scenario == "check_unsupported_schema" {
+                    send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","inputSchema":{{"type":"object","$ref":"https://example.invalid/secret-schema"}}}}]}}}}"#
+                        ),
+                    )?;
+                    continue;
+                }
                 let value_type = if scenario == "schema_change" && lists >= 2 {
                     "number"
                 } else {
@@ -220,16 +239,26 @@ fn main() -> io::Result<()> {
                     append(marker, &format!("descendant-pid:{}\n", child.id()))?;
                     drop(child);
                 }
+                let output_schema = if scenario == "output_schema_invalid" {
+                    r#","outputSchema":{"type":"object","properties":{"call":{"type":"string"}},"required":["call"],"additionalProperties":false}"#.to_string()
+                } else {
+                    String::new()
+                };
+                if scenario == "check_stderr_at_list" {
+                    let mut stderr = io::stderr().lock();
+                    writeln!(stderr, "diagnostic-written-before-list-response")?;
+                    stderr.flush()?;
+                }
                 send(
                     &mut writer,
                     &format!(
-                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}","description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}","description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}{output_schema}}}]}}}}"#
                     ),
                 )?;
                 if matches!(
                     scenario,
                     "block_after_preflight" | "block_after_preflight_tree"
-                ) && lists >= 2
+                ) && lists >= 1
                 {
                     append(marker, "stdin-blocked\n")?;
                     if scenario == "block_after_preflight_tree" {

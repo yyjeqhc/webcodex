@@ -203,6 +203,8 @@ fn startup_is_eager_persistent_and_reused() {
     );
     assert_eq!(fixture.provider.status, "ready");
     assert_eq!(fixture.provider.tools.len(), 1);
+    assert_eq!(fixture.provider.catalog_tool_count, 1);
+    assert!(fixture.provider.catalog_digest.is_some());
 
     assert!(fixture.list().error.is_none());
     for expected in ["call-1", "call-2"] {
@@ -223,6 +225,11 @@ fn startup_is_eager_persistent_and_reused() {
         "provider must never silently respawn"
     );
     assert_eq!(fixture.marker_count("call"), 2);
+    assert_eq!(
+        fixture.marker_count("list"),
+        1,
+        "tools/list is an admission operation and must not repeat during discovery or calls"
+    );
 }
 
 #[test]
@@ -253,6 +260,8 @@ fn startup_secondary_admission_stays_separate_from_runtime_provider_health() {
         Some("plugin_startup_schema_too_large")
     );
     assert!(fixture.provider.tools.is_empty());
+    assert_eq!(fixture.provider.catalog_tool_count, 1);
+    assert!(fixture.provider.catalog_digest.is_some());
 
     let response = fixture.manager.handle(PluginGatewayRequest::ProvidersList);
     let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = response.payload else {
@@ -266,27 +275,64 @@ fn startup_secondary_admission_stays_separate_from_runtime_provider_health() {
 }
 
 #[test]
-fn schema_change_is_not_started_and_never_dispatches_effect() {
+fn same_provider_instance_catalog_is_frozen_and_never_relists() {
     let fixture = Fixture::new("schema_change", 2);
     let response = fixture.call();
-    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
+    assert!(response.error.is_none());
+    assert_eq!(fixture.marker_count("call"), 1);
+    assert_eq!(fixture.marker_count("list"), 1);
+    let listed = fixture.list();
+    let Some(PluginGatewayResponsePayload::Tools { tools }) = listed.payload else {
+        panic!("missing frozen tools: {:?}", listed.error);
+    };
     assert_eq!(
-        response.error.as_ref().unwrap().code,
-        "plugin_schema_changed"
+        tools[0].input_schema["properties"]["value"]["type"],
+        "string"
     );
-    assert_eq!(fixture.marker_count("call"), 0);
+    assert_eq!(fixture.marker_count("list"), 1);
 }
 
 #[test]
-fn schema_preflight_and_effect_share_one_provider_timeout_budget() {
+fn tools_call_uses_full_timeout_without_catalog_relist() {
     let fixture = Fixture::new("split_timeout", 1);
     let response = fixture.call();
-    assert_eq!(response.dispatch_state, PluginDispatchState::OutcomeUnknown);
-    assert_eq!(response.error.as_ref().unwrap().code, "plugin_timeout");
+    assert!(response.error.is_none(), "{:?}", response.error);
+    assert_eq!(fixture.marker_count("call"), 1);
+    assert_eq!(fixture.marker_count("list"), 1);
+}
+
+#[test]
+fn invalid_input_schema_is_not_started_and_provider_sees_no_call() {
+    let fixture = Fixture::new("normal", 2);
+    let response = fixture.call_with_arguments(json!({"value": 7}));
+    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
     assert_eq!(
-        fixture.marker_count("call"),
-        1,
-        "the effect starts only with the time remaining after schema preflight"
+        response.error.as_ref().unwrap().code,
+        "plugin_arguments_schema_invalid"
+    );
+    assert_eq!(fixture.marker_count("call"), 0);
+    assert_eq!(fixture.marker_count("list"), 1);
+
+    let valid = fixture.call_with_arguments(json!({"value": "valid"}));
+    assert!(valid.error.is_none());
+    assert_eq!(fixture.marker_count("call"), 1);
+}
+
+#[test]
+fn output_schema_violation_is_completed_and_retires_provider() {
+    let fixture = Fixture::new("output_schema_invalid", 2);
+    let response = fixture.call();
+    assert_eq!(response.dispatch_state, PluginDispatchState::Completed);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "plugin_output_schema_violation"
+    );
+    assert_eq!(fixture.marker_count("call"), 1);
+    let retired = fixture.call();
+    assert_eq!(retired.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        retired.error.as_ref().unwrap().code,
+        "plugin_provider_unavailable"
     );
 }
 
@@ -414,10 +460,60 @@ fn unsupported_result_is_completed_and_retires_protocol_broken_instance() {
 #[test]
 fn stderr_is_diagnostic_only_and_never_enters_catalog_or_result() {
     let fixture = Fixture::new("stderr", 2);
+    assert!(wait_until(Duration::from_secs(1), || {
+        fixture
+            .manager
+            .local_stderr_diagnostics(
+                PluginPlane::Startup,
+                &fixture.provider.provider_id,
+                &fixture.provider.provider_instance_id,
+            )
+            .is_some_and(|snapshot| {
+                snapshot
+                    .lines
+                    .iter()
+                    .any(|line| line.text == "diagnostic-only-secret-looking-stderr")
+            })
+    }));
     let catalog = serde_json::to_string(&fixture.manager.startup_catalog()).unwrap();
     assert!(!catalog.contains("diagnostic-only-secret-looking-stderr"));
     let result = serde_json::to_string(&fixture.call()).unwrap();
     assert!(!result.contains("diagnostic-only-secret-looking-stderr"));
+}
+
+#[test]
+fn stderr_flood_is_bounded_and_does_not_block_stdout_protocol() {
+    let fixture = Fixture::new("stderr_flood", 2);
+    let response = fixture.call();
+    assert!(response.error.is_none(), "{:?}", response.error);
+    assert_eq!(fixture.marker_count("list"), 1);
+    assert_eq!(fixture.marker_count("call"), 1);
+    assert!(wait_until(Duration::from_secs(1), || {
+        fixture
+            .manager
+            .local_stderr_diagnostics(
+                PluginPlane::Startup,
+                &fixture.provider.provider_id,
+                &fixture.provider.provider_instance_id,
+            )
+            .is_some_and(|snapshot| !snapshot.lines.is_empty())
+    }));
+    let snapshot = fixture
+        .manager
+        .local_stderr_diagnostics(
+            PluginPlane::Startup,
+            &fixture.provider.provider_id,
+            &fixture.provider.provider_instance_id,
+        )
+        .unwrap();
+    assert!(snapshot.lines.len() <= PLUGIN_STDERR_MAX_LINES);
+    assert!(snapshot.aggregate_bytes <= PLUGIN_STDERR_MAX_BYTES);
+    assert!(snapshot
+        .lines
+        .iter()
+        .all(|line| line.text.len() <= PLUGIN_STDERR_MAX_LINE_BYTES && line.truncated));
+    let catalog = serde_json::to_string(&fixture.manager.startup_catalog()).unwrap();
+    assert!(!catalog.contains("stderr-flood"));
 }
 
 #[test]
@@ -442,10 +538,9 @@ fn provider_busy_is_not_started() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let discovery = fixture.list();
-    assert_eq!(discovery.dispatch_state, PluginDispatchState::NotStarted);
-    assert_eq!(
-        discovery.error.as_ref().unwrap().code,
-        "plugin_provider_busy"
+    assert!(
+        discovery.error.is_none(),
+        "frozen catalog discovery must not contend on the live provider connection"
     );
     let second_call = fixture.call();
     assert_eq!(second_call.dispatch_state, PluginDispatchState::NotStarted);

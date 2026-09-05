@@ -9,6 +9,10 @@ Native Tool Plugin 允许 WebCodex Runner 把任意本地可执行程序变成�
 Plugin 进程只运行在 Runner 所在机器。Server 不会收到它的 command path、argv、
 cwd、prepared environment、PID、stderr 或本地凭据。
 
+Native Plugin 是**受信任的本地 executable**。WebCodex 不会 sandbox、隔离、签名或把
+不可信 executable 自动变安全；启动 Plugin 与在 prepared Runner environment 下直接运行
+这个本地程序具有同等级别的本机信任含义。
+
 ## 配置 Plugin
 
 Plugin 使用独立的 `runner.toml` 配置，不复用 MCP provider：
@@ -63,13 +67,23 @@ Plugin 只有两个状态平面，没有额外 draft/stable/published 状态。
 ### Startup
 
 Runner 启动时读取 `[plugins]`，为每个 provider 准备环境并启动进程，依次完成
-`initialize`、`tools/list` 和 bounded schema validation，然后冻结当前 Runner
-instance 的 startup catalog。成功 admission 的 provider 进程会保持 persistent，供
-direct call 继续使用。
+`initialize`、**一次** `tools/list` 和 bounded schema validation，然后 canonicalize
+catalog，并把它冻结到 exact `provider_instance_id`。成功 admission 的 provider 进程会
+保持 persistent，但普通 list/describe/call 不会再要求同一个 provider instance 重新
+执行 `tools/list`。
 
-startup catalog 在这个 Runner 进程生命周期内 immutable。修改 Plugin 源码、
+冻结后的 provider catalog 在这个 provider-instance 生命周期内 immutable。canonical
+validated catalog 会生成稳定 SHA-256 digest，并保留 exact Tool count，供 stale detection、
+audit 和后续 surface pinning 使用。catalog 只能通过 reload/restart 产生新的 provider
+instance 后改变；startup plane 本身在整个 Runner process lifetime 中 immutable。修改 Plugin 源码、
 `runner.toml` 或执行 `plugin_tool reload` 都不会改变一级工具。只有 Runner restart
 才会创建新的 Runner/provider instance 并重新做 startup admission。
+
+完整 provider catalog 与 startup direct-eligible subset 是两个不同 contract。
+`PLUGIN_STARTUP_MAX_DIRECT_TOOLS`（当前为 64）只是 Runner 对 direct subset 的安全上限，
+不是“provider 最多只能有 64 个 Tool”，也不是每个 model/surface 的 routing budget。只要
+完整 provider catalog 仍在自身有界 contract 内，即使 direct subset 没有被 admission，
+它仍可通过 `plugin_tool` 使用；Server-side surface budget 属于独立 governance 层。
 
 如果 startup tool 名称合法、schema 在边界内、在当前 caller-visible startup
 inventory 中唯一，并且没有和 WebCodex reserved tool 冲突，它会直接进入 MCP
@@ -103,13 +117,13 @@ plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
 
 `list(runner, plugin)` 只观察已经 committed/effective 的 runtime provider。它先解析
-caller-visible exact Runner，再观察当前 provider instance，只对这个 exact instance 发出
-`tools/list`。它不会重新读取 `runner.toml`、启动 disposable candidate、调用 `check`、
-reload provider、修改 dynamic overlay、创建 binding，也不会改变
-`firstClassRestartRequired`。如果 provider observation 与 `tools/list` 之间发生 Runner/provider
-replacement，discovery 会 fail closed 并要求重新 list；WebCodex 不会把同名 logical provider
-静默重解析到 replacement，也不会 replay。完整 schema 仍然只能由 `describe` 观察；list
-只返回 tool name、可选 title 等有界 discovery metadata。
+caller-visible exact Runner 和 provider instance，然后直接读取这个 instance 的 frozen
+catalog；**不会**再向 provider 发出 `tools/list` round trip。它也不会重新读取
+`runner.toml`、启动 disposable candidate、调用 `check`、reload provider、修改 dynamic
+overlay、创建 binding 或改变 `firstClassRestartRequired`。如果 exact Runner/provider 已被
+replacement，discovery 会 fail closed 并要求重新 list；WebCodex 不会把同名 logical
+provider 静默重解析到 replacement，也不会 replay。完整 schema 仍然只能由 `describe`
+观察；list 只返回 tool name、可选 title 等有界 discovery metadata。
 
 provider list 中的 `status` 只表示当前 effective runtime health。logical provider 如果也存在于
 frozen startup catalog，则 `startupAdmission` 单独表示冻结的 startup admission（`direct`、
@@ -134,7 +148,9 @@ executable，完成 `initialize`、`tools/list` 与普通 Plugin protocol/bounds
 `diagnostic`：使用有限、稳定的 WebCodex-defined code，并在安全时携带 validated tool name
 以及 `inputSchema` 等有限 field label。diagnostic 只来自 WebCodex protocol parser/validator；
 不会透传 raw serde error、protocol line、schema fragment、Plugin stdout/stderr、executable
-配置、environment 或 process identity。Plugin stderr 始终留在 Runner 本机。
+配置、environment 或 process identity。Plugin stderr 始终留在 Runner 本机。Runner 只为
+live provider 与最近一次 disposable `check` candidate 保留 bounded、control-sanitized 的
+本机 stderr ring；这个 local projection 不属于 Plugin gateway response。
 
 `startupToolShape.eligible=true` 只表示这个 checked provider 自己的 Tool definitions 满足
 更严格的 provider-local startup Tool bounds；它**不保证**最终成为一级 MCP tool。实际
@@ -222,6 +238,24 @@ streaming、pagination 或 arbitrary JSON-RPC tunneling。
 message、schema、arguments、JSON depth/node/string、tool count 和 result 都有明确边界；
 非法或超限数据 fail closed，不会通过截断把它变成另一份 Tool contract。
 
+### Native Plugin Schema Profile v1
+
+`inputSchema` / `outputSchema` 使用 WebCodex 明确定义的小型 profile，**不宣称**支持完整
+JSON Schema 2020-12。每个 schema node 都必须有单一字符串 `type`，支持：`object`、
+`array`、`string`、`number`、`integer`、`boolean`、`null`。支持的 keyword 只有：
+
+- 所有 node：`type`，以及可选 `title`、`description`、`enum`、`const`；
+- object：`properties`、`required`、boolean `additionalProperties`；
+- string：`minLength`、`maxLength`；
+- array：`minItems`、`maxItems`、`items`。
+
+input/output schema root 必须是 `type: "object"`。property 数量、required 数量、enum
+长度、schema bytes/depth/nodes/string 以及声明的 length/item bounds 都有有限上限。未知
+keyword 会在 provider admission 时明确拒绝，不会 silently ignore。v1 特别**不支持**
+`$ref` / remote ref、`$defs`、recursive ref、`pattern`、`format`、numeric
+`minimum` / `maximum`、schema 形式的 `additionalProperties`、union `type`、`anyOf`、
+`oneOf`、`allOf`、`not` 或任意 draft-specific keyword。
+
 完整无依赖 Node 示例见
 [`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)。
 
@@ -229,6 +263,14 @@ message、schema、arguments、JSON depth/node/string、tool count 和 result �
 
 每个 provider 同一时间只处理一个 request。并发请求会得到 provider-busy，而不是无限
 排队。
+
+`tools/call` 进入 provider connection 之前，WebCodex 会先从 exact frozen catalog
+解析 Tool、核对 caller 的 exact schema observation，再使用 frozen input schema 校验
+`arguments`。这里任何失败都是 `NotStarted`，provider executable 会看到 **0 个**
+`tools/call` byte；call path 也不会执行 `tools/list`。provider response 返回后仍执行已有
+text/result bounds；如果 Tool 声明了 `outputSchema`，则 `structuredContent` 必须存在并
+匹配 exact frozen output schema。违约属于已完成 dispatch 后的 provider contract failure，
+WebCodex 会 fail closed 并 retire 该 provider instance。
 
 `plugin_tool call` 必须使用前一次 `describe` 返回的 opaque binding。binding 是
 Server 端有界保存的一次 exact observation，不是 bearer authorization token：每次 call
@@ -239,15 +281,19 @@ WebCodex 不会把它 re-resolve 到新的同名 provider/tool，不会自动生
 replay。内部 Runner/provider instance id 和 schema revision 不会编码到 handle 里或暴露给
 模型。
 
-provider timeout 是一次 RPC 的总预算：从 request encode/validation 前开始，同时覆盖
-bounded stdin queue admission、完整 frame 的 write + flush confirmation，以及 response
-wait。因此 Plugin 即使停止读取 stdin，`write_all` 也不能逃逸 provider timeout。对于
+local frozen-schema preflight 成功后，provider timeout 才作为一次 RPC 的总预算开始：
+它从 provider request encode 前开始，同时覆盖 bounded stdin queue admission、完整
+frame 的 write + flush confirmation，以及 response wait。因此 Plugin 即使停止读取 stdin，
+`write_all` 也不能逃逸 provider timeout。对于
 effectful `tools/call`，只要 frame 已经可能开始写入，write timeout/failure、connection
 loss、process death 或 response timeout 都返回 `OutcomeUnknown`，不会自动 retry/replay；
 只有能证明任何 byte 都不可能发送的失败才是 `NotStarted`。
 
-stdout 只用于 protocol。stderr 单独 drain，仅作为本机 diagnostic，不会自动进入模型
-result，也不会进入 startup registration catalog。
+stdout 只用于 protocol。stderr 由独立 worker 持续 drain，因此 stderr flood 不会反向
+阻塞 stdout protocol。local ring 最多保留 64 行、每行 1 KiB、aggregate 32 KiB；control /
+非 UTF-8 byte 会做安全 projection，超长行会标记 truncated。stderr 不会被当作 protocol，
+不会进入 model ToolResult 或 Workflow Session ledger，也不会自动发送到 Server / startup
+registration catalog。
 
 ## OAuth
 

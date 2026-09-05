@@ -1,8 +1,7 @@
-mod owned;
 mod supervisor;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use owned::reclaim_owned_tree;
+pub(crate) use supervisor::MachineEventReceiver;
 pub use supervisor::{ProcessKind, ProcessPhase, ProcessSnapshot, ProcessSupervisor};

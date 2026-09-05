@@ -13,8 +13,11 @@
 //! * `grandchild <marker> <delay> <total>` — sleep `delay`, write our own PID
 //!   to `marker`, sleep until `total`, then exit 0.
 //! * `hold-stdout` — write `PING` and keep the stdout write end open forever.
+//! * `spawn-parent-lease-child <marker>` — spawn a child with piped stdin and
+//!   exit immediately; used to model an owner process disappearing.
+//! * `parent-lease-child <marker>` — wait for stdin EOF, write `marker`, exit.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 fn main() {
@@ -53,6 +56,31 @@ fn main() {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             }
+        }
+        "spawn-parent-lease-child" => {
+            let marker = args.get(2).expect("marker path");
+            let self_exe = std::env::current_exe().expect("current_exe");
+            let mut cmd = Command::new(self_exe);
+            cmd.args(["parent-lease-child", marker])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            #[allow(clippy::zombie_processes)]
+            let child = cmd.spawn().expect("spawn parent-lease child");
+            println!("LEASE_CHILD_PID={}", child.id());
+            std::io::stdout().flush().expect("flush stdout");
+            // process::exit intentionally skips Rust destructors. The kernel
+            // still closes the parent's pipe write handle, exactly as it does
+            // when the owning Desktop process disappears unexpectedly.
+            std::process::exit(0);
+        }
+        "parent-lease-child" => {
+            let marker = args.get(2).expect("marker path");
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut bytes)
+                .expect("read parent lease stdin");
+            std::fs::write(marker, b"parent_eof").expect("write parent EOF marker");
         }
         other => {
             eprintln!("process_tree_helper: unknown mode: {other}");

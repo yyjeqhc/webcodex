@@ -477,6 +477,33 @@ fn install_shutdown_listener(
         .map_err(|_| "failed to start process shutdown signal listener".to_string())
 }
 
+fn install_parent_liveness_listener(runtime: RunnerRuntimeState) -> Result<(), String> {
+    use std::io::Read;
+
+    let listener = std::thread::Builder::new()
+        .name("webcodex-runner-parent-lease".to_string())
+        .spawn(move || {
+            let mut stdin = std::io::stdin();
+            let mut buffer = [0_u8; 64];
+            loop {
+                match stdin.read(&mut buffer) {
+                    Ok(0) | Err(_) => {
+                        runtime.request_shutdown_signal();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            }
+        })
+        .map_err(|_| "failed to start parent-liveness listener".to_string())?;
+    // This reader is intentionally detached. A blocking stdin read cannot be
+    // cancelled portably; joining it during an ordinary signal-driven shutdown
+    // would hang until the parent closed the lease. Process exit reclaims the
+    // detached thread, while EOF still triggers exact-generation shutdown.
+    drop(listener);
+    Ok(())
+}
+
 fn send_polling_offline_best_effort(client: &Client, cfg: &RunnerConfig, runner_instance_id: &str) {
     let url = format!(
         "{}{}",
@@ -1440,6 +1467,7 @@ pub(crate) fn run_runner(
     cfg: RunnerConfig,
     config_path: PathBuf,
     once: bool,
+    stop_on_stdin_eof: bool,
 ) -> Result<(), String> {
     // Generate the per-process agent instance identity once. It is stable for
     // the whole process lifetime, including across WebSocket reconnects, so the
@@ -1505,6 +1533,15 @@ pub(crate) fn run_runner(
         },
         Err(error) => {
             tracing::error!(error = %error, "detached Job state root is unavailable");
+        }
+    }
+    if stop_on_stdin_eof {
+        if let Err(error) = install_parent_liveness_listener(runtime.clone()) {
+            #[cfg(windows)]
+            if let Some(diagnostics) = exit_diagnostics.as_ref() {
+                diagnostics.mark_terminal(false, "parent_liveness_listener_install_failed", None);
+            }
+            return Err(error);
         }
     }
     let shutdown_listener = match install_shutdown_listener(runtime.clone()) {

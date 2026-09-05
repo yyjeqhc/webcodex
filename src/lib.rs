@@ -94,7 +94,9 @@ pub use startup::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerBinaryAction {
-    Run,
+    Run {
+        stop_on_stdin_eof: bool,
+    },
     Exit {
         code: i32,
         stdout: String,
@@ -112,10 +114,15 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect();
     match args.as_slice() {
-        [] => ServerBinaryAction::Run,
+        [] => ServerBinaryAction::Run {
+            stop_on_stdin_eof: false,
+        },
+        [arg] if arg == "--stop-on-stdin-eof" => ServerBinaryAction::Run {
+            stop_on_stdin_eof: true,
+        },
         [arg] if matches!(arg.as_str(), "--help" | "-h") => ServerBinaryAction::Exit {
             code: 0,
-            stdout: "Usage: webcodex-server [OPTIONS]\n\nRun the WebCodex server runtime.\n\nOptions:\n  -h, --help       Print help and exit\n  -V, --version    Print version and exit\n".to_string(),
+            stdout: "Usage: webcodex-server [OPTIONS]\n\nRun the WebCodex server runtime.\n\nOptions:\n      --stop-on-stdin-eof  Stop when the invoking parent closes stdin\n  -h, --help               Print help and exit\n  -V, --version            Print version and exit\n".to_string(),
             stderr: String::new(),
         },
         [arg] if matches!(arg.as_str(), "--version" | "-V") => ServerBinaryAction::Exit {
@@ -176,6 +183,13 @@ pub fn prepare_server_process_environment() -> Result<(), String> {
 }
 
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    run_server_with_parent_liveness(false).await
+}
+
+#[doc(hidden)]
+pub async fn run_server_with_parent_liveness(
+    stop_on_stdin_eof: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let env_loads = match PREPARED_SERVER_ENV_LOADS.get() {
         Some(prepared) => prepared.clone(),
         None => load_startup_env_files().map_err(std::io::Error::other)?,
@@ -804,6 +818,7 @@ only for local/trusted-network demos."
         router,
         shutdown_coordinator,
         std::time::Duration::from_secs(SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
+        stop_on_stdin_eof,
     )
     .await?;
     Ok(())
@@ -812,6 +827,22 @@ only for local/trusted-network demos."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_parent_liveness_is_explicit_opt_in() {
+        assert_eq!(
+            server_binary_action(std::iter::empty::<&str>()),
+            ServerBinaryAction::Run {
+                stop_on_stdin_eof: false,
+            }
+        );
+        assert_eq!(
+            server_binary_action(["--stop-on-stdin-eof"]),
+            ServerBinaryAction::Run {
+                stop_on_stdin_eof: true,
+            }
+        );
+    }
 
     #[test]
     fn test_parse_env_file_line_basic() {

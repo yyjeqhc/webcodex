@@ -1,4 +1,5 @@
 use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
+use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, DesktopOperationKind, DesktopStateSnapshot, Enrollment, Experience,
@@ -11,14 +12,19 @@ use crate::operation::{
     cancelled_error, CancellationContext, CancellationSignal, OperationAdmission,
     OperationController,
 };
-use crate::process::{ProcessKind, ProcessPhase, ProcessSupervisor};
+use crate::process::{MachineEventReceiver, ProcessKind, ProcessPhase, ProcessSupervisor};
 use crate::webcodex::{
     inspect_project_path, ProjectRuntimeIdentity, QuickShareReadyEvent, RegularTunnelReadyEvent,
     WebCodexAdapter,
 };
 use serde_json::Value;
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::{self, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -30,7 +36,10 @@ const PROJECT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QUICK_SHARE_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const REGULAR_TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
+const READINESS_CLEANUP_SLACK: Duration = Duration::from_secs(2);
 const SHUTDOWN_OPERATION_WAIT: Duration = Duration::from_secs(5);
+const DESKTOP_STATE_MAX_BYTES: u64 = 256 * 1024;
+static NEXT_STATE_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 type SharedSupervisor = Arc<Mutex<ProcessSupervisor>>;
 
@@ -45,12 +54,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> Self {
-        let core = DesktopCore::new(data_dir, resource_dir);
+    pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
+        let core = DesktopCore::new(data_dir, resource_dir)?;
         let published = Arc::clone(&core.published);
         let supervisor = Arc::clone(&core.supervisor);
         let activity = core.activity.clone();
-        Self {
+        Ok(Self {
             core: Mutex::new(Some(core)),
             published,
             supervisor,
@@ -58,7 +67,7 @@ impl AppState {
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
-        }
+        })
     }
 
     pub fn get_state(&self) -> DesktopStateSnapshot {
@@ -403,10 +412,10 @@ pub struct DesktopCore {
 }
 
 impl DesktopCore {
-    fn new(data_dir: PathBuf, resource_dir: PathBuf) -> Self {
+    fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
         let activity = ActivityLog::default();
         let config_path = data_dir.join("desktop-state.json");
-        let config = load_config(&config_path).unwrap_or_default();
+        let config = load_config(&config_path, &activity)?;
         let mut snapshot = DesktopStateSnapshot::default();
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
@@ -414,7 +423,7 @@ impl DesktopCore {
         snapshot.regular_tunnel_available = true;
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
-        Self {
+        Ok(Self {
             data_dir,
             config_path,
             config,
@@ -423,7 +432,7 @@ impl DesktopCore {
             supervisor,
             activity,
             published,
-        }
+        })
     }
 
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
@@ -746,19 +755,43 @@ impl DesktopCore {
         self.save_config().await?;
         cancellation.check()?;
 
+        let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
         let running = self
             .adapter
-            .server_status(Some(&server_url), Some(&env_file), None, cancellation)
+            .server_status_until(
+                Some(&server_url),
+                Some(&env_file),
+                None,
+                cancellation,
+                server_deadline,
+            )
             .await
             .is_ok_and(|status| status.http_reachable);
         cancellation.check()?;
-        if !running {
+        let server_started = if !running {
+            if server_deadline.is_elapsed() {
+                return Err(readiness_timeout_error(
+                    "server_unreachable",
+                    "WebCodex Service did not become ready",
+                    "Check the local Service diagnostics and retry.",
+                ));
+            }
             let command = self.adapter.local_server_command(&env_file)?;
             self.spawn_owned(ProcessKind::LocalServer, command, false, cancellation)
                 .await?;
-        }
-        self.wait_for_server(&server_url, Some(&env_file), None, cancellation)
-            .await?;
+            true
+        } else {
+            false
+        };
+        self.wait_for_server(
+            &server_url,
+            Some(&env_file),
+            None,
+            cancellation,
+            server_deadline,
+            server_started,
+        )
+        .await?;
         self.snapshot.readiness.server = ServerReadiness::Ready;
         self.publish_snapshot();
 
@@ -787,23 +820,36 @@ impl DesktopCore {
             }
         };
 
+        let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
         let runner_ready = self
             .adapter
-            .runner_ready(&identity, cancellation)
+            .runner_ready_until(&identity, cancellation, runner_deadline)
             .await
             .unwrap_or(false);
         cancellation.check()?;
-        if !runner_ready {
+        let runner_started = if !runner_ready {
+            if runner_deadline.is_elapsed() {
+                return Err(readiness_timeout_error(
+                    "runner_offline",
+                    "Runner did not become connected",
+                    "Check Server reachability and Runner diagnostics, then retry.",
+                ));
+            }
             self.snapshot.readiness.runner = RunnerReadiness::Connecting;
             self.publish_snapshot();
             let command = self.adapter.local_runner_command(&identity.runner_config)?;
             self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
                 .await?;
-        }
-        self.wait_for_runner(&identity, cancellation).await?;
+            true
+        } else {
+            false
+        };
+        self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
+            .await?;
         self.snapshot.readiness.runner = RunnerReadiness::Ready;
         self.publish_snapshot();
-        self.wait_for_project(&identity, cancellation).await?;
+        self.wait_for_project(&identity, cancellation, runner_started)
+            .await?;
         cancellation.check()?;
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Ready,
@@ -900,15 +946,31 @@ impl DesktopCore {
             }
         };
 
-        let server_status = self
+        let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
+        let server_status = match self
             .adapter
-            .server_status(
+            .server_status_until(
                 Some(&server_url),
                 None,
                 Some(&identity.user_token_file),
                 cancellation,
+                server_deadline,
             )
-            .await?;
+            .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                cancellation.check()?;
+                if server_deadline.is_elapsed() {
+                    return Err(readiness_timeout_error(
+                        "server_unreachable",
+                        "The existing WebCodex Server did not respond before the readiness deadline",
+                        "Check the Server URL and network path, then retry.",
+                    ));
+                }
+                return Err(error);
+            }
+        };
         cancellation.check()?;
         if !server_status.http_reachable {
             return Err(DesktopError::new(
@@ -917,19 +979,32 @@ impl DesktopCore {
                 "Check the Server URL and network path, then retry.",
             ));
         }
+        let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
         let runner_ready = self
             .adapter
-            .runner_ready(&identity, cancellation)
+            .runner_ready_until(&identity, cancellation, runner_deadline)
             .await
             .unwrap_or(false);
         cancellation.check()?;
-        if !runner_ready {
+        let runner_started = if !runner_ready {
+            if runner_deadline.is_elapsed() {
+                return Err(readiness_timeout_error(
+                    "runner_offline",
+                    "Runner did not become connected",
+                    "Check Server reachability and Runner diagnostics, then retry.",
+                ));
+            }
             let command = self.adapter.local_runner_command(&identity.runner_config)?;
             self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
                 .await?;
-        }
-        self.wait_for_runner(&identity, cancellation).await?;
-        self.wait_for_project(&identity, cancellation).await?;
+            true
+        } else {
+            false
+        };
+        self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
+            .await?;
+        self.wait_for_project(&identity, cancellation, runner_started)
+            .await?;
         cancellation.check()?;
         self.config.topology = Some(topology);
         self.save_config().await?;
@@ -982,9 +1057,17 @@ impl DesktopCore {
                 "Stop the current share before starting another one.",
             ));
         }
+        let deadline = Deadline::after(QUICK_SHARE_READY_TIMEOUT);
         let command = self
             .adapter
             .quick_share_command(Path::new(&project.path), provider)?;
+        if deadline.is_elapsed() {
+            return Err(readiness_timeout_error(
+                "quick_share_not_ready",
+                "Quick Share did not reach verified readiness",
+                "Check Activity and Tunnel prerequisites, then retry.",
+            ));
+        }
         let mut events = self
             .spawn_owned(ProcessKind::QuickShare, command, true, cancellation)
             .await?
@@ -1016,34 +1099,56 @@ impl DesktopCore {
             "Starting the temporary Quick Share runtime",
         );
         self.publish_snapshot();
-
         let event_wait = async {
             while let Some(value) = events.recv().await {
-                if value.get("event").and_then(Value::as_str) == Some("ready") {
-                    return Some(value);
+                match value.get("event").and_then(Value::as_str) {
+                    Some("ready") => return Ok(Some(value)),
+                    Some("machine_event_overflow") => return Err(value),
+                    _ => {}
                 }
             }
-            None
+            Ok(None)
         };
-        let event_value = tokio::select! {
+        let event_result = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                self.stop_process(ProcessKind::QuickShare).await;
+                self.stop_process_until(
+                    ProcessKind::QuickShare,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                ).await;
                 return Err(cancelled_error());
             }
-            result = tokio::time::timeout(QUICK_SHARE_READY_TIMEOUT, event_wait) => {
-                result.ok().flatten()
+            result = tokio::time::timeout_at(deadline.instant(), event_wait) => {
+                result
             }
         };
-        let Some(event_value) = event_value else {
-            let logs = self.process_logs(ProcessKind::QuickShare).await;
-            self.stop_process(ProcessKind::QuickShare).await;
-            return Err(DesktopError::new(
-                "quick_share_not_ready",
-                "Quick Share did not reach verified readiness",
-                "Check Activity and Tunnel prerequisites, then retry.",
-            )
-            .with_details(serde_json::json!({ "diagnostic_lines": logs })));
+        let event_value = match event_result {
+            Ok(Ok(Some(value))) => value,
+            Ok(Err(overflow)) => {
+                self.stop_process_until(
+                    ProcessKind::QuickShare,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                return Err(machine_event_overflow_error(&overflow));
+            }
+            Ok(Ok(None)) | Err(_) => {
+                let logs = self.process_logs(ProcessKind::QuickShare).await;
+                self.stop_process_until(
+                    ProcessKind::QuickShare,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                return Err(DesktopError::new(
+                    "quick_share_not_ready",
+                    "Quick Share did not reach verified readiness",
+                    "Check Activity and Tunnel prerequisites, then retry.",
+                )
+                .with_details(serde_json::json!({
+                    "category": "readiness_timeout",
+                    "diagnostic_lines": logs,
+                })));
+            }
         };
         let event: QuickShareReadyEvent = match serde_json::from_value(event_value) {
             Ok(event) => event,
@@ -1218,9 +1323,17 @@ impl DesktopCore {
                 )
             })?;
 
+        let deadline = Deadline::after(REGULAR_TUNNEL_READY_TIMEOUT);
         let command = self
             .adapter
             .regular_tunnel_command(&env_file, &user_token_file)?;
+        if deadline.is_elapsed() {
+            return Err(readiness_timeout_error(
+                "tunnel_unavailable",
+                "OpenAI Secure Tunnel did not reach verified readiness",
+                "Check Activity and the canonical Tunnel prerequisites, then retry.",
+            ));
+        }
         let mut events = self
             .spawn_owned(ProcessKind::RegularTunnel, command, true, cancellation)
             .await?
@@ -1246,48 +1359,71 @@ impl DesktopCore {
             "Starting the regular OpenAI Secure Tunnel",
         );
         self.publish_snapshot();
-
         let event_wait = async {
             while let Some(value) = events.recv().await {
-                if value.get("event").and_then(Value::as_str) == Some("ready") {
-                    return Some(value);
+                match value.get("event").and_then(Value::as_str) {
+                    Some("ready") => return Ok(Some(value)),
+                    Some("machine_event_overflow") => return Err(value),
+                    _ => {}
                 }
             }
-            None
+            Ok(None)
         };
-        let event_value = tokio::select! {
+        let event_result = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                self.stop_process(ProcessKind::RegularTunnel).await;
+                self.stop_process_until(
+                    ProcessKind::RegularTunnel,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                ).await;
                 return Err(cancelled_error());
             }
-            result = tokio::time::timeout(REGULAR_TUNNEL_READY_TIMEOUT, event_wait) => {
-                result.ok().flatten()
+            result = tokio::time::timeout_at(deadline.instant(), event_wait) => {
+                result
             }
         };
-        let Some(event_value) = event_value else {
-            let logs = self.process_logs(ProcessKind::RegularTunnel).await;
-            self.stop_process(ProcessKind::RegularTunnel).await;
-            self.snapshot.regular_tunnel = Some(RegularTunnelState {
-                provider: "openai".to_string(),
-                status: RegularTunnelStatus::Error,
-                clipboard_state: "unavailable".to_string(),
-                clipboard_contains: "tunnel_id".to_string(),
-                ready_for_chatgpt: false,
-            });
-            self.snapshot.readiness = aggregate_readiness(
-                ServerReadiness::Ready,
-                RunnerReadiness::Ready,
-                ExposureReadiness::Error,
-                ProjectReadiness::Ready,
-            );
-            apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
-            return Err(DesktopError::new(
-                "tunnel_unavailable",
-                "OpenAI Secure Tunnel did not reach verified readiness",
-                "Check Activity and the canonical Tunnel prerequisites, then retry.",
-            )
-            .with_details(serde_json::json!({ "diagnostic_lines": logs })));
+        let event_value = match event_result {
+            Ok(Ok(Some(value))) => value,
+            Ok(Err(overflow)) => {
+                self.stop_process_until(
+                    ProcessKind::RegularTunnel,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                self.snapshot.regular_tunnel = None;
+                return Err(machine_event_overflow_error(&overflow));
+            }
+            Ok(Ok(None)) | Err(_) => {
+                let logs = self.process_logs(ProcessKind::RegularTunnel).await;
+                self.stop_process_until(
+                    ProcessKind::RegularTunnel,
+                    Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+                )
+                .await;
+                self.snapshot.regular_tunnel = Some(RegularTunnelState {
+                    provider: "openai".to_string(),
+                    status: RegularTunnelStatus::Error,
+                    clipboard_state: "unavailable".to_string(),
+                    clipboard_contains: "tunnel_id".to_string(),
+                    ready_for_chatgpt: false,
+                });
+                self.snapshot.readiness = aggregate_readiness(
+                    ServerReadiness::Ready,
+                    RunnerReadiness::Ready,
+                    ExposureReadiness::Error,
+                    ProjectReadiness::Ready,
+                );
+                apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
+                return Err(DesktopError::new(
+                    "tunnel_unavailable",
+                    "OpenAI Secure Tunnel did not reach verified readiness",
+                    "Check Activity and the canonical Tunnel prerequisites, then retry.",
+                )
+                .with_details(serde_json::json!({
+                    "category": "readiness_timeout",
+                    "diagnostic_lines": logs,
+                })));
+            }
         };
         let event: RegularTunnelReadyEvent = match serde_json::from_value(event_value) {
             Ok(event) => event,
@@ -1393,10 +1529,10 @@ impl DesktopCore {
     async fn spawn_owned(
         &self,
         kind: ProcessKind,
-        command: tokio::process::Command,
+        command: std::process::Command,
         machine_stdout: bool,
         cancellation: &CancellationContext,
-    ) -> DesktopResult<Option<tokio::sync::mpsc::UnboundedReceiver<Value>>> {
+    ) -> DesktopResult<Option<MachineEventReceiver>> {
         cancellation.check()?;
         let mut supervisor = self.supervisor.lock().await;
         cancellation.check()?;
@@ -1407,18 +1543,46 @@ impl DesktopCore {
         self.supervisor.lock().await.stop(kind).await;
     }
 
+    async fn stop_process_until(&self, kind: ProcessKind, deadline: Deadline) {
+        self.supervisor
+            .lock()
+            .await
+            .stop_until(kind, deadline)
+            .await;
+    }
+
     async fn wait_for_server(
         &mut self,
         server_url: &str,
         env_file: Option<&Path>,
         token_file: Option<&Path>,
         cancellation: &CancellationContext,
+        deadline: Deadline,
+        cleanup_owned_process: bool,
     ) -> DesktopResult<()> {
-        let deadline = tokio::time::Instant::now() + SERVER_READY_TIMEOUT;
         loop {
             cancellation.check()?;
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalServer,
+                    deadline,
+                    cleanup_owned_process,
+                )
+                .await;
+                return Err(readiness_timeout_error(
+                    "server_unreachable",
+                    "WebCodex Service did not become ready",
+                    "Check the local Service diagnostics and retry.",
+                ));
+            }
             if let Some(process) = self.process_snapshot(ProcessKind::LocalServer).await {
                 if matches!(process.phase, ProcessPhase::Exited | ProcessPhase::Failed) {
+                    self.cleanup_readiness_process(
+                        ProcessKind::LocalServer,
+                        deadline,
+                        cleanup_owned_process,
+                    )
+                    .await;
                     return Err(DesktopError::new(
                         "server_start_failed",
                         "The Desktop-owned WebCodex Server exited during startup",
@@ -1428,21 +1592,33 @@ impl DesktopCore {
             }
             if self
                 .adapter
-                .server_status(Some(server_url), env_file, token_file, cancellation)
+                .server_status_until(
+                    Some(server_url),
+                    env_file,
+                    token_file,
+                    cancellation,
+                    deadline,
+                )
                 .await
                 .is_ok_and(|status| status.http_reachable)
             {
                 return Ok(());
             }
             cancellation.check()?;
-            if tokio::time::Instant::now() >= deadline {
-                return Err(DesktopError::new(
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalServer,
+                    deadline,
+                    cleanup_owned_process,
+                )
+                .await;
+                return Err(readiness_timeout_error(
                     "server_unreachable",
                     "WebCodex Service did not become ready",
                     "Check the local Service diagnostics and retry.",
                 ));
             }
-            sleep_or_cancel(POLL_INTERVAL, cancellation).await?;
+            sleep_or_cancel_until(POLL_INTERVAL, cancellation, deadline).await?;
         }
     }
 
@@ -1450,12 +1626,32 @@ impl DesktopCore {
         &mut self,
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
+        deadline: Deadline,
+        cleanup_owned_process: bool,
     ) -> DesktopResult<()> {
-        let deadline = tokio::time::Instant::now() + RUNNER_READY_TIMEOUT;
         loop {
             cancellation.check()?;
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalRunner,
+                    deadline,
+                    cleanup_owned_process,
+                )
+                .await;
+                return Err(readiness_timeout_error(
+                    "runner_offline",
+                    "Runner did not become connected",
+                    "Check Server reachability and Runner diagnostics, then retry.",
+                ));
+            }
             if let Some(process) = self.process_snapshot(ProcessKind::LocalRunner).await {
                 if matches!(process.phase, ProcessPhase::Exited | ProcessPhase::Failed) {
+                    self.cleanup_readiness_process(
+                        ProcessKind::LocalRunner,
+                        deadline,
+                        cleanup_owned_process,
+                    )
+                    .await;
                     return Err(DesktopError::new(
                         "runner_offline",
                         "The Desktop-owned Runner exited while connecting",
@@ -1465,21 +1661,27 @@ impl DesktopCore {
             }
             if self
                 .adapter
-                .runner_ready(identity, cancellation)
+                .runner_ready_until(identity, cancellation, deadline)
                 .await
                 .unwrap_or(false)
             {
                 return Ok(());
             }
             cancellation.check()?;
-            if tokio::time::Instant::now() >= deadline {
-                return Err(DesktopError::new(
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalRunner,
+                    deadline,
+                    cleanup_owned_process,
+                )
+                .await;
+                return Err(readiness_timeout_error(
                     "runner_offline",
                     "Runner did not become connected",
                     "Check Server reachability and Runner diagnostics, then retry.",
                 ));
             }
-            sleep_or_cancel(POLL_INTERVAL, cancellation).await?;
+            sleep_or_cancel_until(POLL_INTERVAL, cancellation, deadline).await?;
         }
     }
 
@@ -1487,27 +1689,62 @@ impl DesktopCore {
         &mut self,
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
+        cleanup_owned_runner: bool,
     ) -> DesktopResult<()> {
-        let deadline = tokio::time::Instant::now() + PROJECT_READY_TIMEOUT;
+        let deadline = Deadline::after(PROJECT_READY_TIMEOUT);
         loop {
             cancellation.check()?;
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalRunner,
+                    deadline,
+                    cleanup_owned_runner,
+                )
+                .await;
+                return Err(readiness_timeout_error(
+                    "project_not_loaded",
+                    "The selected project is registered but not loaded by the Runner",
+                    "Restart the Runner or check the project registry, then retry.",
+                ));
+            }
             if self
                 .adapter
-                .project_ready(identity, cancellation)
+                .project_ready_until(identity, cancellation, deadline)
                 .await
                 .unwrap_or(false)
             {
                 return Ok(());
             }
             cancellation.check()?;
-            if tokio::time::Instant::now() >= deadline {
-                return Err(DesktopError::new(
+            if deadline.is_elapsed() {
+                self.cleanup_readiness_process(
+                    ProcessKind::LocalRunner,
+                    deadline,
+                    cleanup_owned_runner,
+                )
+                .await;
+                return Err(readiness_timeout_error(
                     "project_not_loaded",
                     "The selected project is registered but not loaded by the Runner",
                     "Restart the Runner or check the project registry, then retry.",
                 ));
             }
-            sleep_or_cancel(POLL_INTERVAL, cancellation).await?;
+            sleep_or_cancel_until(POLL_INTERVAL, cancellation, deadline).await?;
+        }
+    }
+
+    async fn cleanup_readiness_process(
+        &self,
+        kind: ProcessKind,
+        deadline: Deadline,
+        cleanup_owned_process: bool,
+    ) {
+        if cleanup_owned_process {
+            self.stop_process_until(
+                kind,
+                Deadline::at(deadline.cleanup_deadline(READINESS_CLEANUP_SLACK)),
+            )
+            .await;
         }
     }
 
@@ -1549,27 +1786,53 @@ impl DesktopCore {
                 "Retry the setup operation.",
             )
         })?;
-        tokio::fs::write(&self.config_path, encoded)
+        let config_path = self.config_path.clone();
+        tokio::task::spawn_blocking(move || save_config_atomically(&config_path, &encoded))
             .await
-            .map_err(|_| {
-                DesktopError::new(
-                    "desktop_state_unavailable",
-                    "Desktop could not persist its non-secret runtime state",
-                    "Check local app-data permissions and retry.",
-                )
-            })
+            .map_err(|_| desktop_state_unavailable("Desktop state persistence worker stopped"))??;
+        Ok(())
     }
 }
 
-async fn sleep_or_cancel(
+async fn sleep_or_cancel_until(
     duration: Duration,
     cancellation: &CancellationContext,
+    deadline: Deadline,
 ) -> DesktopResult<()> {
+    cancellation.check()?;
+    if deadline.is_elapsed() {
+        return Ok(());
+    }
+    let wake_at = std::cmp::min(deadline.instant(), tokio::time::Instant::now() + duration);
     tokio::select! {
         biased;
         _ = cancellation.cancelled() => Err(cancelled_error()),
-        _ = tokio::time::sleep(duration) => Ok(()),
+        _ = tokio::time::sleep_until(wake_at) => Ok(()),
     }
+}
+
+fn readiness_timeout_error(
+    code: &'static str,
+    message: &'static str,
+    action: &'static str,
+) -> DesktopError {
+    DesktopError::new(code, message, action)
+        .with_details(serde_json::json!({ "category": "readiness_timeout" }))
+}
+
+fn machine_event_overflow_error(event: &Value) -> DesktopError {
+    DesktopError::new(
+        "machine_event_overflow",
+        "Desktop could not retain every critical machine-readiness event",
+        "Retry the operation and inspect Activity if the child keeps emitting excessive machine events.",
+    )
+    .with_details(serde_json::json!({
+        "category": "machine_event_overflow",
+        "dropped_critical": event
+            .get("dropped_critical")
+            .and_then(Value::as_u64)
+            .unwrap_or(1),
+    }))
 }
 
 fn project_snapshot(config: &StoredDesktopConfig) -> Option<ProjectSelection> {
@@ -1604,13 +1867,238 @@ fn identity_from_config(config: &StoredDesktopConfig) -> Option<ProjectRuntimeId
     })
 }
 
-fn load_config(path: &Path) -> Option<StoredDesktopConfig> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if metadata.len() > 256 * 1024 {
-        return None;
+#[derive(Debug)]
+enum StoredConfigFile {
+    Missing,
+    Valid {
+        config: StoredDesktopConfig,
+        bytes: Vec<u8>,
+    },
+    Corrupt,
+}
+
+fn load_config(path: &Path, activity: &ActivityLog) -> DesktopResult<StoredDesktopConfig> {
+    let backup_path = desktop_state_backup_path(path);
+    match read_stored_config(path)? {
+        StoredConfigFile::Valid { config, .. } => Ok(config),
+        StoredConfigFile::Missing => match read_stored_config(&backup_path)? {
+            StoredConfigFile::Missing => Ok(StoredDesktopConfig::default()),
+            StoredConfigFile::Valid { config, bytes } => {
+                recover_config_from_backup(path, &bytes, activity)?;
+                Ok(config)
+            }
+            StoredConfigFile::Corrupt => Err(desktop_state_corrupt()),
+        },
+        StoredConfigFile::Corrupt => match read_stored_config(&backup_path)? {
+            StoredConfigFile::Valid { config, bytes } => {
+                recover_config_from_backup(path, &bytes, activity)?;
+                Ok(config)
+            }
+            StoredConfigFile::Missing | StoredConfigFile::Corrupt => Err(desktop_state_corrupt()),
+        },
     }
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+}
+
+fn recover_config_from_backup(
+    primary_path: &Path,
+    bytes: &[u8],
+    activity: &ActivityLog,
+) -> DesktopResult<()> {
+    write_atomic_file(primary_path, bytes).map_err(|error| {
+        desktop_state_unavailable("Desktop could not restore the previous known-good state")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    activity.push(
+        ActivityEventKind::StateRecovered,
+        "desktop_state",
+        ActivityLevel::Warning,
+        "Recovered Desktop state from the previous known-good snapshot",
+    );
+    Ok(())
+}
+
+fn read_stored_config(path: &Path) -> DesktopResult<StoredConfigFile> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(StoredConfigFile::Missing)
+        }
+        Err(error) => {
+            return Err(
+                desktop_state_unavailable("Desktop could not inspect its saved state")
+                    .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) })),
+            )
+        }
+    };
+    if !metadata.is_file() || metadata.len() > DESKTOP_STATE_MAX_BYTES {
+        return Ok(StoredConfigFile::Corrupt);
+    }
+    let bytes = std::fs::read(path).map_err(|error| {
+        desktop_state_unavailable("Desktop could not read its saved state")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    match serde_json::from_slice::<StoredDesktopConfig>(&bytes) {
+        Ok(config) => Ok(StoredConfigFile::Valid { config, bytes }),
+        Err(_) => Ok(StoredConfigFile::Corrupt),
+    }
+}
+
+fn save_config_atomically(path: &Path, encoded: &[u8]) -> DesktopResult<()> {
+    if encoded.len() as u64 > DESKTOP_STATE_MAX_BYTES {
+        return Err(DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop state exceeded its bounded persistence size",
+            "Retry after reducing the saved Desktop configuration.",
+        ));
+    }
+
+    if let StoredConfigFile::Valid { bytes, .. } = read_stored_config(path)? {
+        let backup = desktop_state_backup_path(path);
+        write_atomic_file(&backup, &bytes).map_err(|error| {
+            desktop_state_unavailable("Desktop could not preserve the previous known-good state")
+                .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+        })?;
+    }
+
+    write_atomic_file(path, encoded).map_err(|error| {
+        desktop_state_unavailable("Desktop could not persist its non-secret runtime state")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })
+}
+
+fn desktop_state_backup_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("desktop-state.json");
+    path.with_file_name(format!("{file_name}.bak"))
+}
+
+fn state_temp_path(path: &Path) -> PathBuf {
+    let id = NEXT_STATE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("desktop-state.json");
+    path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), id))
+}
+
+fn write_atomic_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_file_with_hook(path, bytes, |_| Ok(()))
+}
+
+fn write_atomic_file_with_hook<F>(path: &Path, bytes: &[u8], before_replace: F) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<()>,
+{
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let temp_path = state_temp_path(path);
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp_path)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        before_replace(&temp_path)?;
+        atomic_replace(&temp_path, path)?;
+        sync_state_directory(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn sync_state_directory(path: &Path) -> io::Result<()> {
+    let directory = File::open(path)?;
+    match directory.sync_all() {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error.kind() == io::ErrorKind::Unsupported
+                || error.raw_os_error() == Some(libc::EINVAL) =>
+        {
+            // Some Unix filesystems (notably macOS variants) do not support
+            // directory fsync. The file itself has already been synced and the
+            // same-directory rename is atomic, so treat this specific platform
+            // limitation as best-effort durability rather than a false save
+            // failure after replacement has already succeeded.
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_state_directory(_path: &Path) -> io::Result<()> {
+    // Windows uses MOVEFILE_WRITE_THROUGH for the replacement. Opening a
+    // directory for FlushFileBuffers would require broader sharing semantics
+    // than the app-data policy needs here.
+    Ok(())
+}
+
+fn desktop_state_corrupt() -> DesktopError {
+    DesktopError::new(
+        "desktop_state_corrupt",
+        "Desktop saved state is corrupt and no valid recovery snapshot is available",
+        "Restore or remove the Desktop state files explicitly, then restart WebCodex Desktop.",
+    )
+    .with_details(serde_json::json!({ "category": "state_corrupt" }))
+}
+
+fn desktop_state_unavailable(message: &'static str) -> DesktopError {
+    DesktopError::new(
+        "desktop_state_unavailable",
+        message,
+        "Check local app-data permissions and retry.",
+    )
 }
 
 fn reserve_loopback_address() -> DesktopResult<String> {
@@ -1721,6 +2209,124 @@ fn same_project(left: &str, right: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn unique_state_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "webcodex-desktop-state-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    fn test_stored_config(label: &str) -> StoredDesktopConfig {
+        StoredDesktopConfig {
+            topology: None,
+            project: Some(ProjectSelection {
+                path: format!("/{label}"),
+                allowed_root: "/".to_string(),
+                is_git_repository: false,
+                runtime_project_id: None,
+            }),
+            runtime: None,
+        }
+    }
+
+    #[test]
+    fn atomic_save_interruption_keeps_prior_valid_state() {
+        let dir = unique_state_dir("interrupted-save");
+        std::fs::create_dir_all(&dir).expect("create state fixture dir");
+        let path = dir.join("desktop-state.json");
+        let previous = test_stored_config("previous");
+        let replacement = test_stored_config("replacement");
+        let previous_bytes = serde_json::to_vec_pretty(&previous).unwrap();
+        let replacement_bytes = serde_json::to_vec_pretty(&replacement).unwrap();
+        write_atomic_file(&path, &previous_bytes).expect("write previous state");
+
+        let interrupted = write_atomic_file_with_hook(&path, &replacement_bytes, |_| {
+            Err(io::Error::other("injected interruption before replace"))
+        });
+        assert!(interrupted.is_err());
+        match read_stored_config(&path).expect("read state after interruption") {
+            StoredConfigFile::Valid { config, .. } => assert_eq!(config, previous),
+            other => panic!("previous state was not preserved: {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn atomic_save_preserves_previous_known_good_backup() {
+        let dir = unique_state_dir("known-good-backup");
+        std::fs::create_dir_all(&dir).expect("create state fixture dir");
+        let path = dir.join("desktop-state.json");
+        let previous = test_stored_config("previous");
+        let replacement = test_stored_config("replacement");
+        save_config_atomically(&path, &serde_json::to_vec_pretty(&previous).unwrap())
+            .expect("initial atomic save");
+        save_config_atomically(&path, &serde_json::to_vec_pretty(&replacement).unwrap())
+            .expect("replacement atomic save");
+
+        match read_stored_config(&path).expect("read primary") {
+            StoredConfigFile::Valid { config, .. } => assert_eq!(config, replacement),
+            other => panic!("replacement state was not valid: {other:?}"),
+        }
+        match read_stored_config(&desktop_state_backup_path(&path)).expect("read backup") {
+            StoredConfigFile::Valid { config, .. } => assert_eq!(config, previous),
+            other => panic!("previous snapshot was not valid: {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_primary_with_valid_backup_recovers_explicitly() {
+        let dir = unique_state_dir("recover-backup");
+        std::fs::create_dir_all(&dir).expect("create state fixture dir");
+        let path = dir.join("desktop-state.json");
+        let expected = test_stored_config("recovered");
+        write_atomic_file(
+            &desktop_state_backup_path(&path),
+            &serde_json::to_vec_pretty(&expected).unwrap(),
+        )
+        .expect("write valid backup");
+        std::fs::write(&path, b"{corrupt-primary").expect("write corrupt primary");
+        let activity = ActivityLog::default();
+
+        let recovered = load_config(&path, &activity).expect("recover from backup");
+        assert_eq!(recovered, expected);
+        assert!(matches!(
+            read_stored_config(&path).expect("read restored primary"),
+            StoredConfigFile::Valid { .. }
+        ));
+        assert!(activity.snapshot().iter().any(|entry| {
+            entry.event_kind == ActivityEventKind::StateRecovered && entry.source == "desktop_state"
+        }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_primary_and_backup_returns_explicit_error() {
+        let dir = unique_state_dir("both-corrupt");
+        std::fs::create_dir_all(&dir).expect("create state fixture dir");
+        let path = dir.join("desktop-state.json");
+        std::fs::write(&path, b"{corrupt-primary").expect("write corrupt primary");
+        std::fs::write(desktop_state_backup_path(&path), b"{corrupt-backup")
+            .expect("write corrupt backup");
+
+        let error = load_config(&path, &ActivityLog::default())
+            .expect_err("both corrupt copies must fail closed");
+        assert_eq!(error.code, "desktop_state_corrupt");
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("category"))
+                .and_then(Value::as_str),
+            Some("state_corrupt")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn stored_runtime_contains_paths_not_credentials() {
         let runtime = StoredRuntime {
@@ -1782,10 +2388,10 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ));
-        let state = Arc::new(AppState::new(
-            data_dir.clone(),
-            data_dir.join("test-resources"),
-        ));
+        let state = Arc::new(
+            AppState::new(data_dir.clone(), data_dir.join("test-resources"))
+                .expect("create Desktop test state"),
+        );
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let operation_state = Arc::clone(&state);
@@ -1931,12 +2537,12 @@ mod tests {
         let long_marker = data_dir.join("long-lived-pids.txt");
         let one_shot_marker = data_dir.join("one-shot-pids.txt");
         std::fs::create_dir_all(&data_dir).expect("create shutdown fixture dir");
-        let state = Arc::new(AppState::new(
-            data_dir.clone(),
-            data_dir.join("test-resources"),
-        ));
+        let state = Arc::new(
+            AppState::new(data_dir.clone(), data_dir.join("test-resources"))
+                .expect("create Desktop shutdown test state"),
+        );
 
-        let mut long_command = tokio::process::Command::new("/bin/sh");
+        let mut long_command = std::process::Command::new("/bin/sh");
         long_command.args([
             "-c",
             "sleep 8 & descendant=$!; printf '%s %s\\n' \"$$\" \"$descendant\" > \"$1\"; wait \"$descendant\"",
@@ -2035,7 +2641,8 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&data_dir);
-        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"))
+            .expect("create local dogfood state");
         let cancellation = CancellationContext::never();
         let setup = core.configure_local_setup(&project, &cancellation).await;
         let snapshot = match setup {
@@ -2120,7 +2727,8 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&data_dir);
-        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"))
+            .expect("create Quick Share dogfood state");
         let cancellation = CancellationContext::never();
         let started = core
             .start_quick_share(&project, "none", &cancellation)
@@ -2171,7 +2779,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&host_data);
         let _ = std::fs::remove_dir_all(&client_data);
 
-        let mut host = DesktopCore::new(host_data.clone(), host_data.join("test-resources"));
+        let mut host = DesktopCore::new(host_data.clone(), host_data.join("test-resources"))
+            .expect("create remote dogfood host state");
         let cancellation = CancellationContext::never();
         let host_runtime = host_data.join("runtime");
         let env_file = host_runtime.join("webcodex.env");
@@ -2194,11 +2803,19 @@ mod tests {
             .await
             .expect("start remote dogfood Server");
 
-        let mut client = DesktopCore::new(client_data.clone(), client_data.join("test-resources"));
+        let mut client = DesktopCore::new(client_data.clone(), client_data.join("test-resources"))
+            .expect("create remote dogfood client state");
         let result: DesktopResult<(DesktopStateSnapshot, DesktopStateSnapshot, bool, bool)> =
             async {
-                host.wait_for_server(&server_url, Some(&env_file), None, &cancellation)
-                    .await?;
+                host.wait_for_server(
+                    &server_url,
+                    Some(&env_file),
+                    None,
+                    &cancellation,
+                    Deadline::after(SERVER_READY_TIMEOUT),
+                    true,
+                )
+                .await?;
                 let pairing_code = host
                     .adapter
                     .create_local_pairing(&server_url, &env_file, &cancellation)
@@ -2316,7 +2933,8 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ));
-        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"));
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"))
+            .expect("create tunnel failure state");
         let topology = RuntimeTopology {
             experience: Experience::Full,
             server: ServerTopology::Local,
@@ -2340,7 +2958,7 @@ mod tests {
             ready_for_chatgpt: true,
         });
 
-        let mut command = tokio::process::Command::new("cmd.exe");
+        let mut command = std::process::Command::new("cmd.exe");
         command.args(["/D", "/C", "exit", "/B", "23"]);
         core.supervisor
             .lock()

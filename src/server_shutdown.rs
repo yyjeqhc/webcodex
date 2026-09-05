@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 pub(crate) enum ShutdownReason {
     Sigint,
     Sigterm,
+    ParentEof,
 }
 
 impl ShutdownReason {
@@ -18,6 +19,7 @@ impl ShutdownReason {
         match self {
             Self::Sigint => "SIGINT",
             Self::Sigterm => "SIGTERM",
+            Self::ParentEof => "parent_stdin_eof",
         }
     }
 }
@@ -164,20 +166,51 @@ pub(crate) async fn serve_until_termination<A, S>(
     service: S,
     coordinator: Arc<ShutdownCoordinator>,
     graceful_timeout: Duration,
+    stop_on_stdin_eof: bool,
 ) -> io::Result<()>
 where
     A: Acceptor + Send,
     S: Into<Service> + Send,
 {
     let mut signals = TerminationSignals::new()?;
-    serve_with_signal(
-        server,
-        service,
-        coordinator,
-        signals.recv(),
-        graceful_timeout,
-    )
-    .await
+    let parent_eof = if stop_on_stdin_eof {
+        Some(parent_eof_signal()?)
+    } else {
+        None
+    };
+    let signal = async move {
+        if let Some(parent_eof) = parent_eof {
+            tokio::select! {
+                reason = signals.recv() => reason,
+                _ = parent_eof => ShutdownReason::ParentEof,
+            }
+        } else {
+            signals.recv().await
+        }
+    };
+    serve_with_signal(server, service, coordinator, signal, graceful_timeout).await
+}
+
+fn parent_eof_signal() -> io::Result<tokio::sync::oneshot::Receiver<()>> {
+    use std::io::Read;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("webcodex-server-parent-lease".to_string())
+        .spawn(move || {
+            let mut stdin = std::io::stdin();
+            let mut buffer = [0_u8; 64];
+            loop {
+                match stdin.read(&mut buffer) {
+                    Ok(0) | Err(_) => {
+                        let _ = tx.send(());
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            }
+        })?;
+    Ok(rx)
 }
 
 async fn serve_with_signal<A, S, F>(

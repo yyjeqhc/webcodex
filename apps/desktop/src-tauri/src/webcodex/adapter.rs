@@ -1,13 +1,14 @@
-use super::cli::{run_json, ResolvedBinaries};
+use super::cli::{run_json, run_json_until, ResolvedBinaries};
 use super::models::{
     LoginOutput, OpsProjectsOutput, PairingCreateOutput, RunnerStatusOutput, ServerStatusOutput,
 };
+use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::ProjectSelection;
 use crate::operation::CancellationContext;
 use crate::platform;
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
+use std::process::Command;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +42,24 @@ impl WebCodexAdapter {
             self.binaries = Some(
                 ResolvedBinaries::resolve(self.bundled_runtime_dir.as_deref(), cancellation)
                     .await?,
+            );
+        }
+        Ok(self.binaries.as_ref().expect("resolved above"))
+    }
+
+    pub async fn ensure_binaries_until(
+        &mut self,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<&ResolvedBinaries> {
+        if self.binaries.is_none() {
+            self.binaries = Some(
+                ResolvedBinaries::resolve_until(
+                    self.bundled_runtime_dir.as_deref(),
+                    cancellation,
+                    deadline,
+                )
+                .await?,
             );
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
@@ -113,7 +132,44 @@ impl WebCodexAdapter {
         token_file: Option<&Path>,
         cancellation: &CancellationContext,
     ) -> DesktopResult<ServerStatusOutput> {
-        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        self.server_status_with_deadline(server_url, env_file, token_file, cancellation, None)
+            .await
+    }
+
+    pub async fn server_status_until(
+        &mut self,
+        server_url: Option<&str>,
+        env_file: Option<&Path>,
+        token_file: Option<&Path>,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<ServerStatusOutput> {
+        self.server_status_with_deadline(
+            server_url,
+            env_file,
+            token_file,
+            cancellation,
+            Some(deadline),
+        )
+        .await
+    }
+
+    async fn server_status_with_deadline(
+        &mut self,
+        server_url: Option<&str>,
+        env_file: Option<&Path>,
+        token_file: Option<&Path>,
+        cancellation: &CancellationContext,
+        deadline: Option<Deadline>,
+    ) -> DesktopResult<ServerStatusOutput> {
+        let webcodex = match deadline {
+            Some(deadline) => self
+                .ensure_binaries_until(cancellation, deadline)
+                .await?
+                .webcodex
+                .clone(),
+            None => self.ensure_binaries(cancellation).await?.webcodex.clone(),
+        };
         let mut args = vec!["server".into(), "status".into()];
         if let Some(url) = server_url {
             args.extend(["--url".into(), url.into()]);
@@ -125,8 +181,12 @@ impl WebCodexAdapter {
             args.extend(["--token-file".into(), path.to_string_lossy().to_string()]);
         }
         args.push("--json".into());
-        let output: ServerStatusOutput =
-            run_json(&webcodex, &args, None, false, cancellation).await?;
+        let output: ServerStatusOutput = match deadline {
+            Some(deadline) => {
+                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+            }
+            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+        };
         if output.probe_url.trim().is_empty() {
             return Err(invalid_contract("server status"));
         }
@@ -147,6 +207,7 @@ impl WebCodexAdapter {
     pub fn local_server_command(&self, env_file: &Path) -> DesktopResult<Command> {
         let binaries = self.binaries()?;
         let mut command = Command::new(&binaries.server);
+        command.arg("--stop-on-stdin-eof");
         command.env("WEBCODEX_ENV_FILE", env_file);
         remove_tunnel_credentials(&mut command);
         Ok(command)
@@ -155,7 +216,10 @@ impl WebCodexAdapter {
     pub fn local_runner_command(&self, config: &Path) -> DesktopResult<Command> {
         let binaries = self.binaries()?;
         let mut command = Command::new(&binaries.runner);
-        command.arg("--config").arg(config);
+        command
+            .arg("--config")
+            .arg(config)
+            .arg("--stop-on-stdin-eof");
         remove_tunnel_credentials(&mut command);
         Ok(command)
     }
@@ -304,25 +368,51 @@ impl WebCodexAdapter {
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
     ) -> DesktopResult<bool> {
-        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
-        let output: RunnerStatusOutput = run_json(
-            &webcodex,
-            &[
-                "runner".into(),
-                "status".into(),
-                "--config".into(),
-                identity.runner_config.to_string_lossy().to_string(),
-                "--server-url".into(),
-                identity.server_url.clone(),
-                "--user-token-file".into(),
-                identity.user_token_file.to_string_lossy().to_string(),
-                "--json".into(),
-            ],
-            None,
-            false,
-            cancellation,
-        )
-        .await?;
+        self.runner_ready_with_deadline(identity, cancellation, None)
+            .await
+    }
+
+    pub async fn runner_ready_until(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<bool> {
+        self.runner_ready_with_deadline(identity, cancellation, Some(deadline))
+            .await
+    }
+
+    async fn runner_ready_with_deadline(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+        deadline: Option<Deadline>,
+    ) -> DesktopResult<bool> {
+        let webcodex = match deadline {
+            Some(deadline) => self
+                .ensure_binaries_until(cancellation, deadline)
+                .await?
+                .webcodex
+                .clone(),
+            None => self.ensure_binaries(cancellation).await?.webcodex.clone(),
+        };
+        let args = [
+            "runner".into(),
+            "status".into(),
+            "--config".into(),
+            identity.runner_config.to_string_lossy().to_string(),
+            "--server-url".into(),
+            identity.server_url.clone(),
+            "--user-token-file".into(),
+            identity.user_token_file.to_string_lossy().to_string(),
+            "--json".into(),
+        ];
+        let output: RunnerStatusOutput = match deadline {
+            Some(deadline) => {
+                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+            }
+            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+        };
         if output.config.path.trim().is_empty()
             || output.config.client_id.trim().is_empty()
             || output.config.server_url.trim().is_empty()
@@ -346,23 +436,49 @@ impl WebCodexAdapter {
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
     ) -> DesktopResult<bool> {
-        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
-        let output: OpsProjectsOutput = run_json(
-            &webcodex,
-            &[
-                "ops".into(),
-                "projects".into(),
-                "--server-url".into(),
-                identity.server_url.clone(),
-                "--token-file".into(),
-                identity.user_token_file.to_string_lossy().to_string(),
-                "--json".into(),
-            ],
-            None,
-            false,
-            cancellation,
-        )
-        .await?;
+        self.project_ready_with_deadline(identity, cancellation, None)
+            .await
+    }
+
+    pub async fn project_ready_until(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<bool> {
+        self.project_ready_with_deadline(identity, cancellation, Some(deadline))
+            .await
+    }
+
+    async fn project_ready_with_deadline(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+        deadline: Option<Deadline>,
+    ) -> DesktopResult<bool> {
+        let webcodex = match deadline {
+            Some(deadline) => self
+                .ensure_binaries_until(cancellation, deadline)
+                .await?
+                .webcodex
+                .clone(),
+            None => self.ensure_binaries(cancellation).await?.webcodex.clone(),
+        };
+        let args = [
+            "ops".into(),
+            "projects".into(),
+            "--server-url".into(),
+            identity.server_url.clone(),
+            "--token-file".into(),
+            identity.user_token_file.to_string_lossy().to_string(),
+            "--json".into(),
+        ];
+        let output: OpsProjectsOutput = match deadline {
+            Some(deadline) => {
+                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+            }
+            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+        };
         Ok(output
             .summary
             .projects
@@ -549,7 +665,7 @@ mod tests {
         let local = adapter
             .quick_share_command(Path::new("repo"), "none")
             .unwrap();
-        let local_env: Vec<_> = local.as_std().get_envs().collect();
+        let local_env: Vec<_> = local.get_envs().collect();
         for key in [
             "CONTROL_PLANE_API_KEY",
             "CONTROL_PLANE_TUNNEL_ID",
@@ -564,7 +680,7 @@ mod tests {
         let openai = adapter
             .quick_share_command(Path::new("repo"), "openai")
             .unwrap();
-        let openai_env: Vec<_> = openai.as_std().get_envs().collect();
+        let openai_env: Vec<_> = openai.get_envs().collect();
         for key in ["OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
             assert!(openai_env
                 .iter()
@@ -596,7 +712,6 @@ mod tests {
             .regular_tunnel_command(Path::new("server.env"), Path::new("user-token"))
             .unwrap();
         let args: Vec<_> = command
-            .as_std()
             .get_args()
             .map(|value| value.to_string_lossy().to_string())
             .collect();
@@ -615,7 +730,7 @@ mod tests {
                 "--stop-on-stdin-eof",
             ]
         );
-        let env: Vec<_> = command.as_std().get_envs().collect();
+        let env: Vec<_> = command.get_envs().collect();
         for key in ["OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
             assert!(env
                 .iter()

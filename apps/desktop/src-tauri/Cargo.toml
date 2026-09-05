@@ -24,6 +24,9 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 url = "2"
 webcodex-process = { path = "../../../crates/webcodex-process" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 

@@ -419,6 +419,22 @@ fn runner_cli_legacy_runtime_args_are_preserved() {
         RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: true,
+            stop_on_stdin_eof: false,
+        }
+    );
+}
+
+#[test]
+fn runner_parent_liveness_is_explicit_opt_in() {
+    let _guard = test_env_lock();
+    let action =
+        parse_runner_args(["--config", "/tmp/runner.toml", "--stop-on-stdin-eof"]).unwrap();
+    assert_eq!(
+        action,
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/runner.toml"),
+            once: false,
+            stop_on_stdin_eof: true,
         }
     );
 }
@@ -434,6 +450,7 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/runner.toml"),
             once: false,
+            stop_on_stdin_eof: false,
         }
     );
     drop(_env);
@@ -446,6 +463,7 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: false,
+            stop_on_stdin_eof: false,
         }
     );
     drop(_legacy);
@@ -461,6 +479,7 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/explicit.toml"),
             once: false,
+            stop_on_stdin_eof: false,
         },
         "an explicit --config path must not be blocked by conflicting default-path env aliases"
     );
@@ -469,6 +488,7 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
         RunnerCliAction::Run {
             config_path: client_profile_runner_config("special").unwrap(),
             once: false,
+            stop_on_stdin_eof: false,
         },
         "an explicit profile must not be blocked by conflicting default-path env aliases"
     );
@@ -510,6 +530,7 @@ fn runner_cli_profile_derives_default_config_path() {
         RunnerCliAction::Run {
             config_path: client_profile_runner_config("special").unwrap(),
             once: false,
+            stop_on_stdin_eof: false,
         }
     );
 }
@@ -524,6 +545,7 @@ fn runner_cli_explicit_config_overrides_profile() {
         RunnerCliAction::Run {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: false,
+            stop_on_stdin_eof: false,
         }
     );
 }

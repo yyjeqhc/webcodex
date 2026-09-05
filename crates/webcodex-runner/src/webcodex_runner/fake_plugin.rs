@@ -6,6 +6,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -13,6 +14,11 @@ fn main() -> io::Result<()> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let scenario = args.first().map(String::as_str).unwrap_or("normal");
     let marker = args.get(1).map(Path::new);
+    if scenario == "hold" {
+        loop {
+            thread::sleep(Duration::from_secs(60));
+        }
+    }
     append(marker, "start\n")?;
     if scenario == "execution_context" {
         append(
@@ -112,6 +118,26 @@ fn main() -> io::Result<()> {
                         r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"Native plugin echo","inputSchema":{{"type":"object","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
                     ),
                 )?;
+                if matches!(
+                    scenario,
+                    "block_after_preflight" | "block_after_preflight_tree"
+                ) && lists >= 2
+                {
+                    append(marker, "stdin-blocked\n")?;
+                    if scenario == "block_after_preflight_tree" {
+                        let child = Command::new(env::current_exe()?)
+                            .arg("hold")
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .spawn()?;
+                        append(marker, &format!("descendant-pid:{}\n", child.id()))?;
+                        drop(child);
+                    }
+                    loop {
+                        thread::sleep(Duration::from_secs(60));
+                    }
+                }
             }
             "tools/call" => {
                 calls += 1;

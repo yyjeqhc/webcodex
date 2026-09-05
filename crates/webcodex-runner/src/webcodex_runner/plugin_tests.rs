@@ -3,9 +3,11 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use tempfile::TempDir;
-use webcodex_core::plugin::{PluginContent, PluginGatewayResponsePayload};
+use webcodex_core::plugin::{
+    PluginContent, PluginGatewayResponsePayload, PLUGIN_MAX_ARGUMENT_BYTES,
+};
 
 static FAKE_PLUGIN: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
 
@@ -100,13 +102,17 @@ impl Fixture {
     }
 
     fn call(&self) -> PluginGatewayResponse {
+        self.call_with_arguments(json!({"value":"hello"}))
+    }
+
+    fn call_with_arguments(&self, arguments: Value) -> PluginGatewayResponse {
         let schema = self.provider.tools[0].schema_observation();
         self.manager.handle(PluginGatewayRequest::ToolsCall {
             plane: PluginPlane::Startup,
             provider_id: self.provider.provider_id.clone(),
             provider_instance_id: self.provider.provider_instance_id.clone(),
             name: "echo".to_string(),
-            arguments: json!({"value":"hello"}),
+            arguments,
             expected_schema: schema,
         })
     }
@@ -118,6 +124,35 @@ impl Fixture {
             .filter(|line| *line == value)
             .count()
     }
+
+    fn marker_pid(&self, prefix: &str) -> Option<u32> {
+        fs::read_to_string(&self.marker)
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix)?.parse().ok())
+    }
+}
+
+fn maximum_bounded_arguments() -> Value {
+    let empty = json!({"value":""});
+    let overhead = serde_json::to_vec(&empty).unwrap().len();
+    let arguments = json!({"value":"x".repeat(PLUGIN_MAX_ARGUMENT_BYTES - overhead)});
+    assert_eq!(
+        serde_json::to_vec(&arguments).unwrap().len(),
+        PLUGIN_MAX_ARGUMENT_BYTES
+    );
+    arguments
+}
+
+fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    condition()
 }
 
 fn runner_config(
@@ -232,6 +267,96 @@ fn schema_preflight_and_effect_share_one_provider_timeout_budget() {
         1,
         "the effect starts only with the time remaining after schema preflight"
     );
+}
+
+#[test]
+fn blocking_stdin_write_respects_total_deadline_and_retires_provider_tree() {
+    let fixture = Fixture::new("block_after_preflight_tree", 1);
+    let started = Instant::now();
+    let response = fixture.call_with_arguments(maximum_bounded_arguments());
+    let elapsed = started.elapsed();
+
+    assert_eq!(response.dispatch_state, PluginDispatchState::OutcomeUnknown);
+    assert_eq!(response.error.as_ref().unwrap().code, "plugin_timeout");
+    assert!(
+        elapsed < Duration::from_millis(2500),
+        "blocked stdin write exceeded the provider deadline plus termination slack: {elapsed:?}"
+    );
+    assert_eq!(fixture.marker_count("stdin-blocked"), 1);
+    assert_eq!(fixture.marker_count("call"), 0);
+
+    let descendant_pid = fixture
+        .marker_pid("descendant-pid:")
+        .expect("fixture descendant pid");
+    assert!(wait_until(Duration::from_secs(1), || {
+        !crate::job_manager_tests::process_running(descendant_pid)
+    }));
+
+    let retired = fixture.call();
+    assert_eq!(retired.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        retired.error.as_ref().unwrap().code,
+        "plugin_provider_unavailable"
+    );
+
+    let shutdown_started = Instant::now();
+    fixture.manager.shutdown();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_millis(1500),
+        "shutdown of an already-retired blocked writer must remain bounded"
+    );
+}
+
+#[test]
+fn shutdown_terminates_process_tree_while_effectful_stdin_write_is_blocked() {
+    let fixture = Fixture::new("block_after_preflight_tree", 10);
+    let manager = Arc::clone(&fixture.manager);
+    let provider = fixture.provider.clone();
+    let arguments = maximum_bounded_arguments();
+    let (sender, receiver) = mpsc::channel();
+    let request = std::thread::spawn(move || {
+        let response = manager.handle(PluginGatewayRequest::ToolsCall {
+            plane: PluginPlane::Startup,
+            provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
+            name: "echo".to_string(),
+            arguments,
+            expected_schema: provider.tools[0].schema_observation(),
+        });
+        let _ = sender.send(response);
+    });
+
+    assert!(wait_until(Duration::from_secs(2), || {
+        fixture.marker_count("stdin-blocked") == 1
+    }));
+    assert!(wait_until(Duration::from_secs(2), || {
+        fixture.marker_pid("descendant-pid:").is_some()
+    }));
+    // Give the writer worker an opportunity to enter OS pipe backpressure after
+    // the preflight response has been delivered.
+    std::thread::sleep(Duration::from_millis(50));
+
+    let shutdown_started = Instant::now();
+    fixture.manager.shutdown();
+    let shutdown_elapsed = shutdown_started.elapsed();
+    assert!(
+        shutdown_elapsed < Duration::from_millis(2500),
+        "shutdown waited on the request/session lock: {shutdown_elapsed:?}"
+    );
+
+    let response = receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("blocked request must be released by process-tree termination");
+    request.join().unwrap();
+    assert_eq!(response.dispatch_state, PluginDispatchState::OutcomeUnknown);
+    assert!(matches!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("plugin_manager_stopping") | Some("plugin_stdin_failed") | Some("plugin_eof")
+    ));
+    let descendant_pid = fixture.marker_pid("descendant-pid:").unwrap();
+    assert!(wait_until(Duration::from_secs(1), || {
+        !crate::job_manager_tests::process_running(descendant_pid)
+    }));
 }
 
 #[test]

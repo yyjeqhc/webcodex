@@ -27,6 +27,9 @@ use webcodex_core::plugin::{
 use webcodex_process::ManagedChild;
 
 const PLUGIN_READER_QUEUE: usize = 16;
+const PLUGIN_WRITER_QUEUE: usize = 1;
+const PLUGIN_STOP_POLL: Duration = Duration::from_millis(25);
+const PLUGIN_TERMINATION_BUDGET: Duration = Duration::from_secs(1);
 
 pub(crate) struct PluginManager {
     startup: BTreeMap<String, Arc<ProviderEntry>>,
@@ -37,7 +40,7 @@ pub(crate) struct PluginManager {
     config_path: PathBuf,
     prepared_profiles: PreparedShellProfileCache,
     next_generation: AtomicU64,
-    stopping: AtomicBool,
+    stopping: Arc<AtomicBool>,
 }
 
 struct DynamicState {
@@ -56,14 +59,30 @@ struct ProviderEntry {
     timeout: Duration,
     failed: AtomicBool,
     error_code: Mutex<Option<String>>,
+    process: Arc<ProviderProcess>,
     session: Mutex<Option<ProviderConnection>>,
 }
 
+struct ProviderProcess {
+    child: Mutex<Option<ManagedChild>>,
+}
+
 struct ProviderConnection {
-    child: ManagedChild,
-    stdin: ChildStdin,
+    process: Arc<ProviderProcess>,
+    stopping: Arc<AtomicBool>,
+    writer: mpsc::SyncSender<WriteRequest>,
     incoming: mpsc::Receiver<ReaderEvent>,
     next_id: u64,
+}
+
+struct WriteRequest {
+    frame: Vec<u8>,
+    ack: mpsc::Sender<WriteAck>,
+}
+
+enum WriteAck {
+    Written,
+    Failed,
 }
 
 enum ReaderEvent {
@@ -105,6 +124,14 @@ impl ProviderFailure {
         }
     }
 
+    fn before_send_timeout() -> Self {
+        Self {
+            dispatch_state: PluginDispatchState::NotStarted,
+            code: "plugin_timeout",
+            fatal: false,
+        }
+    }
+
     fn completed(code: &'static str, fatal: bool) -> Self {
         Self {
             dispatch_state: PluginDispatchState::Completed,
@@ -117,6 +144,7 @@ impl ProviderFailure {
 impl PluginManager {
     pub(crate) fn new(startup: &RunnerConfig, config_path: PathBuf) -> Self {
         let prepared_profiles = PreparedShellProfileCache::default();
+        let stopping = Arc::new(AtomicBool::new(false));
         let request_timeout = Duration::from_secs(startup.plugins.request_timeout_secs);
         let mut startup_entries = BTreeMap::new();
         let mut startup_catalog = Vec::with_capacity(startup.plugins.providers.len());
@@ -129,7 +157,7 @@ impl PluginManager {
                 1,
                 request_timeout,
                 &prepared_profiles,
-                None,
+                &stopping,
             );
             let instance_id = entry.instance_id.clone();
             let mut advertised = StartupPluginProvider {
@@ -186,7 +214,7 @@ impl PluginManager {
             config_path,
             prepared_profiles,
             next_generation: AtomicU64::new(2),
-            stopping: AtomicBool::new(false),
+            stopping,
         }
     }
 
@@ -341,7 +369,7 @@ impl PluginManager {
                 generation,
                 Duration::from_secs(candidate.plugins.request_timeout_secs),
                 &self.prepared_profiles,
-                Some(&self.stopping),
+                &self.stopping,
             );
             if let Some(code) = failure {
                 failures.push(PluginReloadFailure {
@@ -399,11 +427,19 @@ impl PluginManager {
         for provider in self.startup.values() {
             provider.shutdown();
         }
-        let dynamic = self.dynamic.lock().unwrap();
-        for entry in dynamic.overlay.values() {
-            if let DynamicEntry::Provider(provider) = entry {
-                provider.shutdown();
-            }
+        let dynamic_providers = {
+            let dynamic = self.dynamic.lock().unwrap();
+            dynamic
+                .overlay
+                .values()
+                .filter_map(|entry| match entry {
+                    DynamicEntry::Provider(provider) => Some(Arc::clone(provider)),
+                    DynamicEntry::Removed => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for provider in dynamic_providers {
+            provider.shutdown();
         }
     }
 }
@@ -464,9 +500,7 @@ impl ProviderEntry {
             Err(error) => {
                 if error.fatal {
                     self.retire(error.code);
-                    if let Some(connection) = session.as_mut() {
-                        connection.terminate();
-                    }
+                    self.process.terminate();
                     *session = None;
                 }
                 Err(error)
@@ -516,11 +550,56 @@ impl ProviderEntry {
     }
 
     fn shutdown(&self) {
-        if let Ok(mut session) = self.session.lock() {
-            if let Some(connection) = session.as_mut() {
-                connection.terminate();
-            }
+        self.process.terminate();
+        if let Ok(mut session) = self.session.try_lock() {
             *session = None;
+        }
+    }
+}
+
+impl Drop for ProviderEntry {
+    fn drop(&mut self) {
+        self.process.terminate();
+    }
+}
+
+impl ProviderProcess {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+        }
+    }
+
+    fn install(&self, child: ManagedChild) {
+        let mut slot = self
+            .child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        debug_assert!(slot.is_none());
+        *slot = Some(child);
+    }
+
+    fn terminate(&self) {
+        let child = self
+            .child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(mut child) = child {
+            terminate_provider_process(&mut child);
+        }
+    }
+}
+
+impl Drop for ProviderProcess {
+    fn drop(&mut self) {
+        let child = self
+            .child
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(mut child) = child {
+            terminate_provider_process(&mut child);
         }
     }
 }
@@ -531,8 +610,9 @@ fn prepare_provider(
     generation: u64,
     request_timeout: Duration,
     prepared_profiles: &PreparedShellProfileCache,
-    stop_requested: Option<&AtomicBool>,
+    stopping: &Arc<AtomicBool>,
 ) -> (Arc<ProviderEntry>, Option<Vec<PluginTool>>, Option<String>) {
+    let process = Arc::new(ProviderProcess::new());
     let entry = Arc::new(ProviderEntry {
         config: config.clone(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
@@ -542,6 +622,7 @@ fn prepare_provider(
             .unwrap_or(request_timeout),
         failed: AtomicBool::new(false),
         error_code: Mutex::new(None),
+        process: Arc::clone(&process),
         session: Mutex::new(None),
     });
     let cwd = config
@@ -556,7 +637,7 @@ fn prepare_provider(
         config.profile.as_deref(),
         &cwd,
         prepared_profiles,
-        stop_requested,
+        Some(stopping.as_ref()),
     ) {
         Ok(environment) => environment,
         Err(_) => {
@@ -639,9 +720,27 @@ fn prepare_provider(
         entry.retire("plugin_reader_unavailable");
         return (entry, None, Some("plugin_reader_unavailable".to_string()));
     }
+    let (writer, write_requests) = mpsc::sync_channel(PLUGIN_WRITER_QUEUE);
+    let stdin_thread_name = format!("wc-plugin-stdin-{}", config.id);
+    if std::thread::Builder::new()
+        .name(stdin_thread_name)
+        .spawn(move || provider_stdin_writer(stdin, write_requests))
+        .is_err()
+    {
+        let _ = child.terminate_tree();
+        entry.retire("plugin_writer_unavailable");
+        return (entry, None, Some("plugin_writer_unavailable".to_string()));
+    }
+    process.install(child);
+    if stopping.load(Ordering::SeqCst) {
+        process.terminate();
+        entry.retire("plugin_manager_stopping");
+        return (entry, None, Some("plugin_manager_stopping".to_string()));
+    }
     let mut connection = ProviderConnection {
-        child,
-        stdin,
+        process: Arc::clone(&process),
+        stopping: Arc::clone(stopping),
+        writer,
         incoming,
         next_id: 1,
     };
@@ -650,14 +749,14 @@ fn prepare_provider(
         .map(Duration::from_secs)
         .unwrap_or(request_timeout);
     if let Err(failure) = connection.initialize(timeout) {
-        connection.terminate();
+        process.terminate();
         entry.retire(failure.code);
         return (entry, None, Some(failure.code.to_string()));
     }
     let tools = match connection.tools_list(timeout) {
         Ok(tools) => tools,
         Err(failure) => {
-            connection.terminate();
+            process.terminate();
             entry.retire(failure.code);
             return (entry, None, Some(failure.code.to_string()));
         }
@@ -734,6 +833,10 @@ impl ProviderConnection {
         timeout: Duration,
         effectful: bool,
     ) -> Result<Value, ProviderFailure> {
+        // The deadline is created before any request-side validation or
+        // serialization. Queue admission, the complete write+flush ack, and the
+        // response wait all consume this same absolute budget.
+        let deadline = Instant::now() + timeout;
         match self.incoming.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) | Ok(ReaderEvent::Eof) => {
@@ -761,18 +864,75 @@ impl ProviderConnection {
             return Err(ProviderFailure::not_started("plugin_request_too_large"));
         }
         encoded.push(b'\n');
-        self.stdin
-            .write_all(&encoded)
-            .and_then(|_| self.stdin.flush())
-            .map_err(|_| ProviderFailure::after_send("plugin_stdin_failed", effectful))?;
+        if deadline.saturating_duration_since(Instant::now()).is_zero() {
+            return Err(ProviderFailure::before_send_timeout());
+        }
 
-        let deadline = Instant::now() + timeout;
+        let (ack_sender, ack_receiver) = mpsc::channel();
+        let mut write_request = WriteRequest {
+            frame: encoded,
+            ack: ack_sender,
+        };
         loop {
+            if self.stopping.load(Ordering::SeqCst) {
+                return Err(ProviderFailure::not_started("plugin_manager_stopping"));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(ProviderFailure::before_send_timeout());
+            }
+            match self.writer.try_send(write_request) {
+                Ok(()) => break,
+                Err(mpsc::TrySendError::Full(request)) => {
+                    write_request = request;
+                    std::thread::sleep(Duration::from_millis(1).min(remaining));
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err(ProviderFailure::not_started("plugin_stdin_failed"));
+                }
+            }
+        }
+
+        // Once the bounded queue accepted the frame, an effectful request may
+        // already have started writing. A timeout or transport failure before
+        // the full write+flush ack is therefore OutcomeUnknown for effects.
+        loop {
+            if self.stopping.load(Ordering::SeqCst) {
+                self.process.terminate();
+                return Err(ProviderFailure::after_send(
+                    "plugin_manager_stopping",
+                    effectful,
+                ));
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(ProviderFailure::after_send("plugin_timeout", effectful));
             }
-            let response = match self.incoming.recv_timeout(remaining) {
+            match ack_receiver.recv_timeout(remaining.min(PLUGIN_STOP_POLL)) {
+                Ok(WriteAck::Written) => break,
+                Ok(WriteAck::Failed) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(ProviderFailure::after_send(
+                        "plugin_stdin_failed",
+                        effectful,
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            }
+        }
+
+        loop {
+            if self.stopping.load(Ordering::SeqCst) {
+                self.process.terminate();
+                return Err(ProviderFailure::after_send(
+                    "plugin_manager_stopping",
+                    effectful,
+                ));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(ProviderFailure::after_send("plugin_timeout", effectful));
+            }
+            let response = match self.incoming.recv_timeout(remaining.min(PLUGIN_STOP_POLL)) {
                 Ok(ReaderEvent::Message(Ok(response))) => response,
                 Ok(ReaderEvent::Message(Err(fault))) => {
                     return Err(ProviderFailure::after_send(
@@ -783,38 +943,43 @@ impl ProviderConnection {
                 Ok(ReaderEvent::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(ProviderFailure::after_send("plugin_eof", effectful));
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(ProviderFailure::after_send("plugin_timeout", effectful));
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
             };
             return validate_rpc_response(response, id, effectful);
         }
     }
+}
 
-    fn terminate(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        let _ = self.child.terminate_tree();
-        let _ = self
-            .child
-            .wait_tree_exit(deadline.saturating_duration_since(Instant::now()));
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) => {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(10).min(remaining));
+fn terminate_provider_process(child: &mut ManagedChild) {
+    let deadline = Instant::now() + PLUGIN_TERMINATION_BUDGET;
+    let _ = child.terminate_tree();
+    let _ = child.wait_tree_exit(deadline.saturating_duration_since(Instant::now()));
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return;
                 }
+                std::thread::sleep(Duration::from_millis(10).min(remaining));
             }
         }
     }
 }
 
-impl Drop for ProviderConnection {
-    fn drop(&mut self) {
-        self.terminate();
+fn provider_stdin_writer(mut stdin: ChildStdin, requests: mpsc::Receiver<WriteRequest>) {
+    while let Ok(request) = requests.recv() {
+        let result = stdin.write_all(&request.frame).and_then(|_| stdin.flush());
+        let failed = result.is_err();
+        let _ = request.ack.send(if failed {
+            WriteAck::Failed
+        } else {
+            WriteAck::Written
+        });
+        if failed {
+            return;
+        }
     }
 }
 

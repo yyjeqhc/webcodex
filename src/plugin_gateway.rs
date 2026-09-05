@@ -80,6 +80,15 @@ impl PluginGatewayRuntime {
         store.values.remove(binding);
         store.order.retain(|candidate| candidate != binding);
     }
+
+    #[cfg(test)]
+    pub(crate) fn binding_count(&self) -> usize {
+        self.bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values
+            .len()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +96,7 @@ pub(crate) struct ResolvedPluginRunner {
     pub(crate) client_id: String,
     pub(crate) runner_instance_id: String,
     pub(crate) display_name: Option<String>,
+    pub(crate) startup_providers: Vec<StartupPluginProvider>,
 }
 
 /// One exact startup Tool binding projected from the current caller-visible
@@ -154,7 +164,7 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": PLUGIN_TOOL_NAME,
-        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Plugins are arbitrary local executables using the bounded WebCodex stdio protocol, not MCP servers. Prefer action=check before reload while developing: check rereads the exact Runner's current runner.toml, really starts one disposable candidate through the Runner's normal Plugin environment/protocol path, initializes and lists tools, never calls tools/call, and never changes startup or dynamic Plugin state. action=reload commits validated candidates to the dynamic plane; startup first-class tools remain unchanged until Runner restart. Dynamic calls then use reload -> describe -> call: describe returns an opaque exact binding and call accepts only that binding plus arguments. Stale bindings never retarget or replay. Runner/provider instance identities and Plugin execution configuration stay hidden.",
+        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Canonical discovery is list -> list(runner) -> list(runner, plugin) -> describe -> call: provider-level list observes only the current committed/effective exact provider and returns bounded tool names/titles without creating a binding. Prefer action=check before reload while developing: check rereads runner.toml, starts one disposable candidate, initializes and lists tools, never calls tools/call, and returns bounded WebCodex-generated diagnostics without mutating committed Plugin state. Then use reload -> list(runner, plugin) -> describe -> call; restart the Runner only for startup first-class promotion. list never checks, reloads, or mutates Plugin state. describe creates the opaque exact binding; call accepts only that binding plus arguments. Stale Runner/provider observations never retarget or replay, and Plugin execution configuration stays Runner-local.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -164,11 +174,11 @@ pub(crate) fn tool_spec() -> Value {
                 },
                 "runner": {
                     "type": "string",
-                    "description": "Exact caller-visible Runner client id. Optional for list; required for check, reload, and describe; not accepted for call."
+                    "description": "Exact caller-visible Runner client id. Optional for list; required for list(plugin), check, reload, and describe; not accepted for call."
                 },
                 "plugin": {
                     "type": "string",
-                    "description": "Logical Plugin provider id. Required for check and describe; not accepted for call."
+                    "description": "Logical Plugin provider id. Optional only for list when runner is also present; required for check and describe; not accepted for reload or call."
                 },
                 "tool": {
                     "type": "string",
@@ -242,24 +252,44 @@ async fn list(
     args: PluginToolArguments,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
-    if args.plugin.is_some()
-        || args.tool.is_some()
-        || args.binding.is_some()
-        || args.arguments.is_some()
-    {
+    if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
         return Err(GatewayError::local(
             "invalid_arguments",
-            "action=list accepts only optional runner",
+            "action=list accepts only optional runner and plugin",
+        ));
+    }
+    if args.plugin.is_some() && args.runner.is_none() {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "action=list requires runner when plugin is provided",
         ));
     }
     if let Some(runner) = args.runner.as_deref() {
         let runner = resolve_runner(runtime, runner, auth).await?;
+        if let Some(plugin) = args.plugin.as_deref() {
+            let plugin = required_provider(Some(plugin))?;
+            let (provider, tools) =
+                observe_effective_provider_tools(runtime, &runner, plugin, auth).await?;
+            let mut value = sanitize_provider_view_for_runner(&runner, provider);
+            value["runner"] = Value::String(runner.client_id.clone());
+            value["toolCount"] = Value::from(tools.len());
+            value["tools"] = Value::Array(
+                tools
+                    .into_iter()
+                    .map(sanitize_tool_summary)
+                    .collect::<Vec<_>>(),
+            );
+            return Ok(value);
+        }
         let response =
             execute_exact(runtime, &runner, PluginGatewayRequest::ProvidersList, auth).await?;
         let (providers, restart_required) = response_providers(response)?;
         return Ok(json!({
             "runner": runner.client_id,
-            "plugins": providers.into_iter().map(sanitize_provider_view).collect::<Vec<_>>(),
+            "plugins": providers
+                .into_iter()
+                .map(|provider| sanitize_provider_view_for_runner(&runner, provider))
+                .collect::<Vec<_>>(),
             "firstClassRestartRequired": restart_required
         }));
     }
@@ -343,7 +373,10 @@ async fn reload(
             first_class_restart_required,
         }) => Ok(json!({
             "runner": runner.client_id,
-            "plugins": providers.into_iter().map(sanitize_provider_view).collect::<Vec<_>>(),
+            "plugins": providers
+                .into_iter()
+                .map(|provider| sanitize_provider_view_for_runner(&runner, provider))
+                .collect::<Vec<_>>(),
             "failures": failures,
             "firstClassRestartRequired": first_class_restart_required
         })),
@@ -369,32 +402,8 @@ async fn describe(
     let plugin_id = required_provider(args.plugin.as_deref())?;
     let tool_name = required_tool(args.tool.as_deref())?;
     let runner = resolve_runner(runtime, runner_id, auth).await?;
-
-    let providers_response =
-        execute_exact(runtime, &runner, PluginGatewayRequest::ProvidersList, auth).await?;
-    let (providers, _) = response_providers(providers_response)?;
-    let provider = providers
-        .into_iter()
-        .find(|provider| provider.provider_id == plugin_id)
-        .ok_or_else(|| {
-            GatewayError::local(
-                "plugin_unavailable",
-                "the requested Plugin is not currently available on the exact Runner",
-            )
-        })?;
-
-    let response = execute_exact(
-        runtime,
-        &runner,
-        PluginGatewayRequest::ToolsList {
-            plane: PluginPlane::Effective,
-            provider_id: provider.provider_id.clone(),
-            provider_instance_id: provider.provider_instance_id.clone(),
-        },
-        auth,
-    )
-    .await?;
-    let tools = response_tools(response)?;
+    let (provider, tools) =
+        observe_effective_provider_tools(runtime, &runner, plugin_id, auth).await?;
     let tool = tools
         .into_iter()
         .find(|candidate| candidate.name == tool_name)
@@ -419,6 +428,66 @@ async fn describe(
         "tool": tool,
         "binding": binding
     }))
+}
+
+async fn observe_effective_provider_tools(
+    runtime: &ToolRuntime,
+    runner: &ResolvedPluginRunner,
+    plugin_id: &str,
+    auth: Option<&AuthContext>,
+) -> Result<(PluginProviderView, Vec<PluginTool>), GatewayError> {
+    let providers_response =
+        execute_exact(runtime, runner, PluginGatewayRequest::ProvidersList, auth).await?;
+    let (providers, _) = match response_providers(providers_response) {
+        Ok(value) => value,
+        Err(mut error) if matches!(error.code.as_str(), "stale_runner" | "runner_unavailable") => {
+            error.code = "plugin_replaced".to_string();
+            error.recovery =
+                Some("Re-list the Plugin. WebCodex did not retarget or replay the operation.");
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
+    let provider = providers
+        .into_iter()
+        .find(|provider| provider.provider_id == plugin_id)
+        .ok_or_else(|| {
+            GatewayError::local(
+                "plugin_unavailable",
+                "the requested Plugin is not currently available on the exact Runner",
+            )
+        })?;
+
+    let response = execute_exact(
+        runtime,
+        runner,
+        PluginGatewayRequest::ToolsList {
+            plane: PluginPlane::Effective,
+            provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
+        },
+        auth,
+    )
+    .await?;
+    let tools = match response_tools(response) {
+        Ok(tools) => tools,
+        Err(mut error)
+            if matches!(
+                error.code.as_str(),
+                "stale_runner"
+                    | "runner_unavailable"
+                    | "stale_plugin_provider"
+                    | "plugin_provider_unavailable"
+            ) =>
+        {
+            error.code = "plugin_replaced".to_string();
+            error.recovery =
+                Some("Re-list the Plugin. WebCodex did not retarget or replay the operation.");
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
+    Ok((provider, tools))
 }
 
 async fn call_plugin(
@@ -556,6 +625,10 @@ pub(crate) async fn visible_plugin_runners(
             client_id: runner.client_id,
             runner_instance_id: runner.runner_instance_id,
             display_name: runner.display_name,
+            startup_providers: runner
+                .policy
+                .and_then(|policy| policy.plugin_providers)
+                .unwrap_or_default(),
         });
     }
     runners
@@ -642,6 +715,7 @@ pub(crate) async fn call_startup_direct(
         client_id: candidate.client_id.clone(),
         runner_instance_id: candidate.runner_instance_id.clone(),
         display_name: None,
+        startup_providers: Vec::new(),
     };
     let response = match execute_exact(
         runtime,
@@ -834,10 +908,26 @@ fn sanitize_check_report(runner: &str, report: PluginCheckReport) -> Value {
     if let Some(detail) = report.detail {
         value["detail"] = Value::String(detail);
     }
+    if let Some(diagnostic) = report.diagnostic {
+        let mut summary = json!({"code": diagnostic.code});
+        if let Some(tool) = diagnostic.tool {
+            summary["tool"] = Value::String(tool);
+        }
+        if let Some(field) = diagnostic.field {
+            summary["field"] = Value::String(field);
+        }
+        value["diagnostic"] = summary;
+    }
     if let Some(shape) = report.startup_tool_shape {
         let mut startup_shape = json!({"eligible": shape.eligible});
         if let Some(code) = shape.code {
             startup_shape["code"] = Value::String(code);
+        }
+        if let Some(tool) = shape.tool {
+            startup_shape["tool"] = Value::String(tool);
+        }
+        if let Some(field) = shape.field {
+            startup_shape["field"] = Value::String(field);
         }
         value["startupToolShape"] = startup_shape;
     }
@@ -858,8 +948,23 @@ fn check_phase_name(phase: PluginCheckPhase) -> &'static str {
     }
 }
 
-fn sanitize_provider_view(provider: PluginProviderView) -> Value {
-    json!({
+fn sanitize_tool_summary(tool: PluginTool) -> Value {
+    let mut summary = json!({"name": tool.name});
+    if let Some(title) = tool.title {
+        summary["title"] = Value::String(title);
+    }
+    summary
+}
+
+fn sanitize_provider_view_for_runner(
+    runner: &ResolvedPluginRunner,
+    provider: PluginProviderView,
+) -> Value {
+    let startup_admission = runner
+        .startup_providers
+        .iter()
+        .find(|startup| startup.provider_id == provider.provider_id);
+    let mut value = json!({
         "plugin": provider.provider_id,
         "name": provider.name,
         "status": provider.status,
@@ -869,7 +974,22 @@ fn sanitize_provider_view(provider: PluginProviderView) -> Value {
             PluginPlane::Effective => "dynamic"
         },
         "startupDirectToolCount": provider.startup_direct_tool_count
-    })
+    });
+    if let Some(startup) = startup_admission {
+        let admission = match startup.status.as_str() {
+            "ready" => Some("direct"),
+            "ready_secondary" => Some("secondary"),
+            "failed" => Some("failed"),
+            _ => None,
+        };
+        if let Some(admission) = admission {
+            value["startupAdmission"] = Value::String(admission.to_string());
+            if let Some(code) = startup.error_code.as_ref() {
+                value["startupAdmissionCode"] = Value::String(code.clone());
+            }
+        }
+    }
+    value
 }
 
 fn required_runner(value: Option<&str>) -> Result<&str, GatewayError> {

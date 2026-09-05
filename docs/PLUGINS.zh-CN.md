@@ -88,16 +88,35 @@ direct call fail closed；不会在同一个 identity 下静默重启。
 
 ### Dynamic
 
-Runner 启动后的 Plugin 开发统一走 dynamic plane：
+已提交 Plugin 的 canonical discovery 使用三级 ladder：
 
 ```text
-plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
-plugin_tool(action="reload", runner="my-runner")
+plugin_tool(action="list")
+    -> 当前 caller 可见且支持 Plugin 的 Runners
 plugin_tool(action="list", runner="my-runner")
+    -> 该 exact Runner 当前 effective providers
+plugin_tool(action="list", runner="my-runner", plugin="repo-tools")
+    -> 该 exact provider 当前有界 tool name/title
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
     -> { ..., "binding": "wc_pbind_..." }
 plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`list(runner, plugin)` 只观察已经 committed/effective 的 runtime provider。它先解析
+caller-visible exact Runner，再观察当前 provider instance，只对这个 exact instance 发出
+`tools/list`。它不会重新读取 `runner.toml`、启动 disposable candidate、调用 `check`、
+reload provider、修改 dynamic overlay、创建 binding，也不会改变
+`firstClassRestartRequired`。如果 provider observation 与 `tools/list` 之间发生 Runner/provider
+replacement，discovery 会 fail closed 并要求重新 list；WebCodex 不会把同名 logical provider
+静默重解析到 replacement，也不会 replay。完整 schema 仍然只能由 `describe` 观察；list
+只返回 tool name、可选 title 等有界 discovery metadata。
+
+provider list 中的 `status` 只表示当前 effective runtime health。logical provider 如果也存在于
+frozen startup catalog，则 `startupAdmission` 单独表示冻结的 startup admission（`direct`、
+`secondary` 或 `failed`），必要时带 `startupAdmissionCode`。dynamic reload 不会重写这份
+startup admission。即使 `startupAdmission=direct`，也**不保证**所有 caller 最终都能在 MCP
+`tools/list` 看见一级工具：Server 仍会因为 reserved name 或 caller-visible duplicate Plugin tool
+name 抑制 direct exposure。
 
 `check` 是开发时 `reload` 之前推荐使用的预检。Runner 会重新读取当前
 `runner.toml`，只定位 requested provider，使用正常 Plugin runtime 的同一套
@@ -111,7 +130,11 @@ executable，完成 `initialize`、`tools/list` 与普通 Plugin protocol/bounds
 成功预检返回 `ready=true`，tool summary 只包含 name 和可选 title。坏 candidate 通常仍然
 表示“check 操作成功完成了诊断”，因此返回 `ready=false`、结构化 `phase`、稳定 `code`
 以及有界、由 WebCodex 生成的安全 `detail`，而不是把所有坏 Plugin 都变成
-`plugin_tool isError=true`。Plugin stderr 始终留在 Runner 本机，不会进入 check report。
+`plugin_tool isError=true`。Tool definition validation failure 还会带一个很小的
+`diagnostic`：使用有限、稳定的 WebCodex-defined code，并在安全时携带 validated tool name
+以及 `inputSchema` 等有限 field label。diagnostic 只来自 WebCodex protocol parser/validator；
+不会透传 raw serde error、protocol line、schema fragment、Plugin stdout/stderr、executable
+配置、environment 或 process identity。Plugin stderr 始终留在 Runner 本机。
 
 `startupToolShape.eligible=true` 只表示这个 checked provider 自己的 Tool definitions 满足
 更严格的 provider-local startup Tool bounds；它**不保证**最终成为一级 MCP tool。实际
@@ -139,8 +162,9 @@ dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
 ```text
 修改 Plugin code/config
     -> plugin_tool check
-    -> 修复直到 disposable candidate ready
+    -> 按 bounded diagnostic 修复直到 disposable candidate ready
     -> plugin_tool reload
+    -> plugin_tool list(runner, plugin)
     -> plugin_tool describe
     -> 收到 opaque binding
     -> plugin_tool call(binding, arguments)

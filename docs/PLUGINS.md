@@ -96,16 +96,40 @@ the provider under the same identity.
 
 ### Dynamic
 
-After startup, Plugin development uses the dynamic plane:
+Committed Plugin discovery uses one three-level ladder:
 
 ```text
-plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
-plugin_tool(action="reload", runner="my-runner")
+plugin_tool(action="list")
+    -> caller-visible Plugin-capable Runners
 plugin_tool(action="list", runner="my-runner")
+    -> current effective providers on that exact Runner
+plugin_tool(action="list", runner="my-runner", plugin="repo-tools")
+    -> bounded current tool names/titles for that exact provider
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
     -> { ..., "binding": "wc_pbind_..." }
 plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`list(runner, plugin)` is a runtime observation of the already committed/effective
+provider. It resolves the exact caller-visible Runner, observes the current
+provider instance, and asks only that instance for `tools/list`. It does not
+reread `runner.toml`, start a disposable candidate, run `check`, reload a
+provider, mutate the dynamic overlay, create a binding, or alter
+`firstClassRestartRequired`. If the exact Runner/provider is replaced between
+the provider observation and `tools/list`, discovery fails closed and tells the
+caller to re-list; WebCodex never silently resolves the same logical name to the
+replacement or replays the operation. Full schemas remain exclusive to
+`describe`; list returns only bounded discovery metadata such as tool names and
+optional titles.
+
+Provider-list `status` describes current effective runtime health. When the
+logical provider also existed in the frozen startup catalog, `startupAdmission`
+describes that separate frozen admission (`direct`, `secondary`, or `failed`),
+with `startupAdmissionCode` when applicable. Reloading a dynamic provider does
+not rewrite startup admission. Even `startupAdmission=direct` does **not**
+guarantee that every caller sees a first-class MCP tool: Server-side reserved
+names and caller-visible duplicate Plugin tool names can still suppress direct
+exposure.
 
 `check` is the recommended preflight before `reload`. The Runner rereads its
 current `runner.toml`, locates only the requested provider, prepares the same
@@ -120,8 +144,13 @@ external side effects; `check` is not a purely static config linter.
 A successful check returns `ready=true` plus bounded tool summaries containing
 only names and optional titles. A broken candidate is normally a successful
 check operation with `ready=false`, a structured `phase`, a stable error `code`,
-and a bounded WebCodex-generated `detail`. Plugin stderr remains Runner-local and
-is never included in the report.
+and a bounded WebCodex-generated `detail`. Tool-definition validation failures
+also include a small `diagnostic` with a finite WebCodex-defined code and, when
+safe, a validated tool name and finite field label such as `inputSchema`.
+Diagnostics come only from WebCodex protocol parsing/validators; raw serde
+errors, protocol lines, schema fragments, Plugin stdout/stderr, executable
+configuration, environment, and process identities are never copied into the
+report. Plugin stderr remains Runner-local.
 
 `startupToolShape.eligible=true` means only that this checked provider's own Tool
 definitions satisfy the stricter per-provider startup Tool bounds. It is **not**
@@ -154,8 +183,9 @@ This creates the normal development loop:
 ```text
 edit Plugin code/config
     -> plugin_tool check
-    -> fix until the disposable candidate is ready
+    -> fix the bounded diagnostic until the disposable candidate is ready
     -> plugin_tool reload
+    -> plugin_tool list(runner, plugin)
     -> plugin_tool describe
     -> receive opaque binding
     -> plugin_tool call(binding, arguments)

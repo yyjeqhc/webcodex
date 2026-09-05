@@ -2,9 +2,9 @@ use super::*;
 use crate::runner_protocol::{RunnerPolicySummary, RunnerResultPayload};
 use std::sync::Arc;
 use webcodex_core::plugin::{
-    PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary, PluginGatewayRequest,
-    PluginGatewayResponse, PluginGatewayResponsePayload, PluginStartupToolShape, PluginTool,
-    StartupPluginProvider,
+    PluginCheckDiagnostic, PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary,
+    PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
+    PluginStartupToolShape, PluginTool, StartupPluginProvider,
 };
 
 fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
@@ -311,9 +311,12 @@ async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves
                     name: "search_symbol".to_string(),
                     title: Some("Search Symbol".to_string()),
                 }],
+                diagnostic: None,
                 startup_tool_shape: Some(PluginStartupToolShape {
                     eligible: true,
                     code: None,
+                    tool: None,
+                    field: None,
                 }),
             },
         }),
@@ -387,6 +390,11 @@ async fn broken_plugin_candidate_is_a_successful_check_diagnostic_result() {
                 ),
                 tool_count: 0,
                 tools: vec![],
+                diagnostic: Some(PluginCheckDiagnostic {
+                    code: "duplicate_tool_name".to_string(),
+                    tool: Some("search_symbol".to_string()),
+                    field: Some("name".to_string()),
+                }),
                 startup_tool_shape: None,
             },
         }),
@@ -402,7 +410,34 @@ async fn broken_plugin_candidate_is_a_successful_check_diagnostic_result() {
         "plugin_tools_list_invalid"
     );
     assert_eq!(value["result"]["structuredContent"]["phase"], "validation");
+    assert_eq!(
+        value["result"]["structuredContent"]["diagnostic"]["code"],
+        "duplicate_tool_name"
+    );
+    assert_eq!(
+        value["result"]["structuredContent"]["diagnostic"]["tool"],
+        "search_symbol"
+    );
+    assert_eq!(
+        value["result"]["structuredContent"]["diagnostic"]["field"],
+        "name"
+    );
     assert!(value["result"]["structuredContent"]
         .get("binding")
         .is_none());
+    let encoded = serde_json::to_string(&value["result"]["structuredContent"]).unwrap();
+    for forbidden in [
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+        "PID",
+        "runner_instance_id",
+        "provider_instance_id",
+        "\"properties\"",
+        "\"type\":\"object\"",
+    ] {
+        assert!(!encoded.contains(forbidden), "check leaked {forbidden}");
+    }
 }

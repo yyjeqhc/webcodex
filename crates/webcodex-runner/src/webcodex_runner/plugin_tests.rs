@@ -245,6 +245,27 @@ fn bad_version_and_invalid_startup_provider_do_not_block_manager() {
 }
 
 #[test]
+fn startup_secondary_admission_stays_separate_from_runtime_provider_health() {
+    let fixture = Fixture::new("check_startup_large_schema", 2);
+    assert_eq!(fixture.provider.status, "ready_secondary");
+    assert_eq!(
+        fixture.provider.error_code.as_deref(),
+        Some("plugin_startup_schema_too_large")
+    );
+    assert!(fixture.provider.tools.is_empty());
+
+    let response = fixture.manager.handle(PluginGatewayRequest::ProvidersList);
+    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = response.payload else {
+        panic!("missing provider view: {:?}", response.error);
+    };
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].status, "ready");
+    assert_eq!(providers[0].plane, PluginPlane::Startup);
+    assert_eq!(providers[0].startup_direct_tool_count, 0);
+    assert_eq!(providers[0].error_code, None);
+}
+
+#[test]
 fn schema_change_is_not_started_and_never_dispatches_effect() {
     let fixture = Fixture::new("schema_change", 2);
     let response = fixture.call();
@@ -420,9 +441,18 @@ fn provider_busy_is_not_started() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let second = fixture.call();
-    assert_eq!(second.dispatch_state, PluginDispatchState::NotStarted);
-    assert_eq!(second.error.as_ref().unwrap().code, "plugin_provider_busy");
+    let discovery = fixture.list();
+    assert_eq!(discovery.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        discovery.error.as_ref().unwrap().code,
+        "plugin_provider_busy"
+    );
+    let second_call = fixture.call();
+    assert_eq!(second_call.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        second_call.error.as_ref().unwrap().code,
+        "plugin_provider_busy"
+    );
     assert!(first.join().unwrap().error.is_none());
 }
 

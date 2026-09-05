@@ -102,6 +102,8 @@ const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Runtime workspace": "运行时工作区",
   "Inspect infrastructure and manage durable Agents without mixing administration into the current Session.": "检查基础设施并管理持久 Agent，同时避免将管理操作混入当前会话。",
   "Overview": "概览",
+  "Details": "详情",
+  "Session context views": "会话上下文视图",
   "Server health and fleet capacity": "服务器健康状态与设备群容量",
   "Runner fleet": "运行器设备群",
   "Devices, builds and current load": "设备、构建与当前负载",
@@ -695,14 +697,18 @@ function applyWorkspaceView(view: RuntimeWorkspaceView, persist = true): void {
 
 function revealOperationsSection(targetId: string): void {
   applyWorkspaceView("operations");
-  document.querySelectorAll<HTMLButtonElement>("[data-operations-target]").forEach((button) => {
-    button.classList.toggle("selected", button.dataset.operationsTarget === targetId);
+  const buttons = document.querySelectorAll<HTMLButtonElement>("[data-operations-target]");
+  if (!Array.from(buttons).some((button) => button.dataset.operationsTarget === targetId)) return;
+  buttons.forEach((button) => {
+    const selected = button.dataset.operationsTarget === targetId;
+    button.classList.toggle("selected", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+    show(String(button.dataset.operationsTarget), selected);
   });
-  const target = el(targetId);
-  window.requestAnimationFrame(() => {
-    target?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-    target?.focus({ preventScroll: true });
-  });
+  const scroll = document.querySelector(".operations-scroll");
+  if (scroll) scroll.scrollTop = 0;
+  el(targetId)?.focus({ preventScroll: true });
 }
 
 type RuntimeConnectionState = "connected" | "connecting" | "stale" | "disconnected";
@@ -816,7 +822,9 @@ function setMobileNavigationOpen(open: boolean, restoreFocus = false): void {
     closeAppearanceMenus(false);
     closeTopbarMore(false);
     closeRuntimeInspector(false);
-    window.setTimeout(() => close?.focus(), 260);
+    window.setTimeout(() => {
+      if (mobileNavigationViewport() && shell?.classList.contains("mobile-nav-open")) close?.focus();
+    }, 260);
   } else if (restoreFocus && mobile) {
     window.setTimeout(() => toggle?.focus(), 0);
   }
@@ -3940,6 +3948,15 @@ document.querySelector(".context-trigger")?.addEventListener("click", (event) =>
 });
 document.querySelectorAll<HTMLButtonElement>("[data-runtime-view]").forEach((button) => {
   button.addEventListener("click", () => applyWorkspaceView(workspaceViewPreference(button.dataset.runtimeView)));
+});
+document.querySelectorAll<HTMLButtonElement>("[data-context-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll<HTMLButtonElement>("[data-context-target]").forEach((item) => {
+      const selected = item === button;
+      item.setAttribute("aria-pressed", String(selected));
+      show(String(item.dataset.contextTarget), selected);
+    });
+  });
 });
 document.querySelectorAll<HTMLButtonElement>("[data-operations-target]").forEach((button) => {
   button.addEventListener("click", () => revealOperationsSection(String(button.dataset.operationsTarget || "runtime-operations-overview")));

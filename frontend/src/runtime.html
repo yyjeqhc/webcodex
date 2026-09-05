@@ -136,7 +136,7 @@
             <p id="runtime-sessions-empty" class="muted small empty-copy" hidden>No retained Workflow Sessions for this project.</p>
           </section>
 
-          <details id="runtime-recent-panel" class="recent-panel">
+          <details id="runtime-recent-panel" class="recent-panel" open>
             <summary class="recent-panel-summary">
               <span class="recent-panel-title">Recent Sessions</span>
               <span id="runtime-recent-status" class="muted small recent-panel-meta">—</span>
@@ -154,15 +154,15 @@
                 <span class="muted small">Local</span>
               </div>
               <p class="operations-navigation-copy muted small">Inspect infrastructure and manage durable Agents without mixing administration into the current Session.</p>
-              <button class="operations-nav-item selected" type="button" data-operations-target="runtime-operations-overview">
+              <button class="operations-nav-item selected" type="button" data-operations-target="runtime-operations-overview" aria-controls="runtime-operations-overview" aria-current="page">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2" /></svg>
                 <span><strong>Overview</strong><small>Server health and fleet capacity</small></span>
               </button>
-              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-runners">
+              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-runners" aria-controls="runtime-operations-runners">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg>
                 <span><strong>Runner fleet</strong><small>Devices, builds and current load</small></span>
               </button>
-              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-agents">
+              <button class="operations-nav-item" type="button" data-operations-target="runtime-operations-agents" aria-controls="runtime-operations-agents">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
                 <span><strong>Durable Agents</strong><small>Agents, inboxes and conversations</small></span>
               </button>
@@ -349,7 +349,7 @@
                 <p id="runtime-overview-unavailable" class="muted small" hidden>Runtime-wide overview is unavailable to this credential; project-scoped Console access remains available.</p>
               </section>
 
-              <section id="runtime-operations-runners" class="operations-card operations-runners" tabindex="-1">
+              <section id="runtime-operations-runners" class="operations-card operations-runners" tabindex="-1" hidden>
                 <div class="operations-card-head">
                   <div><span class="eyebrow">Devices</span><h3>Runner fleet <span id="runtime-runner-count" class="muted small">0</span></h3></div>
                   <span id="runtime-runner-access" class="muted small">—</span>
@@ -359,7 +359,7 @@
                 <p id="runtime-runner-unavailable" class="muted small" hidden>Runtime-wide Runner facts require runtime:read.</p>
               </section>
 
-              <section id="runtime-operations-agents" class="operations-card operations-agents" tabindex="-1">
+              <section id="runtime-operations-agents" class="operations-card operations-agents" tabindex="-1" hidden>
                 <div class="operations-card-head">
                   <div><span class="eyebrow">Durable communication</span><h3>Agents &amp; Conversations <span id="runtime-communication-count" class="muted small">0 Agents</span></h3></div>
                   <span id="runtime-communication-status" class="muted small">communication:read checking…</span>
@@ -452,6 +452,7 @@
       <details class="runtime-inspector">
         <summary class="context-trigger" title="Session context" aria-label="Session context" aria-controls="runtime-inspector-panel">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.5" /><circle cx="16" cy="12" r="1.5" /><circle cx="10" cy="18" r="1.5" /></svg>
+          <span>Context</span>
         </summary>
         <button id="runtime-inspector-backdrop" class="inspector-backdrop" type="button" tabindex="-1" aria-label="Close session context"></button>
         <div id="runtime-inspector-panel" class="inspector-popover">
@@ -470,56 +471,53 @@
 
           <div class="inspector-scroll">
           <section id="runtime-session-context" class="inspector-card session-context" hidden>
-            <div class="inspector-card-head">
-              <h2>Session</h2>
+            <div class="context-navigation" role="group" aria-label="Session context views">
+              <button type="button" data-context-target="runtime-context-overview" aria-controls="runtime-context-overview" aria-pressed="true">Overview</button>
+              <button type="button" data-context-target="runtime-context-activity" aria-controls="runtime-context-activity" aria-pressed="false">Activity</button>
+              <button type="button" data-context-target="runtime-context-details" aria-controls="runtime-context-details" aria-pressed="false">Details</button>
             </div>
-            <div class="overview context-primary-overview" aria-label="Workflow Session overview">
-              <section class="overview-card runtime-fact"><h4>Work</h4><p id="runtime-overview-work">—</p></section>
-              <section id="runtime-overview-attention-card" class="overview-card attention-fact"><h4>Attention</h4><p id="runtime-overview-attention">—</p></section>
-            </div>
-
-            <details class="session-evidence">
-              <summary>
-                <span>Details &amp; activity</span>
-                <span class="muted small">IDs, validation, timeline</span>
-              </summary>
-              <div class="session-evidence-body">
-                <div class="session-identity" aria-label="Workflow Session identity">
-                  <div class="session-identity-fact">
-                    <span class="muted small">Session ID</span>
-                    <code id="runtime-session-id" class="session-identity-value">—</code>
-                  </div>
-                  <div class="session-identity-fact">
-                    <span class="muted small">Lifecycle</span>
-                    <span id="runtime-session-context-lifecycle" class="session-identity-value small">—</span>
-                  </div>
-                  <div class="session-identity-fact">
-                    <span class="muted small">Mode</span>
-                    <span id="runtime-session-context-mode" class="session-identity-value small">—</span>
-                  </div>
-                  <div class="session-identity-fact">
-                    <span class="muted small">Created</span>
-                    <span id="runtime-session-created" class="session-identity-value small">—</span>
-                  </div>
-                  <div class="session-identity-fact">
-                    <span class="muted small">Updated</span>
-                    <span id="runtime-session-updated" class="session-identity-value small">—</span>
-                  </div>
+            <section id="runtime-context-overview" aria-label="Overview">
+              <div class="overview context-primary-overview" aria-label="Workflow Session overview">
+                <section class="overview-card runtime-fact"><h4>Work</h4><p id="runtime-overview-work">—</p></section>
+                <section id="runtime-overview-attention-card" class="overview-card attention-fact"><h4>Attention</h4><p id="runtime-overview-attention">—</p></section>
+              </div>
+              <div class="overview context-secondary-overview">
+                <section id="runtime-overview-validation-card" class="overview-card validation-fact"><h4>Validation</h4><p id="runtime-overview-validation">—</p></section>
+                <section class="overview-card reported-card"><h4>Reported progress</h4><p class="muted small">Model-reported; informational only.</p><p id="runtime-overview-progress" class="muted">—</p></section>
+              </div>
+            </section>
+            <section id="runtime-context-activity" aria-label="Activity" hidden>
+              <div class="activity-section" aria-labelledby="runtime-activity-heading">
+                <div class="timeline-controls"><strong id="runtime-activity-heading">Activity</strong><button id="runtime-jump-latest" class="text-button" type="button" hidden>Jump to latest</button></div>
+                <ol id="runtime-timeline" class="timeline"></ol>
+                <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+              </div>
+            </section>
+            <section id="runtime-context-details" aria-label="Details" hidden>
+              <div class="session-identity" aria-label="Workflow Session identity">
+                <div class="session-identity-fact">
+                  <span class="muted small">Session ID</span>
+                  <code id="runtime-session-id" class="session-identity-value">—</code>
                 </div>
-                <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
-
-                <div class="overview context-secondary-overview">
-                  <section id="runtime-overview-validation-card" class="overview-card validation-fact"><h4>Validation</h4><p id="runtime-overview-validation">—</p></section>
-                  <section class="overview-card reported-card"><h4>Reported progress</h4><p class="muted small">Model-reported; informational only.</p><p id="runtime-overview-progress" class="muted">—</p></section>
+                <div class="session-identity-fact">
+                  <span class="muted small">Lifecycle</span>
+                  <span id="runtime-session-context-lifecycle" class="session-identity-value small">—</span>
                 </div>
-
-                <div class="activity-section" aria-labelledby="runtime-activity-heading">
-                  <div class="timeline-controls"><strong id="runtime-activity-heading">Activity</strong><button id="runtime-jump-latest" class="text-button" type="button" hidden>Jump to latest</button></div>
-                  <ol id="runtime-timeline" class="timeline"></ol>
-                  <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+                <div class="session-identity-fact">
+                  <span class="muted small">Mode</span>
+                  <span id="runtime-session-context-mode" class="session-identity-value small">—</span>
+                </div>
+                <div class="session-identity-fact">
+                  <span class="muted small">Created</span>
+                  <span id="runtime-session-created" class="session-identity-value small">—</span>
+                </div>
+                <div class="session-identity-fact">
+                  <span class="muted small">Updated</span>
+                  <span id="runtime-session-updated" class="session-identity-value small">—</span>
                 </div>
               </div>
-            </details>
+              <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
+            </section>
           </section>
 
           </div>

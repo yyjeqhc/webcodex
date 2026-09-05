@@ -108,7 +108,7 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 6);
+    assert_eq!(workflow["version"], 7);
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -117,14 +117,14 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .expect("Session context ACK guidance");
     assert!(ack_guidance.contains("ack_session_context_revision"));
-    assert!(ack_guidance.contains("returned session_context_revision exactly"));
+    assert!(ack_guidance.contains("session_context_revision exactly"));
     assert!(ack_guidance.contains("never derive it"));
-    assert!(ack_guidance.contains("No revision: keep the last ACK"));
+    assert!(ack_guidance.contains("No revision"));
     assert!(ack_guidance.contains("if unknown, omit"));
     assert!(ack_guidance.contains("Missing/invalid"));
-    assert!(ack_guidance.contains("compact current handoff"));
+    assert!(ack_guidance.contains("compact handoff"));
     assert!(ack_guidance.contains("stale may recover"));
-    assert!(ack_guidance.contains("nonblocking"));
+    assert!(ack_guidance.contains("Nonblocking"));
     let recording_guidance = workflow["model_protocol"]["session_recording"]
         .as_str()
         .expect("Session recording guidance");
@@ -132,7 +132,7 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(recording_guidance.contains("recording_session_id"));
     assert!(recording_guidance.contains("recorder provenance only"));
     assert!(recording_guidance.contains("business session_id may target another Session"));
-    assert!(recording_guidance.contains("recording_session_id grants no authority"));
+    assert!(recording_guidance.contains("grants no authority"));
     let message_ack_guidance = workflow["model_protocol"]["session_message_ack"]
         .as_str()
         .expect("Session message ACK guidance");

@@ -658,7 +658,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          $stage = Join-Path $env:GITHUB_WORKSPACE "target\desktop-release-bundle"
+          $stage = Join-Path $env:RUNNER_TEMP "webcodex-desktop-release-bundle"
           & .\scripts\prepare_desktop_bundle.ps1 `
             -BinDir $binDir `
             -Version $env:VERSION `

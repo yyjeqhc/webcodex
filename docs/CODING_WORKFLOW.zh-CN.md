@@ -25,7 +25,9 @@ work_on_project
 
 普通使用不需要理解 WebCodex 内部的 continuity/audit field；这些属于 implementation/maintainer contract。
 
-Behavioral role 写在 task instruction 里即可，例如实现任务：
+内置工作流为所有任务提供默认 guidance，不要求先指定角色：核对目标和适用规则、保留已有工作、完成已授权的实现、按改动范围验证、观察已有 Job 而不重复执行，以及如实报告证据。只使用当前暴露的 schema 支持的工具与协议字段。
+
+Behavioral role 在默认原则上增加侧重点，写在 task instruction 里即可，例如实现任务：
 
 ```text
 使用 implementation_owner guidance。实现 <任务>，运行聚焦 validation，
@@ -36,14 +38,18 @@ Behavioral role 写在 task instruction 里即可，例如实现任务：
 
 ```text
 使用 independent_review guidance。独立评审 <改动或 commit>，
-只修复具体问题，并运行聚焦 regression validation。
+报告有文件/行号证据和影响说明的具体发现，不修改文件。
 ```
 
-Role guidance 只改变模型行为，不改变 authentication、project authority、tool policy 或 hard safety。
+如果也希望修复，明确补充“修复具体发现，并运行聚焦回归验证”。单独指定评审角色不代表授权修改。
+
+Guidance 通过工具结果交给客户端，不是客户端的 system prompt，也不会授予执行权限。Host 指令、用户任务、适用项目规则、认证和运行时安全策略仍然有效。返回 guidance 不等于模型已经读取、记住或遵守；只有当前模型上下文仍保留内容时才应关闭其返回。
 
 ## 编辑前先检查
 
 能够表达任务时，优先使用 structured project search/read，而不是 shell。只读取理解当前改动所需的文件和范围，并保留 workspace 中已经存在的无关工作。
+
+Bootstrap 只读取固定的几个指令入口，不会扫描所有子目录规则。修改某个路径前，需要检查适用的子目录指令，并补读相关缺失或被截断的规则内容。
 
 做 branch/PR review 时，先使用当前 Server 提供的有界 review/change-summary 工具，再按需要缩小到具体文件或 diff hunks。
 
@@ -80,6 +86,12 @@ Guard failure 是 **zero-write conflict**，不是削弱 guard 的理由。重�
 多窗口协作属于高级 maintainer workflow，不是普通 coding loop。独立 writer 应使用不同 worktree/Project，并保持各自 Workflow Session 分离；使用当前 Server 返回的 assignment/completion 工具，不要复制另一个窗口的 execution history。
 
 精确的 concurrency、retry、provenance 与 cross-Session authorization 规则见 [Manual Multi-Window Collaboration](agent/manual-window-collaboration.md)。对应 protocol field 有意不放在普通工作流里。
+
+## 如何判断是否有效
+
+运行时测试可以证明 guidance 的返回一致、有界、符合 schema，且不会变成执行权限。`scripts/eval_coding_loop.sh` 检查的是脚本化工具循环，没有运行模型，不能衡量模型是否遵守提示词。
+
+要衡量行为收益，应固定模型、工具、参数与任务样本，对比有无 guidance 的多次运行。样本至少包括小型修复、只读评审、已有无关改动、子目录规则，以及结果不确定的长时间操作。先比较正确性与任务范围保持，再比较不必要的询问、重复执行、验证质量、工具调用和 token 成本。不能从 schema 测试通过推断模型成功率提升。
 
 ## 内部协议细节
 

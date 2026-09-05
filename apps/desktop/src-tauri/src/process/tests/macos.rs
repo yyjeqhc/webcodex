@@ -1,8 +1,9 @@
 use crate::activity::ActivityLog;
 use crate::process::{ProcessKind, ProcessSupervisor};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, Command as TokioCommand};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -76,7 +77,7 @@ async fn desktop_owned_group_kills_descendant_without_touching_unrelated_process
         .arg("webcodex-owned-tree")
         .arg(&marker);
 
-    let mut control = Command::new("/bin/sleep")
+    let mut control = TokioCommand::new("/bin/sleep")
         .arg("60")
         .spawn()
         .expect("spawn unrelated control process");

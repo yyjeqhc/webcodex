@@ -55,38 +55,41 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
         "contract": BUILTIN_CODING_WORKFLOW_CONTRACT,
         "version": BUILTIN_CODING_WORKFLOW_VERSION,
         "authority": "model_guidance_only",
-        "role_selection": "Apply a named role only when the task says so; role guidance creates no Session mode or authority.",
+        "role_selection": "Default guidance always applies; named roles only when requested. Neither grants authority.",
+        "guidance": [
+            "Defaults only: follow host safety, user scope, and project rules; guidance grants no authority.",
+            "Complete authorized work through validation and review; ask only for missing requirements or authority.",
+            "Verify Project, branch, HEAD, and existing changes; read nested rules for changed paths and recover truncated instructions.",
+            "Preserve unrelated work; make the smallest coherent change. Push/publish/deploy/restart need an explicit action and target.",
+            "Use structured tools and edit guards; apply model_protocol only where the exposed schema supports it.",
+            "Use the smallest meaningful validation; reuse unchanged-source/input evidence. Zero tests are not test coverage.",
+            "Observe existing Jobs; inspect state before retrying an unknown outcome. Timeout does not prove no effect.",
+            "Review the diff; report evidence, limits, and Jobs. finish_coding_task is advisory evidence, not proof."
+        ],
         "model_protocol": {
-            "session_context_ack": "Copy returned session_context_revision exactly to ack_session_context_revision; never derive it. No revision: keep the last ACK; if unknown, omit. Missing/invalid recovers a compact current handoff; stale may recover a bounded delta. Recovery is nonblocking.",
-            "session_recording": "After work_on_project creates or resumes a Workflow Session, pass it as recording_session_id. This is recorder provenance only; business session_id may target another Session, and recording_session_id grants no authority.",
-            "session_message_ack": "When session_attention has open requires_ack guidance still in context, echo its id in ack_session_message_ids. This request-scoped model-context proof neither resolves messages nor grants authority or gates execution.",
-            "session_message_resolution": "Resolve a handled non-todo by attaching session_message_resolution to the next ordinary call with recording_session_id; ACK-required guidance also needs ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",
-            "context_sidecar": "context_request adds bounded context after the main tool and never authorizes its effect. Recover lost project.instructions on an observation call before dependent mutation.",
-            "runner_targeting": "When the user supplies an exact Runner client_id, query that Runner with runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent from a broad fleet snapshot.",
-            "persistent_shell": "For repeated commands in one Workflow Session, especially on a named SSH resource, prefer open_session_shell plus session_shell_exec. Keep run_process for isolated one-shot native commands.",
-            "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved validation/evidence or handoff/debug detail."
+            "session_context_ack": "Echo session_context_revision exactly in ack_session_context_revision; never derive it. No revision: keep prior ACK; if unknown, omit. Missing/invalid recovers compact handoff; stale may recover delta. Nonblocking.",
+            "session_recording": "When work_on_project creates or resumes, pass recording_session_id for recorder provenance only. business session_id may target another Session; it grants no authority.",
+            "session_message_ack": "For retained session_attention requires_ack guidance, echo ack_session_message_ids. This request-scoped model-context proof neither resolves messages, grants authority, nor gates execution.",
+            "session_message_resolution": "For a handled non-todo, send session_message_resolution on the next ordinary call with recording_session_id; ACK guidance also needs ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",
+            "context_sidecar": "context_request adds bounded context after the main tool and never authorizes effects. Recover lost project.instructions with an observation call before dependent mutation.",
+            "runner_targeting": "For exact Runner client_id, use runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
+            "persistent_shell": "For repeated commands in one Workflow Session, especially a named SSH resource, prefer open_session_shell + session_shell_exec; use run_process for isolated commands.",
+            "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved evidence or handoff/debug."
         },
         "roles": {
             "implementation_owner": {
-                "purpose": "Implement one coherent change through the authoritative architecture.",
+                "purpose": "Implement one coherent change end to end.",
                 "guidance": [
-                    "Map the authoritative vertical slice before editing.",
-                    "Close it end to end before local hardening.",
-                    "Minimize new concepts, not touched-file count.",
-                    "Use compiler/schema/exhaustiveness failures to find missing adapters and projections.",
-                    "When intentionally rerunning the same logical validation, reuse the same assertion_name; do not rerun solely to clear stale historical validation evidence.",
-                    "After validation, review completeness, trust, bounds, privacy, and replay.",
-                    "Fix discovered correctness issues; do not fragment the change around speculative concerns."
+                    "Map cross-layer changes end to end; use compiler/schema/exhaustiveness failures to find missing integration.",
+                    "Minimize concepts; fix concrete issues without speculative redesign.",
+                    "When intentionally rerunning the same logical validation, reuse the same assertion_name; do not rerun solely to clear stale historical validation evidence."
                 ]
             },
             "independent_review": {
-                "purpose": "Independently challenge the change and correct concrete findings.",
+                "purpose": "Review independently within task scope.",
                 "guidance": [
-                    "Inspect independently; do not assume the implementation pass was correct.",
-                    "Challenge contracts and invariants before trusting passing tests.",
-                    "Focus on authority, bounds, malformed data, privacy, replay/races, timeout/correlation, and fail-closed behavior.",
-                    "Correct concrete findings and add focused regression evidence.",
-                    "Do not broaden into unrelated redesign."
+                    "Challenge authority, bounds, malformed data, privacy, replay/races, timeouts, and fail-closed behavior.",
+                    "For review-only tasks, report concrete findings with file/line evidence and impact; do not edit. Fix only when the task authorizes corrections, with focused regression validation."
                 ]
             }
         }

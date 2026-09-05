@@ -108,6 +108,11 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
         }
     }
     if let Some(array) = instance.as_array() {
+        if let Some(min_items) = schema.get("minItems").and_then(Value::as_u64) {
+            if array.len() < min_items as usize {
+                return Err(format!("{path}: below minItems"));
+            }
+        }
         if let Some(max_items) = schema.get("maxItems").and_then(Value::as_u64) {
             if array.len() > max_items as usize {
                 return Err(format!("{path}: maxItems exceeded"));

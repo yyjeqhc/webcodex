@@ -402,12 +402,19 @@ fn startup_workspace_schema() -> Value {
 fn startup_workflow_schema() -> Value {
     json!({
         "type": "object",
-        "description": "WebCodex-owned model guidance for named coding/review pass roles. Separate from project instructions and Session authority.",
+        "description": "WebCodex-owned workflow defaults and optional named coding/review roles. Separate from project instructions and Session authority.",
         "properties": {
             "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
             "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
             "authority": {"type": "string", "const": "model_guidance_only"},
             "role_selection": {"type": "string", "maxLength": 240},
+            "guidance": {
+                "type": "array",
+                "description": "Default behavior for every coding/review task, including tasks without a named role. Guidance never grants authority.",
+                "minItems": 1,
+                "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+                "items": {"type": "string", "maxLength": 320}
+            },
             "model_protocol": {
                 "type": "object",
                 "description": "Shared model-invocation guidance. It is not Session state, authority, or execution policy.",
@@ -443,7 +450,7 @@ fn startup_workflow_schema() -> Value {
                 "additionalProperties": false
             }
         },
-        "required": ["contract", "version", "authority", "role_selection", "model_protocol", "roles"],
+        "required": ["contract", "version", "authority", "role_selection", "guidance", "model_protocol", "roles"],
         "additionalProperties": false
     })
 }

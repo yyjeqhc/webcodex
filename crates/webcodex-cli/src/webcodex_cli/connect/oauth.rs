@@ -958,6 +958,7 @@ mod tests {
             oauth_computer_permissions: false,
             oauth_local_mcp: false,
             oauth_local_plugins: false,
+            oauth_local_ssh: false,
             oauth_coding_agent: false,
             username: None,
             project: PathBuf::from("."),

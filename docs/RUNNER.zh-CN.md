@@ -289,6 +289,23 @@ default_cwd = "/opt/webcodex-edge"
 generation；已经启动的 SSH 命令继续自己的有界生命周期，不会被重定向、replay
 或盲目重试。
 
+有权限的模型 client 也可以通过 MCP `ssh_resource` 工具登记 Runner-local SSH
+resource。`list` 只返回安全的逻辑名称、`static|managed`、active/pending-restart 状态，
+以及绑定 exact Runner 与 registry revision 的 opaque binding。`register` 接受一个用户
+明确提供的 OpenSSH destination argv 与可选 default cwd；`remove` 只删除 managed
+desired state。工具不会返回 raw target、用户名、地址、SSH option、credential 或
+identity path。静态 `[ssh.resources.*]` 名称始终 reserved，不能通过这条路径覆盖或删除。
+
+Managed mutation 修改的是 durable desired state，不是当前进程的 live config。返回
+`restart_required=true` 时，需要重启该 Runner，再次 `list` 后才能把资源绑定到
+Workflow Session。已经与 frozen startup snapshot 一致的幂等操作可以返回
+`restart_required=false`。访问还需要独立的可选 `ssh:local` permission；hosted OAuth
+client 通过 `webcodex connect ... --oauth-local-ssh` 显式 opt in。
+
+Managed target 最终仍由现有 SSH transport 消费。因此，成功登记 Windows OpenSSH
+destination 不代表一定能建立 PersistentShell：当前 remote persistent-shell contract
+仍要求远端已有 `sh`/`bash`。Remote PowerShell PersistentShell 不属于本能力。
+
 ## LSP 导航（只读）
 
 Runner 可以通过在仓库机器上运行的语言服务器提供只读语义导航：
@@ -343,8 +360,9 @@ sudo webcodex runner status --scope system --profile <profile>
 install、status、start、stop、restart、logs、uninstall 请使用相同的 `--scope`。
 User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`。
 
-编辑 `runner.toml` 后，reload 对应服务以应用 policy、shell 与 SSH 资源变更。
-身份、server/auth、传输与并发变更仍需要重启。无效 reload 会保留当前生效的
-generation。对于可安全分类的 validation failure，reload status 只报告闭集、非 secret 的
+编辑静态 `runner.toml` SSH resource 后，仍与 policy、shell 一样遵循普通 config reload
+语义。`ssh_resource` managed mutation 不同：它使用 frozen startup snapshot，且只在工具
+返回 `restart_required=true` 时要求重启 Runner。身份、server/auth、传输与并发变更仍
+需要重启。无效 reload 会保留当前生效的 generation。对于可安全分类的 validation failure，reload status 只报告闭集、非 secret 的
 原子信息，例如 `field=max_concurrent_jobs` 与 `reason=out_of_range`；不会投影 raw TOML、
 配置值、路径、credential 或 parser 文本。

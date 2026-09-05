@@ -1947,6 +1947,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // this explicit even when zero Plugins are configured so cross-platform
     // `plugin_tool reload` can target the exact Runner.
     capabilities.native_tool_plugins = true;
+    capabilities.managed_ssh_resources = true;
     // MCP gateway support is fenced by the validated provider inventory in
     // registration rather than a separate capability bit. Older binaries omit
     // that inventory, so a newer Server will never target them.

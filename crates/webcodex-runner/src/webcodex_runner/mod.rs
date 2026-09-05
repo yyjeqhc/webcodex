@@ -10,6 +10,7 @@ pub(crate) mod exit_diagnostics;
 pub(crate) mod external_tools;
 pub(crate) mod files;
 pub(crate) mod lsp;
+pub(crate) mod managed_ssh;
 pub(crate) mod mcp_gateway;
 pub(crate) mod output;
 pub(crate) mod output_text;

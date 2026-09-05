@@ -644,6 +644,10 @@ fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
 
 #[cfg(target_os = "linux")]
 fn verify_systemd_units(units: &[(&str, &str)]) {
+    // Other CLI tests temporarily replace PATH under the shared env-test lock.
+    // Keep both systemd-analyze probes in one stable environment so the
+    // availability check cannot race a later `verify` spawn.
+    let _guard = env_test_guard();
     let available = std::process::Command::new("systemd-analyze")
         .arg("--version")
         .output()

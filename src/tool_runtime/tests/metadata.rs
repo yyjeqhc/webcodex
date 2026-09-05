@@ -395,6 +395,7 @@ async fn register_agent_projects_for_auth(
                         job_state_reconciliation: false,
                         coding_agent_runs: false,
                         native_tool_plugins: false,
+                        managed_ssh_resources: false,
                     },
                 ),
                 policy: None,

@@ -326,6 +326,9 @@ pub const RUNNER_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
 /// Runner-owned native Tool Plugin gateway and explicit dynamic reload support.
 /// Missing on older Runners is false and is never inferred from MCP inventory.
 pub const RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS: &str = "native_tool_plugins";
+/// Runner-local durable managed SSH resource registry. Missing on older Runners
+/// is false and is never inferred from one-shot or persistent SSH execution.
+pub const RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES: &str = "managed_ssh_resources";
 /// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
 /// These explicit bools remain wire facts shared by Server and Runner, but a
 /// missing/false baseline bit rejects registration. Downstream consumers may
@@ -405,6 +408,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION,
     RUNNER_CAPABILITY_CODING_AGENT_RUNS,
     RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS,
+    RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES,
     RUNNER_CAPABILITY_COMPUTER_CONTROL,
     RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
@@ -655,6 +659,9 @@ pub struct RunnerCapabilities {
     /// because `plugin_tool reload` can activate a dynamic provider later.
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_tool_plugins: bool,
+    /// Runner-local managed SSH resource list/register/remove lifecycle.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub managed_ssh_resources: bool,
 }
 
 /// Bounded, non-secret status for the Runner's active configuration generation.
@@ -745,6 +752,7 @@ impl Default for RunnerCapabilities {
             job_state_reconciliation: false,
             coding_agent_runs: false,
             native_tool_plugins: false,
+            managed_ssh_resources: false,
         }
     }
 }
@@ -3417,6 +3425,7 @@ mod envelope_tests {
                 job_state_reconciliation: false,
                 coding_agent_runs: false,
                 native_tool_plugins: false,
+                managed_ssh_resources: false,
             },
             policy: None,
             job_concurrency_limit: Some(4),
@@ -4585,6 +4594,7 @@ mod envelope_tests {
                 "job_state_reconciliation",
                 "coding_agent_runs",
                 "native_tool_plugins",
+                "managed_ssh_resources",
                 "computer_control",
                 "computer_scroll_to_element",
                 "computer_key_input",

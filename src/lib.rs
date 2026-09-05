@@ -47,6 +47,7 @@ mod runtime_http;
 mod server_instance;
 mod server_listener;
 mod server_shutdown;
+mod ssh_resource_gateway;
 mod startup;
 mod task_cli;
 #[cfg(test)]

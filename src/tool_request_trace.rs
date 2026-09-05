@@ -59,6 +59,7 @@ struct TraceCorrelation {
     trace_id: String,
     request_id: String,
     job_id: Option<String>,
+    runner_kind: String,
     created_at: i64,
 }
 
@@ -1376,6 +1377,7 @@ pub(crate) fn record_runner_request_enqueued<T: Serialize>(
             trace_id: trace_id.clone(),
             request_id: request_id.to_string(),
             job_id: job_id.map(str::to_string),
+            runner_kind: kind.to_string(),
             created_at: now_ts(),
         };
         correlations
@@ -1447,7 +1449,10 @@ pub(crate) fn capture_runner_result<T: Serialize>(request_id: &str, payload: &T)
         return;
     };
     match serde_json::to_value(payload) {
-        Ok(value) => capture_payload_for_trace(&correlation.trace_id, "runner_result", &value),
+        Ok(value) => {
+            let value = runner_result_trace_payload(&correlation.runner_kind, &value);
+            capture_payload_for_trace(&correlation.trace_id, "runner_result", &value)
+        }
         Err(error) => tracing::warn!(
             event = "tool_trace_capture_failed",
             server_trace_id = %correlation.trace_id,
@@ -1456,6 +1461,33 @@ pub(crate) fn capture_runner_result<T: Serialize>(request_id: &str, payload: &T)
             "tool_trace_capture_failed"
         ),
     }
+}
+
+fn runner_result_trace_payload(kind: &str, payload: &Value) -> Value {
+    if kind != "ssh_resource" {
+        return payload.clone();
+    }
+    let result = payload.get("result");
+    json!({
+        "kind": "ssh_resource",
+        "exit_code": result
+            .and_then(|value| value.get("exit_code"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "stdout_present": result
+            .and_then(|value| value.get("stdout"))
+            .is_some_and(|value| !value.is_null()),
+        "stderr_present": result
+            .and_then(|value| value.get("stderr"))
+            .is_some_and(|value| !value.is_null()),
+        "error_present": result
+            .and_then(|value| value.get("error"))
+            .is_some_and(|value| !value.is_null()),
+        "command_execution_state": payload
+            .get("command_execution_state")
+            .cloned()
+            .unwrap_or(Value::Null),
+    })
 }
 
 /// Finalize a non-Job Runner result correlation only after authoritative result
@@ -1762,12 +1794,14 @@ mod tests {
             trace_id: "trace-a".to_string(),
             request_id: "request-a".to_string(),
             job_id: Some("job-a".to_string()),
+            runner_kind: "run_process".to_string(),
             created_at: 1,
         };
         let other_correlation = TraceCorrelation {
             trace_id: "trace-b".to_string(),
             request_id: "request-b".to_string(),
             job_id: Some("job-b".to_string()),
+            runner_kind: "run_process".to_string(),
             created_at: 1,
         };
         let mut correlations = TraceCorrelations::default();
@@ -2480,6 +2514,33 @@ mod tests {
         assert_eq!(
             read_phase("runner_result"),
             json!({"exit_code": 0, "stdout": "ok"})
+        );
+    }
+
+    #[test]
+    fn ssh_resource_runner_result_trace_never_persists_result_bodies() {
+        let target = "17724@w10";
+        let payload = json!({
+            "result": {
+                "exit_code": 0,
+                "stdout": format!("{{\"action\":\"register\",\"target\":\"{target}\"}}"),
+                "stderr": target,
+                "error": target
+            },
+            "command_execution_state": "completed"
+        });
+        let sanitized = runner_result_trace_payload("ssh_resource", &payload);
+        let serialized = serde_json::to_string(&sanitized).unwrap();
+        assert!(!serialized.contains(target));
+        assert_eq!(sanitized["kind"], "ssh_resource");
+        assert_eq!(sanitized["stdout_present"], true);
+        assert_eq!(sanitized["stderr_present"], true);
+        assert_eq!(sanitized["error_present"], true);
+        assert_eq!(sanitized["exit_code"], 0);
+
+        assert_eq!(
+            runner_result_trace_payload("run_process", &payload),
+            payload
         );
     }
 

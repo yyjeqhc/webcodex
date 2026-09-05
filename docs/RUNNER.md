@@ -361,6 +361,29 @@ remain local. Configuration reloads bind future commands to the current resource
 generation; already-started SSH commands keep their own bounded lifecycle and
 are never redirected, replayed, or blindly retried.
 
+Authorized model clients can also onboard Runner-local SSH resources with the
+`ssh_resource` MCP tool. `list` returns only safe logical names plus
+`static|managed`, active/pending-restart state, and an opaque exact-Runner /
+registry-revision binding. `register` accepts one explicit OpenSSH destination
+argv and optional default cwd; `remove` deletes only managed desired state.
+Raw targets, usernames, addresses, SSH options, credentials, and identity paths
+are never returned by the tool. Static `[ssh.resources.*]` names are reserved
+and cannot be overwritten or removed through this path.
+
+Managed mutations are durable desired-state changes, not live configuration
+edits. When a mutation returns `restart_required=true`, restart that Runner,
+then `list` again before binding the resource into a Workflow Session. An
+idempotent operation already aligned with the frozen startup snapshot may
+return `restart_required=false`. Access is separately gated by the optional
+`ssh:local` permission; hosted OAuth clients opt in with
+`webcodex connect ... --oauth-local-ssh`.
+
+The managed target is still consumed by the existing SSH transport. In
+particular, registering a Windows OpenSSH destination does not imply that
+PersistentShell can start there: the current remote persistent-shell contract
+requires the existing remote `sh`/`bash` path. Remote PowerShell PersistentShell
+is not part of this capability.
+
 ## LSP navigation (read-only)
 
 The Runner can serve read-only semantic navigation through language servers
@@ -420,9 +443,11 @@ Use the same `--scope` for install, status, start, stop, restart, logs, and
 uninstall. User scope uses `systemctl --user`; system scope uses
 `/etc/systemd/system`.
 
-After editing `runner.toml`, reload the matching service to apply policy,
-shell, and SSH-resource changes. Identity, server/auth, transport, and
-concurrency changes still require a restart. Invalid reloads keep the active
-generation. When a validation failure is safely classifiable, reload status reports only
+After editing static `runner.toml` SSH resources, normal config reload semantics
+still apply together with policy and shell changes. Managed `ssh_resource`
+mutations are different: they use a frozen startup snapshot and require a Runner
+restart exactly when the tool reports `restart_required=true`. Identity,
+server/auth, transport, and concurrency changes still require a restart. Invalid
+reloads keep the active generation. When a validation failure is safely classifiable, reload status reports only
 closed non-secret atoms such as `field=max_concurrent_jobs` and `reason=out_of_range`;
 raw TOML, configured values, paths, credentials, and parser text are not projected.

@@ -1,5 +1,6 @@
 use super::coding_agent::CodingAgentManager;
 use super::external_tools::ExternalToolRouter;
+use super::managed_ssh::ManagedSshResourceStore;
 use super::mcp_gateway::McpGatewayManager;
 use super::plugin::PluginManager;
 use super::shutdown::lock_unpoison;
@@ -486,21 +487,32 @@ pub(crate) struct HotRunnerConfig {
     pub(crate) generation: u64,
     pub(crate) policy: RunnerPolicy,
     pub(crate) shell: ShellConfig,
+    /// Static/manual `[ssh.resources]` from the current runner.toml generation.
+    pub(crate) static_ssh: SshConfig,
+    /// Effective process-local resources: current static resources plus the
+    /// managed registry snapshot frozen when this Runner process started.
     pub(crate) ssh: SshConfig,
     pub(crate) external_tools: Arc<ExternalToolRouter>,
     reload_status: Mutex<RunnerConfigReloadStatus>,
 }
 
 impl HotRunnerConfig {
-    fn new(generation: u64, cfg: &RunnerConfig, status: RunnerConfigReloadStatus) -> Self {
-        Self {
+    fn new(
+        generation: u64,
+        cfg: &RunnerConfig,
+        startup_managed_ssh: &SshConfig,
+        status: RunnerConfigReloadStatus,
+    ) -> Result<Self, &'static str> {
+        let ssh = ManagedSshResourceStore::merge_active(&cfg.ssh, startup_managed_ssh)?;
+        Ok(Self {
             generation,
             policy: cfg.policy.clone(),
             shell: cfg.shell.clone(),
-            ssh: cfg.ssh.clone(),
+            static_ssh: cfg.ssh.clone(),
+            ssh,
             external_tools: Arc::new(ExternalToolRouter::new(&cfg.tool_providers)),
             reload_status: Mutex::new(status),
-        }
+        })
     }
 
     pub(crate) fn reload_status(&self) -> RunnerConfigReloadStatus {
@@ -510,6 +522,8 @@ impl HotRunnerConfig {
 
 pub(crate) struct ReloadableRunnerConfig {
     startup: RunnerConfig,
+    startup_managed_ssh: SshConfig,
+    managed_ssh: Arc<ManagedSshResourceStore>,
     mcp_gateway: Arc<McpGatewayManager>,
     plugins: Arc<PluginManager>,
     coding_agents: Option<Arc<CodingAgentManager>>,
@@ -528,7 +542,16 @@ impl ReloadableRunnerConfig {
             status.last_reload_result = "unsupported".to_string();
             status.last_reload_error_code = Some("reload_unsupported".to_string());
         }
-        let current = Arc::new(HotRunnerConfig::new(1, &startup, status));
+        let managed_ssh = Arc::new(ManagedSshResourceStore::initialize(
+            &startup.client_id,
+            &startup.server_url,
+            &startup.ssh,
+        ));
+        let startup_managed_ssh = managed_ssh.startup_managed().clone();
+        let current = Arc::new(
+            HotRunnerConfig::new(1, &startup, &startup_managed_ssh, status)
+                .expect("startup managed SSH snapshot was collision-checked"),
+        );
         let external_routers = vec![Arc::downgrade(&current.external_tools)];
         let coding_agents = if startup.acp.agents.is_empty() {
             None
@@ -545,6 +568,8 @@ impl ReloadableRunnerConfig {
             mcp_gateway: Arc::new(McpGatewayManager::new(&startup.mcp_gateway)),
             plugins: Arc::new(PluginManager::new(&startup, path.clone())),
             coding_agents,
+            startup_managed_ssh,
+            managed_ssh,
             startup,
             path,
             current: RwLock::new(current),
@@ -584,6 +609,10 @@ impl ReloadableRunnerConfig {
 
     pub(crate) fn coding_agents(&self) -> Option<&Arc<CodingAgentManager>> {
         self.coding_agents.as_ref()
+    }
+
+    pub(crate) fn managed_ssh(&self) -> &ManagedSshResourceStore {
+        &self.managed_ssh
     }
 
     pub(crate) fn client_id(&self) -> &str {
@@ -653,7 +682,27 @@ impl ReloadableRunnerConfig {
             restart_required: !restart_required_fields.is_empty(),
             restart_required_fields,
         };
-        let next = Arc::new(HotRunnerConfig::new(generation, &candidate, status.clone()));
+        let next = match HotRunnerConfig::new(
+            generation,
+            &candidate,
+            &self.startup_managed_ssh,
+            status.clone(),
+        ) {
+            Ok(next) => Arc::new(next),
+            Err(_) => {
+                let status = {
+                    let mut status = active.reload_status.lock().unwrap();
+                    status.last_reload_result = "failure".to_string();
+                    status.last_reload_error_code = Some("config_validation_failed".to_string());
+                    status.last_reload_error_field = None;
+                    status.last_reload_error_reason = None;
+                    status.clone()
+                };
+                active.external_tools.configuration_status_changed();
+                eprintln!("webcodex-runner config reload failed: config_validation_failed");
+                return status;
+            }
+        };
         {
             let mut routers = lock_unpoison(&self.external_routers);
             routers.retain(|router| router.strong_count() > 0);
@@ -958,53 +1007,25 @@ fn validate_shell_profile_config(name: &str, profile: &ShellProfileConfig) -> Re
 }
 
 fn validate_ssh_resource_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.len() > 80 {
-        return Err("ssh resource name must contain 1..=80 characters".to_string());
-    }
-    if name.contains("..") || name.contains('/') || name.contains('\\') {
-        return Err(format!(
-            "ssh.resources.{} is not a safe resource name",
-            name
-        ));
-    }
-    if !name
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
-    {
-        return Err(format!(
-            "ssh resource name '{}' may only contain ASCII letters, digits, '_', '-', and '.'",
-            name
-        ));
-    }
-    Ok(())
+    webcodex_core::ssh_resource::validate_ssh_resource_name(name)
+        .map_err(|_| "ssh resource name is invalid".to_string())
 }
 
 fn validate_ssh_config(ssh: &mut SshConfig) -> Result<(), String> {
     for (name, resource) in &mut ssh.resources {
         validate_ssh_resource_name(name)?;
-        resource.host = resource.host.trim().to_string();
-        if resource.host.is_empty()
-            || resource.host.starts_with('-')
-            || resource.host.len() > 512
-            || resource.host.chars().any(char::is_control)
-        {
-            return Err(format!(
-                "ssh.resources.{}.host must be a non-empty safe host name",
-                name
-            ));
-        }
-        if let Some(default_cwd) = resource.default_cwd.as_mut() {
-            *default_cwd = default_cwd.trim().to_string();
-            if default_cwd.is_empty()
-                || default_cwd.len() > 4096
-                || default_cwd.chars().any(char::is_control)
-            {
-                return Err(format!(
-                    "ssh.resources.{}.default_cwd must be a non-empty remote path without control characters",
-                    name
-                ));
-            }
-        }
+        resource.host = webcodex_core::ssh_resource::normalize_ssh_resource_target(&resource.host)
+            .map_err(|_| {
+                format!("ssh.resources.{name}.host must be a non-empty safe SSH destination")
+            })?;
+        resource.default_cwd = webcodex_core::ssh_resource::normalize_ssh_resource_default_cwd(
+            resource.default_cwd.as_deref(),
+        )
+        .map_err(|_| {
+            format!(
+                "ssh.resources.{name}.default_cwd must be a non-empty remote path without control characters"
+            )
+        })?;
     }
     Ok(())
 }

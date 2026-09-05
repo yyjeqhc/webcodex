@@ -23,6 +23,7 @@ pub mod sensitive_text;
 pub mod shell_quote;
 pub mod skill_metadata;
 pub mod skill_store;
+pub mod ssh_resource;
 pub mod validation_bridge;
 pub mod validation_evidence;
 

@@ -40,7 +40,11 @@ async fn http_mcp_tools_list_success() {
         assert!(tool["inputSchema"].is_object());
         if matches!(
             tool["name"].as_str(),
-            Some(crate::mcp_gateway::MCP_TOOL_NAME | crate::plugin_gateway::PLUGIN_TOOL_NAME)
+            Some(
+                crate::mcp_gateway::MCP_TOOL_NAME
+                    | crate::plugin_gateway::PLUGIN_TOOL_NAME
+                    | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+            )
         ) {
             assert!(
                 tool.get("outputSchema").is_none(),

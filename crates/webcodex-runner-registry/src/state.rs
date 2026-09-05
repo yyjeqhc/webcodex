@@ -225,6 +225,10 @@ pub(super) struct PendingShellRequest {
     /// before dequeue.
     pub(super) expected_mcp_gateway_provider_id: Option<String>,
     pub(super) expected_mcp_gateway_provider_instance_id: Option<String>,
+    /// Exact Runner process lease captured for Runner-local managed SSH resource
+    /// management. Revalidated at dequeue so a replacement Runner can never
+    /// inherit a host-configuration mutation.
+    pub(super) expected_ssh_resource_runner_instance_id: Option<String>,
     /// Exact Runner process lease plus read/manage mode captured for a
     /// Runner-global Skill store request. Revalidated at dequeue so a
     /// replacement process using the same client_id cannot inherit authority.

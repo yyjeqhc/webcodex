@@ -218,21 +218,27 @@ impl ManagedSshResourceStore {
             if existing != &desired {
                 return Err("ssh_resource_name_conflict");
             }
+            let active = self
+                .startup_managed
+                .resources
+                .get(&name)
+                .is_some_and(|active| managed_matches_config(existing, active));
             return Ok(SshResourceResponse::Register {
                 revision: registry.revision,
                 resource: name.clone(),
                 persisted: true,
-                active: self
-                    .startup_managed
-                    .resources
-                    .get(&name)
-                    .is_some_and(|active| managed_matches_config(existing, active)),
-                restart_required: true,
+                active,
+                restart_required: !active,
             });
         }
         if registry.resources.len() >= MANAGED_SSH_RESOURCE_MAX_COUNT {
             return Err("ssh_resource_invalid");
         }
+        let active = self
+            .startup_managed
+            .resources
+            .get(&name)
+            .is_some_and(|current| managed_matches_config(&desired, current));
         registry.resources.insert(name.clone(), desired);
         registry.revision = registry
             .revision
@@ -243,8 +249,8 @@ impl ManagedSshResourceStore {
             revision: registry.revision,
             resource: name,
             persisted: true,
-            active: false,
-            restart_required: true,
+            active,
+            restart_required: !active,
         })
     }
 
@@ -265,6 +271,7 @@ impl ManagedSshResourceStore {
         if registry.resources.remove(&name).is_none() {
             return Err("ssh_resource_not_found");
         }
+        let active = self.startup_managed.resources.contains_key(&name);
         registry.revision = registry
             .revision
             .checked_add(1)
@@ -274,8 +281,8 @@ impl ManagedSshResourceStore {
             revision: registry.revision,
             resource: name.clone(),
             persisted: true,
-            active: self.startup_managed.resources.contains_key(&name),
-            restart_required: true,
+            active,
+            restart_required: active,
         })
     }
 }
@@ -313,6 +320,9 @@ fn safe_error_message(code: &str) -> &'static str {
         }
         "ssh_resource_registry_stale" => {
             "Managed SSH resource registry changed; list resources again"
+        }
+        "ssh_resource_outcome_unknown" => {
+            "Managed SSH resource durability is uncertain; list resources again"
         }
         "ssh_resource_invalid" => "Managed SSH resource request or registry is invalid",
         _ => "Managed SSH resource registry is unavailable",
@@ -507,7 +517,14 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), &'static str> {
         let _ = fs::remove_file(&temp);
         return Err("ssh_resource_registry_unavailable");
     }
-    sync_parent(path)?;
+    #[cfg(test)]
+    if parent
+        .join(".managed-ssh-resources.fail-after-replace")
+        .exists()
+    {
+        return Err("ssh_resource_outcome_unknown");
+    }
+    sync_parent(path).map_err(|_| "ssh_resource_outcome_unknown")?;
     Ok(())
 }
 
@@ -817,6 +834,68 @@ mod tests {
     }
 
     #[test]
+    fn no_op_desired_state_changes_do_not_claim_a_restart() {
+        let active_tmp = tempfile::tempdir().unwrap();
+        let static_ssh = SshConfig::default();
+        let first = store(&active_tmp, &static_ssh);
+        let _ = first.handle(
+            &static_ssh,
+            SshResourceRequest::Register {
+                expected_revision: 0,
+                name: "w10".to_string(),
+                target: "17724@w10".to_string(),
+                default_cwd: None,
+            },
+        );
+        let active = store(&active_tmp, &static_ssh);
+        let idempotent = active.handle(
+            &static_ssh,
+            SshResourceRequest::Register {
+                expected_revision: 1,
+                name: "w10".to_string(),
+                target: "17724@w10".to_string(),
+                default_cwd: None,
+            },
+        );
+        assert!(matches!(
+            idempotent,
+            SshResourceResponse::Register {
+                revision: 1,
+                active: true,
+                restart_required: false,
+                ..
+            }
+        ));
+
+        let pending_tmp = tempfile::tempdir().unwrap();
+        let pending = store(&pending_tmp, &static_ssh);
+        let _ = pending.handle(
+            &static_ssh,
+            SshResourceRequest::Register {
+                expected_revision: 0,
+                name: "new".to_string(),
+                target: "new".to_string(),
+                default_cwd: None,
+            },
+        );
+        let removed = pending.handle(
+            &static_ssh,
+            SshResourceRequest::Remove {
+                expected_revision: 1,
+                name: "new".to_string(),
+            },
+        );
+        assert!(matches!(
+            removed,
+            SshResourceResponse::Remove {
+                active: false,
+                restart_required: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn stale_revision_and_corrupt_registry_fail_closed() {
         let tmp = tempfile::tempdir().unwrap();
         let static_ssh = SshConfig::default();
@@ -911,6 +990,35 @@ mod tests {
             before, after,
             "failed replace must preserve the prior durable registry"
         );
+    }
+
+    #[test]
+    fn failure_after_atomic_replace_is_outcome_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let static_ssh = SshConfig::default();
+        let store = store(&tmp, &static_ssh);
+        fs::write(
+            tmp.path().join(".managed-ssh-resources.fail-after-replace"),
+            b"1",
+        )
+        .unwrap();
+        let response = store.handle(
+            &static_ssh,
+            SshResourceRequest::Register {
+                expected_revision: 0,
+                name: "w10".to_string(),
+                target: "17724@w10".to_string(),
+                default_cwd: None,
+            },
+        );
+        assert!(matches!(
+            response,
+            SshResourceResponse::Error { ref code, .. }
+                if code == "ssh_resource_outcome_unknown"
+        ));
+        let registry = load_registry(&tmp.path().join(STORE_FILE)).unwrap();
+        assert_eq!(registry.revision, 1);
+        assert!(registry.resources.contains_key("w10"));
     }
 
     #[test]

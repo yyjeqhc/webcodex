@@ -12,8 +12,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::Duration;
 use webcodex_core::ssh_resource::{
-    SshResourceRequest, SshResourceResponse, SSH_RESOURCE_DEFAULT_CWD_MAX_BYTES,
-    SSH_RESOURCE_NAME_MAX_BYTES, SSH_RESOURCE_TARGET_MAX_BYTES,
+    validate_response_for_request, SshResourceRequest, SshResourceResponse,
+    SSH_RESOURCE_DEFAULT_CWD_MAX_BYTES, SSH_RESOURCE_NAME_MAX_BYTES, SSH_RESOURCE_TARGET_MAX_BYTES,
 };
 
 pub(crate) const SSH_RESOURCE_TOOL_NAME: &str = "ssh_resource";
@@ -163,7 +163,7 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": SSH_RESOURCE_TOOL_NAME,
-        "description": "List and durably manage Runner-local named SSH resources for PersistentShell onboarding. action=list returns safe logical names plus an opaque exact-Runner/revision binding. For an explicit new SSH target, register it with that binding; registration is persisted only and always requires Runner restart before it can become active. After restart, list again, bind the active logical name with update_session_context, then open_session_shell. For explicit one-shot/no-persistence SSH, run_process remains valid. Targets and authentication details are never returned.",
+        "description": "List and durably manage Runner-local named SSH resources for PersistentShell onboarding. action=list returns safe logical names plus an opaque exact-Runner/revision binding. For an explicit new SSH target, register it with that binding; mutations change durable desired state only. When restart_required=true, restart the Runner before the desired state becomes active; an idempotent operation already aligned with the startup snapshot may return false. Then list again, bind the active logical name with update_session_context, and open_session_shell. For explicit one-shot/no-persistence SSH, run_process remains valid. Targets and authentication details are never returned.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -406,7 +406,12 @@ fn render_mutation_response(
                 "restart_required": restart_required
             }))
         }
-        SshResourceResponse::Error { ref code, .. } if code == "ssh_resource_registry_stale" => {
+        SshResourceResponse::Error { ref code, .. }
+            if matches!(
+                code.as_str(),
+                "ssh_resource_registry_stale" | "ssh_resource_outcome_unknown"
+            ) =>
+        {
             runtime.ssh_resource_gateway.forget(binding_id);
             response_to_error(response)
         }
@@ -488,6 +493,7 @@ async fn execute_exact(
     request: SshResourceRequest,
     auth: Option<&AuthContext>,
 ) -> Result<SshResourceResponse, GatewayError> {
+    let expected_request = request.clone();
     let access = crate::runner_http::runner_access_from_auth(auth);
     let (request_id, receiver) = runtime
         .runner_registry
@@ -550,26 +556,43 @@ async fn execute_exact(
                     "runner_replaced",
                     "the exact Runner changed before managed SSH resource dispatch",
                 )
-            } else {
+            } else if response.request_dispatched == Some(false) {
                 GatewayError::new(
                     "ssh_resource_registry_unavailable",
-                    "managed SSH resource operation failed before a valid response was returned",
+                    "managed SSH resource request failed before Runner dispatch",
                 )
+            } else {
+                invalid_runner_response_error(&expected_request)
             },
         );
     }
-    let stdout = response.stdout.as_deref().ok_or_else(|| {
+    let stdout = response
+        .stdout
+        .as_deref()
+        .ok_or_else(|| invalid_runner_response_error(&expected_request))?;
+    let parsed = serde_json::from_str::<SshResourceResponse>(stdout)
+        .map_err(|_| invalid_runner_response_error(&expected_request))?;
+    validate_response_for_request(&expected_request, &parsed)
+        .map_err(|_| invalid_runner_response_error(&expected_request))?;
+    Ok(parsed)
+}
+
+fn invalid_runner_response_error(request: &SshResourceRequest) -> GatewayError {
+    if matches!(
+        request,
+        SshResourceRequest::Register { .. } | SshResourceRequest::Remove { .. }
+    ) {
         GatewayError::new(
-            "ssh_resource_registry_unavailable",
-            "Runner returned no managed SSH resource response",
+            "ssh_resource_outcome_unknown",
+            "managed SSH resource request reached the Runner but no valid correlated response was returned",
         )
-    })?;
-    serde_json::from_str::<SshResourceResponse>(stdout).map_err(|_| {
+        .recovery("List SSH resources again before attempting another mutation.")
+    } else {
         GatewayError::new(
             "ssh_resource_registry_unavailable",
             "Runner returned an invalid managed SSH resource response",
         )
-    })
+    }
 }
 
 fn response_to_error<T>(response: SshResourceResponse) -> Result<T, GatewayError> {
@@ -600,6 +623,11 @@ fn response_to_error<T>(response: SshResourceResponse) -> Result<T, GatewayError
                     "ssh_resource_registry_stale",
                     "managed SSH resource registry changed since this binding was listed",
                     Some("List SSH resources again before retrying the mutation."),
+                ),
+                "ssh_resource_outcome_unknown" => (
+                    "ssh_resource_outcome_unknown",
+                    "managed SSH resource mutation may have changed durable state",
+                    Some("List SSH resources again before attempting another mutation."),
                 ),
                 "ssh_resource_invalid" => (
                     "ssh_resource_invalid",

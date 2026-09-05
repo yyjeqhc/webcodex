@@ -323,3 +323,68 @@ async fn managed_ssh_binding_rejects_runner_instance_replacement() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn managed_ssh_invalid_post_dispatch_response_is_outcome_unknown_and_binding_is_retired() {
+    let runtime = Arc::new(test_runtime());
+    let auth = ssh_auth();
+    register_managed_runner(&runtime, "instance-a").await;
+    let binding = list_binding(&runtime, &auth, 3).await;
+
+    let task = call_in_task(
+        Arc::clone(&runtime),
+        auth.clone(),
+        json!({
+            "action":"register",
+            "binding":binding,
+            "name":"w10",
+            "target":"17724@w10"
+        }),
+        806,
+    )
+    .await;
+    let request = wait_for_request(&runtime, "instance-a").await;
+    complete_response(
+        &runtime,
+        request,
+        "instance-a",
+        SshResourceResponse::Register {
+            revision: 4,
+            resource: "different-name".to_string(),
+            persisted: true,
+            active: false,
+            restart_required: true,
+        },
+    )
+    .await;
+    let result = tool_result(task.await.unwrap());
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "ssh_resource_outcome_unknown"
+    );
+
+    let retry = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(807)),
+            json!({
+                "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                "arguments": {
+                    "action":"register",
+                    "binding":binding,
+                    "name":"w10",
+                    "target":"17724@w10"
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let result = tool_result(retry);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "ssh_resource_binding_required"
+    );
+}

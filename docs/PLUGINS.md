@@ -291,7 +291,11 @@ forms of `additionalProperties`, union `type`, `anyOf`, `oneOf`, `allOf`, `not`,
 or arbitrary draft-specific keywords.
 
 See [`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs) for
-a complete no-dependency Node example.
+a minimal no-dependency Node example. The repository also ships
+[`plugins/safe-delete`](../plugins/safe-delete/README.md), an optional
+project-root-fenced Plugin that moves one file or directory to the operating
+system Trash/Recycle Bin without adding permanent deletion to WebCodex's built-in
+tool surface.
 
 ## Calling and failure semantics
 

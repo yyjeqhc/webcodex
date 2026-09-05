@@ -256,8 +256,11 @@ keyword 会在 provider admission 时明确拒绝，不会 silently ignore。v1 
 `minimum` / `maximum`、schema 形式的 `additionalProperties`、union `type`、`anyOf`、
 `oneOf`、`allOf`、`not` 或任意 draft-specific keyword。
 
-完整无依赖 Node 示例见
-[`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)。
+最小无依赖 Node 示例见
+[`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)。仓库还提供可选的
+[`plugins/safe-delete`](../plugins/safe-delete/README.zh-CN.md)：它把删除权限限制在配置的
+项目根内，只把单个文件或目录移入系统 Trash / Recycle Bin，不会把永久删除能力加入
+WebCodex 内建工具面。
 
 ## 调用与失败语义
 

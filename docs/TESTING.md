@@ -47,10 +47,15 @@ The lanes above define test semantics; workflows decide when to run them.
   unless every required result is `success`. Pushes to `main`, external-contributor
   PRs, and owner PRs carrying `run-ci` still force the complete native matrix. Other
   owner PRs are upgraded automatically according to changed-path risk: native
-  process, shell, Plugin, Computer, platform-specific, and Desktop Rust ownership
-  selects Windows and/or macOS lanes; packaging/signing/release surfaces select the
-  corresponding package lanes or the full matrix. Ordinary Rust domain/control
-  changes remain on the mandatory Linux gates. The stable `test-macos`,
+  process-owning Runner surfaces, shell, Plugin, Computer, platform-specific, and
+  Desktop Rust ownership selects Windows and/or macOS lanes; `npm/webcodex/**`
+  selects the native Windows package lane; packaging/signing/release and workflow
+  policy surfaces select the corresponding package lanes or the full matrix.
+  For changed Rust files and Cargo manifests, classification inspects bounded full
+  diff context so a body-only edit inside an existing platform `cfg`/target section
+  cannot silently look platform-neutral; an over-bound context falls back to full
+  native. Ordinary Rust domain/control changes remain on the mandatory Linux gates.
+  The stable `test-macos`,
   `test-windows`, and `test-native` aggregates always resolve and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped
   required-check context that could leave branch protection pending.

@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 MAX_CHANGED_PATHS = 2048
 MAX_PATH_BYTES = 4096
 MAX_NAME_STATUS_BYTES = 1024 * 1024
-MAX_RUST_DIFF_BYTES = 2 * 1024 * 1024
+MAX_PLATFORM_DIFF_BYTES = 2 * 1024 * 1024
 MAX_GIT_STDERR_BYTES = 64 * 1024
 
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -182,7 +182,7 @@ def _classify_path(risk: Risk, path: str) -> None:
         risk.categories.add("frontend")
         return
 
-    if path in {".github/workflows/ci.yml", "scripts/ci_path_risk.py"}:
+    if path.startswith(".github/workflows/") or path == "scripts/ci_path_risk.py":
         risk.needs_full_native = True
         risk.categories.add("ci-policy")
         return
@@ -206,6 +206,14 @@ def _classify_path(risk: Risk, path: str) -> None:
     if path in {"apps/desktop/package.json", "apps/desktop/package-lock.json"}:
         _mark_windows_desktop(risk, "desktop-package")
         _mark_macos(risk, "desktop-package", desktop=True)
+        return
+
+    # The npm installer/wrapper contains real Windows-specific process/path
+    # behavior. Linux tooling exercises its portable contract, but production
+    # package changes also need the native Windows package lane that runs the
+    # artifact-to-install smoke.
+    if path.startswith("npm/webcodex/"):
+        _mark_windows_package(risk, "npm-package")
         return
 
     if path in {
@@ -274,6 +282,11 @@ def _classify_path(risk: Risk, path: str) -> None:
             "shutdown",
             "detached_job",
             "supervisor",
+            "coding_agent",
+            "external_tools",
+            "mcp_gateway",
+            "projects",
+            "validation",
         )
         if any(token in lower for token in runner_native_tokens):
             _mark_windows_runner(risk, "runner-native")
@@ -301,25 +314,21 @@ def _classify_path(risk: Risk, path: str) -> None:
     risk.categories.add("normal-linux")
 
 
-def classify_changes(changes: list[Change], rust_diff: str = "") -> Risk:
+def classify_changes(changes: list[Change], platform_diff: str = "") -> Risk:
     risk = Risk(changed_count=len(changes))
     for change in changes:
         _validate_path(change.path)
         _classify_path(risk, change.path)
 
-    # Scan only added/deleted Rust diff lines. A cfg removal matters as much as an
-    # addition because either can change the compiled platform surface.
-    changed_rust_lines = "\n".join(
-        line
-        for line in rust_diff.splitlines()
-        if (line.startswith("+") or line.startswith("-"))
-        and not line.startswith("+++")
-        and not line.startswith("---")
-    )
-    if WINDOWS_CFG_RE.search(changed_rust_lines) or MACOS_CFG_RE.search(changed_rust_lines):
+    # `platform_diff` deliberately contains the complete bounded context of every
+    # changed Rust/Cargo manifest file, not only +/- lines. A body-only edit inside
+    # an existing `#[cfg(windows)]` block or target-specific Cargo dependency is
+    # still platform risk even when the cfg declaration itself is unchanged.
+    # Oversized context fails safe to full native in `classify_git_range`.
+    if WINDOWS_CFG_RE.search(platform_diff) or MACOS_CFG_RE.search(platform_diff):
         _mark_windows_core(risk, "platform-cfg")
         _mark_macos(risk, "platform-cfg")
-    if AARCH64_CFG_RE.search(changed_rust_lines):
+    if AARCH64_CFG_RE.search(platform_diff):
         risk.needs_linux_arm64 = True
         risk.needs_windows_arm64 = True
         _mark_macos(risk, "aarch64-cfg")
@@ -411,11 +420,11 @@ def _git_changes(base: str, head: str) -> list[Change]:
     return changes
 
 
-def _git_rust_diff(base: str, head: str) -> str:
+def _git_platform_diff(base: str, head: str) -> str:
     raw = _run_git_bounded(
         [
             "diff",
-            "--unified=0",
+            "--unified=1000000",
             "--no-renames",
             "--no-ext-diff",
             "--no-textconv",
@@ -423,11 +432,12 @@ def _git_rust_diff(base: str, head: str) -> str:
             f"{base}...{head}",
             "--",
             "*.rs",
+            ":(glob)**/Cargo.toml",
             ":(exclude)docs/**",
             ":(exclude)frontend/**",
             ":(exclude)apps/desktop/src/**",
         ],
-        max_stdout_bytes=MAX_RUST_DIFF_BYTES,
+        max_stdout_bytes=MAX_PLATFORM_DIFF_BYTES,
     )
     return raw.decode("utf-8", errors="replace")
 
@@ -437,8 +447,12 @@ def classify_git_range(base: str, head: str) -> Risk:
         raise GitDiffError("base and head must be exact 40-hex Git commit ids")
     try:
         changes = _git_changes(base, head)
-        rust_diff = _git_rust_diff(base, head) if any(c.path.endswith(".rs") for c in changes) else ""
-        return classify_changes(changes, rust_diff)
+        needs_platform_context = any(
+            change.path.endswith(".rs") or PurePosixPath(change.path).name == "Cargo.toml"
+            for change in changes
+        )
+        platform_diff = _git_platform_diff(base, head) if needs_platform_context else ""
+        return classify_changes(changes, platform_diff)
     except DiffLimitExceeded:
         return Risk.full("bounded-fallback")
 

@@ -57,10 +57,9 @@ fn effective_canonical_roots(
     configured: &[PathBuf],
     allow_cwd_anywhere: bool,
 ) -> Result<Vec<PathBuf>, String> {
-    webcodex_runner_config::effective_allowed_roots(configured, allow_cwd_anywhere)?
-        .into_iter()
-        .map(|root| canonical_existing_directory(&root, "allowed root"))
-        .collect()
+    let effective =
+        webcodex_runner_config::effective_allowed_roots(configured, allow_cwd_anywhere)?;
+    Ok(webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective))
 }
 
 fn validate_project_authority(
@@ -404,6 +403,131 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("outside allowed_roots"), "{error}");
         assert!(!registry.exists());
+    }
+
+    #[test]
+    fn stale_first_root_does_not_block_later_matching_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stale = tmp.path().join("deleted-project");
+        let root = tmp.path().join("root");
+        let project = root.join("demo");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&project).unwrap();
+        let config_path = tmp.path().join("runner.toml");
+        config_with_policy(&config_path, &registry, &[stale, root.clone()], false);
+
+        let output = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project,
+            json: true,
+        })
+        .expect("a stale unrelated root must not block a later matching root");
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["project"]["already_registered"], false);
+        assert_eq!(
+            output["policy"]["allowed_roots"],
+            serde_json::json!([root.canonicalize().unwrap().to_string_lossy().to_string()])
+        );
+        assert!(registry.join("demo.toml").is_file());
+    }
+
+    #[test]
+    fn stale_root_and_valid_nonmatching_root_remain_denied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stale = tmp.path().join("deleted-project");
+        let allowed = tmp.path().join("allowed");
+        let project = tmp.path().join("outside");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let config_path = tmp.path().join("runner.toml");
+        config_with_policy(&config_path, &registry, &[stale, allowed], false);
+
+        let error = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project,
+            json: false,
+        })
+        .unwrap_err();
+        assert!(error.contains("outside allowed_roots"), "{error}");
+        assert!(!registry.exists());
+    }
+
+    #[test]
+    fn all_stale_roots_remain_denied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&project).unwrap();
+        let config_path = tmp.path().join("runner.toml");
+        config_with_policy(
+            &config_path,
+            &registry,
+            &[
+                tmp.path().join("deleted-one"),
+                tmp.path().join("deleted-two"),
+            ],
+            false,
+        );
+
+        let error = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project,
+            json: false,
+        })
+        .unwrap_err();
+        assert!(error.contains("outside allowed_roots"), "{error}");
+        assert!(error.contains("allow_cwd_anywhere is false"), "{error}");
+        assert!(!registry.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_symlink_escape_remains_denied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let outside = tmp.path().join("outside");
+        let registry = tmp.path().join("registry");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let escape = root.join("escape");
+        std::os::unix::fs::symlink(&outside, &escape).unwrap();
+        let config_path = tmp.path().join("runner.toml");
+        config(&config_path, &registry, &root);
+
+        let error = run_project_register(ProjectRegisterOptions {
+            config: config_path,
+            project: escape,
+            json: false,
+        })
+        .unwrap_err();
+        assert!(error.contains("outside allowed_roots"), "{error}");
+        assert!(!registry.exists());
+    }
+
+    #[test]
+    fn stale_roots_do_not_relax_allow_cwd_anywhere_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("ordinary-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let stale = tmp.path().join("deleted-project");
+
+        let denied_registry = tmp.path().join("denied-registry");
+        let denied = register_existing_project(
+            &denied_registry,
+            &project,
+            std::slice::from_ref(&stale),
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert!(denied.contains("allow_cwd_anywhere is false"), "{denied}");
+        assert!(!denied_registry.exists());
+
+        let allowed_registry = tmp.path().join("allowed-registry");
+        register_existing_project(&allowed_registry, &project, &[stale], true, None)
+            .expect("the existing allow_cwd_anywhere relaxation must remain unchanged");
+        assert!(allowed_registry.join("ordinary-project.toml").is_file());
     }
 
     #[cfg(windows)]

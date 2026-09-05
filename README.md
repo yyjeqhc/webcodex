@@ -31,7 +31,7 @@ npx --yes @yyjeqhc/webcodex share
 - **Use the real toolchain** — run commands, tests, formatters, compilers, and project-specific tooling on the machine that owns the repository.
 - **Work with Git** — inspect status and diffs while keeping repository operations visible and reviewable.
 - **Handle long-running work** — keep jobs observable instead of requiring one model turn to stay open indefinitely.
-- **Support human review** — use the Runtime Console and task workflow to guide, cancel, accept, or reject work where those actions are available.
+- **Support human review** — use the [Runtime Console](docs/runtime-console.md) and task workflow to guide, cancel, accept, or reject work where those actions are available.
 
 ## Why WebCodex?
 

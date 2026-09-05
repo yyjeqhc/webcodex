@@ -550,8 +550,8 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(html, /runtime-session-context-lifecycle/);
   assert.match(html, /runtime-session-context-mode/);
   assert.match(css, /\.session-identity/);
-  assert.match(html, /class="session-evidence"/);
-  assert.match(html, /Details &amp; activity/);
+  assert.match(html, /class="context-navigation"/);
+  assert.match(html, /data-context-target="runtime-context-activity"/);
   assert.match(html, /workspace path/);
   assert.match(html, /class="recent-panel-title">Recent Sessions<\/span>/);
   assert.match(html, /id="runtime-inspector-close"[^>]*aria-label="Close session context"/);
@@ -1161,7 +1161,7 @@ test("navigation and inspector source contracts maintain disclosure hierarchy an
   ]);
 
   // P3: Recent Sessions component semantics - clean class, no legacy sidebar-details overrides
-  assert.match(html, /<details id="runtime-recent-panel" class="recent-panel">/);
+  assert.match(html, /<details id="runtime-recent-panel" class="recent-panel" open>/);
   assert.match(html, /<span class="recent-panel-title">Recent Sessions<\/span>/);
   assert.doesNotMatch(html, /class="[^"]*sidebar-details/);
   assert.doesNotMatch(css, /\.sidebar-details/);

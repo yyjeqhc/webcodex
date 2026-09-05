@@ -1,5 +1,6 @@
 mod activity;
 mod commands;
+mod deadline;
 mod error;
 mod models;
 mod operation;
@@ -17,7 +18,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
             let resource_dir = app.path().resource_dir()?;
-            app.manage(AppState::new(data_dir, resource_dir));
+            app.manage(AppState::new(data_dir, resource_dir)?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

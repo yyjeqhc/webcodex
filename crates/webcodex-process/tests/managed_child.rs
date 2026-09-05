@@ -157,6 +157,23 @@ fn wait_until_file(path: &Path, timeout: Duration) -> bool {
     }
 }
 
+#[test]
+fn inherited_stdin_lease_detects_parent_process_disappearance() {
+    let marker = unique_temp_path("parent-lease-eof");
+    let mut parent = Command::new(helper());
+    parent
+        .args(["spawn-parent-lease-child", marker.to_str().unwrap()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut parent = parent.spawn().expect("spawn parent-lease owner");
+    let status = parent.wait().expect("wait parent-lease owner");
+    assert!(status.success(), "fixture parent should exit cleanly");
+    assert!(
+        wait_until_file(&marker, Duration::from_secs(5)),
+        "child did not observe stdin EOF after its exact owner process disappeared"
+    );
+}
+
 /// Spawn the helper in `mode`. When `capture_stdout` is set, returns a
 /// [`LineReader`] fed from the child's piped stdout.
 fn spawn_helper(
@@ -604,6 +621,32 @@ fn graceful_request_repeated_and_already_exited_do_not_panic() {
     );
     #[cfg(windows)]
     let _ = result;
+}
+
+/// Once the owned Unix generation is authoritatively known empty, its numeric
+/// process-group id is no longer valid kill authority. This is the stale-PID /
+/// PID-reuse fence Desktop relies on by retaining the ManagedChild generation
+/// rather than remembering and later targeting a pid/pgid integer.
+#[cfg(unix)]
+#[test]
+fn confirmed_generation_never_reuses_numeric_pgid_as_kill_authority() {
+    let (mut managed, _) = spawn_helper("sleep", &["0", "0"], false);
+    let stale_numeric_identity = managed.id();
+    let _ = managed.wait().expect("wait direct child");
+    assert!(managed
+        .wait_tree_exit(Duration::from_secs(10))
+        .expect("confirm whole-tree exit"));
+
+    assert_eq!(
+        managed
+            .request_terminate_tree()
+            .expect("post-exit graceful request"),
+        GracefulTermination::AlreadyExited,
+        "confirmed generation {stale_numeric_identity} must not probe or signal its old numeric pgid"
+    );
+    managed
+        .terminate_tree()
+        .expect("post-exit force cleanup is idempotent and must not retarget the numeric pgid");
 }
 
 /// ManagedChild must preserve the platform's normal `Command::spawn` behavior

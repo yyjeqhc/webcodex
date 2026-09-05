@@ -581,6 +581,7 @@ enum RunnerCliAction {
     Run {
         config_path: PathBuf,
         once: bool,
+        stop_on_stdin_eof: bool,
     },
     Exit {
         code: i32,
@@ -590,13 +591,14 @@ enum RunnerCliAction {
 }
 
 fn usage() -> &'static str {
-    "Usage: webcodex-runner [--config PATH] [--once]\n\n\
+    "Usage: webcodex-runner [--config PATH] [--once] [--stop-on-stdin-eof]\n\n\
      Options:\n\
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
        -c, --config PATH          Runner config path for normal runtime\n\
        --profile NAME             Client config profile for default config path\n\
-       --once                     Complete one successful poll, then exit (polling transport)\n\n\
+       --once                     Complete one successful poll, then exit (polling transport)\n\
+       --stop-on-stdin-eof        Stop when the invoking parent closes stdin\n\n\
      With --profile, the default config path is derived under\n\
      /etc/webcodex/clients/<profile> for root or\n\
      ~/.config/webcodex/clients/<profile> for non-root users. Explicit\n\
@@ -657,6 +659,7 @@ where
     let mut config_path: Option<PathBuf> = None;
     let mut profile: Option<String> = None;
     let mut once = false;
+    let mut stop_on_stdin_eof = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -675,6 +678,7 @@ where
                 });
             }
             "--once" => once = true,
+            "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
             "--config" | "-c" => {
                 let Some(path) = args.next() else {
                     return Err("--config requires a path".to_string());
@@ -713,7 +717,11 @@ where
                 .unwrap_or_else(default_config_path)?
         }
     };
-    Ok(RunnerCliAction::Run { config_path, once })
+    Ok(RunnerCliAction::Run {
+        config_path,
+        once,
+        stop_on_stdin_eof,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5753,8 +5761,12 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (config_path, once) = match action {
-        RunnerCliAction::Run { config_path, once } => (config_path, once),
+    let (config_path, once, stop_on_stdin_eof) = match action {
+        RunnerCliAction::Run {
+            config_path,
+            once,
+            stop_on_stdin_eof,
+        } => (config_path, once, stop_on_stdin_eof),
         RunnerCliAction::Exit {
             code,
             stdout,
@@ -5781,7 +5793,7 @@ fn main() {
             "webcodex-runner warning: agent token is empty; connecting without Authorization; the server must be started with --open"
         );
     }
-    if let Err(e) = run_runner(cfg, config_path, once) {
+    if let Err(e) = run_runner(cfg, config_path, once, stop_on_stdin_eof) {
         eprintln!("webcodex-runner failed: {}", e);
         std::process::exit(1);
     }

@@ -1,3 +1,4 @@
+use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::BinaryInfo;
 use crate::operation::{cancelled_error, CancellationContext};
@@ -51,7 +52,23 @@ impl ResolvedBinaries {
         bundled_runtime_dir: Option<&Path>,
         cancellation: &CancellationContext,
     ) -> DesktopResult<Self> {
+        Self::resolve_until(
+            bundled_runtime_dir,
+            cancellation,
+            Deadline::after(CLI_TIMEOUT),
+        )
+        .await
+    }
+
+    pub async fn resolve_until(
+        bundled_runtime_dir: Option<&Path>,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<Self> {
         cancellation.check()?;
+        if deadline.is_elapsed() {
+            return Err(timeout_error());
+        }
         let (directory, source) =
             if let Some(directory) = bundled_runtime_dir.filter(|path| path.is_dir()) {
                 (directory.to_path_buf(), ResolvedBinarySource::Bundled)
@@ -131,9 +148,9 @@ impl ResolvedBinaries {
             }
         }
 
-        let cli_version = binary_version(&webcodex, cancellation).await?;
-        let server_version = binary_version(&server, cancellation).await?;
-        let runner_version = binary_version(&runner, cancellation).await?;
+        let cli_version = binary_version(&webcodex, cancellation, deadline).await?;
+        let server_version = binary_version(&server, cancellation, deadline).await?;
+        let runner_version = binary_version(&runner, cancellation, deadline).await?;
         if cli_version.version != server_version.version
             || cli_version.version != runner_version.version
             || cli_version.git_commit != server_version.git_commit
@@ -182,8 +199,17 @@ struct VersionLine {
 async fn binary_version(
     path: &Path,
     cancellation: &CancellationContext,
+    deadline: Deadline,
 ) -> DesktopResult<VersionLine> {
-    let output = run_bounded(path, &["--version".to_string()], None, false, cancellation).await?;
+    let output = run_bounded_until(
+        path,
+        &["--version".to_string()],
+        None,
+        false,
+        cancellation,
+        deadline,
+    )
+    .await?;
     if output.exit_code != Some(0) {
         return Err(DesktopError::new(
             "binary_probe_failed",
@@ -225,7 +251,34 @@ pub async fn run_json<T: DeserializeOwned>(
     secret_output: bool,
     cancellation: &CancellationContext,
 ) -> DesktopResult<T> {
-    let output = run_bounded(executable, args, stdin, secret_output, cancellation).await?;
+    run_json_until(
+        executable,
+        args,
+        stdin,
+        secret_output,
+        cancellation,
+        Deadline::after(CLI_TIMEOUT),
+    )
+    .await
+}
+
+pub async fn run_json_until<T: DeserializeOwned>(
+    executable: &Path,
+    args: &[String],
+    stdin: Option<&[u8]>,
+    secret_output: bool,
+    cancellation: &CancellationContext,
+    deadline: Deadline,
+) -> DesktopResult<T> {
+    let output = run_bounded_until(
+        executable,
+        args,
+        stdin,
+        secret_output,
+        cancellation,
+        deadline,
+    )
+    .await?;
     if output.exit_code != Some(0) {
         return Err(DesktopError::new(
             "webcodex_command_failed",
@@ -251,24 +304,7 @@ struct BoundedOutput {
     stderr: Vec<u8>,
 }
 
-async fn run_bounded(
-    executable: &Path,
-    args: &[String],
-    stdin_payload: Option<&[u8]>,
-    secret_output: bool,
-    cancellation: &CancellationContext,
-) -> DesktopResult<BoundedOutput> {
-    run_bounded_with_timeout(
-        executable,
-        args,
-        stdin_payload,
-        secret_output,
-        cancellation,
-        CLI_TIMEOUT,
-    )
-    .await
-}
-
+#[cfg(test)]
 async fn run_bounded_with_timeout(
     executable: &Path,
     args: &[String],
@@ -277,8 +313,29 @@ async fn run_bounded_with_timeout(
     cancellation: &CancellationContext,
     timeout: Duration,
 ) -> DesktopResult<BoundedOutput> {
-    let deadline = Instant::now() + timeout;
+    run_bounded_until(
+        executable,
+        args,
+        stdin_payload,
+        _secret_output,
+        cancellation,
+        Deadline::after(timeout),
+    )
+    .await
+}
+
+async fn run_bounded_until(
+    executable: &Path,
+    args: &[String],
+    stdin_payload: Option<&[u8]>,
+    _secret_output: bool,
+    cancellation: &CancellationContext,
+    deadline: Deadline,
+) -> DesktopResult<BoundedOutput> {
     cancellation.check()?;
+    if deadline.is_elapsed() {
+        return Err(timeout_error());
+    }
     if stdin_payload.is_some_and(|payload| payload.len() > CLI_INPUT_BYTES) {
         return Err(DesktopError::new(
             "webcodex_command_input_failed",
@@ -352,7 +409,7 @@ async fn run_bounded_with_timeout(
         stdin_task = Some(tokio::task::spawn_blocking(move || {
             write_and_close_stdin(stdin, payload)
         }));
-        match await_stdin_writer(&mut stdin_task, deadline, cancellation).await {
+        match await_stdin_writer(&mut stdin_task, deadline.instant(), cancellation).await {
             Ok(Ok(())) => {}
             Ok(Err(_)) => {
                 cleanup_command(
@@ -394,7 +451,7 @@ async fn run_bounded_with_timeout(
         }
     }
 
-    let status = match wait_for_direct_child(&mut child, deadline, cancellation).await {
+    let status = match wait_for_direct_child(&mut child, deadline.instant(), cancellation).await {
         Ok(Ok(status)) => status,
         Ok(Err(_)) => {
             cleanup_command(
@@ -435,7 +492,7 @@ async fn run_bounded_with_timeout(
         }
     };
 
-    let stdout = match await_reader(&mut stdout_task, deadline, cancellation).await {
+    let stdout = match await_reader(&mut stdout_task, deadline.instant(), cancellation).await {
         Ok(output) => output,
         Err(interruption) => {
             cleanup_command(
@@ -449,7 +506,7 @@ async fn run_bounded_with_timeout(
             return Err(interruption.into_error());
         }
     };
-    let stderr = match await_reader(&mut stderr_task, deadline, cancellation).await {
+    let stderr = match await_reader(&mut stderr_task, deadline.instant(), cancellation).await {
         Ok(output) => output,
         Err(interruption) => {
             cleanup_command(
@@ -464,7 +521,7 @@ async fn run_bounded_with_timeout(
         }
     };
 
-    match wait_for_tree_exit(&child, deadline, cancellation).await {
+    match wait_for_tree_exit(&child, deadline.instant(), cancellation).await {
         Ok(Ok(())) => {}
         Ok(Err(_)) => {
             cleanup_command(
@@ -653,8 +710,12 @@ async fn await_reader(
     Ok(result.unwrap_or_default())
 }
 
-async fn cleanup_child_only(child: &mut ManagedChild, operation_deadline: Instant) {
-    terminate_managed_tree(child, cleanup_deadline(operation_deadline)).await;
+async fn cleanup_child_only(child: &mut ManagedChild, operation_deadline: Deadline) {
+    terminate_managed_tree(
+        child,
+        operation_deadline.cleanup_deadline(CLI_CLEANUP_SLACK),
+    )
+    .await;
 }
 
 async fn cleanup_command(
@@ -662,9 +723,9 @@ async fn cleanup_command(
     stdin_task: &mut Option<JoinHandle<std::io::Result<()>>>,
     stdout_task: &mut Option<JoinHandle<Vec<u8>>>,
     stderr_task: &mut Option<JoinHandle<Vec<u8>>>,
-    operation_deadline: Instant,
+    operation_deadline: Deadline,
 ) {
-    let deadline = cleanup_deadline(operation_deadline);
+    let deadline = operation_deadline.cleanup_deadline(CLI_CLEANUP_SLACK);
     terminate_managed_tree(child, deadline).await;
     finish_task(stdin_task, deadline).await;
     finish_task(stdout_task, deadline).await;
@@ -708,15 +769,6 @@ async fn finish_task<T>(task: &mut Option<JoinHandle<T>>, deadline: Instant) {
         if Instant::now() < deadline {
             let _ = tokio::time::timeout_at(deadline, &mut task).await;
         }
-    }
-}
-
-fn cleanup_deadline(operation_deadline: Instant) -> Instant {
-    let now = Instant::now();
-    if operation_deadline > now {
-        std::cmp::min(operation_deadline, now + CLI_CLEANUP_SLACK)
-    } else {
-        now + CLI_CLEANUP_SLACK
     }
 }
 
@@ -801,7 +853,7 @@ mod tests {
         assert_eq!(ResolvedBinarySource::Bundled.label(), "Bundled");
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     fn process_exists(pid: u32) -> bool {
         let Ok(pid) = i32::try_from(pid) else {
             return false;
@@ -816,7 +868,7 @@ mod tests {
         )
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     fn unique_marker(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "webcodex-cli-{name}-{}-{}",
@@ -828,7 +880,7 @@ mod tests {
         ))
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     fn read_fixture_pids(marker: &Path) -> Vec<u32> {
         std::fs::read_to_string(marker)
             .expect("fixture must publish owned pids")
@@ -837,7 +889,7 @@ mod tests {
             .collect()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[tokio::test]
     async fn blocked_stdin_uses_one_total_deadline_and_reclaims_owned_tree() {
         let marker = unique_marker("blocked-stdin");
@@ -871,7 +923,7 @@ mod tests {
         let _ = std::fs::remove_file(marker);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[tokio::test]
     async fn inherited_output_pipe_cannot_extend_the_command_lifetime() {
         let marker = unique_marker("inherited-pipe");
@@ -904,7 +956,7 @@ mod tests {
         let _ = std::fs::remove_file(marker);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[tokio::test]
     async fn explicit_cancel_interrupts_blocked_stdin_and_keeps_cancel_classification() {
         let marker = unique_marker("cancelled-stdin");
@@ -944,6 +996,101 @@ mod tests {
             assert!(
                 !process_exists(pid),
                 "owned PID {pid} survived cancellation"
+            );
+        }
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn absolute_deadline_is_not_reset_by_nested_cli_work() {
+        let cancellation = CancellationContext::never();
+        let outer_started = Instant::now();
+        let deadline = Deadline::after(Duration::from_millis(350));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let error = run_bounded_until(
+            Path::new("/bin/sh"),
+            &["-c".to_string(), "sleep 8".to_string()],
+            None,
+            false,
+            &cancellation,
+            deadline,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "webcodex_command_timeout");
+        assert!(
+            outer_started.elapsed() < Duration::from_secs(3),
+            "nested CLI work must consume the original deadline plus only bounded cleanup slack"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn elapsed_deadline_does_not_start_a_new_cli_command() {
+        let marker = unique_marker("expired-before-spawn");
+        let cancellation = CancellationContext::never();
+        let deadline = Deadline::after(Duration::from_millis(20));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let args = vec![
+            "-c".to_string(),
+            "printf started > \"$1\"".to_string(),
+            "webcodex-expired-deadline".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let error = run_bounded_until(
+            Path::new("/bin/sh"),
+            &args,
+            None,
+            false,
+            &cancellation,
+            deadline,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "webcodex_command_timeout");
+        assert!(!marker.exists(), "expired deadline must prevent spawn");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_during_output_drain_reclaims_the_owned_tree() {
+        let marker = unique_marker("cancel-output-drain");
+        let args = vec![
+            "-c".to_string(),
+            "sleep 8 & descendant=$!; printf '%s\\n' \"$descendant\" > \"$1\"; exit 0".to_string(),
+            "webcodex-cancel-output-drain".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let operation = CancellationSignal::new();
+        let cancellation = CancellationContext::new(operation.clone(), CancellationSignal::new());
+        let command = tokio::spawn(async move {
+            run_bounded_with_timeout(
+                Path::new("/bin/sh"),
+                &args,
+                None,
+                false,
+                &cancellation,
+                Duration::from_secs(8),
+            )
+            .await
+        });
+        let marker_deadline = Instant::now() + Duration::from_secs(2);
+        while !marker.is_file() {
+            assert!(Instant::now() < marker_deadline, "fixture did not start");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        operation.cancel();
+        let error = tokio::time::timeout(Duration::from_secs(4), command)
+            .await
+            .expect("cancelled drain must return promptly")
+            .expect("fixture task")
+            .unwrap_err();
+        assert_eq!(error.code, "desktop_operation_cancelled");
+        for pid in read_fixture_pids(&marker) {
+            assert!(
+                !process_exists(pid),
+                "pipe-holding PID {pid} survived output-drain cancellation"
             );
         }
         let _ = std::fs::remove_file(marker);

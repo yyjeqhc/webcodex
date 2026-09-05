@@ -92,19 +92,22 @@ pub fn structured_validation_target_identity(tool_name: &str, arguments: &Value)
             let filter = normalized_rust_test_target_filter(obj.get("filter"))?;
             let features = normalized_cargo_target_value(obj.get("features"))?;
             let package = normalized_cargo_target_value(obj.get("package"))?;
-            let require_tests = obj
-                .get("require_tests")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let require_tests = obj.get("require_tests").and_then(Value::as_bool);
             let min_tests = obj.get("min_tests").and_then(Value::as_u64);
             if min_tests.is_some_and(|minimum| !(1..=CARGO_TEST_MIN_TESTS_MAX).contains(&minimum)) {
                 return None;
             }
             let minimum_tests = match (require_tests, min_tests) {
-                (true, Some(minimum)) => Some(minimum.max(1)),
-                (true, None) => Some(1),
-                (false, minimum) => minimum,
+                (Some(true), Some(minimum)) => Some(minimum.max(1)),
+                (Some(true), None) => Some(1),
+                (_, minimum) => minimum,
             };
+            // The effective minimum already normalizes require_tests=true and
+            // min_tests. Preserve only the remaining proof-semantic difference:
+            // explicit false with no minimum accepts a zero-test execution,
+            // while omission does not.
+            let explicit_zero_test_opt_out =
+                (require_tests == Some(false) && minimum_tests.is_none()).then_some(false);
             serde_json::json!({
                 "tool": tool_name,
                 "kind": "test",
@@ -117,6 +120,7 @@ pub fn structured_validation_target_identity(tool_name: &str, arguments: &Value)
                 "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
                 "no_run": obj.get("no_run").and_then(Value::as_bool).unwrap_or(false),
                 "minimum_tests": minimum_tests,
+                "require_tests": explicit_zero_test_opt_out,
             })
         }
         "go_test" => {

@@ -888,6 +888,7 @@ fn normalized_validation_status(status: Option<&str>) -> &'static str {
         Some("passed") => "passed",
         Some("failed") => "failed",
         Some("expected") => "expected",
+        Some("inconclusive") => "inconclusive",
         Some("not_run") => "not_run",
         Some("unavailable") => "unavailable",
         _ => "unknown",

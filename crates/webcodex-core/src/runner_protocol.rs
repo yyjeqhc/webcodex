@@ -2434,6 +2434,17 @@ pub struct ShellJobValidationMetadata {
     /// observation postcondition, not part of the executable argv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_tests: Option<u64>,
+    /// Exact caller-provided Cargo test execution requirement. `Some(false)`
+    /// is materially different from omission: it explicitly accepts a
+    /// successful zero-test execution as validation proof when no minimum is
+    /// requested. This is bounded policy metadata, never executable text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_tests: Option<bool>,
+    /// Exact caller-provided Cargo `--no-run` intent. `Some(true)` means the
+    /// validation is compile-only and therefore does not require executed-test
+    /// count evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_run: Option<bool>,
 }
 
 impl ShellJobValidationMetadata {
@@ -2456,6 +2467,17 @@ impl ShellJobValidationMetadata {
             return false;
         }
         if self.minimum_tests.is_some() && self.tool != "cargo_test" {
+            return false;
+        }
+        if (self.require_tests.is_some() || self.no_run.is_some()) && self.tool != "cargo_test" {
+            return false;
+        }
+        if self.no_run == Some(true) && self.minimum_tests.is_some() {
+            return false;
+        }
+        if self.require_tests == Some(true)
+            && (self.minimum_tests.is_none() || self.no_run == Some(true))
+        {
             return false;
         }
         let step = &self.steps[0];
@@ -4945,6 +4967,8 @@ mod filter_canonical_tests {
             adapter: tool.to_string(),
             validation_target_id: None,
             minimum_tests: None,
+            require_tests: None,
+            no_run: None,
         }
     }
 

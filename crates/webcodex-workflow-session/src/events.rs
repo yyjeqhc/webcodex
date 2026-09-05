@@ -1548,6 +1548,12 @@ pub fn validation_output_summary_for_tool_result(tool_name: &str, output: &Value
         }
     }
     if tool_name == "cargo_test" {
+        if let Some(require_tests) = output.get("require_tests").and_then(Value::as_bool) {
+            summary["require_tests"] = json!(require_tests);
+        }
+        if let Some(no_run) = output.get("no_run").and_then(Value::as_bool) {
+            summary["no_run"] = json!(no_run);
+        }
         if let Some(assertion) = sanitized_test_count_assertion(output.get("test_count_assertion"))
         {
             summary["test_count_assertion"] = assertion;
@@ -1628,6 +1634,12 @@ pub(super) fn sanitize_persisted_validation_output_summary(
         }
     }
     if tool_name == "cargo_test" {
+        if let Some(require_tests) = object.get("require_tests").and_then(Value::as_bool) {
+            summary["require_tests"] = json!(require_tests);
+        }
+        if let Some(no_run) = object.get("no_run").and_then(Value::as_bool) {
+            summary["no_run"] = json!(no_run);
+        }
         if let Some(assertion) = sanitized_test_count_assertion(object.get("test_count_assertion"))
         {
             summary["test_count_assertion"] = assertion;

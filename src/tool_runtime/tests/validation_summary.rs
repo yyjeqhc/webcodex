@@ -600,8 +600,9 @@ async fn validation_summary_keeps_zero_tests_from_resolving_cargo_test_failure()
             Some(&auth),
         )
         .await;
-    assert_eq!(result.output["validation"]["status"], "mixed");
-    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(result.output["validation"]["successes"], 0);
+    assert_eq!(result.output["validation"]["latest_status"], "inconclusive");
     assert_eq!(
         result.output["validation"]["historical_failures"]["resolved"],
         false

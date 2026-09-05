@@ -415,6 +415,8 @@ fn build_overview(
         "failed"
     } else if latest_status == Some("passed") {
         "passed"
+    } else if latest_status == Some("inconclusive") {
+        "inconclusive"
     } else {
         "unavailable"
     };

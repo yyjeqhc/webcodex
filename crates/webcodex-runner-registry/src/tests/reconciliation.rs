@@ -392,6 +392,8 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
                     adapter: "cargo_test".to_string(),
                     validation_target_id: Some(target.to_string()),
                     minimum_tests: Some(6),
+                    require_tests: None,
+                    no_run: None,
                 }),
                 visibility: ShellJobVisibility::Public,
                 ..Default::default()
@@ -480,6 +482,8 @@ async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
         adapter: "go_test".to_string(),
         validation_target_id: None,
         minimum_tests: None,
+        require_tests: None,
+        no_run: None,
     });
     let inventory = ShellJobInventory {
         active_complete: true,

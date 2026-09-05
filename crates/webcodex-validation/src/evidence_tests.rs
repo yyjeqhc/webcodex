@@ -746,9 +746,15 @@ fn validation_summary_exposes_cargo_test_zero_tests_metadata() {
 
     let session = store.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
-    let event = &validation["latest_success"];
+    let event = &validation["latest"];
 
-    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["status"], "inconclusive");
+    assert_eq!(validation["reason"], "zero_tests_not_validation_proof");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation.get("latest_success").is_none());
+    assert_eq!(validation["current_evidence"]["status"], "inconclusive");
+    assert_eq!(validation["current_evidence"]["successes"], 0);
     assert_eq!(validation["cargo_test_zero_tests_run"], true);
     assert_eq!(validation["historical_failures"]["count"], 0);
     assert_eq!(validation["historical_failures"]["resolved"], false);
@@ -757,7 +763,196 @@ fn validation_summary_exposes_cargo_test_zero_tests_metadata() {
     assert_eq!(event["tests_detected"], true);
     assert_eq!(event["tests_run_count"], 0);
     assert_eq!(event["zero_tests_run"], true);
+    assert_eq!(event["success"], true);
     assert_no_raw_validation_output_fields(&validation, "validation summary");
+}
+
+#[test]
+fn successful_cargo_test_with_executed_tests_is_proven_validation() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 2 tests\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 2,
+            "zero_tests_run": false
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest_success"]["tests_run_count"], 2);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+}
+
+#[test]
+fn explicit_require_tests_false_accepts_zero_test_validation_proof() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo", "require_tests": false}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true,
+            "require_tests": false
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest_success"]["require_tests"], false);
+    assert_eq!(validation["latest_success"]["zero_tests_run"], true);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+}
+
+#[test]
+fn cargo_test_no_run_does_not_require_executed_test_count_proof() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo", "no_run": true}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": false,
+            "tests_run_count": null,
+            "zero_tests_run": null,
+            "no_run": true
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest_success"]["no_run"], true);
+}
+
+#[test]
+fn missing_test_count_metadata_is_inconclusive_not_zero_tests() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "test result: ok. 10 passed; 0 failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": null,
+            "zero_tests_run": null
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "inconclusive");
+    assert_eq!(validation["reason"], "test_count_metadata_unavailable");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation["latest"]["tests_run_count"].is_null());
+    assert!(validation["latest"]["zero_tests_run"].is_null());
+    assert_eq!(validation["cargo_test_zero_tests_run"], false);
+}
+
+#[test]
+fn later_zero_test_event_does_not_replace_previous_real_validation_proof() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let arguments = json!({"project": "agent:eval:demo"});
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        arguments.clone(),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 2 tests\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 2,
+            "zero_tests_run": false
+        }),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        arguments,
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert_eq!(validation["latest"]["zero_tests_run"], true);
+    assert_eq!(validation["latest_success"]["tests_run_count"], 2);
+    assert_eq!(validation["current_evidence"]["status"], "passed");
+    assert_eq!(
+        validation["current_evidence"]["latest_status"],
+        "inconclusive"
+    );
+    assert_eq!(validation["current_evidence"]["successes"], 1);
 }
 
 #[test]
@@ -945,8 +1140,10 @@ fn failed_cargo_test_followed_by_zero_tests_remains_historically_unresolved() {
     let session = store.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
 
-    assert_eq!(validation["status"], "mixed");
-    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation.get("latest_success").is_none());
     assert_eq!(validation["latest"]["tool_name"], "cargo_test");
     assert_eq!(validation["latest"]["zero_tests_run"], true);
     assert_eq!(validation["cargo_test_zero_tests_run"], true);
@@ -989,8 +1186,10 @@ fn failed_cargo_test_followed_by_unproven_success_remains_historically_unresolve
     let session = store.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
 
-    assert_eq!(validation["status"], "mixed");
-    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation.get("latest_success").is_none());
     assert_eq!(validation["latest"]["success"], true);
     assert!(validation["latest"]["tests_run_count"].is_null());
     assert!(validation["latest"]["zero_tests_run"].is_null());
@@ -1790,9 +1989,15 @@ fn cargo_test_target_identity_includes_effective_count_contract() {
         "cwd": ".",
         "filter": "focused"
     }));
+    let explicit_zero_opt_out = target(json!({
+        "cwd": ".",
+        "filter": "focused",
+        "require_tests": false
+    }));
     assert_eq!(require_one, min_one);
     assert_ne!(require_one, min_six);
     assert_ne!(require_one, compatible_default);
+    assert_ne!(compatible_default, explicit_zero_opt_out);
 }
 
 #[test]

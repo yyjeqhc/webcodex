@@ -419,6 +419,8 @@ impl ToolRuntime {
                     "tests_passed",
                     "tests_failed",
                     "zero_tests_run",
+                    "require_tests",
+                    "no_run",
                     "test_count_assertion",
                     "diagnostics",
                 ] {

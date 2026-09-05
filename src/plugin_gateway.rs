@@ -7,7 +7,8 @@
 
 pub(crate) use webcodex_core::plugin::*;
 
-use crate::auth::{AuthContext, SCOPE_PLUGIN_LOCAL};
+use crate::auth::{AuthContext, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE};
+use crate::tool_runtime::specialized::{SpecializedOperationPolicy, SpecializedSource};
 use crate::tool_runtime::ToolRuntime;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -157,8 +158,177 @@ struct PluginToolArguments {
     arguments: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PluginOperation {
+    List,
+    Check,
+    Reload,
+    Describe,
+    Call,
+}
+
+impl PluginOperation {
+    fn parse(action: &str) -> Option<Self> {
+        match action {
+            "list" => Some(Self::List),
+            "check" => Some(Self::Check),
+            "reload" => Some(Self::Reload),
+            "describe" => Some(Self::Describe),
+            "call" => Some(Self::Call),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn policy(self) -> SpecializedOperationPolicy {
+        match self {
+            Self::List => SpecializedOperationPolicy::read(
+                SpecializedSource::Plugin,
+                "list",
+                SCOPE_PLUGIN_INSPECT,
+            ),
+            Self::Describe => SpecializedOperationPolicy::read(
+                SpecializedSource::Plugin,
+                "describe",
+                SCOPE_PLUGIN_INSPECT,
+            ),
+            Self::Call => SpecializedOperationPolicy::local_execution(
+                SpecializedSource::Plugin,
+                "call",
+                SCOPE_PLUGIN_INVOKE,
+            ),
+            Self::Check => SpecializedOperationPolicy::management(
+                SpecializedSource::Plugin,
+                "check",
+                SCOPE_PLUGIN_MANAGE,
+                false,
+                true,
+            ),
+            Self::Reload => SpecializedOperationPolicy::management(
+                SpecializedSource::Plugin,
+                "reload",
+                SCOPE_PLUGIN_MANAGE,
+                true,
+                true,
+            ),
+        }
+    }
+}
+
+pub(crate) fn operation_policy(
+    arguments: &Value,
+) -> Result<SpecializedOperationPolicy, &'static str> {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .ok_or("plugin_tool action is required")?;
+    PluginOperation::parse(action)
+        .map(PluginOperation::policy)
+        .ok_or("plugin_tool action must be one of list, check, reload, describe, or call")
+}
+
 pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
-    auth.is_some_and(|auth| auth.has_scope(SCOPE_PLUGIN_LOCAL))
+    auth.is_some_and(|auth| {
+        auth.has_scope(SCOPE_PLUGIN_INSPECT)
+            || auth.has_scope(SCOPE_PLUGIN_INVOKE)
+            || auth.has_scope(SCOPE_PLUGIN_MANAGE)
+    })
+}
+
+pub(crate) fn invoke_authorized(auth: Option<&AuthContext>) -> bool {
+    auth.is_some_and(|auth| auth.has_scope(SCOPE_PLUGIN_INVOKE))
+}
+
+fn authorized_for_operation(auth: Option<&AuthContext>, operation: PluginOperation) -> bool {
+    let required = operation.policy().required_scope;
+    auth.is_some_and(|auth| auth.has_scope(required))
+}
+
+/// Bounded model/ledger projection. Arbitrary Plugin arguments and opaque
+/// bindings are deliberately represented only by presence bits.
+pub(crate) fn audit_arguments(arguments: &Value) -> Value {
+    let object = arguments.as_object();
+    let action = object
+        .and_then(|o| o.get("action"))
+        .and_then(Value::as_str)
+        .and_then(PluginOperation::parse)
+        .map(|operation| operation.policy().operation);
+    let runner = object
+        .and_then(|o| o.get("runner"))
+        .and_then(Value::as_str)
+        .filter(|value| bounded_runner_id(value));
+    let plugin = object
+        .and_then(|o| o.get("plugin"))
+        .and_then(Value::as_str)
+        .filter(|value| validate_provider_id(value).is_ok());
+    let tool = object
+        .and_then(|o| o.get("tool"))
+        .and_then(Value::as_str)
+        .filter(|value| validate_tool_name(value).is_ok());
+    json!({
+        "action": action,
+        "runner": runner,
+        "plugin": plugin,
+        "tool": tool,
+        "binding_present": object.is_some_and(|o| o.get("binding").is_some()),
+        "arguments_present": object.is_some_and(|o| o.get("arguments").is_some()),
+    })
+}
+
+fn bounded_runner_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// Add authoritative bounded provider identity when an opaque call binding can
+/// be resolved without executing the Plugin. The binding value, provider
+/// instance identity, schema observation, and arbitrary arguments stay out of
+/// the projection.
+pub(crate) async fn audit_arguments_with_identity(
+    runtime: &ToolRuntime,
+    arguments: &Value,
+    auth: Option<&AuthContext>,
+) -> Value {
+    let audit = audit_arguments(arguments);
+    if !invoke_authorized(auth) {
+        return audit;
+    }
+    let Some(binding) = arguments
+        .as_object()
+        .filter(|object| object.get("action").and_then(Value::as_str) == Some("call"))
+        .and_then(|object| object.get("binding"))
+        .and_then(Value::as_str)
+        .and_then(|binding| runtime.plugin_gateway.binding(binding))
+    else {
+        return audit;
+    };
+    let Ok(runner) = resolve_runner(runtime, &binding.client_id, auth).await else {
+        return audit;
+    };
+    if runner.runner_instance_id != binding.runner_instance_id {
+        return audit;
+    }
+    audit_arguments_with_resolved_binding(audit, &binding)
+}
+
+fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBinding) -> Value {
+    audit["runner"] = Value::String(binding.client_id.clone());
+    audit["plugin"] = Value::String(binding.provider_id.clone());
+    audit["tool"] = Value::String(binding.tool_name.clone());
+    audit["binding_resolved"] = Value::Bool(true);
+    audit
+}
+
+pub(crate) fn audit_startup_direct(candidate: &StartupPluginToolCandidate) -> Value {
+    json!({
+        "runner": candidate.client_id,
+        "plugin": candidate.provider_id,
+        "tool": candidate.tool.name,
+        "plane": "startup",
+        "arguments_present": true,
+    })
 }
 
 pub(crate) fn tool_spec() -> Value {
@@ -192,6 +362,11 @@ pub(crate) fn tool_spec() -> Value {
                 "arguments": {
                     "type": "object",
                     "description": "Required for action=call. Arguments must match the schema returned by the describe that created binding."
+                },
+                "recording_session_id": {
+                    "type": "string",
+                    "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                    "description": "Optional explicit Workflow Session used for authority, read-only/guard, permission, and audit governance. It is never inferred from MCP transport identity."
                 }
             },
             "required": ["action"],
@@ -208,12 +383,6 @@ pub(crate) async fn call(
     arguments: Value,
     auth: Option<&AuthContext>,
 ) -> Value {
-    if !authorized(auth) {
-        return gateway_error_result(GatewayError::local(
-            "insufficient_scope",
-            "local native Plugin access requires the plugin:local scope",
-        ));
-    }
     let parsed: PluginToolArguments = match serde_json::from_value(arguments) {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -223,26 +392,38 @@ pub(crate) async fn call(
             ))
         }
     };
-    let result = match parsed.action.as_str() {
-        "list" => list(runtime, parsed, auth)
-            .await
-            .map(GatewaySuccess::Metadata),
-        "check" => check(runtime, parsed, auth)
-            .await
-            .map(GatewaySuccess::Metadata),
-        "reload" => reload(runtime, parsed, auth)
-            .await
-            .map(GatewaySuccess::Metadata),
-        "describe" => describe(runtime, parsed, auth)
-            .await
-            .map(GatewaySuccess::Metadata),
-        "call" => call_plugin(runtime, parsed, auth)
-            .await
-            .map(GatewaySuccess::ToolResult),
-        _ => Err(GatewayError::local(
+    let Some(operation) = PluginOperation::parse(&parsed.action) else {
+        return gateway_error_result(GatewayError::local(
             "invalid_action",
             "action must be one of list, check, reload, describe, or call",
-        )),
+        ));
+    };
+    if !authorized_for_operation(auth, operation) {
+        return gateway_error_result(GatewayError::local(
+            "insufficient_scope",
+            format!(
+                "Plugin operation '{}' requires the {} scope",
+                operation.policy().operation,
+                operation.policy().required_scope
+            ),
+        ));
+    }
+    let result = match operation {
+        PluginOperation::List => list(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        PluginOperation::Check => check(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        PluginOperation::Reload => reload(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        PluginOperation::Describe => describe(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        PluginOperation::Call => call_plugin(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::ToolResult),
     };
     render_gateway_result(result)
 }
@@ -635,7 +816,7 @@ pub(crate) async fn visible_plugin_runners(
 }
 
 /// Return exact startup Tool candidates from sanitized immutable registration
-/// inventory.  This helper intentionally does not require `plugin:local`: call
+/// inventory.  This helper intentionally does not require Plugin invocation authority: call
 /// dispatch uses it before the scope check so a spoofed direct Plugin name is
 /// rejected as forbidden instead of falling through to an unrelated unknown
 /// static tool path. Runner visibility policy remains authoritative.
@@ -693,10 +874,10 @@ pub(crate) async fn call_startup_direct(
     arguments: Value,
     auth: Option<&AuthContext>,
 ) -> Value {
-    if !authorized(auth) {
+    if !invoke_authorized(auth) {
         return gateway_error_result(GatewayError::local(
             "insufficient_scope",
-            "direct native Plugin calls require the plugin:local scope",
+            "direct native Plugin calls require the plugin:invoke scope",
         ));
     }
     if !arguments.is_object() {
@@ -1174,5 +1355,106 @@ mod tests {
         assert!(!encoded.contains("command"));
         assert!(!encoded.contains("cwd"));
         assert!(!encoded.contains("\"env\""));
+    }
+
+    #[test]
+    fn plugin_audit_projection_never_contains_binding_or_arbitrary_arguments() {
+        let binding = "wc_pbind_private_binding_marker";
+        let secret = "PLUGIN_PRIVATE_ARGUMENT_MARKER";
+        let audit = audit_arguments(&json!({
+            "action": "call",
+            "binding": binding,
+            "arguments": {
+                "token": secret,
+                "nested": {"credential": "also-private"}
+            }
+        }));
+        let encoded = serde_json::to_string(&audit).unwrap();
+        assert!(!encoded.contains(binding));
+        assert!(!encoded.contains(secret));
+        assert!(!encoded.contains("also-private"));
+        assert_eq!(audit["binding_present"], true);
+        assert_eq!(audit["arguments_present"], true);
+    }
+
+    #[test]
+    fn plugin_audit_projection_drops_unbounded_or_unrecognized_identity_fields() {
+        let secret = "PRIVATE\nPLUGIN\nFIELD";
+        let audit = audit_arguments(&json!({
+            "action": secret,
+            "runner": secret,
+            "plugin": secret,
+            "tool": secret,
+            "arguments": {"token": "never-project-this"}
+        }));
+        let encoded = serde_json::to_string(&audit).unwrap();
+        assert!(!encoded.contains("PRIVATE"));
+        assert!(!encoded.contains("never-project-this"));
+        assert!(audit["action"].is_null());
+        assert!(audit["runner"].is_null());
+        assert!(audit["plugin"].is_null());
+        assert!(audit["tool"].is_null());
+        assert_eq!(audit["arguments_present"], true);
+    }
+
+    #[test]
+    fn plugin_audit_projection_resolves_bounded_binding_identity_without_opaque_values() {
+        let binding = test_binding("provider-a", "tool-a");
+        let opaque = "wc_pbind_private_binding_marker";
+        let secret = "PLUGIN_PRIVATE_ARGUMENT_MARKER";
+        let audit = audit_arguments_with_resolved_binding(
+            audit_arguments(&json!({
+                "action": "call",
+                "binding": opaque,
+                "arguments": {"token": secret}
+            })),
+            &binding,
+        );
+        let encoded = serde_json::to_string(&audit).unwrap();
+        assert_eq!(audit["runner"], "runner-a");
+        assert_eq!(audit["plugin"], "provider-a");
+        assert_eq!(audit["tool"], "tool-a");
+        assert_eq!(audit["binding_resolved"], true);
+        assert!(!encoded.contains(&opaque));
+        assert!(!encoded.contains(secret));
+        assert!(!encoded.contains("provider-a-instance"));
+    }
+
+    #[test]
+    fn plugin_operation_policy_distinguishes_inspect_execution_and_management() {
+        use crate::tool_runtime::specialized::SpecializedEffect;
+
+        assert_eq!(
+            PluginOperation::List.policy().effect,
+            SpecializedEffect::Read
+        );
+        assert_eq!(
+            PluginOperation::Describe.policy().effect,
+            SpecializedEffect::Read
+        );
+        assert_eq!(
+            PluginOperation::Call.policy().effect,
+            SpecializedEffect::LocalExecution
+        );
+        assert_eq!(
+            PluginOperation::Check.policy().effect,
+            SpecializedEffect::Management
+        );
+        assert_eq!(
+            PluginOperation::Reload.policy().effect,
+            SpecializedEffect::Management
+        );
+        assert_eq!(
+            PluginOperation::Check.policy().required_scope,
+            SCOPE_PLUGIN_MANAGE
+        );
+        assert!(!PluginOperation::Check.policy().write_like);
+        assert!(PluginOperation::Check.policy().shell_like);
+        assert!(PluginOperation::Reload.policy().write_like);
+        assert!(PluginOperation::Reload.policy().shell_like);
+        assert_eq!(
+            PluginOperation::Call.policy().required_scope,
+            SCOPE_PLUGIN_INVOKE
+        );
     }
 }

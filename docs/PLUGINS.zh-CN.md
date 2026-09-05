@@ -274,7 +274,7 @@ WebCodex 会 fail closed 并 retire 该 provider instance。
 
 `plugin_tool call` 必须使用前一次 `describe` 返回的 opaque binding。binding 是
 Server 端有界保存的一次 exact observation，不是 bearer authorization token：每次 call
-仍然重新要求当前 credential 具有 `plugin:local`，并且当前 caller 仍有权访问对应 logical
+仍然重新要求当前 credential 具有 `plugin:invoke`，并且当前 caller 仍有权访问对应 logical
 Runner。binding 也可能因为容量上限被 eviction。Runner/provider instance 被替换、tool 被
 删除或 schema 改变时，旧 binding 以 `NotStarted` fail closed，必须重新 describe；
 WebCodex 不会把它 re-resolve 到新的同名 provider/tool，不会自动生成新 binding，也不会
@@ -297,15 +297,21 @@ registration catalog。
 
 ## OAuth
 
-Native Plugin 使用独立 authority：`plugin:local`。
+Native Plugin authority 按 operation 拆分：
 
-- credential 没有 `plugin:local` 时，MCP `tools/list` 不显示 `plugin_tool` 和 startup
-  Plugin 一级工具，伪造 direct call 也会被拒绝；
-- `plugin:local` 不属于 shared-key OAuth baseline；
+- `plugin:inspect` 允许 list、describe 等纯 metadata observation；
+- `plugin:invoke` 允许 `plugin_tool call` 和 startup Plugin 一级工具；
+- `plugin:manage` 允许会启动或改变本地 Plugin process 的开发/管理操作，目前是 check 和
+  reload；它本身不会隐式授予 `plugin:invoke`；
+- 以上 scope 都不属于 direct shared-key model baseline；
 - 使用 shared-key OAuth bridge 时，需要显式
-  `webcodex connect ... --auth oauth --oauth-local-plugins`。
+  `webcodex connect ... --auth oauth --oauth-local-plugins`；该 opt-in 只授予
+  `plugin:inspect` + `plugin:invoke`，绝不会授予 `plugin:manage`。
 
-`mcp:local` 不授予 Plugin 权限；`plugin:local` 也不授予 Runner-owned MCP provider 权限。
+`mcp:local` 不授予 Plugin 权限；Plugin scopes 也不授予 Runner-owned MCP provider 权限。
+effectful Plugin operation 如果携带显式 `recording_session_id`，还必须通过与其他
+consequential WebCodex execution 相同的 Workflow Session guard 和 authority-mode
+permission policy；WebCodex 不会从 MCP transport identity 推断 Workflow Session。
 
 ## 排障
 

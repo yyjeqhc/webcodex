@@ -309,7 +309,7 @@ provider contract violation and retires that provider instance fail-closed.
 
 `plugin_tool call` requires an opaque binding from a preceding `describe`.
 Bindings are bounded server-side observations, not bearer authorization tokens:
-every call still requires current `plugin:local` authority and current access to
+every call still requires current `plugin:invoke` authority and current access to
 the logical Runner. A binding can also be evicted. If its Runner/provider
 instance disappears, the tool is removed, or its schema changes, the stale call
 fails `NotStarted` and must be described again. WebCodex never re-resolves the
@@ -337,16 +337,23 @@ registration catalog.
 
 ## OAuth
 
-Native Plugin access is a separate authority: `plugin:local`.
+Native Plugin authority is operation-specific:
 
-- Without `plugin:local`, `plugin_tool` and first-class startup Plugin tools are
-  omitted from MCP `tools/list` and direct spoofed calls are rejected.
-- `plugin:local` is not part of the shared-key OAuth baseline.
+- `plugin:inspect` allows metadata observation such as list and describe.
+- `plugin:invoke` allows `plugin_tool call` and first-class startup Plugin tools.
+- `plugin:manage` allows development/management operations that can start or
+  change local Plugin processes, currently check and reload. It does not imply
+  `plugin:invoke`.
+- None of these scopes is part of the direct shared-key model baseline.
 - For the shared-key OAuth bridge, opt in explicitly with
-  `webcodex connect ... --auth oauth --oauth-local-plugins`.
+  `webcodex connect ... --auth oauth --oauth-local-plugins`; that opt-in grants
+  only `plugin:inspect` + `plugin:invoke`, never `plugin:manage`.
 
-`mcp:local` does not grant Plugin access, and `plugin:local` does not grant
-Runner-owned MCP provider access.
+`mcp:local` does not grant Plugin access, and Plugin scopes do not grant
+Runner-owned MCP provider access. Effectful Plugin operations also pass the
+same Workflow Session guard and authority-mode permission policy as other
+consequential WebCodex execution when an explicit `recording_session_id` is
+supplied; WebCodex never infers that Session from MCP transport identity.
 
 ## Troubleshooting
 

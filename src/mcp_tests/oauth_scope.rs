@@ -230,10 +230,10 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
         status,
         &body,
         challenge.as_deref(),
-        Some(crate::auth::SCOPE_PLUGIN_LOCAL),
+        Some(crate::auth::SCOPE_PLUGIN_INSPECT),
     );
 
-    let (_tmp, service, token) = oauth_mcp_service("runtime:read plugin:local");
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read plugin:inspect plugin:invoke");
     let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert!(body["result"]["tools"]
@@ -277,6 +277,23 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
     assert_eq!(
         body["result"]["structuredContent"]["error"]["code"], "invalid_arguments",
         "the pre-binding call shape must be rejected instead of treated as a describe lookup"
+    );
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+            "arguments": {"action": "check", "runner": "runner-a"}
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_PLUGIN_MANAGE),
     );
 }
 
@@ -359,11 +376,14 @@ async fn oauth2_first_class_startup_plugin_visibility_and_direct_spoof_require_p
         status,
         &body,
         challenge.as_deref(),
-        Some(crate::auth::SCOPE_PLUGIN_LOCAL),
+        Some(crate::auth::SCOPE_PLUGIN_INVOKE),
     );
 
-    let (_tmp, service, token) =
-        oauth_mcp_service_with_startup_plugin("runtime:read plugin:local", tool_name).await;
+    let (_tmp, service, token) = oauth_mcp_service_with_startup_plugin(
+        "runtime:read plugin:inspect plugin:invoke",
+        tool_name,
+    )
+    .await;
     let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert!(body["result"]["tools"]
@@ -459,7 +479,7 @@ async fn oauth2_adaptive_gateway_preserves_canonical_target_scope_errors() {
         status,
         &body,
         challenge.as_deref(),
-        Some(crate::auth::SCOPE_PLUGIN_LOCAL),
+        Some(crate::auth::SCOPE_PLUGIN_INSPECT),
     );
 
     let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;

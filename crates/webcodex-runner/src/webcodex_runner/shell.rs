@@ -1296,10 +1296,11 @@ pub(crate) fn cwd_allowed(policy: &RunnerPolicy, cwd: &Path) -> Result<(), Strin
     }
     let cwd = canonicalize_existing(cwd)?;
     for root in &policy.allowed_roots {
-        let root = canonicalize_existing(root)?;
-        // Case-insensitive component-wise containment on Windows.
-        if webcodex_runner_config::paths::path_is_within(&cwd, &root) {
-            return Ok(());
+        if let Ok(root) = canonicalize_existing(root) {
+            // Case-insensitive component-wise containment on Windows.
+            if webcodex_runner_config::paths::path_is_within(&cwd, &root) {
+                return Ok(());
+            }
         }
     }
     Err(format!(

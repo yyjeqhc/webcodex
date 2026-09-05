@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn cwd_allowed_skips_missing_unrelated_root_when_later_root_matches() {
+    let allowed = tempfile::tempdir().unwrap();
+    let missing = allowed.path().join("deleted-project");
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: false,
+        allowed_roots: vec![missing, allowed.path().to_path_buf()],
+        ..RunnerPolicy::default()
+    };
+
+    cwd_allowed(&policy, allowed.path())
+        .expect("a missing unrelated root must not block a later matching root");
+}
+
+#[test]
+fn cwd_allowed_remains_fail_closed_when_no_existing_root_matches() {
+    let allowed = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let missing = allowed.path().join("deleted-project");
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: false,
+        allowed_roots: vec![missing, allowed.path().to_path_buf()],
+        ..RunnerPolicy::default()
+    };
+
+    let error = cwd_allowed(&policy, outside.path()).unwrap_err();
+    assert!(error.contains("outside allowed_roots"), "{error}");
+}
+
 #[cfg(windows)]
 #[test]
 fn shell_job_filters_sensitive_env_case_insensitive() {

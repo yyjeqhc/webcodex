@@ -273,8 +273,8 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert_eq!(body["result"]["isError"], true);
     assert_eq!(
-        body["result"]["structuredContent"]["error"]["code"],
-        "describe_required"
+        body["result"]["structuredContent"]["error"]["code"], "invalid_arguments",
+        "the pre-binding call shape must be rejected instead of treated as a describe lookup"
     );
 }
 

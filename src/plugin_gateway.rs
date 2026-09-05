@@ -3,7 +3,7 @@
 //! Plugin processes and their executable configuration never cross the Runner
 //! boundary.  This module resolves only caller-visible logical identities,
 //! stores bounded describe observations, and dispatches the closed typed Plugin
-//! gateway with exact Runner/provider fences.
+//! gateway with opaque exact Runner/provider/schema bindings.
 
 pub(crate) use webcodex_core::plugin::*;
 
@@ -16,70 +16,69 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 pub(crate) const PLUGIN_TOOL_NAME: &str = "plugin_tool";
-const MAX_SCHEMA_OBSERVATIONS: usize = 512;
+const MAX_PLUGIN_BINDINGS: usize = 512;
 const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct ObservationKey {
-    runner: String,
-    plugin: String,
-    tool: String,
-}
-
 #[derive(Debug, Clone)]
-struct ObservedBinding {
+struct PluginBinding {
     client_id: String,
     runner_instance_id: String,
     provider_id: String,
     provider_instance_id: String,
+    tool_name: String,
     schema: PluginSchemaObservation,
 }
 
 #[derive(Default)]
-struct ObservationStore {
-    values: HashMap<ObservationKey, ObservedBinding>,
-    order: VecDeque<ObservationKey>,
+struct BindingStore {
+    values: HashMap<String, PluginBinding>,
+    order: VecDeque<String>,
 }
 
 #[derive(Default)]
 pub(crate) struct PluginGatewayRuntime {
-    observations: Mutex<ObservationStore>,
+    bindings: Mutex<BindingStore>,
 }
 
 impl PluginGatewayRuntime {
-    fn remember(&self, key: ObservationKey, value: ObservedBinding) {
+    fn remember(&self, value: PluginBinding) -> String {
         let mut store = self
-            .observations
+            .bindings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !store.values.contains_key(&key) {
-            store.order.push_back(key.clone());
-        }
-        store.values.insert(key, value);
-        while store.values.len() > MAX_SCHEMA_OBSERVATIONS {
+        let binding = loop {
+            let candidate = format!("wc_pbind_{}", uuid::Uuid::new_v4().simple());
+            if !store.values.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        store.order.push_back(binding.clone());
+        store.values.insert(binding.clone(), value);
+        while store.values.len() > MAX_PLUGIN_BINDINGS {
             let Some(oldest) = store.order.pop_front() else {
                 break;
             };
             store.values.remove(&oldest);
         }
+        binding
     }
 
-    fn observed(&self, key: &ObservationKey) -> Option<ObservedBinding> {
-        self.observations
+    fn binding(&self, binding: &str) -> Option<PluginBinding> {
+        self.bindings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values
-            .get(key)
+            .get(binding)
             .cloned()
     }
 
-    fn forget(&self, key: &ObservationKey) {
+    fn forget(&self, binding: &str) {
         let mut store = self
-            .observations
+            .bindings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        store.values.remove(key);
-        store.order.retain(|candidate| candidate != key);
+        store.values.remove(binding);
+        store.order.retain(|candidate| candidate != binding);
     }
 }
 
@@ -143,6 +142,8 @@ struct PluginToolArguments {
     #[serde(default)]
     tool: Option<String>,
     #[serde(default)]
+    binding: Option<String>,
+    #[serde(default)]
     arguments: Option<Value>,
 }
 
@@ -153,7 +154,7 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": PLUGIN_TOOL_NAME,
-        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Plugins are arbitrary local executables using the bounded WebCodex stdio protocol, not MCP servers. action=reload rereads the exact Runner's runner.toml into the dynamic plane; startup first-class tools remain unchanged until Runner restart. Use describe before call. Runner/provider instance identities are intentionally hidden.",
+        "description": "Develop and call Runner-local WebCodex native Tool Plugins. Plugins are arbitrary local executables using the bounded WebCodex stdio protocol, not MCP servers. action=reload rereads the exact Runner's runner.toml into the dynamic plane; startup first-class tools remain unchanged until Runner restart. Dynamic calls use reload -> describe -> call: describe returns an opaque binding for that exact Runner/provider/schema observation, and call accepts only that binding plus arguments. Stale bindings never retarget or replay; describe again after replacement. Binding handles are not authorization and Runner/provider instance identities stay hidden.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -163,19 +164,24 @@ pub(crate) fn tool_spec() -> Value {
                 },
                 "runner": {
                     "type": "string",
-                    "description": "Exact caller-visible Runner client id. Required for reload, describe, and call."
+                    "description": "Exact caller-visible Runner client id. Optional for list; required for reload and describe; not accepted for call."
                 },
                 "plugin": {
                     "type": "string",
-                    "description": "Logical Plugin provider id. Required for describe and call."
+                    "description": "Logical Plugin provider id. Required only for describe; not accepted for call."
                 },
                 "tool": {
                     "type": "string",
-                    "description": "Logical Plugin tool name. Required for describe and call."
+                    "description": "Logical Plugin tool name. Required only for describe; not accepted for call."
+                },
+                "binding": {
+                    "type": "string",
+                    "pattern": "^wc_pbind_[0-9a-f]{32}$",
+                    "description": "Opaque exact-observation handle returned by action=describe. Required for call. It does not grant authorization."
                 },
                 "arguments": {
                     "type": "object",
-                    "description": "Arguments for action=call, matching the most recent action=describe schema."
+                    "description": "Required for action=call. Arguments must match the schema returned by the describe that created binding."
                 }
             },
             "required": ["action"],
@@ -233,7 +239,11 @@ async fn list(
     args: PluginToolArguments,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
-    if args.plugin.is_some() || args.tool.is_some() || args.arguments.is_some() {
+    if args.plugin.is_some()
+        || args.tool.is_some()
+        || args.binding.is_some()
+        || args.arguments.is_some()
+    {
         return Err(GatewayError::local(
             "invalid_arguments",
             "action=list accepts only optional runner",
@@ -270,7 +280,11 @@ async fn reload(
     args: PluginToolArguments,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
-    if args.plugin.is_some() || args.tool.is_some() || args.arguments.is_some() {
+    if args.plugin.is_some()
+        || args.tool.is_some()
+        || args.binding.is_some()
+        || args.arguments.is_some()
+    {
         return Err(GatewayError::local(
             "invalid_arguments",
             "action=reload accepts only runner",
@@ -305,10 +319,10 @@ async fn describe(
     args: PluginToolArguments,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
-    if args.arguments.is_some() {
+    if args.binding.is_some() || args.arguments.is_some() {
         return Err(GatewayError::local(
             "invalid_arguments",
-            "action=describe does not accept arguments",
+            "action=describe accepts only runner, plugin, and tool",
         ));
     }
     let runner_id = required_runner(args.runner.as_deref())?;
@@ -350,25 +364,20 @@ async fn describe(
                 "the requested tool is not present on the current effective Plugin provider",
             )
         })?;
-    runtime.plugin_gateway.remember(
-        ObservationKey {
-            runner: runner.client_id.clone(),
-            plugin: provider.provider_id.clone(),
-            tool: tool.name.clone(),
-        },
-        ObservedBinding {
-            client_id: runner.client_id.clone(),
-            runner_instance_id: runner.runner_instance_id.clone(),
-            provider_id: provider.provider_id.clone(),
-            provider_instance_id: provider.provider_instance_id.clone(),
-            schema: tool.schema_observation(),
-        },
-    );
+    let binding = runtime.plugin_gateway.remember(PluginBinding {
+        client_id: runner.client_id.clone(),
+        runner_instance_id: runner.runner_instance_id.clone(),
+        provider_id: provider.provider_id.clone(),
+        provider_instance_id: provider.provider_instance_id.clone(),
+        tool_name: tool.name.clone(),
+        schema: tool.schema_observation(),
+    });
     Ok(json!({
         "runner": runner.client_id,
         "plugin": provider.provider_id,
         "pluginName": provider.name,
-        "tool": tool
+        "tool": tool,
+        "binding": binding
     }))
 }
 
@@ -377,9 +386,13 @@ async fn call_plugin(
     args: PluginToolArguments,
     auth: Option<&AuthContext>,
 ) -> Result<PluginToolResult, GatewayError> {
-    let runner_id = required_runner(args.runner.as_deref())?;
-    let plugin_id = required_provider(args.plugin.as_deref())?;
-    let tool_name = required_tool(args.tool.as_deref())?;
+    if args.runner.is_some() || args.plugin.is_some() || args.tool.is_some() {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "action=call accepts only binding and arguments",
+        ));
+    }
+    let binding_id = required_binding(args.binding.as_deref())?.to_string();
     let arguments = args.arguments.ok_or_else(|| {
         GatewayError::local("invalid_arguments", "action=call requires arguments")
     })?;
@@ -392,44 +405,55 @@ async fn call_plugin(
     validate_json_value(&arguments, PLUGIN_MAX_ARGUMENT_BYTES, "tool arguments").map_err(|_| {
         GatewayError::local("invalid_arguments", "tool arguments exceed Plugin bounds")
     })?;
-    let observation_key = ObservationKey {
-        runner: runner_id.to_string(),
-        plugin: plugin_id.to_string(),
-        tool: tool_name.to_string(),
-    };
     let observed = runtime
         .plugin_gateway
-        .observed(&observation_key)
-        .ok_or_else(|| {
-            GatewayError::local(
-                "describe_required",
-                "describe this Plugin tool before calling it so WebCodex can bind the exact Runner, provider instance, and schema",
-            )
-            .recovery(
-                "Call plugin_tool with action=describe for this runner, plugin, and tool, then retry with the described schema.",
-            )
-        })?;
-    // Deliberately do not re-list/re-resolve the provider here.  The observed
-    // exact identities are the only legal dispatch target for this call.
-    let runner = ResolvedPluginRunner {
-        client_id: observed.client_id.clone(),
-        runner_instance_id: observed.runner_instance_id.clone(),
-        display_name: None,
-    };
-    let response = execute_exact(
+        .binding(&binding_id)
+        .ok_or_else(describe_required_error)?;
+
+    // A binding identifies the observation; it does not grant authority. Resolve
+    // the logical Runner against the current credential again, then require the
+    // exact Runner instance that produced the describe observation.
+    let runner = resolve_runner(runtime, &observed.client_id, auth)
+        .await
+        .map_err(|_| describe_required_error())?;
+    if runner.runner_instance_id != observed.runner_instance_id {
+        runtime.plugin_gateway.forget(&binding_id);
+        return Err(GatewayError::local(
+            "plugin_replaced",
+            "the exact Runner instance described by this binding is no longer current",
+        )
+        .recovery("Re-describe this Plugin tool. WebCodex did not retarget or replay the call."));
+    }
+
+    // Deliberately do not re-list/re-resolve the provider here. The exact
+    // provider instance, tool name, and schema from this binding are the only
+    // legal dispatch target.
+    let response = match execute_exact(
         runtime,
         &runner,
         PluginGatewayRequest::ToolsCall {
             plane: PluginPlane::Effective,
             provider_id: observed.provider_id.clone(),
             provider_instance_id: observed.provider_instance_id.clone(),
-            name: tool_name.to_string(),
+            name: observed.tool_name.clone(),
             arguments,
             expected_schema: observed.schema,
         },
         auth,
     )
-    .await?;
+    .await
+    {
+        Ok(response) => response,
+        Err(mut error) => {
+            if error.code == "plugin_replaced" {
+                runtime.plugin_gateway.forget(&binding_id);
+                error.recovery = Some(
+                    "Re-describe this Plugin tool. WebCodex did not retarget or replay the call.",
+                );
+            }
+            return Err(error);
+        }
+    };
     let state = response.dispatch_state;
     if let Some(error) = response.error {
         if matches!(
@@ -439,7 +463,7 @@ async fn call_plugin(
                 | "stale_plugin_provider"
                 | "plugin_provider_unavailable"
         ) {
-            runtime.plugin_gateway.forget(&observation_key);
+            runtime.plugin_gateway.forget(&binding_id);
         }
         let mut error = response_error(state, error);
         if matches!(
@@ -781,6 +805,39 @@ fn required_tool(value: Option<&str>) -> Result<&str, GatewayError> {
     Ok(value)
 }
 
+fn required_binding(value: Option<&str>) -> Result<&str, GatewayError> {
+    let value = value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| GatewayError::local("invalid_arguments", "action=call requires binding"))?;
+    let Some(random) = value.strip_prefix("wc_pbind_") else {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "binding is not a valid opaque Plugin binding",
+        ));
+    };
+    if random.len() != 32
+        || !random
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "binding is not a valid opaque Plugin binding",
+        ));
+    }
+    Ok(value)
+}
+
+fn describe_required_error() -> GatewayError {
+    GatewayError::local(
+        "describe_required",
+        "this Plugin binding is unavailable to the current credential or is no longer retained",
+    )
+    .recovery(
+        "Call plugin_tool with action=describe for the intended runner, plugin, and tool, then call with the returned binding. WebCodex did not retarget or replay the call.",
+    )
+}
+
 fn render_gateway_result(result: Result<GatewaySuccess, GatewayError>) -> Value {
     match result {
         Ok(GatewaySuccess::Metadata(value)) => gateway_success_result(value),
@@ -836,12 +893,65 @@ fn dispatch_state_name(state: PluginDispatchState) -> &'static str {
 mod tests {
     use super::*;
 
+    fn test_binding(provider: &str, tool: &str) -> PluginBinding {
+        PluginBinding {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+            provider_id: provider.to_string(),
+            provider_instance_id: format!("{provider}-instance"),
+            tool_name: tool.to_string(),
+            schema: PluginSchemaObservation {
+                input_schema: json!({"type":"object"}),
+                output_schema: None,
+                annotations: None,
+            },
+        }
+    }
+
+    #[test]
+    fn plugin_bindings_are_independent_and_evicted_fifo() {
+        let runtime = PluginGatewayRuntime::default();
+        let first = runtime.remember(test_binding("provider-a", "tool-a"));
+        let second = runtime.remember(test_binding("provider-b", "tool-b"));
+        assert_ne!(first, second);
+        assert!(first.starts_with("wc_pbind_"));
+        assert!(second.starts_with("wc_pbind_"));
+        assert_eq!(runtime.binding(&first).unwrap().tool_name, "tool-a");
+        assert_eq!(runtime.binding(&second).unwrap().tool_name, "tool-b");
+
+        runtime.forget(&first);
+        assert!(runtime.binding(&first).is_none());
+        assert_eq!(
+            runtime.binding(&second).unwrap().provider_id,
+            "provider-b",
+            "forgetting one exact binding must not disturb another provider/tool binding"
+        );
+
+        let oldest = runtime.remember(test_binding("oldest", "tool"));
+        for index in 0..MAX_PLUGIN_BINDINGS {
+            runtime.remember(test_binding(&format!("provider-{index}"), "tool"));
+        }
+        assert!(
+            runtime.binding(&oldest).is_none(),
+            "binding store must remain bounded with deterministic oldest eviction"
+        );
+    }
+
     #[test]
     fn fixed_plugin_tool_catalog_hides_runtime_identity_and_provider_defined_output_schema() {
         let spec = tool_spec();
         let encoded = serde_json::to_string(&spec).unwrap();
         assert_eq!(spec["name"], PLUGIN_TOOL_NAME);
         assert!(spec.get("outputSchema").is_none());
+        assert!(spec["inputSchema"]["properties"]["binding"].is_object());
+        assert_eq!(
+            spec["inputSchema"]["properties"]["binding"]["pattern"],
+            "^wc_pbind_[0-9a-f]{32}$"
+        );
+        assert!(spec["description"]
+            .as_str()
+            .unwrap()
+            .contains("call accepts only that binding plus arguments"));
         assert!(!encoded.contains("provider_instance_id"));
         assert!(!encoded.contains("runner_instance_id"));
         assert!(!encoded.contains("revision"));

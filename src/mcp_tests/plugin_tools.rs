@@ -61,7 +61,11 @@ async fn complete_plugin_request(
 }
 
 fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
-    let mut auth = mcp_export_api_auth("plugin-test-pat", "alice");
+    plugin_auth_for("alice", include_scope)
+}
+
+fn plugin_auth_for(owner: &str, include_scope: bool) -> crate::auth::AuthContext {
+    let mut auth = mcp_export_api_auth("plugin-test-pat", owner);
     if include_scope {
         auth.scopes
             .push(crate::auth::SCOPE_PLUGIN_LOCAL.to_string());
@@ -200,6 +204,122 @@ async fn tools_list(
         McpOutcome::Ok(value) => value,
         other => panic!("tools/list failed: {other:?}"),
     }
+}
+
+async fn describe_dynamic_binding(
+    runtime: &Arc<ToolRuntime>,
+    auth: &crate::auth::AuthContext,
+    runner_id: &str,
+    runner_instance_id: &str,
+    provider: PluginProviderView,
+    tool: PluginTool,
+    rpc_id: u64,
+) -> (String, Value) {
+    let request_runtime = Arc::clone(runtime);
+    let request_auth = auth.clone();
+    let runner = runner_id.to_string();
+    let plugin = provider.provider_id.clone();
+    let tool_name = tool.name.clone();
+    let task = tokio::spawn(async move {
+        handle_mcp_request(
+            &request_runtime,
+            rpc(
+                "tools/call",
+                Some(json!(rpc_id)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": {
+                        "action":"describe",
+                        "runner":runner,
+                        "plugin":plugin,
+                        "tool":tool_name
+                    }
+                }),
+            ),
+            Some(&request_auth),
+        )
+        .await
+    });
+
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, runner_id, runner_instance_id).await;
+    assert!(matches!(
+        providers_request.plugin_gateway,
+        Some(PluginGatewayRequest::ProvidersList)
+    ));
+    complete_plugin_request(
+        runtime,
+        providers_request,
+        runner_instance_id,
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider.clone()],
+            first_class_restart_required: true,
+        }),
+    )
+    .await;
+
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, runner_id, runner_instance_id).await;
+    assert!(matches!(
+        tools_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            plane: PluginPlane::Effective,
+            ref provider_id,
+            ref provider_instance_id,
+        }) if provider_id == &provider.provider_id
+            && provider_instance_id == &provider.provider_instance_id
+    ));
+    complete_plugin_request(
+        runtime,
+        tools_request,
+        runner_instance_id,
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Tools { tools: vec![tool] }),
+    )
+    .await;
+
+    let McpOutcome::Ok(result) = task.await.unwrap() else {
+        panic!("plugin_tool describe did not complete successfully");
+    };
+    assert_eq!(result["result"]["isError"], false);
+    let binding = result["result"]["structuredContent"]["binding"]
+        .as_str()
+        .expect("describe must return opaque binding")
+        .to_string();
+    assert!(binding.starts_with("wc_pbind_"));
+    let encoded = serde_json::to_string(&result["result"]["structuredContent"]).unwrap();
+    assert!(!encoded.contains(runner_instance_id));
+    assert!(!encoded.contains(&provider.provider_instance_id));
+    (binding, result)
+}
+
+fn spawn_binding_call(
+    runtime: &Arc<ToolRuntime>,
+    auth: &crate::auth::AuthContext,
+    binding: String,
+    arguments: Value,
+    rpc_id: u64,
+) -> tokio::task::JoinHandle<McpOutcome> {
+    let request_runtime = Arc::clone(runtime);
+    let request_auth = auth.clone();
+    tokio::spawn(async move {
+        handle_mcp_request(
+            &request_runtime,
+            rpc(
+                "tools/call",
+                Some(json!(rpc_id)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": {
+                        "action":"call",
+                        "binding":binding,
+                        "arguments":arguments
+                    }
+                }),
+            ),
+            Some(&request_auth),
+        )
+        .await
+    })
 }
 
 #[tokio::test]
@@ -695,30 +815,19 @@ async fn plugin_tool_reload_describe_call_binds_exact_dynamic_provider_and_forge
         describe_result["result"]["structuredContent"]["plugin"],
         "repo-tools"
     );
+    let binding = describe_result["result"]["structuredContent"]["binding"]
+        .as_str()
+        .expect("describe binding")
+        .to_string();
+    assert!(binding.starts_with("wc_pbind_"));
 
-    let call_runtime = Arc::clone(&runtime);
-    let call_auth = auth.clone();
-    let call_task = tokio::spawn(async move {
-        handle_mcp_request(
-            &call_runtime,
-            rpc(
-                "tools/call",
-                Some(json!(722)),
-                json!({
-                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                    "arguments": {
-                        "action":"call",
-                        "runner":"runner-a",
-                        "plugin":"repo-tools",
-                        "tool":"search_symbol",
-                        "arguments":{"query":"PluginManager"}
-                    }
-                }),
-            ),
-            Some(&call_auth),
-        )
-        .await
-    });
+    let call_task = spawn_binding_call(
+        &runtime,
+        &auth,
+        binding.clone(),
+        json!({"query":"PluginManager"}),
+        722,
+    );
     let call_request =
         wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
     let Some(PluginGatewayRequest::ToolsCall {
@@ -763,29 +872,13 @@ async fn plugin_tool_reload_describe_call_binds_exact_dynamic_provider_and_forge
         "found PluginManager"
     );
 
-    let replacement_runtime = Arc::clone(&runtime);
-    let replacement_auth = auth.clone();
-    let replacement_task = tokio::spawn(async move {
-        handle_mcp_request(
-            &replacement_runtime,
-            rpc(
-                "tools/call",
-                Some(json!(723)),
-                json!({
-                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                    "arguments": {
-                        "action":"call",
-                        "runner":"runner-a",
-                        "plugin":"repo-tools",
-                        "tool":"search_symbol",
-                        "arguments":{"query":"stale"}
-                    }
-                }),
-            ),
-            Some(&replacement_auth),
-        )
-        .await
-    });
+    let replacement_task = spawn_binding_call(
+        &runtime,
+        &auth,
+        binding.clone(),
+        json!({"query":"stale"}),
+        723,
+    );
     let replacement_request =
         wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
     assert!(matches!(
@@ -825,9 +918,7 @@ async fn plugin_tool_reload_describe_call_binds_exact_dynamic_provider_and_forge
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"call",
-                    "runner":"runner-a",
-                    "plugin":"repo-tools",
-                    "tool":"search_symbol",
+                    "binding":binding,
                     "arguments":{"query":"must-describe-again"}
                 }
             }),
@@ -848,6 +939,455 @@ async fn plugin_tool_reload_describe_call_binds_exact_dynamic_provider_and_forge
         .poll(RunnerPollRequest {
             client_id: "runner-a".to_string(),
             runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn plugin_binding_a_never_retargets_across_reload_and_binding_b_still_calls_v2() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+
+    let provider_v1 = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "dynamic-provider-v1".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let provider_v2 = PluginProviderView {
+        provider_instance_id: "dynamic-provider-v2".to_string(),
+        ..provider_v1.clone()
+    };
+
+    let (binding_a, _) = describe_dynamic_binding(
+        &runtime,
+        &auth,
+        "runner-a",
+        "runner-instance-a",
+        provider_v1.clone(),
+        plugin_tool("search_symbol"),
+        730,
+    )
+    .await;
+
+    let reload_runtime = Arc::clone(&runtime);
+    let reload_auth = auth.clone();
+    let reload_task = tokio::spawn(async move {
+        handle_mcp_request(
+            &reload_runtime,
+            rpc(
+                "tools/call",
+                Some(json!(731)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": {"action":"reload","runner":"runner-a"}
+                }),
+            ),
+            Some(&reload_auth),
+        )
+        .await
+    });
+    let reload_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        reload_request.plugin_gateway,
+        Some(PluginGatewayRequest::Reload)
+    ));
+    complete_plugin_request(
+        &runtime,
+        reload_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Reloaded {
+            providers: vec![provider_v2.clone()],
+            failures: vec![],
+            first_class_restart_required: true,
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(reload_result) = reload_task.await.unwrap() else {
+        panic!("reload failed");
+    };
+    assert_eq!(reload_result["result"]["isError"], false);
+
+    let (binding_b, _) = describe_dynamic_binding(
+        &runtime,
+        &auth,
+        "runner-a",
+        "runner-instance-a",
+        provider_v2.clone(),
+        plugin_tool("search_symbol"),
+        732,
+    )
+    .await;
+    assert_ne!(binding_a, binding_b);
+
+    let stale_a = spawn_binding_call(&runtime, &auth, binding_a, json!({"query":"stale-a"}), 733);
+    let request_a =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        request_a.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsCall {
+            plane: PluginPlane::Effective,
+            ref provider_instance_id,
+            ref name,
+            ..
+        }) if provider_instance_id == "dynamic-provider-v1" && name == "search_symbol"
+    ));
+    complete_plugin_request(
+        &runtime,
+        request_a,
+        "runner-instance-a",
+        PluginGatewayResponse::error(
+            PluginDispatchState::NotStarted,
+            "stale_plugin_provider",
+            "v1 was replaced",
+        ),
+    )
+    .await;
+    let McpOutcome::Ok(stale_result) = stale_a.await.unwrap() else {
+        panic!("stale binding should render a normal Plugin tool error");
+    };
+    assert_eq!(
+        stale_result["result"]["structuredContent"]["error"]["code"],
+        "plugin_replaced"
+    );
+    assert_eq!(
+        stale_result["result"]["structuredContent"]["dispatchState"],
+        "not_started"
+    );
+
+    let live_b = spawn_binding_call(&runtime, &auth, binding_b, json!({"query":"live-b"}), 734);
+    let request_b =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    let Some(PluginGatewayRequest::ToolsCall {
+        plane,
+        provider_instance_id,
+        name,
+        arguments,
+        ..
+    }) = request_b.plugin_gateway.clone()
+    else {
+        panic!("binding B did not dispatch a typed call");
+    };
+    assert_eq!(plane, PluginPlane::Effective);
+    assert_eq!(provider_instance_id, "dynamic-provider-v2");
+    assert_eq!(name, "search_symbol");
+    assert_eq!(arguments, json!({"query":"live-b"}));
+    complete_plugin_request(
+        &runtime,
+        request_b,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
+            result: PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "v2-ok".to_string(),
+                }],
+                structured_content: Some(json!({"version":2})),
+                is_error: false,
+            },
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(live_result) = live_b.await.unwrap() else {
+        panic!("binding B call failed");
+    };
+    assert_eq!(live_result["result"]["content"][0]["text"], "v2-ok");
+}
+
+#[tokio::test]
+async fn plugin_binding_rechecks_scope_and_runner_owner_without_invalidating_owner_binding() {
+    let runtime = Arc::new(test_runtime());
+    let alice = plugin_auth_for("alice", true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "dynamic-provider-instance".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let (binding, _) = describe_dynamic_binding(
+        &runtime,
+        &alice,
+        "runner-a",
+        "runner-instance-a",
+        provider,
+        plugin_tool("search_symbol"),
+        740,
+    )
+    .await;
+
+    let no_scope = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(741)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":binding.clone(),
+                    "arguments":{"query":"no-scope"}
+                }
+            }),
+        ),
+        Some(&plugin_auth_for("alice", false)),
+    )
+    .await;
+    assert!(matches!(no_scope, McpOutcome::Forbidden { .. }));
+
+    let bob = plugin_auth_for("bob", true);
+    let bob_result = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(742)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":binding.clone(),
+                    "arguments":{"query":"private"}
+                }
+            }),
+        ),
+        Some(&bob),
+    )
+    .await;
+    let McpOutcome::Ok(bob_result) = bob_result else {
+        panic!("owner isolation should render a Plugin tool error");
+    };
+    assert_eq!(bob_result["result"]["isError"], true);
+    assert_eq!(
+        bob_result["result"]["structuredContent"]["error"]["code"],
+        "describe_required"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    let alice_call = spawn_binding_call(
+        &runtime,
+        &alice,
+        binding,
+        json!({"query":"still-alice"}),
+        743,
+    );
+    let request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsCall { .. })
+    ));
+    complete_plugin_request(
+        &runtime,
+        request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
+            result: PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "alice-ok".to_string(),
+                }],
+                structured_content: None,
+                is_error: false,
+            },
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(alice_result) = alice_call.await.unwrap() else {
+        panic!("Alice's binding was incorrectly invalidated by Bob");
+    };
+    assert_eq!(alice_result["result"]["content"][0]["text"], "alice-ok");
+}
+
+#[tokio::test]
+async fn plugin_binding_runner_replacement_and_schema_change_fail_closed() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "dynamic-provider-instance".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+
+    let (runner_binding, _) = describe_dynamic_binding(
+        &runtime,
+        &auth,
+        "runner-a",
+        "runner-instance-a",
+        provider.clone(),
+        plugin_tool("search_symbol"),
+        750,
+    )
+    .await;
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-b",
+        "repo-tools",
+        "replacement-startup-provider",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let replaced = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(751)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":runner_binding,
+                    "arguments":{"query":"old-runner"}
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(replaced) = replaced else {
+        panic!("runner replacement should render a Plugin tool error");
+    };
+    assert_eq!(
+        replaced["result"]["structuredContent"]["error"]["code"],
+        "plugin_replaced"
+    );
+    assert_eq!(
+        replaced["result"]["structuredContent"]["dispatchState"],
+        "not_started"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-b".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    let (schema_binding, _) = describe_dynamic_binding(
+        &runtime,
+        &auth,
+        "runner-a",
+        "runner-instance-b",
+        provider,
+        plugin_tool("search_symbol"),
+        752,
+    )
+    .await;
+    let schema_call = spawn_binding_call(
+        &runtime,
+        &auth,
+        schema_binding.clone(),
+        json!({"query":"schema-change"}),
+        753,
+    );
+    let schema_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-b").await;
+    assert!(matches!(
+        schema_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsCall {
+            ref provider_instance_id,
+            ..
+        }) if provider_instance_id == "dynamic-provider-instance"
+    ));
+    complete_plugin_request(
+        &runtime,
+        schema_request,
+        "runner-instance-b",
+        PluginGatewayResponse::error(
+            PluginDispatchState::NotStarted,
+            "plugin_schema_changed",
+            "schema changed",
+        ),
+    )
+    .await;
+    let McpOutcome::Ok(schema_result) = schema_call.await.unwrap() else {
+        panic!("schema change should render a Plugin tool error");
+    };
+    assert_eq!(
+        schema_result["result"]["structuredContent"]["error"]["code"],
+        "plugin_schema_changed"
+    );
+    assert_eq!(
+        schema_result["result"]["structuredContent"]["dispatchState"],
+        "not_started"
+    );
+
+    let second = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(754)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":schema_binding,
+                    "arguments":{"query":"must-describe-again"}
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(second) = second else {
+        panic!("evicted stale binding should render a normal Plugin tool error");
+    };
+    assert_eq!(
+        second["result"]["structuredContent"]["error"]["code"],
+        "describe_required"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-b".to_string(),
         })
         .await
         .unwrap()

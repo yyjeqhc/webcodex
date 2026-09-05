@@ -2,6 +2,7 @@ mod activity;
 mod commands;
 mod error;
 mod models;
+mod operation;
 mod platform;
 mod process;
 mod state;
@@ -30,6 +31,7 @@ pub fn run() {
             commands::start_regular_tunnel,
             commands::stop_regular_tunnel,
             commands::stop_local_runtime,
+            commands::cancel_desktop_operation,
             commands::get_bounded_activity,
         ])
         .build(tauri::generate_context!())

@@ -1,6 +1,7 @@
 use crate::activity::{sanitize_message, ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::error::{DesktopError, DesktopResult};
 use crate::platform;
+use crate::process::reclaim_owned_tree;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -292,7 +293,12 @@ impl ProcessSupervisor {
                 graceful = false;
             }
             if !graceful {
-                stop_owned_tree(&mut process.child, process.owned_tree).await;
+                reclaim_owned_tree(
+                    &mut process.child,
+                    process.owned_tree,
+                    tokio::time::Instant::now() + GRACEFUL_STOP_TIMEOUT,
+                )
+                .await;
             }
         }
         #[cfg(target_os = "macos")]
@@ -300,7 +306,12 @@ impl ProcessSupervisor {
             // A root may already be terminal when stop() is called while one of
             // its descendants is still alive. The recorded process-group identity
             // remains the authority for that cleanup.
-            stop_owned_tree(&mut process.child, process.owned_tree).await;
+            reclaim_owned_tree(
+                &mut process.child,
+                process.owned_tree,
+                tokio::time::Instant::now() + GRACEFUL_STOP_TIMEOUT,
+            )
+            .await;
         }
         finish_drain_task(process.stdout_task).await;
         finish_drain_task(process.stderr_task).await;
@@ -322,43 +333,6 @@ impl ProcessSupervisor {
             self.stop(kind).await;
         }
     }
-}
-
-async fn stop_owned_tree(child: &mut Child, tree: platform::OwnedProcessTree) {
-    let _ = platform::terminate_owned_tree(tree).await;
-    if !wait_for_owned_tree_stop(child, tree).await {
-        let _ = platform::force_stop_owned_tree(tree).await;
-        let _ = child.start_kill();
-        let _ = wait_for_owned_tree_stop(child, tree).await;
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn wait_for_owned_tree_stop(child: &mut Child, tree: platform::OwnedProcessTree) -> bool {
-    let deadline = tokio::time::Instant::now() + GRACEFUL_STOP_TIMEOUT;
-    loop {
-        let _ = child.try_wait();
-        if !platform::owned_tree_is_running(tree) {
-            return true;
-        }
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            return false;
-        }
-        tokio::time::sleep(std::cmp::min(
-            std::time::Duration::from_millis(25),
-            deadline - now,
-        ))
-        .await;
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn wait_for_owned_tree_stop(child: &mut Child, _tree: platform::OwnedProcessTree) -> bool {
-    matches!(
-        tokio::time::timeout(GRACEFUL_STOP_TIMEOUT, child.wait()).await,
-        Ok(Ok(_))
-    )
 }
 
 async fn finish_drain_task(mut task: JoinHandle<()>) {

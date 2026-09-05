@@ -26,18 +26,24 @@ pub struct QuickShareRequest {
     pub provider: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelDesktopOperationRequest {
+    pub operation_id: String,
+}
+
 #[tauri::command]
 pub async fn get_desktop_state(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.get_state().await
+    Ok(state.get_state())
 }
 
 #[tauri::command]
 pub async fn refresh_runtime_status(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.refresh_runtime_status().await
+    state.refresh_runtime_status().await
 }
 
 #[tauri::command]
@@ -45,11 +51,7 @@ pub async fn inspect_project(
     request: ProjectRequest,
     state: State<'_, AppState>,
 ) -> Result<ProjectSelection, DesktopError> {
-    state
-        .lock()
-        .await
-        .inspect_project(&request.project_path)
-        .await
+    state.inspect_project(&request.project_path).await
 }
 
 #[tauri::command]
@@ -57,11 +59,7 @@ pub async fn configure_local_setup(
     request: ProjectRequest,
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state
-        .lock()
-        .await
-        .configure_local_setup(&request.project_path)
-        .await
+    state.configure_local_setup(&request.project_path).await
 }
 
 #[tauri::command]
@@ -70,8 +68,6 @@ pub async fn configure_remote_setup(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
     state
-        .lock()
-        .await
         .configure_remote_setup(
             &request.server_url,
             &request.pairing_code,
@@ -86,8 +82,6 @@ pub async fn start_quick_share(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
     state
-        .lock()
-        .await
         .start_quick_share(&request.project_path, &request.provider)
         .await
 }
@@ -96,33 +90,41 @@ pub async fn start_quick_share(
 pub async fn stop_quick_share(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.stop_quick_share().await
+    state.stop_quick_share().await
 }
 
 #[tauri::command]
 pub async fn start_regular_tunnel(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.start_regular_tunnel().await
+    state.start_regular_tunnel().await
 }
 
 #[tauri::command]
 pub async fn stop_regular_tunnel(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.stop_regular_tunnel().await
+    state.stop_regular_tunnel().await
 }
 
 #[tauri::command]
 pub async fn stop_local_runtime(
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.lock().await.stop_local_runtime().await
+    state.stop_local_runtime().await
+}
+
+#[tauri::command]
+pub async fn cancel_desktop_operation(
+    request: CancelDesktopOperationRequest,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    state.cancel_operation(&request.operation_id)
 }
 
 #[tauri::command]
 pub async fn get_bounded_activity(
     state: State<'_, AppState>,
 ) -> Result<Vec<ActivityEntry>, DesktopError> {
-    Ok(state.lock().await.activity())
+    Ok(state.activity())
 }

@@ -4,6 +4,7 @@ mod macos;
 mod windows;
 
 use tokio::process::Command;
+use webcodex_process::SpawnOptions;
 
 #[derive(Debug, Clone, Copy)]
 pub struct OwnedProcessTree {
@@ -26,6 +27,17 @@ pub fn configure_child(command: &mut Command) {
     windows::configure_child(command);
     #[cfg(target_os = "macos")]
     macos::configure_child(command);
+}
+
+pub fn managed_spawn_options() -> SpawnOptions {
+    #[cfg(target_os = "windows")]
+    {
+        return windows::managed_spawn_options();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        SpawnOptions::new()
+    }
 }
 
 pub async fn terminate_owned_tree(tree: OwnedProcessTree) -> bool {

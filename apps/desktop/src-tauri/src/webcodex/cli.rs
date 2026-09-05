@@ -1,15 +1,22 @@
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::BinaryInfo;
+use crate::operation::{cancelled_error, CancellationContext};
 use crate::platform;
 use serde::de::DeserializeOwned;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::task::JoinHandle;
+use tokio::time::Instant;
+use webcodex_process::{GracefulTermination, ManagedChild};
 
 const CLI_OUTPUT_BYTES: usize = 256 * 1024;
+const CLI_INPUT_BYTES: usize = 64 * 1024;
 const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+const CLI_CLEANUP_SLACK: Duration = Duration::from_secs(2);
+const CLI_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CLI_GRACEFUL_CLEANUP: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedBinarySource {
@@ -40,7 +47,11 @@ pub struct ResolvedBinaries {
 }
 
 impl ResolvedBinaries {
-    pub async fn resolve(bundled_runtime_dir: Option<&Path>) -> DesktopResult<Self> {
+    pub async fn resolve(
+        bundled_runtime_dir: Option<&Path>,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<Self> {
+        cancellation.check()?;
         let (directory, source) =
             if let Some(directory) = bundled_runtime_dir.filter(|path| path.is_dir()) {
                 (directory.to_path_buf(), ResolvedBinarySource::Bundled)
@@ -120,9 +131,9 @@ impl ResolvedBinaries {
             }
         }
 
-        let cli_version = binary_version(&webcodex).await?;
-        let server_version = binary_version(&server).await?;
-        let runner_version = binary_version(&runner).await?;
+        let cli_version = binary_version(&webcodex, cancellation).await?;
+        let server_version = binary_version(&server, cancellation).await?;
+        let runner_version = binary_version(&runner, cancellation).await?;
         if cli_version.version != server_version.version
             || cli_version.version != runner_version.version
             || cli_version.git_commit != server_version.git_commit
@@ -168,8 +179,11 @@ struct VersionLine {
     git_commit: String,
 }
 
-async fn binary_version(path: &Path) -> DesktopResult<VersionLine> {
-    let output = run_bounded(path, &["--version".to_string()], None, false).await?;
+async fn binary_version(
+    path: &Path,
+    cancellation: &CancellationContext,
+) -> DesktopResult<VersionLine> {
+    let output = run_bounded(path, &["--version".to_string()], None, false, cancellation).await?;
     if output.exit_code != Some(0) {
         return Err(DesktopError::new(
             "binary_probe_failed",
@@ -209,8 +223,9 @@ pub async fn run_json<T: DeserializeOwned>(
     args: &[String],
     stdin: Option<&[u8]>,
     secret_output: bool,
+    cancellation: &CancellationContext,
 ) -> DesktopResult<T> {
-    let output = run_bounded(executable, args, stdin, secret_output).await?;
+    let output = run_bounded(executable, args, stdin, secret_output, cancellation).await?;
     if output.exit_code != Some(0) {
         return Err(DesktopError::new(
             "webcodex_command_failed",
@@ -228,6 +243,7 @@ pub async fn run_json<T: DeserializeOwned>(
     })
 }
 
+#[derive(Debug)]
 struct BoundedOutput {
     exit_code: Option<i32>,
     stdout: Vec<u8>,
@@ -239,80 +255,256 @@ async fn run_bounded(
     executable: &Path,
     args: &[String],
     stdin_payload: Option<&[u8]>,
-    _secret_output: bool,
+    secret_output: bool,
+    cancellation: &CancellationContext,
 ) -> DesktopResult<BoundedOutput> {
-    let mut command = Command::new(executable);
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // One-shot Desktop adapter calls must not survive cancellation or an
-        // early stdin/write error. Long-lived Server/Runner/Share processes
-        // are owned separately by ProcessSupervisor instead.
-        .kill_on_drop(true);
+    run_bounded_with_timeout(
+        executable,
+        args,
+        stdin_payload,
+        secret_output,
+        cancellation,
+        CLI_TIMEOUT,
+    )
+    .await
+}
+
+async fn run_bounded_with_timeout(
+    executable: &Path,
+    args: &[String],
+    stdin_payload: Option<&[u8]>,
+    _secret_output: bool,
+    cancellation: &CancellationContext,
+    timeout: Duration,
+) -> DesktopResult<BoundedOutput> {
+    let deadline = Instant::now() + timeout;
+    cancellation.check()?;
+    if stdin_payload.is_some_and(|payload| payload.len() > CLI_INPUT_BYTES) {
+        return Err(DesktopError::new(
+            "webcodex_command_input_failed",
+            "Protected WebCodex command input exceeds the Desktop safety limit",
+            "Retry with a valid bounded Desktop input.",
+        ));
+    }
+
+    let mut command = bounded_command(executable, args);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin_payload.is_some() {
         command.stdin(Stdio::piped());
     } else {
         command.stdin(Stdio::null());
     }
-    platform::configure_child(&mut command);
-    let mut child = command.spawn().map_err(|error| {
-        DesktopError::new(
-            "webcodex_command_start_failed",
-            "Could not start a WebCodex command",
-            "Check the Desktop binary directory and Windows execution permissions.",
-        )
-        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        DesktopError::new(
-            "webcodex_command_start_failed",
-            "Could not capture WebCodex output",
-            "Retry the operation.",
-        )
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        DesktopError::new(
-            "webcodex_command_start_failed",
-            "Could not capture WebCodex diagnostics",
-            "Retry the operation.",
-        )
-    })?;
-    let stdout_task = tokio::spawn(read_bounded(stdout));
-    let stderr_task = tokio::spawn(read_bounded(stderr));
-    if let Some(payload) = stdin_payload {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(payload).await.map_err(|_| {
+    let mut child =
+        ManagedChild::spawn_with_options(&mut command, platform::managed_spawn_options()).map_err(
+            |error| {
                 DesktopError::new(
+                    "webcodex_command_start_failed",
+                    "Could not start a safely owned WebCodex command",
+                    "Check the Desktop binary directory and execution permissions.",
+                )
+                .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+            },
+        )?;
+
+    let stdout = match child.child_mut().stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            cleanup_child_only(&mut child, deadline).await;
+            return Err(DesktopError::new(
+                "webcodex_command_start_failed",
+                "Could not capture WebCodex output",
+                "Retry the operation.",
+            ));
+        }
+    };
+    let stderr = match child.child_mut().stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            cleanup_child_only(&mut child, deadline).await;
+            return Err(DesktopError::new(
+                "webcodex_command_start_failed",
+                "Could not capture WebCodex diagnostics",
+                "Retry the operation.",
+            ));
+        }
+    };
+    let mut stdout_task = Some(tokio::task::spawn_blocking(move || read_bounded(stdout)));
+    let mut stderr_task = Some(tokio::task::spawn_blocking(move || read_bounded(stderr)));
+    let mut stdin_task = None;
+
+    if let Some(payload) = stdin_payload {
+        let Some(stdin) = child.child_mut().stdin.take() else {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(DesktopError::new(
+                "webcodex_command_input_failed",
+                "Could not open protected input for the WebCodex command",
+                "Retry the operation.",
+            ));
+        };
+        let payload = payload.to_vec();
+        stdin_task = Some(tokio::task::spawn_blocking(move || {
+            write_and_close_stdin(stdin, payload)
+        }));
+        match await_stdin_writer(&mut stdin_task, deadline, cancellation).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                cleanup_command(
+                    &mut child,
+                    &mut stdin_task,
+                    &mut stdout_task,
+                    &mut stderr_task,
+                    deadline,
+                )
+                .await;
+                return Err(DesktopError::new(
                     "webcodex_command_input_failed",
                     "Could not pass protected input to WebCodex",
                     "Retry the operation.",
+                ));
+            }
+            Err(WaitInterruption::Timeout) => {
+                cleanup_command(
+                    &mut child,
+                    &mut stdin_task,
+                    &mut stdout_task,
+                    &mut stderr_task,
+                    deadline,
                 )
-            })?;
-            stdin.shutdown().await.ok();
+                .await;
+                return Err(timeout_error());
+            }
+            Err(WaitInterruption::Cancelled) => {
+                cleanup_command(
+                    &mut child,
+                    &mut stdin_task,
+                    &mut stdout_task,
+                    &mut stderr_task,
+                    deadline,
+                )
+                .await;
+                return Err(cancelled_error());
+            }
         }
     }
-    let status = match tokio::time::timeout(CLI_TIMEOUT, child.wait()).await {
+
+    let status = match wait_for_direct_child(&mut child, deadline, cancellation).await {
         Ok(Ok(status)) => status,
         Ok(Err(_)) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
             return Err(DesktopError::new(
                 "webcodex_command_wait_failed",
                 "Could not observe the WebCodex command result",
                 "Retry the operation.",
-            ))
-        }
-        Err(_) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            return Err(DesktopError::new(
-                "webcodex_command_timeout",
-                "WebCodex did not finish within the Desktop command timeout",
-                "Check Server reachability and retry.",
             ));
         }
+        Err(WaitInterruption::Timeout) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(timeout_error());
+        }
+        Err(WaitInterruption::Cancelled) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(cancelled_error());
+        }
     };
-    let stdout = stdout_task.await.unwrap_or_default();
-    let stderr = stderr_task.await.unwrap_or_default();
+
+    let stdout = match await_reader(&mut stdout_task, deadline, cancellation).await {
+        Ok(output) => output,
+        Err(interruption) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(interruption.into_error());
+        }
+    };
+    let stderr = match await_reader(&mut stderr_task, deadline, cancellation).await {
+        Ok(output) => output,
+        Err(interruption) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(interruption.into_error());
+        }
+    };
+
+    match wait_for_tree_exit(&child, deadline, cancellation).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(DesktopError::new(
+                "webcodex_command_wait_failed",
+                "Could not verify that the Desktop-owned WebCodex process tree exited",
+                "Retry the operation after checking Activity.",
+            ));
+        }
+        Err(WaitInterruption::Timeout) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(timeout_error());
+        }
+        Err(WaitInterruption::Cancelled) => {
+            cleanup_command(
+                &mut child,
+                &mut stdin_task,
+                &mut stdout_task,
+                &mut stderr_task,
+                deadline,
+            )
+            .await;
+            return Err(cancelled_error());
+        }
+    }
+
     Ok(BoundedOutput {
         exit_code: status.code(),
         stdout,
@@ -320,11 +512,257 @@ async fn run_bounded(
     })
 }
 
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R) -> Vec<u8> {
+fn bounded_command(executable: &Path, args: &[String]) -> Command {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("WEBCODEX_DESKTOP_STUCK_OPERATION_FIXTURE").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        #[cfg(target_os = "windows")]
+        {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$child = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 120' -PassThru; Wait-Process -Id $child.Id",
+            ]);
+            return command;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "sleep 120 & descendant=$!; wait \"$descendant\""]);
+            return command;
+        }
+    }
+
+    let mut command = Command::new(executable);
+    command.args(args);
+    command
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitInterruption {
+    Timeout,
+    Cancelled,
+}
+
+impl WaitInterruption {
+    fn into_error(self) -> DesktopError {
+        match self {
+            Self::Timeout => timeout_error(),
+            Self::Cancelled => cancelled_error(),
+        }
+    }
+}
+
+async fn wait_for_direct_child(
+    child: &mut ManagedChild,
+    deadline: Instant,
+    cancellation: &CancellationContext,
+) -> Result<std::io::Result<ExitStatus>, WaitInterruption> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(Ok(status)),
+            Ok(None) => {}
+            Err(error) => return Ok(Err(error)),
+        }
+        wait_for_poll(deadline, cancellation).await?;
+    }
+}
+
+async fn wait_for_tree_exit(
+    child: &ManagedChild,
+    deadline: Instant,
+    cancellation: &CancellationContext,
+) -> Result<std::io::Result<()>, WaitInterruption> {
+    loop {
+        match child.try_tree_exit() {
+            Ok(true) => return Ok(Ok(())),
+            Ok(false) => {}
+            Err(error) => return Ok(Err(error)),
+        }
+        wait_for_poll(deadline, cancellation).await?;
+    }
+}
+
+async fn wait_for_poll(
+    deadline: Instant,
+    cancellation: &CancellationContext,
+) -> Result<(), WaitInterruption> {
+    if cancellation.is_cancelled() {
+        return Err(WaitInterruption::Cancelled);
+    }
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(WaitInterruption::Timeout);
+    }
+    let next_poll = std::cmp::min(deadline, now + CLI_POLL_INTERVAL);
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(WaitInterruption::Cancelled),
+        _ = tokio::time::sleep_until(next_poll) => Ok(()),
+    }
+}
+
+async fn await_stdin_writer(
+    task: &mut Option<JoinHandle<std::io::Result<()>>>,
+    deadline: Instant,
+    cancellation: &CancellationContext,
+) -> Result<std::io::Result<()>, WaitInterruption> {
+    let Some(handle) = task.as_mut() else {
+        return Ok(Ok(()));
+    };
+    if cancellation.is_cancelled() {
+        return Err(WaitInterruption::Cancelled);
+    }
+    if Instant::now() >= deadline {
+        return Err(WaitInterruption::Timeout);
+    }
+    let result = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(WaitInterruption::Cancelled),
+        _ = tokio::time::sleep_until(deadline) => return Err(WaitInterruption::Timeout),
+        result = handle => result,
+    };
+    task.take();
+    Ok(result.unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()))))
+}
+
+async fn await_reader(
+    task: &mut Option<JoinHandle<Vec<u8>>>,
+    deadline: Instant,
+    cancellation: &CancellationContext,
+) -> Result<Vec<u8>, WaitInterruption> {
+    let Some(handle) = task.as_mut() else {
+        return Ok(Vec::new());
+    };
+    if cancellation.is_cancelled() {
+        return Err(WaitInterruption::Cancelled);
+    }
+    if Instant::now() >= deadline {
+        return Err(WaitInterruption::Timeout);
+    }
+    let result = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(WaitInterruption::Cancelled),
+        _ = tokio::time::sleep_until(deadline) => return Err(WaitInterruption::Timeout),
+        result = handle => result,
+    };
+    task.take();
+    Ok(result.unwrap_or_default())
+}
+
+async fn cleanup_child_only(child: &mut ManagedChild, operation_deadline: Instant) {
+    terminate_managed_tree(child, cleanup_deadline(operation_deadline)).await;
+}
+
+async fn cleanup_command(
+    child: &mut ManagedChild,
+    stdin_task: &mut Option<JoinHandle<std::io::Result<()>>>,
+    stdout_task: &mut Option<JoinHandle<Vec<u8>>>,
+    stderr_task: &mut Option<JoinHandle<Vec<u8>>>,
+    operation_deadline: Instant,
+) {
+    let deadline = cleanup_deadline(operation_deadline);
+    terminate_managed_tree(child, deadline).await;
+    finish_task(stdin_task, deadline).await;
+    finish_task(stdout_task, deadline).await;
+    finish_task(stderr_task, deadline).await;
+}
+
+async fn terminate_managed_tree(child: &mut ManagedChild, deadline: Instant) {
+    if matches!(
+        child.request_terminate_tree(),
+        Ok(GracefulTermination::Requested)
+    ) {
+        let now = Instant::now();
+        if now < deadline {
+            let graceful_deadline = std::cmp::min(deadline, now + CLI_GRACEFUL_CLEANUP);
+            let _ = wait_for_tree_exit_during_cleanup(child, graceful_deadline).await;
+        }
+    }
+    if !child.try_tree_exit().unwrap_or(false) {
+        let _ = child.terminate_tree();
+        let _ = wait_for_tree_exit_during_cleanup(child, deadline).await;
+    }
+    let _ = child.try_wait();
+}
+
+async fn wait_for_tree_exit_during_cleanup(child: &ManagedChild, deadline: Instant) -> bool {
+    loop {
+        if child.try_tree_exit().unwrap_or(false) {
+            return true;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        tokio::time::sleep_until(std::cmp::min(deadline, now + CLI_POLL_INTERVAL)).await;
+    }
+}
+
+async fn finish_task<T>(task: &mut Option<JoinHandle<T>>, deadline: Instant) {
+    if let Some(mut task) = task.take() {
+        task.abort();
+        if Instant::now() < deadline {
+            let _ = tokio::time::timeout_at(deadline, &mut task).await;
+        }
+    }
+}
+
+fn cleanup_deadline(operation_deadline: Instant) -> Instant {
+    let now = Instant::now();
+    if operation_deadline > now {
+        std::cmp::min(operation_deadline, now + CLI_CLEANUP_SLACK)
+    } else {
+        now + CLI_CLEANUP_SLACK
+    }
+}
+
+fn timeout_error() -> DesktopError {
+    DesktopError::new(
+        "webcodex_command_timeout",
+        "WebCodex did not finish within the Desktop command timeout",
+        "Check Server reachability and retry.",
+    )
+}
+
+#[cfg(test)]
+pub(crate) async fn run_test_bounded(
+    executable: &Path,
+    args: &[String],
+    stdin_payload: Option<&[u8]>,
+    cancellation: &CancellationContext,
+    timeout: Duration,
+) -> DesktopResult<()> {
+    run_bounded_with_timeout(
+        executable,
+        args,
+        stdin_payload,
+        false,
+        cancellation,
+        timeout,
+    )
+    .await
+    .map(|_| ())
+}
+
+fn write_and_close_stdin(
+    mut stdin: std::process::ChildStdin,
+    payload: Vec<u8>,
+) -> std::io::Result<()> {
+    stdin.write_all(&payload)?;
+    stdin.flush()?;
+    drop(stdin);
+    Ok(())
+}
+
+fn read_bounded<R: Read>(mut reader: R) -> Vec<u8> {
     let mut output = Vec::new();
     let mut buffer = [0_u8; 4096];
     loop {
-        let read = match reader.read(&mut buffer).await {
+        let read = match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(read) => read,
         };
@@ -347,6 +785,7 @@ fn executable_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operation::{CancellationContext, CancellationSignal};
 
     #[test]
     fn version_parser_requires_commit_identity() {
@@ -360,5 +799,219 @@ mod tests {
     #[test]
     fn bundled_source_label_is_stable() {
         assert_eq!(ResolvedBinarySource::Bundled.label(), "Bundled");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn process_exists(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        let result = unsafe { libc::kill(pid, 0) };
+        if result == 0 {
+            return true;
+        }
+        !matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn unique_marker(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "webcodex-cli-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_fixture_pids(marker: &Path) -> Vec<u32> {
+        std::fs::read_to_string(marker)
+            .expect("fixture must publish owned pids")
+            .split_whitespace()
+            .map(|value| value.parse().expect("fixture pid"))
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn blocked_stdin_uses_one_total_deadline_and_reclaims_owned_tree() {
+        let marker = unique_marker("blocked-stdin");
+        let args = vec![
+            "-c".to_string(),
+            "sleep 8 & descendant=$!; printf '%s %s\\n' \"$$\" \"$descendant\" > \"$1\"; wait \"$descendant\"".to_string(),
+            "webcodex-blocked-stdin".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let payload = vec![b'x'; CLI_INPUT_BYTES];
+        let cancellation = CancellationContext::never();
+        let started = Instant::now();
+        let error = run_bounded_with_timeout(
+            Path::new("/bin/sh"),
+            &args,
+            Some(&payload),
+            false,
+            &cancellation,
+            Duration::from_millis(350),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "webcodex_command_timeout");
+        assert!(started.elapsed() < Duration::from_secs(4));
+        for pid in read_fixture_pids(&marker) {
+            assert!(
+                !process_exists(pid),
+                "owned PID {pid} survived timeout cleanup"
+            );
+        }
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn inherited_output_pipe_cannot_extend_the_command_lifetime() {
+        let marker = unique_marker("inherited-pipe");
+        let args = vec![
+            "-c".to_string(),
+            "sleep 8 & descendant=$!; printf '%s\\n' \"$descendant\" > \"$1\"; exit 0".to_string(),
+            "webcodex-inherited-pipe".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let cancellation = CancellationContext::never();
+        let started = Instant::now();
+        let error = run_bounded_with_timeout(
+            Path::new("/bin/sh"),
+            &args,
+            None,
+            false,
+            &cancellation,
+            Duration::from_millis(350),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "webcodex_command_timeout");
+        assert!(started.elapsed() < Duration::from_secs(4));
+        for pid in read_fixture_pids(&marker) {
+            assert!(
+                !process_exists(pid),
+                "pipe-holding PID {pid} survived cleanup"
+            );
+        }
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn explicit_cancel_interrupts_blocked_stdin_and_keeps_cancel_classification() {
+        let marker = unique_marker("cancelled-stdin");
+        let args = vec![
+            "-c".to_string(),
+            "sleep 8 & descendant=$!; printf '%s %s\\n' \"$$\" \"$descendant\" > \"$1\"; wait \"$descendant\"".to_string(),
+            "webcodex-cancelled-stdin".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let operation = CancellationSignal::new();
+        let cancellation = CancellationContext::new(operation.clone(), CancellationSignal::new());
+        let payload = vec![b'x'; CLI_INPUT_BYTES];
+        let command = tokio::spawn(async move {
+            run_bounded_with_timeout(
+                Path::new("/bin/sh"),
+                &args,
+                Some(&payload),
+                false,
+                &cancellation,
+                Duration::from_secs(8),
+            )
+            .await
+        });
+        let marker_deadline = Instant::now() + Duration::from_secs(2);
+        while !marker.is_file() {
+            assert!(Instant::now() < marker_deadline, "fixture did not start");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        operation.cancel();
+        let error = tokio::time::timeout(Duration::from_secs(4), command)
+            .await
+            .expect("cancelled command must return promptly")
+            .expect("fixture task")
+            .unwrap_err();
+        assert_eq!(error.code, "desktop_operation_cancelled");
+        for pid in read_fixture_pids(&marker) {
+            assert!(
+                !process_exists(pid),
+                "owned PID {pid} survived cancellation"
+            );
+        }
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows_process_exists(pid: u32) -> bool {
+        let filter = format!("PID eq {pid}");
+        let Ok(output) = std::process::Command::new("tasklist.exe")
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .output()
+        else {
+            return false;
+        };
+        String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn windows_blocked_stdin_reclaims_the_owned_process_tree() {
+        let marker = std::env::temp_dir().join(format!(
+            "webcodex-cli-blocked-stdin-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let script = concat!(
+            "$child = Start-Process powershell.exe ",
+            "-ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 8' ",
+            "-PassThru; ",
+            "Set-Content -Path $args[0] -Value \"$PID $($child.Id)\" -NoNewline; ",
+            "Start-Sleep -Seconds 8"
+        );
+        let args = vec![
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            script.to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let payload = vec![b'x'; CLI_INPUT_BYTES];
+        let cancellation = CancellationContext::never();
+        let started = Instant::now();
+        let error = run_bounded_with_timeout(
+            Path::new("powershell.exe"),
+            &args,
+            Some(&payload),
+            false,
+            &cancellation,
+            Duration::from_millis(1200),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "webcodex_command_timeout");
+        assert!(started.elapsed() < Duration::from_secs(6));
+        let pids = std::fs::read_to_string(&marker)
+            .expect("fixture must publish owned pids")
+            .split_whitespace()
+            .map(|value| value.parse::<u32>().expect("fixture pid"))
+            .collect::<Vec<_>>();
+        for pid in pids {
+            assert!(
+                !windows_process_exists(pid),
+                "owned PID {pid} survived timeout cleanup"
+            );
+        }
+        let _ = std::fs::remove_file(marker);
     }
 }

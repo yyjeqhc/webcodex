@@ -250,6 +250,50 @@ pub struct RegularTunnelState {
     pub ready_for_chatgpt: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopOperationKind {
+    LocalSetup,
+    RemoteSetup,
+    QuickShareStart,
+    QuickShareStop,
+    RegularTunnelStart,
+    RegularTunnelStop,
+    LocalRuntimeStop,
+    RuntimeRefresh,
+}
+
+impl DesktopOperationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalSetup => "local_setup",
+            Self::RemoteSetup => "remote_setup",
+            Self::QuickShareStart => "quick_share_start",
+            Self::QuickShareStop => "quick_share_stop",
+            Self::RegularTunnelStart => "regular_tunnel_start",
+            Self::RegularTunnelStop => "regular_tunnel_stop",
+            Self::LocalRuntimeStop => "local_runtime_stop",
+            Self::RuntimeRefresh => "runtime_refresh",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopOperationPhase {
+    Running,
+    Cancelling,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopOperationSnapshot {
+    pub id: String,
+    pub kind: DesktopOperationKind,
+    pub phase: DesktopOperationPhase,
+    pub started_at_ms: u64,
+    pub cancellable: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
@@ -258,6 +302,7 @@ pub struct DesktopStateSnapshot {
     pub binaries: Option<BinaryInfo>,
     pub quick_share: Option<QuickShareState>,
     pub regular_tunnel: Option<RegularTunnelState>,
+    pub current_operation: Option<DesktopOperationSnapshot>,
     pub activity_sequence: u64,
     pub openai_tunnel_configured: bool,
     pub regular_tunnel_available: bool,
@@ -272,6 +317,7 @@ impl Default for DesktopStateSnapshot {
             binaries: None,
             quick_share: None,
             regular_tunnel: None,
+            current_operation: None,
             activity_sequence: 0,
             openai_tunnel_configured: false,
             regular_tunnel_available: false,

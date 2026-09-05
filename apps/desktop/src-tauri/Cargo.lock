@@ -3998,6 +3998,15 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "url",
+ "webcodex-process",
+]
+
+[[package]]
+name = "webcodex-process"
+version = "0.3.9"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

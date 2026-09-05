@@ -4,6 +4,7 @@ use super::models::{
 };
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::ProjectSelection;
+use crate::operation::CancellationContext;
 use crate::platform;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
@@ -32,10 +33,15 @@ impl WebCodexAdapter {
         }
     }
 
-    pub async fn ensure_binaries(&mut self) -> DesktopResult<&ResolvedBinaries> {
+    pub async fn ensure_binaries(
+        &mut self,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
-            self.binaries =
-                Some(ResolvedBinaries::resolve(self.bundled_runtime_dir.as_deref()).await?);
+            self.binaries = Some(
+                ResolvedBinaries::resolve(self.bundled_runtime_dir.as_deref(), cancellation)
+                    .await?,
+            );
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
     }
@@ -51,38 +57,7 @@ impl WebCodexAdapter {
     }
 
     pub async fn inspect_project(&self, path: &str) -> DesktopResult<ProjectSelection> {
-        let requested = PathBuf::from(path);
-        let canonical = tokio::fs::canonicalize(&requested).await.map_err(|_| {
-            DesktopError::new(
-                "project_unavailable",
-                "The selected project directory could not be resolved",
-                "Choose an existing directory that this Windows account can access.",
-            )
-        })?;
-        let metadata = tokio::fs::metadata(&canonical).await.map_err(|_| {
-            DesktopError::new(
-                "project_unavailable",
-                "The selected project directory could not be inspected",
-                "Check its filesystem permissions and retry.",
-            )
-        })?;
-        if !metadata.is_dir() {
-            return Err(DesktopError::new(
-                "project_not_directory",
-                "The selected project is not a directory",
-                "Choose a project directory.",
-            ));
-        }
-        let allowed_root = canonical.parent().unwrap_or(&canonical).to_path_buf();
-        let is_git_repository = tokio::fs::symlink_metadata(canonical.join(".git"))
-            .await
-            .is_ok();
-        Ok(ProjectSelection {
-            path: display_path(&canonical),
-            allowed_root: display_path(&allowed_root),
-            is_git_repository,
-            runtime_project_id: None,
-        })
+        inspect_project_path(path).await
     }
 
     pub async fn init_local_server(
@@ -90,8 +65,10 @@ impl WebCodexAdapter {
         listen: &str,
         data_dir: &Path,
         env_file: &Path,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<ServerStatusOutput> {
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        cancellation.check()?;
         tokio::fs::create_dir_all(
             data_dir
                 .parent()
@@ -119,12 +96,14 @@ impl WebCodexAdapter {
             ],
             None,
             false,
+            cancellation,
         )
         .await?;
         if init.env_file.trim().is_empty() || init.listen.trim().is_empty() {
             return Err(invalid_contract("server init"));
         }
-        self.server_status(None, Some(env_file), None).await
+        self.server_status(None, Some(env_file), None, cancellation)
+            .await
     }
 
     pub async fn server_status(
@@ -132,8 +111,9 @@ impl WebCodexAdapter {
         server_url: Option<&str>,
         env_file: Option<&Path>,
         token_file: Option<&Path>,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<ServerStatusOutput> {
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
         let mut args = vec!["server".into(), "status".into()];
         if let Some(url) = server_url {
             args.extend(["--url".into(), url.into()]);
@@ -145,7 +125,8 @@ impl WebCodexAdapter {
             args.extend(["--token-file".into(), path.to_string_lossy().to_string()]);
         }
         args.push("--json".into());
-        let output: ServerStatusOutput = run_json(&webcodex, &args, None, false).await?;
+        let output: ServerStatusOutput =
+            run_json(&webcodex, &args, None, false, cancellation).await?;
         if output.probe_url.trim().is_empty() {
             return Err(invalid_contract("server status"));
         }
@@ -239,8 +220,9 @@ impl WebCodexAdapter {
         &mut self,
         server_url: &str,
         env_file: &Path,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<String> {
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
         let username = platform::current_username();
         let output: PairingCreateOutput = run_json(
             &webcodex,
@@ -259,6 +241,7 @@ impl WebCodexAdapter {
             ],
             None,
             true,
+            cancellation,
         )
         .await?;
         if !output.pairing_code.starts_with("wc_pair_") {
@@ -273,6 +256,7 @@ impl WebCodexAdapter {
         pairing_code: &str,
         connections_dir: &Path,
         project: &ProjectSelection,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<ProjectRuntimeIdentity> {
         validate_server_url(server_url)?;
         if pairing_code.trim().is_empty() {
@@ -282,7 +266,8 @@ impl WebCodexAdapter {
                 "Enter the wc_pair_… code issued by the Server.",
             ));
         }
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        cancellation.check()?;
         tokio::fs::create_dir_all(connections_dir)
             .await
             .map_err(|_| {
@@ -308,13 +293,18 @@ impl WebCodexAdapter {
             ],
             Some(pairing_code.as_bytes()),
             true,
+            cancellation,
         )
         .await?;
         validate_login_output(&output, project)
     }
 
-    pub async fn runner_ready(&mut self, identity: &ProjectRuntimeIdentity) -> DesktopResult<bool> {
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+    pub async fn runner_ready(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<bool> {
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
         let output: RunnerStatusOutput = run_json(
             &webcodex,
             &[
@@ -330,6 +320,7 @@ impl WebCodexAdapter {
             ],
             None,
             false,
+            cancellation,
         )
         .await?;
         if output.config.path.trim().is_empty()
@@ -353,8 +344,9 @@ impl WebCodexAdapter {
     pub async fn project_ready(
         &mut self,
         identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<bool> {
-        let webcodex = self.ensure_binaries().await?.webcodex.clone();
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
         let output: OpsProjectsOutput = run_json(
             &webcodex,
             &[
@@ -368,6 +360,7 @@ impl WebCodexAdapter {
             ],
             None,
             false,
+            cancellation,
         )
         .await?;
         Ok(output
@@ -376,6 +369,41 @@ impl WebCodexAdapter {
             .iter()
             .any(|candidate| ops_project_is_ready(candidate, identity)))
     }
+}
+
+pub async fn inspect_project_path(path: &str) -> DesktopResult<ProjectSelection> {
+    let requested = PathBuf::from(path);
+    let canonical = tokio::fs::canonicalize(&requested).await.map_err(|_| {
+        DesktopError::new(
+            "project_unavailable",
+            "The selected project directory could not be resolved",
+            "Choose an existing directory that this account can access.",
+        )
+    })?;
+    let metadata = tokio::fs::metadata(&canonical).await.map_err(|_| {
+        DesktopError::new(
+            "project_unavailable",
+            "The selected project directory could not be inspected",
+            "Check its filesystem permissions and retry.",
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(DesktopError::new(
+            "project_not_directory",
+            "The selected project is not a directory",
+            "Choose a project directory.",
+        ));
+    }
+    let allowed_root = canonical.parent().unwrap_or(&canonical).to_path_buf();
+    let is_git_repository = tokio::fs::symlink_metadata(canonical.join(".git"))
+        .await
+        .is_ok();
+    Ok(ProjectSelection {
+        path: display_path(&canonical),
+        allowed_root: display_path(&allowed_root),
+        is_git_repository,
+        runtime_project_id: None,
+    })
 }
 
 fn ops_project_is_ready(

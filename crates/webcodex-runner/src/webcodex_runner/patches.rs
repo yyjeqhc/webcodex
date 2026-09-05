@@ -332,8 +332,8 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
 };
 use crate::apply_patch_shared::{
-    derive_codex_patch_update_with_matches, parse_codex_patch, CodexPatchChunkMatch,
-    CodexPatchError, CodexPatchHunk, CodexPatchMatchDiagnostic,
+    derive_codex_patch_update_with_matching_mode, parse_codex_patch, ApplyPatchMatchingMode,
+    CodexPatchChunkMatch, CodexPatchError, CodexPatchHunk, CodexPatchMatchDiagnostic,
 };
 
 #[derive(Debug, Deserialize)]
@@ -352,7 +352,26 @@ struct ApplyPatchPayload {
     #[serde(default)]
     dry_run: Option<bool>,
     #[serde(default)]
+    matching_mode: Option<ApplyPatchMatchingMode>,
+    /// Rolling-wire compatibility for older Servers only. Current model-facing
+    /// requests use matching_mode and never emit this field.
+    #[serde(default)]
     strict_matching: Option<bool>,
+}
+
+fn apply_patch_matching_mode(
+    payload: &ApplyPatchPayload,
+) -> Result<ApplyPatchMatchingMode, String> {
+    if payload.matching_mode.is_some() && payload.strict_matching.is_some() {
+        return Err("matching_mode and legacy strict_matching cannot be combined".to_string());
+    }
+    Ok(match (payload.matching_mode, payload.strict_matching) {
+        (Some(mode), None) => mode,
+        (None, Some(true)) => ApplyPatchMatchingMode::ExactUnique,
+        // Preserve the old Server wire default when rolling a new Runner first.
+        (None, Some(false) | None) => ApplyPatchMatchingMode::FirstMatch,
+        (Some(_), Some(_)) => unreachable!(),
+    })
 }
 
 #[derive(Debug)]
@@ -1054,6 +1073,7 @@ fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFai
 fn execute_planned_file_changes(
     plans: Vec<PlannedFileChange>,
     dry_run: bool,
+    requested_matching_mode: Option<ApplyPatchMatchingMode>,
     start: Instant,
 ) -> CommandResult {
     let mut changed_paths = Vec::new();
@@ -1128,19 +1148,20 @@ fn execute_planned_file_changes(
             })
         })
         .collect::<Vec<_>>();
-    line_edit_stdout(
-        serde_json::json!({
-            "dry_run": dry_run,
-            "applied_count": plans.len(),
-            "changed": !dry_run && would_change,
-            "state_changed": !dry_run && would_change,
-            "execution_state": "completed",
-            "would_change": would_change,
-            "files": files,
-            "changed_paths": changed_paths,
-        }),
-        start,
-    )
+    let mut output = serde_json::json!({
+        "dry_run": dry_run,
+        "applied_count": plans.len(),
+        "changed": !dry_run && would_change,
+        "state_changed": !dry_run && would_change,
+        "execution_state": "completed",
+        "would_change": would_change,
+        "files": files,
+        "changed_paths": changed_paths,
+    });
+    if let Some(mode) = requested_matching_mode {
+        output["requested_matching_mode"] = serde_json::json!(mode.as_str());
+    }
+    line_edit_stdout(output, start)
 }
 
 fn resolve_unique_patch_path(
@@ -1234,34 +1255,59 @@ fn apply_patch_match_diagnostic_json(diagnostic: &CodexPatchMatchDiagnostic) -> 
     })
 }
 
-fn apply_patch_strict_match_rejection(
+fn apply_patch_matching_mode_rejection(
     index: usize,
     path: &str,
     matched: &CodexPatchChunkMatch,
     start: Instant,
 ) -> CommandResult {
-    let rejection = matched.strict_rejection;
+    let Some(rejection) = matched.match_rejection.as_ref() else {
+        return batch_error(
+            Some(index),
+            Some("edit"),
+            Some(path),
+            "invalid_match_metadata",
+            "matching-mode rejection was missing its bounded rejection fact",
+            start,
+        );
+    };
+    let ambiguous = rejection.candidate_count > 1;
+    let retry_guidance = match (rejection.requested_matching_mode, ambiguous) {
+        (ApplyPatchMatchingMode::Unique, true) => {
+            "add a stable parent/function/test/module anchor or small surrounding context and retry with matching_mode=unique; candidate positions are equal observation targets, never a winner"
+        }
+        (ApplyPatchMatchingMode::ExactUnique, true) => {
+            "expand exact context until every textual positioning decision is exact and unique, then retry with matching_mode=exact_unique"
+        }
+        (ApplyPatchMatchingMode::ExactUnique, false) => {
+            "reread the current source and regenerate exact context, then retry with matching_mode=exact_unique"
+        }
+        _ => "regenerate the patch with unambiguous context and retry",
+    };
     line_edit_stdout(
         serde_json::json!({
             "changed": false,
             "state_changed": false,
             "execution_state": "not_started",
-            "error_kind": "strict_match_rejected",
+            "error_kind": "matching_mode_rejected",
             "change_index": index,
             "path": path,
             "chunk_index": matched.chunk_index,
-            "match_mode": rejection.map(|fact| fact.match_mode.as_str()),
-            "match_source": rejection.map(|fact| fact.match_source.as_str()),
-            "matched_start_line": rejection.map(|fact| fact.matched_start_line),
-            "candidate_count": rejection.map(|fact| fact.candidate_count),
-            "search_start_line": rejection.map(|fact| fact.search_start_line),
-            "source_line_count": rejection.map(|fact| fact.source_line_count),
-            "strict_match": false,
-            "recovery_action": "refine_strict_patch",
-            "retry_guidance": "add exact unique context and retry with strict_matching=true; do not relax strict matching to recover from this rejection",
+            "requested_matching_mode": rejection.requested_matching_mode.as_str(),
+            "match_mode": rejection.match_mode.as_str(),
+            "match_source": rejection.match_source.as_str(),
+            "matched_start_line": (!ambiguous).then_some(rejection.matched_start_line),
+            "candidate_count": rejection.candidate_count,
+            "candidate_start_lines": rejection.candidate_start_lines,
+            "candidate_positions_truncated": rejection.candidate_positions_truncated,
+            "search_start_line": rejection.search_start_line,
+            "source_line_count": rejection.source_line_count,
+            "matching_mode_satisfied": false,
+            "recovery_action": "refine_patch_context",
+            "retry_guidance": retry_guidance,
             "error": format!(
-                "Rejected strict Codex patch before write: {path} chunk {} was not positioned by exact unique matching. No files were modified.",
-                matched.chunk_index
+                "Rejected Codex patch before write: {path} chunk {} did not satisfy matching_mode={}. No files were modified.",
+                matched.chunk_index, rejection.requested_matching_mode.as_str()
             ),
         }),
         start,
@@ -1306,7 +1352,10 @@ pub(crate) fn handle_apply_patch_file_request(
         }
     };
     let dry_run = payload.dry_run.unwrap_or(false);
-    let strict_matching = payload.strict_matching.unwrap_or(false);
+    let matching_mode = match apply_patch_matching_mode(&payload) {
+        Ok(mode) => mode,
+        Err(error) => return batch_error(None, None, None, "invalid_payload", error, start),
+    };
     let mut touched = HashSet::new();
     let mut plans = Vec::with_capacity(patch.hunks.len());
 
@@ -1413,18 +1462,21 @@ pub(crate) fn handle_apply_patch_file_request(
                 let (replacement, chunk_matches) = if chunks.is_empty() {
                     (original.clone(), Vec::new())
                 } else {
-                    match derive_codex_patch_update_with_matches(&original, path, chunks) {
+                    match derive_codex_patch_update_with_matching_mode(
+                        &original,
+                        path,
+                        chunks,
+                        matching_mode,
+                    ) {
                         Ok(update) => {
-                            if strict_matching {
-                                if let Some(matched) = update
-                                    .chunk_matches
-                                    .iter()
-                                    .find(|matched| !matched.strict_match)
-                                {
-                                    return apply_patch_strict_match_rejection(
-                                        index, path, matched, start,
-                                    );
-                                }
+                            if let Some(matched) = update
+                                .chunk_matches
+                                .iter()
+                                .find(|matched| matched.match_rejection.is_some())
+                            {
+                                return apply_patch_matching_mode_rejection(
+                                    index, path, matched, start,
+                                );
                             }
                             (update.content, update.chunk_matches)
                         }
@@ -1457,6 +1509,7 @@ pub(crate) fn handle_apply_patch_file_request(
                             "match_source": chunk_match.match_source.as_str(),
                             "matched_start_line": chunk_match.matched_start_line,
                             "candidate_count": chunk_match.candidate_count,
+                            "unique_match": chunk_match.unique_match,
                             "strict_match": chunk_match.strict_match,
                         })
                     })
@@ -1527,7 +1580,7 @@ pub(crate) fn handle_apply_patch_file_request(
         plans.push(planned);
     }
 
-    execute_planned_file_changes(plans, dry_run, start)
+    execute_planned_file_changes(plans, dry_run, Some(matching_mode), start)
 }
 
 pub(crate) fn handle_apply_text_edits_file_request(
@@ -1918,7 +1971,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
         plans.push(planned);
     }
 
-    execute_planned_file_changes(plans, dry_run, start)
+    execute_planned_file_changes(plans, dry_run, None, start)
 }
 
 #[cfg(test)]

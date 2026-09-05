@@ -1903,8 +1903,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // patch-plan/match metadata consumed by Server validation. Older apply_patch
     // implementations omit this capability and are rejected before dispatch.
     capabilities.apply_patch_match_metadata = true;
-    // Strict patch positioning is an additive extension to apply_patch. Older
-    // Runners omit it, so Servers must not send strict_matching to them.
+    // Enum-based matching is the 0.4 model-facing authority. Older Runners omit
+    // it, so current Servers fail closed instead of falling back to old defaults.
+    capabilities.apply_patch_matching_mode = true;
+    // Retain the legacy bit only so an older Server can roll against this Runner.
     capabilities.apply_patch_strict_matching = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;

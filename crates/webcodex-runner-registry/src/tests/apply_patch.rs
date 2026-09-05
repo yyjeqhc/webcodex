@@ -1,13 +1,11 @@
 use super::*;
 
-fn patch_request(client_id: &str, strict_matching: bool) -> ShellFileOpRequest {
-    let mut content = serde_json::json!({
+fn patch_request(client_id: &str) -> ShellFileOpRequest {
+    let content = serde_json::json!({
         "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n-old\n+new\n*** End Patch",
         "dry_run": false,
+        "matching_mode": "unique",
     });
-    if strict_matching {
-        content["strict_matching"] = serde_json::json!(true);
-    }
     ShellFileOpRequest {
         op: "apply_patch".to_string(),
         client_id: client_id.to_string(),
@@ -32,6 +30,7 @@ async fn register_patch_instance(
     client_id: &str,
     supported: bool,
     metadata_supported: bool,
+    matching_mode_supported: bool,
     strict_supported: bool,
 ) -> Result<RunnerView, String> {
     register_instance_with_capabilities(
@@ -42,6 +41,7 @@ async fn register_patch_instance(
             file_write: true,
             apply_patch: supported,
             apply_patch_match_metadata: metadata_supported,
+            apply_patch_matching_mode: matching_mode_supported,
             apply_patch_strict_matching: strict_supported,
             ..Default::default()
         },
@@ -52,15 +52,11 @@ async fn register_patch_instance(
 #[tokio::test]
 async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically() {
     let registry = RunnerRegistry::default();
-    register_patch_instance(&registry, "patch-off", false, false, false)
+    register_patch_instance(&registry, "patch-off", false, false, false, false)
         .await
         .unwrap();
     let error = registry
-        .enqueue_apply_patch(
-            patch_request("patch-off", false),
-            false,
-            "tester".to_string(),
-        )
+        .enqueue_apply_patch(patch_request("patch-off"), "tester".to_string())
         .await
         .unwrap_err();
     assert!(error.contains("capability_unavailable"), "{error}");
@@ -74,15 +70,11 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .unwrap()
         .is_none());
 
-    register_patch_instance(&registry, "legacy-patch", true, false, false)
+    register_patch_instance(&registry, "legacy-patch", true, false, false, false)
         .await
         .unwrap();
     let error = registry
-        .enqueue_apply_patch(
-            patch_request("legacy-patch", false),
-            false,
-            "tester".to_string(),
-        )
+        .enqueue_apply_patch(patch_request("legacy-patch"), "tester".to_string())
         .await
         .unwrap_err();
     assert!(error.contains("capability_unavailable"), "{error}");
@@ -96,15 +88,29 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .unwrap()
         .is_none());
 
-    register_patch_instance(&registry, "patch-on", true, true, false)
+    register_patch_instance(&registry, "mode-off", true, true, false, false)
+        .await
+        .unwrap();
+    let error = registry
+        .enqueue_apply_patch(patch_request("mode-off"), "tester".to_string())
+        .await
+        .unwrap_err();
+    assert!(error.contains("capability_unavailable"), "{error}");
+    assert!(error.contains("apply_patch_matching_mode"), "{error}");
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "mode-off".to_string(),
+            runner_instance_id: "inst".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    register_patch_instance(&registry, "patch-on", true, true, true, false)
         .await
         .unwrap();
     let (request_id, _rx) = registry
-        .enqueue_apply_patch(
-            patch_request("patch-on", false),
-            false,
-            "tester".to_string(),
-        )
+        .enqueue_apply_patch(patch_request("patch-on"), "tester".to_string())
         .await
         .expect("current Runner should accept ordinary apply_patch");
     let queued = registry
@@ -122,49 +128,11 @@ async fn enqueue_apply_patch_requires_explicit_capability_and_queues_atomically(
         .as_deref()
         .unwrap()
         .contains("*** Begin Patch"));
-
-    register_patch_instance(&registry, "strict-off", true, true, false)
-        .await
-        .unwrap();
-    let error = registry
-        .enqueue_apply_patch(
-            patch_request("strict-off", true),
-            true,
-            "tester".to_string(),
-        )
-        .await
-        .unwrap_err();
-    assert!(error.contains("capability_unavailable"), "{error}");
-    assert!(error.contains("apply_patch_strict_matching"), "{error}");
-    assert!(registry
-        .poll(RunnerPollRequest {
-            client_id: "strict-off".to_string(),
-            runner_instance_id: "inst".to_string(),
-        })
-        .await
-        .unwrap()
-        .is_none());
-
-    register_patch_instance(&registry, "strict-on", true, true, true)
-        .await
-        .unwrap();
-    let (_, _) = registry
-        .enqueue_apply_patch(patch_request("strict-on", true), true, "tester".to_string())
-        .await
-        .expect("strict-capable Runner should accept strict apply_patch");
-    let queued = registry
-        .poll(RunnerPollRequest {
-            client_id: "strict-on".to_string(),
-            runner_instance_id: "inst".to_string(),
-        })
-        .await
-        .unwrap()
-        .expect("strict apply_patch request should be queued");
     assert!(queued
         .content
         .as_deref()
         .unwrap()
-        .contains("\"strict_matching\":true"));
+        .contains("\"matching_mode\":\"unique\""));
 }
 
 #[test]
@@ -175,9 +143,11 @@ fn apply_patch_missing_capability_defaults_false_and_is_omitted() {
     .unwrap();
     assert!(!legacy.apply_patch);
     assert!(!legacy.apply_patch_match_metadata);
+    assert!(!legacy.apply_patch_matching_mode);
     assert!(!legacy.apply_patch_strict_matching);
     let serialized = serde_json::to_value(RunnerCapabilities::default()).unwrap();
     assert!(serialized.get("apply_patch").is_none());
     assert!(serialized.get("apply_patch_match_metadata").is_none());
+    assert!(serialized.get("apply_patch_matching_mode").is_none());
     assert!(serialized.get("apply_patch_strict_matching").is_none());
 }

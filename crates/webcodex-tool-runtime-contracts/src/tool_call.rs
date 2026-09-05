@@ -11,6 +11,7 @@ use super::tool_inputs::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
+use webcodex_core::apply_patch_shared::ApplyPatchMatchingMode;
 use webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN;
 use webcodex_core::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
@@ -699,7 +700,7 @@ pub enum ToolCall {
         #[serde(default)]
         dry_run: Option<bool>,
         #[serde(default)]
-        strict_matching: Option<bool>,
+        matching_mode: Option<ApplyPatchMatchingMode>,
         #[serde(default)]
         session_id: Option<String>,
     },
@@ -2401,6 +2402,16 @@ impl ToolCall {
         })?;
         validate_model_facing_assertion_name(name, &arguments)?;
         validate_model_facing_result_expectation(name, &arguments)?;
+        if name == "apply_patch"
+            && arguments
+                .as_object()
+                .is_some_and(|object| object.contains_key("strict_matching"))
+        {
+            return Err(
+                "invalid arguments for tool 'apply_patch': field 'strict_matching' is no longer supported; use matching_mode='exact_unique' for former strict_matching=true, matching_mode='first_match' for former strict_matching=false, or omit matching_mode for the current unique default"
+                    .to_string(),
+            );
+        }
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "read_project_artifact"

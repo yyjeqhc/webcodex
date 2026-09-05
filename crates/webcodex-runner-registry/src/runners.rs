@@ -260,6 +260,14 @@ impl RunnerRegistry {
                     .to_string(),
             );
         }
+        if runner_features.supports(RunnerFeature::ApplyPatchMatchingMode)
+            && !runner_features.supports(RunnerFeature::ApplyPatchMatchMetadata)
+        {
+            return Err(
+                "apply_patch_matching_mode capability requires apply_patch_match_metadata capability"
+                    .to_string(),
+            );
+        }
         let job_inventory = body.job_inventory.clone();
         let coding_agent_providers = body.coding_agent_providers.clone();
         let coding_agent_inventory = body.coding_agent_inventory.clone();

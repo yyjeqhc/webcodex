@@ -168,10 +168,15 @@ pub const RUNNER_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
 /// current Server must reject apply_patch before dispatch rather than accepting a
 /// legacy success shape.
 pub const RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA: &str = "apply_patch_match_metadata";
+/// The Runner understands the 0.4 model-facing apply_patch matching_mode enum
+/// (`first_match`, `unique`, `exact_unique`) and returns metadata bound to the
+/// requested mode. Missing on older Runners is false; current Servers fail
+/// closed instead of silently falling back to legacy permissive positioning.
+pub const RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE: &str = "apply_patch_matching_mode";
 /// The Runner understands `strict_matching=true` for apply_patch and rejects
 /// any update chunk whose positioning is not exact and unique before writing.
-/// Missing on older Runners is false and is never inferred from apply_patch or
-/// apply_patch_match_metadata.
+/// This legacy wire capability is retained only so older Servers can roll
+/// against a current Runner; current model-facing contracts use matching_mode.
 pub const RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING: &str = "apply_patch_strict_matching";
 pub const RUNNER_CAPABILITY_GIT: &str = "git";
 pub const RUNNER_CAPABILITY_JOBS: &str = "jobs";
@@ -404,6 +409,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     RUNNER_CAPABILITY_APPLY_PATCH,
     RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
+    RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE,
     RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
     RUNNER_CAPABILITY_GIT,
     RUNNER_CAPABILITY_JOBS,
@@ -527,9 +533,13 @@ pub struct RunnerCapabilities {
     /// results. Missing on older Runners is false and never follows from apply_patch.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_patch_match_metadata: bool,
+    /// Current enum-based apply_patch positioning semantics. Missing on older
+    /// Runners is false and must fail closed for current model-facing requests.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_patch_matching_mode: bool,
     /// Fail-closed exact-and-unique positioning for apply_patch requests that
-    /// explicitly opt into strict_matching. Missing on older Runners is false and
-    /// requires the current match-metadata success contract.
+    /// arrive from a legacy Server as strict_matching=true. New Servers do not
+    /// use this bool as model-facing authority.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_patch_strict_matching: bool,
     #[serde(default)]
@@ -892,6 +902,7 @@ impl Default for RunnerCapabilities {
             apply_text_edit_line_scope: false,
             apply_patch: false,
             apply_patch_match_metadata: false,
+            apply_patch_matching_mode: false,
             apply_patch_strict_matching: false,
             git: false,
             jobs: false,
@@ -3655,6 +3666,7 @@ mod envelope_tests {
                 apply_text_edit_line_scope: false,
                 apply_patch: false,
                 apply_patch_match_metadata: false,
+                apply_patch_matching_mode: false,
                 apply_patch_strict_matching: false,
                 git: false,
                 jobs: true,

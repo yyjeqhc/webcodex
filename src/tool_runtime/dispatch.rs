@@ -726,9 +726,10 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
     ) -> ToolResult {
-        // Phase-1 edit usage telemetry: argument-free structured log only.
-        // Does not alter execution, session ledger, Action Audit, or schemas.
-        let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage(call.tool_name());
+        // Edit usage telemetry retains only fixed safe classifications. For
+        // apply_patch it captures the requested matching enum before the call is
+        // moved, never the patch/path/content arguments.
+        let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage_for_call(&call);
         let mut result = self
             .dispatch_with_auth_transport_options_and_metadata_inner(
                 call,

@@ -454,6 +454,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 apply_text_edit_line_scope: true,
                 apply_patch: true,
                 apply_patch_match_metadata: true,
+                apply_patch_matching_mode: true,
                 apply_patch_strict_matching: true,
                 git: true,
                 jobs: true,

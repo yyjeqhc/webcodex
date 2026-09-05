@@ -745,14 +745,14 @@ fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
 }
 
 #[test]
-fn apply_patch_audit_records_strict_flags_without_patch_body() {
+fn apply_patch_audit_records_matching_mode_without_patch_body() {
     let private_patch =
         "*** Begin Patch\n*** Add File: NEVER_LOG_PATCH_BODY.txt\n+secret\n*** End Patch";
     let arguments = serde_json::json!({
         "project": "agent:test:demo",
         "patch": private_patch,
         "dry_run": true,
-        "strict_matching": true,
+        "matching_mode": "exact_unique",
     });
 
     let raw_summary =
@@ -760,7 +760,7 @@ fn apply_patch_audit_records_strict_flags_without_patch_body() {
     assert_eq!(raw_summary["project"], "agent:test:demo");
     assert_eq!(raw_summary["patch_present"], true);
     assert_eq!(raw_summary["dry_run"], true);
-    assert_eq!(raw_summary["strict_matching"], true);
+    assert_eq!(raw_summary["matching_mode"], "exact_unique");
     assert!(!serde_json::to_string(&raw_summary)
         .unwrap()
         .contains("NEVER_LOG_PATCH_BODY"));
@@ -770,7 +770,7 @@ fn apply_patch_audit_records_strict_flags_without_patch_body() {
     assert_eq!(typed_summary["project"], "agent:test:demo");
     assert_eq!(typed_summary["patch_present"], true);
     assert_eq!(typed_summary["dry_run"], true);
-    assert_eq!(typed_summary["strict_matching"], true);
+    assert_eq!(typed_summary["matching_mode"], "exact_unique");
     assert!(!serde_json::to_string(&typed_summary)
         .unwrap()
         .contains("NEVER_LOG_PATCH_BODY"));

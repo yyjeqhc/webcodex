@@ -35,7 +35,7 @@ use webcodex_core::runner_protocol::{
     RunnerConfigOperationRequest, RunnerRequest, ShellFileOpRequest, ShellJobContext,
     ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
     RAW_SHELL_COMMAND_MAX_BYTES, RUNNER_CAPABILITY_APPLY_PATCH,
-    RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA, RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+    RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE, RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE, RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, RUNNER_CAPABILITY_FILE_READ,
@@ -606,7 +606,6 @@ impl RunnerRegistry {
     pub async fn enqueue_apply_patch(
         &self,
         body: ShellFileOpRequest,
-        strict_matching: bool,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
@@ -666,13 +665,12 @@ impl RunnerRegistry {
                 body.client_id
             ));
         }
-        if strict_matching
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ApplyPatchStrictMatching)
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::ApplyPatchMatchingMode)
         {
             return Err(format!(
-                "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING}",
+                "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE}",
                 body.client_id
             ));
         }

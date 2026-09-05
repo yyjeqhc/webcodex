@@ -97,9 +97,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "sha rechecks",
         "rollback",
         "dry_run",
-        "strict_match",
-        "strict_matching=true",
-        "exact-unique positioning",
+        "matching_mode=unique",
+        "stable parent/function/test/module",
+        "matching_mode=exact_unique",
+        "stale-context",
+        "matching_mode=first_match",
         "apply_text_edits",
         "small exact edits",
         "external diffs",
@@ -356,29 +358,42 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         );
     }
     let codex_patch = &spec_named(&specs, "apply_patch").input_schema["properties"];
-    for field in ["project", "patch", "dry_run", "strict_matching"] {
+    for field in ["project", "patch", "dry_run", "matching_mode"] {
         assert!(
             codex_patch.get(field).is_some(),
             "apply_patch must keep field {field}"
         );
     }
+    assert_eq!(codex_patch["matching_mode"]["default"], "unique");
+    assert_eq!(
+        codex_patch["matching_mode"]["enum"],
+        json!(["first_match", "unique", "exact_unique"])
+    );
+    assert!(
+        codex_patch.get("strict_matching").is_none(),
+        "legacy strict_matching must not remain model-facing"
+    );
     let patch_spec = spec_named(&specs, "apply_patch");
     let patch_output = &patch_spec.output_schema["properties"]["output"]["properties"];
     assert!(
         patch_output.get("match_diagnostic").is_some(),
         "apply_patch failures must expose body-free match diagnostics"
     );
-    let strict_diagnostic = patch_output
-        .get("strict_match_diagnostic")
-        .expect("apply_patch strict failures must expose validated body-free diagnostics");
-    assert_eq!(strict_diagnostic["additionalProperties"], false);
+    let match_rejection = patch_output
+        .get("match_rejection_diagnostic")
+        .expect("apply_patch matching failures must expose validated body-free diagnostics");
+    assert_eq!(match_rejection["additionalProperties"], false);
     assert_eq!(
-        strict_diagnostic["properties"]["classification"]["enum"],
+        match_rejection["properties"]["classification"]["enum"],
         json!(["unique_fuzzy_candidate", "ambiguous_candidate"])
     );
     assert_eq!(
-        strict_diagnostic["properties"]["matched_start_line"]["anyOf"][1]["type"],
+        match_rejection["properties"]["matched_start_line"]["anyOf"][1]["type"],
         "null"
+    );
+    assert_eq!(
+        match_rejection["properties"]["candidate_start_lines"]["maxItems"],
+        webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_CANDIDATE_POSITIONS
     );
     let recovery = patch_output
         .get("recovery")
@@ -390,9 +405,16 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
     );
     assert_eq!(
         recovery["properties"]["reason"]["enum"],
-        json!(["context_mismatch", "strict_match_rejected_unique_fuzzy"])
+        json!([
+            "context_mismatch",
+            "matching_mode_rejected_unique_fuzzy",
+            "matching_mode_rejected_ambiguous"
+        ])
     );
-    assert_eq!(recovery["properties"]["items"]["maxItems"], 1);
+    assert_eq!(
+        recovery["properties"]["items"]["maxItems"],
+        webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_CANDIDATE_POSITIONS
+    );
     assert_eq!(
         recovery["properties"]["items"]["items"]["properties"]["limit"]["maximum"],
         webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_RECOVERY_READ_LINES
@@ -431,6 +453,7 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         "match_source",
         "matched_start_line",
         "candidate_count",
+        "unique_match",
         "strict_match",
     ] {
         assert!(

@@ -9,10 +9,10 @@ impl ToolRuntime {
                 project,
                 patch,
                 dry_run,
-                strict_matching,
+                matching_mode,
                 session_id: _,
             } => {
-                self.apply_patch(project, patch, dry_run, strict_matching)
+                self.apply_patch(project, patch, dry_run, matching_mode)
                     .await
             }
             ToolCall::ApplyUnifiedDiff {

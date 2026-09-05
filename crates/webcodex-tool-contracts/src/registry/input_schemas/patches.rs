@@ -18,9 +18,9 @@ pub fn apply_patch_input_schema() -> Value {
             false,
         ),
         (
-            "strict_matching",
-            "boolean",
-            "If true, require every text positioning match to be exact and unique before any write; unanchored append remains allowed. Requires Runner apply_patch_strict_matching capability. Defaults false.",
+            "matching_mode",
+            "string",
+            "Positioning policy. unique (default) tries Exact, TrimEnd, Trim, then Normalized and requires exactly one final mutation target at the selected tier; a repeated @@ anchor is allowed when old_lines still resolves to one target, while anchored pure additions require a unique anchor. exact_unique additionally requires Exact and unique at every textual positioning decision and is intended for an explicit stale-context/concurrency fence after reading exact current source. first_match is only for explicitly requested permissive compatibility and deterministically selects the first eligible candidate in the highest-priority tier.",
             false,
         ),
     ]));
@@ -28,7 +28,9 @@ pub fn apply_patch_input_schema() -> Value {
     schema["properties"]["patch"]["maxLength"] =
         json!(webcodex_core::apply_patch_shared::MAX_CODEX_PATCH_BYTES);
     schema["properties"]["dry_run"]["default"] = json!(false);
-    schema["properties"]["strict_matching"]["default"] = json!(false);
+    schema["properties"]["matching_mode"]["enum"] =
+        json!(["first_match", "unique", "exact_unique"]);
+    schema["properties"]["matching_mode"]["default"] = json!("unique");
     schema
 }
 

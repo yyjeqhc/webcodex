@@ -29,6 +29,7 @@ pub const PLUGIN_MAX_JSON_DEPTH: usize = 16;
 pub const PLUGIN_MAX_JSON_NODES: usize = 4_096;
 pub const PLUGIN_MAX_JSON_STRING_BYTES: usize = 64 * 1024;
 pub const PLUGIN_STARTUP_CATALOG_MAX_BYTES: usize = 256 * 1024;
+pub const PLUGIN_MAX_CHECK_DETAIL_BYTES: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +41,9 @@ pub enum PluginPlane {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginGatewayRequest {
+    Check {
+        provider_id: String,
+    },
     Reload,
     ProvidersList,
     ToolsList {
@@ -71,7 +75,7 @@ impl PluginGatewayRequest {
                 provider_instance_id,
                 ..
             } => Some((provider_id, provider_instance_id, *plane)),
-            Self::Reload | Self::ProvidersList => None,
+            Self::Check { .. } | Self::Reload | Self::ProvidersList => None,
         }
     }
 }
@@ -187,9 +191,59 @@ pub struct PluginReloadFailure {
     pub code: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginCheckPhase {
+    Config,
+    Environment,
+    Executable,
+    Spawn,
+    Stdio,
+    Initialize,
+    ToolsList,
+    Validation,
+    Ready,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginCheckToolSummary {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginStartupToolShape {
+    pub eligible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginCheckReport {
+    pub provider_id: String,
+    pub ready: bool,
+    pub phase: PluginCheckPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub tool_count: usize,
+    #[serde(default)]
+    pub tools: Vec<PluginCheckToolSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_tool_shape: Option<PluginStartupToolShape>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginGatewayResponsePayload {
+    Checked {
+        report: PluginCheckReport,
+    },
     Providers {
         providers: Vec<PluginProviderView>,
         first_class_restart_required: bool,
@@ -301,6 +355,7 @@ fn validate_identifier(
 
 pub fn validate_request(request: &PluginGatewayRequest) -> Result<(), String> {
     match request {
+        PluginGatewayRequest::Check { provider_id } => validate_provider_id(provider_id),
         PluginGatewayRequest::Reload | PluginGatewayRequest::ProvidersList => Ok(()),
         PluginGatewayRequest::ToolsList {
             provider_id,
@@ -501,6 +556,7 @@ pub fn validate_response(response: &PluginGatewayResponse) -> Result<(), String>
     }
     if let Some(payload) = response.payload.as_ref() {
         match payload {
+            PluginGatewayResponsePayload::Checked { report } => validate_check_report(report)?,
             PluginGatewayResponsePayload::Providers { providers, .. } => {
                 validate_provider_views(providers)?
             }
@@ -520,6 +576,58 @@ pub fn validate_response(response: &PluginGatewayResponse) -> Result<(), String>
             }
             PluginGatewayResponsePayload::Tools { tools } => validate_tools(tools)?,
             PluginGatewayResponsePayload::ToolResult { result } => validate_tool_result(result)?,
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
+    validate_provider_id(&report.provider_id)?;
+    if report.ready {
+        if report.phase != PluginCheckPhase::Ready
+            || report.code.is_some()
+            || report.detail.is_some()
+        {
+            return Err("ready Plugin check report has inconsistent status fields".to_string());
+        }
+        if report.startup_tool_shape.is_none() {
+            return Err("ready Plugin check report requires startup tool shape".to_string());
+        }
+    } else {
+        if report.phase == PluginCheckPhase::Ready || report.code.is_none() {
+            return Err("failed Plugin check report has inconsistent status fields".to_string());
+        }
+        if report.tool_count != 0 || !report.tools.is_empty() || report.startup_tool_shape.is_some()
+        {
+            return Err("failed Plugin check report must not retain tool inventory".to_string());
+        }
+    }
+    if let Some(code) = report.code.as_deref() {
+        validate_status_atom(code, "Plugin check code")?;
+    }
+    if let Some(detail) = report.detail.as_deref() {
+        if detail.is_empty() || detail.len() > PLUGIN_MAX_CHECK_DETAIL_BYTES {
+            return Err("Plugin check detail exceeds bound".to_string());
+        }
+        validate_text_controls(detail, "Plugin check detail")?;
+    }
+    if report.tool_count != report.tools.len() || report.tools.len() > PLUGIN_MAX_TOOL_COUNT {
+        return Err("Plugin check tool summary count is invalid".to_string());
+    }
+    for tool in &report.tools {
+        validate_tool_name(&tool.name)?;
+        if let Some(title) = tool.title.as_deref() {
+            if title.is_empty() || title.len() > PLUGIN_MAX_PROVIDER_NAME_BYTES {
+                return Err("Plugin check tool title is invalid".to_string());
+            }
+            validate_text_controls(title, "Plugin check tool title")?;
+        }
+    }
+    if let Some(shape) = report.startup_tool_shape.as_ref() {
+        match (shape.eligible, shape.code.as_deref()) {
+            (true, None) => {}
+            (false, Some(code)) => validate_status_atom(code, "Plugin startup tool shape code")?,
+            _ => return Err("Plugin startup tool shape status is inconsistent".to_string()),
         }
     }
     Ok(())
@@ -663,6 +771,48 @@ mod tests {
             expected_schema: tool().schema_observation(),
         };
         assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn check_contract_is_typed_and_report_is_bounded() {
+        let request = PluginGatewayRequest::Check {
+            provider_id: "repo-tools".to_string(),
+        };
+        validate_request(&request).unwrap();
+
+        let report = PluginCheckReport {
+            provider_id: "repo-tools".to_string(),
+            ready: true,
+            phase: PluginCheckPhase::Ready,
+            code: None,
+            detail: None,
+            tool_count: 1,
+            tools: vec![PluginCheckToolSummary {
+                name: "echo".to_string(),
+                title: Some("Echo".to_string()),
+            }],
+            startup_tool_shape: Some(PluginStartupToolShape {
+                eligible: true,
+                code: None,
+            }),
+        };
+        validate_check_report(&report).unwrap();
+        validate_response(&PluginGatewayResponse::success(
+            PluginGatewayResponsePayload::Checked {
+                report: report.clone(),
+            },
+        ))
+        .unwrap();
+
+        let mut invalid = report;
+        invalid.detail = Some("x".repeat(PLUGIN_MAX_CHECK_DETAIL_BYTES + 1));
+        invalid.ready = false;
+        invalid.phase = PluginCheckPhase::Validation;
+        invalid.code = Some("plugin_tools_list_invalid".to_string());
+        invalid.tool_count = 0;
+        invalid.tools.clear();
+        invalid.startup_tool_shape = None;
+        assert!(validate_check_report(&invalid).is_err());
     }
 
     #[test]

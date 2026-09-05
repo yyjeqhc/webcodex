@@ -18,9 +18,10 @@ use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_core::plugin::{
     validate_request, validate_startup_catalog, validate_startup_tool, validate_tool_result,
-    validate_tools, PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse,
-    PluginGatewayResponsePayload, PluginPlane, PluginProviderView, PluginReloadFailure,
-    PluginSchemaObservation, PluginTool, PluginToolResult, StartupPluginProvider,
+    validate_tools, PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary,
+    PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
+    PluginPlane, PluginProviderView, PluginReloadFailure, PluginSchemaObservation,
+    PluginStartupToolShape, PluginTool, PluginToolResult, StartupPluginProvider,
     PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION, PLUGIN_STARTUP_CATALOG_MAX_BYTES,
     PLUGIN_STARTUP_MAX_DIRECT_TOOLS,
 };
@@ -37,7 +38,7 @@ pub(crate) struct PluginManager {
     startup_config: PluginConfig,
     startup_shell: ShellConfig,
     dynamic: Mutex<DynamicState>,
-    reload_gate: Mutex<()>,
+    candidate_gate: Mutex<()>,
     config_path: PathBuf,
     prepared_profiles: PreparedShellProfileCache,
     next_generation: AtomicU64,
@@ -104,6 +105,89 @@ struct ProviderFailure {
     fatal: bool,
 }
 
+struct ProviderPreparationFailure {
+    phase: PluginCheckPhase,
+    code: &'static str,
+    detail: &'static str,
+}
+
+fn initialize_failure_detail(code: &str) -> &'static str {
+    match code {
+        "plugin_protocol_version_mismatch" => {
+            "Plugin initialize response did not confirm webcodex-plugin-v1"
+        }
+        "plugin_initialize_invalid" => "Plugin initialize result violates protocol bounds",
+        "plugin_timeout" => "Plugin initialize did not complete within the provider timeout",
+        "plugin_eof" => "Plugin process ended during initialize",
+        _ => "Plugin initialize did not complete successfully",
+    }
+}
+
+fn plugin_config_error_code(error: &str) -> &'static str {
+    if error.starts_with("failed to read config") {
+        "plugin_config_read_failed"
+    } else if error.starts_with("failed to parse config") {
+        "plugin_config_parse_failed"
+    } else {
+        "plugin_config_invalid"
+    }
+}
+
+fn plugin_config_check_detail(code: &str) -> &'static str {
+    match code {
+        "plugin_config_read_failed" => "runner.toml could not be read",
+        "plugin_config_parse_failed" => "runner.toml could not be parsed",
+        _ => "runner.toml failed Runner configuration validation",
+    }
+}
+
+fn failed_check_report(
+    provider_id: &str,
+    phase: PluginCheckPhase,
+    code: &str,
+    detail: &str,
+) -> PluginCheckReport {
+    PluginCheckReport {
+        provider_id: provider_id.to_string(),
+        ready: false,
+        phase,
+        code: Some(code.to_string()),
+        detail: Some(detail.to_string()),
+        tool_count: 0,
+        tools: Vec::new(),
+        startup_tool_shape: None,
+    }
+}
+
+fn startup_tool_shape(tools: &[PluginTool]) -> PluginStartupToolShape {
+    if tools.len() > PLUGIN_STARTUP_MAX_DIRECT_TOOLS {
+        return PluginStartupToolShape {
+            eligible: false,
+            code: Some("plugin_startup_tool_count_exceeded".to_string()),
+        };
+    }
+    if let Some(error) = tools
+        .iter()
+        .find_map(|tool| validate_startup_tool(tool).err())
+    {
+        return PluginStartupToolShape {
+            eligible: false,
+            code: Some(
+                if error.contains("startup tool") && error.contains("exceeds maximum") {
+                    "plugin_startup_schema_too_large"
+                } else {
+                    "plugin_startup_tool_invalid"
+                }
+                .to_string(),
+            ),
+        };
+    }
+    PluginStartupToolShape {
+        eligible: true,
+        code: None,
+    }
+}
+
 impl ProviderFailure {
     fn not_started(code: &'static str) -> Self {
         Self {
@@ -161,16 +245,17 @@ impl PluginManager {
                 &stopping,
             );
             let instance_id = entry.instance_id.clone();
+            let failure_code = failure.as_ref().map(|failure| failure.code.to_string());
             let mut advertised = StartupPluginProvider {
                 provider_id: provider.id.clone(),
                 provider_instance_id: instance_id,
                 name: provider.name.clone(),
-                status: if failure.is_some() {
+                status: if failure_code.is_some() {
                     "failed".to_string()
                 } else {
                     "ready".to_string()
                 },
-                error_code: failure.clone(),
+                error_code: failure_code,
                 tools: Vec::new(),
             };
 
@@ -212,7 +297,7 @@ impl PluginManager {
                 overlay: BTreeMap::new(),
                 first_class_restart_required: false,
             }),
-            reload_gate: Mutex::new(()),
+            candidate_gate: Mutex::new(()),
             config_path,
             prepared_profiles,
             next_generation: AtomicU64::new(2),
@@ -241,6 +326,7 @@ impl PluginManager {
             );
         }
         match request {
+            PluginGatewayRequest::Check { provider_id } => self.check_candidate(&provider_id),
             PluginGatewayRequest::Reload => self.reload_dynamic(),
             PluginGatewayRequest::ProvidersList => {
                 PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
@@ -343,14 +429,105 @@ impl PluginManager {
             .collect()
     }
 
+    fn check_candidate(&self, provider_id: &str) -> PluginGatewayResponse {
+        let _candidate_guard = match self.candidate_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return gateway_error(
+                PluginDispatchState::NotStarted,
+                "plugin_check_busy",
+                "Another Plugin candidate operation is already running; this check was not started",
+            ),
+            Err(TryLockError::Poisoned(_)) => {
+                return gateway_error(
+                    PluginDispatchState::NotStarted,
+                    "plugin_check_state_failed",
+                    "Plugin candidate-operation state is unavailable; this check was not started",
+                )
+            }
+        };
+        let candidate = match load_config(&self.config_path) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                let code = plugin_config_error_code(&error);
+                return PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+                    report: failed_check_report(
+                        provider_id,
+                        PluginCheckPhase::Config,
+                        code,
+                        plugin_config_check_detail(code),
+                    ),
+                });
+            }
+        };
+        let Some(provider) = candidate
+            .plugins
+            .providers
+            .iter()
+            .find(|provider| provider.id == provider_id)
+        else {
+            return PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+                report: failed_check_report(
+                    provider_id,
+                    PluginCheckPhase::Config,
+                    "plugin_not_configured",
+                    "requested Plugin provider is not configured in current runner.toml",
+                ),
+            });
+        };
+        let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
+        let (entry, tools, failure) = prepare_provider(
+            provider,
+            &candidate.shell,
+            generation,
+            Duration::from_secs(candidate.plugins.request_timeout_secs),
+            &self.prepared_profiles,
+            &self.stopping,
+        );
+        if self.stopping.load(Ordering::SeqCst)
+            || failure
+                .as_ref()
+                .is_some_and(|failure| failure.code == "plugin_manager_stopping")
+        {
+            entry.shutdown();
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "plugin_manager_stopping",
+                "Plugin manager began stopping during candidate check; no state was changed",
+            );
+        }
+        let report = if let Some(failure) = failure {
+            failed_check_report(provider_id, failure.phase, failure.code, failure.detail)
+        } else {
+            let tools = tools.unwrap_or_default();
+            PluginCheckReport {
+                provider_id: provider_id.to_string(),
+                ready: true,
+                phase: PluginCheckPhase::Ready,
+                code: None,
+                detail: None,
+                tool_count: tools.len(),
+                tools: tools
+                    .iter()
+                    .map(|tool| PluginCheckToolSummary {
+                        name: tool.name.clone(),
+                        title: tool.title.clone(),
+                    })
+                    .collect(),
+                startup_tool_shape: Some(startup_tool_shape(&tools)),
+            }
+        };
+        entry.shutdown();
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked { report })
+    }
+
     fn reload_dynamic(&self) -> PluginGatewayResponse {
-        let _reload_guard = match self.reload_gate.try_lock() {
+        let _candidate_guard = match self.candidate_gate.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::WouldBlock) => {
                 return gateway_error(
                     PluginDispatchState::NotStarted,
                     "plugin_reload_busy",
-                    "Another Plugin reload is already preparing candidates; this reload was not started",
+                    "Another Plugin candidate operation is already running; this reload was not started",
                 )
             }
             Err(TryLockError::Poisoned(_)) => {
@@ -364,13 +541,7 @@ impl PluginManager {
         let candidate = match load_config(&self.config_path) {
             Ok(candidate) => candidate,
             Err(error) => {
-                let code = if error.starts_with("failed to read config") {
-                    "plugin_config_read_failed"
-                } else if error.starts_with("failed to parse config") {
-                    "plugin_config_parse_failed"
-                } else {
-                    "plugin_config_invalid"
-                };
+                let code = plugin_config_error_code(&error);
                 return gateway_error(
                     PluginDispatchState::NotStarted,
                     code,
@@ -390,10 +561,10 @@ impl PluginManager {
                 &self.prepared_profiles,
                 &self.stopping,
             );
-            if let Some(code) = failure {
+            if let Some(failure) = failure {
                 failures.push(PluginReloadFailure {
                     provider_id: provider.id.clone(),
-                    code,
+                    code: failure.code.to_string(),
                 });
             } else {
                 prepared.insert(provider.id.clone(), entry);
@@ -650,7 +821,11 @@ fn prepare_provider(
     request_timeout: Duration,
     prepared_profiles: &PreparedShellProfileCache,
     stopping: &Arc<AtomicBool>,
-) -> (Arc<ProviderEntry>, Option<Vec<PluginTool>>, Option<String>) {
+) -> (
+    Arc<ProviderEntry>,
+    Option<Vec<PluginTool>>,
+    Option<ProviderPreparationFailure>,
+) {
     let process = Arc::new(ProviderProcess::new());
     let entry = Arc::new(ProviderEntry {
         config: config.clone(),
@@ -684,7 +859,11 @@ fn prepare_provider(
             return (
                 entry,
                 None,
-                Some("plugin_environment_prepare_failed".to_string()),
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Environment,
+                    code: "plugin_environment_prepare_failed",
+                    detail: "configured shell/profile environment could not be prepared",
+                }),
             );
         }
     };
@@ -697,7 +876,20 @@ fn prepare_provider(
                 "plugin_executable_unavailable"
             };
             entry.retire(code);
-            return (entry, None, Some(code.to_string()));
+            let detail = if code == "plugin_executable_unsupported" {
+                "configured Plugin executable type is unsupported for the native Plugin ABI"
+            } else {
+                "configured Plugin executable could not be resolved in the prepared environment"
+            };
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Executable,
+                    code,
+                    detail,
+                }),
+            );
         }
     };
     command
@@ -708,7 +900,15 @@ fn prepare_provider(
         Ok(child) => child,
         Err(_) => {
             entry.retire("plugin_spawn_failed");
-            return (entry, None, Some("plugin_spawn_failed".to_string()));
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Spawn,
+                    code: "plugin_spawn_failed",
+                    detail: "configured Plugin executable could not be started",
+                }),
+            );
         }
     };
     let stdin = match child.child_mut().stdin.take() {
@@ -716,7 +916,15 @@ fn prepare_provider(
         None => {
             let _ = child.terminate_tree();
             entry.retire("plugin_stdio_unavailable");
-            return (entry, None, Some("plugin_stdio_unavailable".to_string()));
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Stdio,
+                    code: "plugin_stdio_unavailable",
+                    detail: "Plugin protocol stdio pipes could not be created",
+                }),
+            );
         }
     };
     let stdout = match child.child_mut().stdout.take() {
@@ -724,7 +932,15 @@ fn prepare_provider(
         None => {
             let _ = child.terminate_tree();
             entry.retire("plugin_stdio_unavailable");
-            return (entry, None, Some("plugin_stdio_unavailable".to_string()));
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Stdio,
+                    code: "plugin_stdio_unavailable",
+                    detail: "Plugin protocol stdio pipes could not be created",
+                }),
+            );
         }
     };
     let stderr = match child.child_mut().stderr.take() {
@@ -732,7 +948,15 @@ fn prepare_provider(
         None => {
             let _ = child.terminate_tree();
             entry.retire("plugin_stdio_unavailable");
-            return (entry, None, Some("plugin_stdio_unavailable".to_string()));
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Stdio,
+                    code: "plugin_stdio_unavailable",
+                    detail: "Plugin protocol stdio pipes could not be created",
+                }),
+            );
         }
     };
     let stderr_thread_name = format!("wc-plugin-stderr-{}", config.id);
@@ -746,7 +970,15 @@ fn prepare_provider(
     {
         let _ = child.terminate_tree();
         entry.retire("plugin_reader_unavailable");
-        return (entry, None, Some("plugin_reader_unavailable".to_string()));
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Stdio,
+                code: "plugin_reader_unavailable",
+                detail: "Plugin stdout/stderr protocol workers could not be started",
+            }),
+        );
     }
     let (sender, incoming) = mpsc::sync_channel(PLUGIN_READER_QUEUE);
     let stdout_thread_name = format!("wc-plugin-{}", config.id);
@@ -757,7 +989,15 @@ fn prepare_provider(
     {
         let _ = child.terminate_tree();
         entry.retire("plugin_reader_unavailable");
-        return (entry, None, Some("plugin_reader_unavailable".to_string()));
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Stdio,
+                code: "plugin_reader_unavailable",
+                detail: "Plugin stdout/stderr protocol workers could not be started",
+            }),
+        );
     }
     let (writer, write_requests) = mpsc::sync_channel(PLUGIN_WRITER_QUEUE);
     let stdin_thread_name = format!("wc-plugin-stdin-{}", config.id);
@@ -768,13 +1008,29 @@ fn prepare_provider(
     {
         let _ = child.terminate_tree();
         entry.retire("plugin_writer_unavailable");
-        return (entry, None, Some("plugin_writer_unavailable".to_string()));
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Stdio,
+                code: "plugin_writer_unavailable",
+                detail: "Plugin stdin writer worker could not be started",
+            }),
+        );
     }
     process.install(child);
     if stopping.load(Ordering::SeqCst) {
         process.terminate();
         entry.retire("plugin_manager_stopping");
-        return (entry, None, Some("plugin_manager_stopping".to_string()));
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Initialize,
+                code: "plugin_manager_stopping",
+                detail: "Plugin manager began stopping during candidate preparation",
+            }),
+        );
     }
     let mut connection = ProviderConnection {
         process: Arc::clone(&process),
@@ -790,14 +1046,40 @@ fn prepare_provider(
     if let Err(failure) = connection.initialize(timeout) {
         process.terminate();
         entry.retire(failure.code);
-        return (entry, None, Some(failure.code.to_string()));
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Initialize,
+                code: failure.code,
+                detail: initialize_failure_detail(failure.code),
+            }),
+        );
     }
     let tools = match connection.tools_list(timeout) {
         Ok(tools) => tools,
         Err(failure) => {
             process.terminate();
             entry.retire(failure.code);
-            return (entry, None, Some(failure.code.to_string()));
+            let phase = if failure.code == "plugin_tools_list_invalid" {
+                PluginCheckPhase::Validation
+            } else {
+                PluginCheckPhase::ToolsList
+            };
+            let detail = if phase == PluginCheckPhase::Validation {
+                "Plugin tools/list result violates Tool schema or Plugin bounds"
+            } else {
+                "Plugin tools/list did not complete successfully"
+            };
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase,
+                    code: failure.code,
+                    detail,
+                }),
+            );
         }
     };
     *entry.session.lock().unwrap() = Some(connection);
@@ -1161,3 +1443,7 @@ fn stale_provider() -> PluginGatewayResponse {
 #[cfg(test)]
 #[path = "plugin_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plugin_check_tests.rs"]
+mod check_tests;

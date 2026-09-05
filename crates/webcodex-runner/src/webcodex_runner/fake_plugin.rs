@@ -20,6 +20,9 @@ fn main() -> io::Result<()> {
         }
     }
     append(marker, "start\n")?;
+    if scenario.starts_with("check_") || scenario.starts_with("candidate_") {
+        append(marker, &format!("candidate-pid:{}\n", std::process::id()))?;
+    }
     if scenario == "reload_new" {
         append(marker, "reload-new-start\n")?;
     }
@@ -66,10 +69,23 @@ fn main() -> io::Result<()> {
         match method.as_str() {
             "initialize" => {
                 append(marker, "initialize\n")?;
-                if scenario == "init_crash" {
+                if scenario == "init_crash" || scenario == "check_init_crash" {
                     return Ok(());
                 }
-                let version = if scenario == "bad_version" {
+                if scenario == "check_init_timeout" {
+                    thread::sleep(Duration::from_secs(3));
+                }
+                if scenario == "check_bad_version_tree" {
+                    let child = Command::new(env::current_exe()?)
+                        .arg("hold")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()?;
+                    append(marker, &format!("descendant-pid:{}\n", child.id()))?;
+                    drop(child);
+                }
+                let version = if matches!(scenario, "bad_version" | "check_bad_version_tree") {
                     "unsupported-plugin-v0"
                 } else {
                     "webcodex-plugin-v1"
@@ -84,15 +100,41 @@ fn main() -> io::Result<()> {
             "tools/list" => {
                 lists += 1;
                 append(marker, "list\n")?;
-                if scenario == "reload_block_list" && lists == 1 {
-                    append(marker, "reload-blocked\n")?;
+                if matches!(scenario, "reload_block_list" | "candidate_block_list_tree")
+                    && lists == 1
+                {
+                    append(
+                        marker,
+                        if scenario == "reload_block_list" {
+                            "reload-blocked\n"
+                        } else {
+                            "candidate-blocked\n"
+                        },
+                    )?;
+                    if scenario == "candidate_block_list_tree" {
+                        let child = Command::new(env::current_exe()?)
+                            .arg("hold")
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .spawn()?;
+                        append(marker, &format!("descendant-pid:{}\n", child.id()))?;
+                        drop(child);
+                    }
                     let release = marker
                         .map(|path| path.with_extension("release"))
-                        .expect("reload_block_list requires marker path");
+                        .expect("blocking candidate scenario requires marker path");
                     while !release.exists() {
                         thread::sleep(Duration::from_millis(10));
                     }
-                    append(marker, "reload-released\n")?;
+                    append(
+                        marker,
+                        if scenario == "reload_block_list" {
+                            "reload-released\n"
+                        } else {
+                            "candidate-released\n"
+                        },
+                    )?;
                 }
                 if scenario == "split_timeout" && lists >= 2 {
                     thread::sleep(Duration::from_millis(750));
@@ -111,11 +153,21 @@ fn main() -> io::Result<()> {
                     )?;
                     continue;
                 }
-                if scenario == "invalid_tools" {
+                if matches!(scenario, "invalid_tools" | "check_invalid_tools") {
                     send(
                         &mut writer,
                         &format!(
                             r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","inputSchema":[]}}]}}}}"#
+                        ),
+                    )?;
+                    continue;
+                }
+                if scenario == "check_oversized_schema" {
+                    send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","inputSchema":{{"type":"object","description":"{}"}}}}]}}}}"#,
+                            "x".repeat(70 * 1024)
                         ),
                     )?;
                     continue;
@@ -125,10 +177,26 @@ fn main() -> io::Result<()> {
                 } else {
                     "string"
                 };
+                let tool_name = if scenario == "check_v2" { "echo_v2" } else { "echo" };
+                let startup_padding = if scenario == "check_startup_large_schema" {
+                    "x".repeat(40 * 1024)
+                } else {
+                    String::new()
+                };
+                if scenario == "check_success_tree" {
+                    let child = Command::new(env::current_exe()?)
+                        .arg("hold")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()?;
+                    append(marker, &format!("descendant-pid:{}\n", child.id()))?;
+                    drop(child);
+                }
                 send(
                     &mut writer,
                     &format!(
-                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"Native plugin echo","inputSchema":{{"type":"object","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}","description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
                     ),
                 )?;
                 if matches!(

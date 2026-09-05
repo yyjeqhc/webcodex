@@ -1,0 +1,524 @@
+use super::*;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use tempfile::TempDir;
+use webcodex_core::plugin::PluginGatewayResponsePayload;
+
+static FAKE_PLUGIN_CHECK: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
+
+struct FakeBinary {
+    _temp: TempDir,
+    path: PathBuf,
+}
+
+fn fake_binary() -> Arc<FakeBinary> {
+    let cache = FAKE_PLUGIN_CHECK.get_or_init(|| Mutex::new(Weak::new()));
+    let mut cached = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(binary) = cached.upgrade() {
+        return binary;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join(format!(
+        "webcodex-plugin-check-fake{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/webcodex_runner/fake_plugin.rs");
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let result = Command::new(rustc)
+        .arg("--edition=2021")
+        .arg("--crate-name=webcodex_plugin_check_fake")
+        .arg(source)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let binary = Arc::new(FakeBinary {
+        _temp: temp,
+        path: output,
+    });
+    *cached = Arc::downgrade(&binary);
+    binary
+}
+
+struct CheckFixture {
+    manager: Arc<PluginManager>,
+    config_path: PathBuf,
+    marker: PathBuf,
+    fake: Arc<FakeBinary>,
+    _temp: TempDir,
+}
+
+impl CheckFixture {
+    fn new(candidate_scenario: &str, timeout_secs: u64) -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("marker.log");
+        let fake = fake_binary();
+        let startup_plugins = PluginConfig {
+            request_timeout_secs: timeout_secs,
+            providers: vec![PluginProviderConfig {
+                id: "fake".to_string(),
+                name: "Fake Plugin".to_string(),
+                command: fake.path.to_string_lossy().into_owned(),
+                args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+                cwd: Some(temp.path().to_string_lossy().into_owned()),
+                profile: None,
+                timeout_secs: Some(timeout_secs),
+            }],
+        };
+        let config_path = temp.path().join("runner.toml");
+        write_runner_toml(
+            &config_path,
+            temp.path(),
+            &fake.path,
+            &marker,
+            candidate_scenario,
+            timeout_secs,
+        );
+        let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+        let manager = Arc::new(PluginManager::new(&config, config_path.clone()));
+        Self {
+            manager,
+            config_path,
+            marker,
+            fake,
+            _temp: temp,
+        }
+    }
+
+    fn check(&self) -> PluginGatewayResponse {
+        self.manager.handle(PluginGatewayRequest::Check {
+            provider_id: "fake".to_string(),
+        })
+    }
+
+    fn rewrite_candidate(&self, scenario: &str, timeout_secs: u64) {
+        write_runner_toml(
+            &self.config_path,
+            self._temp.path(),
+            &self.fake.path,
+            &self.marker,
+            scenario,
+            timeout_secs,
+        );
+    }
+
+    fn marker_count(&self, value: &str) -> usize {
+        fs::read_to_string(&self.marker)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == value)
+            .count()
+    }
+
+    fn marker_pids(&self, prefix: &str) -> Vec<u32> {
+        fs::read_to_string(&self.marker)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.strip_prefix(prefix)?.parse().ok())
+            .collect()
+    }
+}
+
+fn checked_report(response: PluginGatewayResponse) -> PluginCheckReport {
+    assert_eq!(response.dispatch_state, PluginDispatchState::Completed);
+    assert!(response.error.is_none());
+    let Some(PluginGatewayResponsePayload::Checked { report }) = response.payload else {
+        panic!("missing Plugin check report");
+    };
+    report
+}
+
+fn provider_state(manager: &PluginManager) -> (Vec<PluginProviderView>, bool) {
+    let response = manager.handle(PluginGatewayRequest::ProvidersList);
+    let Some(PluginGatewayResponsePayload::Providers {
+        providers,
+        first_class_restart_required,
+    }) = response.payload
+    else {
+        panic!("missing provider state: {:?}", response.error);
+    };
+    (providers, first_class_restart_required)
+}
+
+fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    condition()
+}
+
+#[test]
+fn check_success_is_disposable_and_preserves_committed_plugin_state() {
+    let fixture = CheckFixture::new("check_success_tree", 2);
+    let startup_before = fixture.manager.startup_catalog();
+    let state_before = provider_state(&fixture.manager);
+
+    let report = checked_report(fixture.check());
+    assert!(report.ready);
+    assert_eq!(report.phase, PluginCheckPhase::Ready);
+    assert_eq!(report.tool_count, 1);
+    assert_eq!(report.tools[0].name, "echo");
+    assert!(report.startup_tool_shape.as_ref().unwrap().eligible);
+    assert_eq!(
+        fixture.marker_count("call"),
+        0,
+        "check must never call tools/call"
+    );
+    assert_eq!(fixture.manager.startup_catalog(), startup_before);
+    assert_eq!(provider_state(&fixture.manager), state_before);
+
+    let candidate_pid = fixture
+        .marker_pids("candidate-pid:")
+        .into_iter()
+        .next()
+        .unwrap();
+    let descendant_pid = fixture
+        .marker_pids("descendant-pid:")
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(wait_until(Duration::from_secs(2), || {
+        !crate::job_manager_tests::process_running(candidate_pid)
+            && !crate::job_manager_tests::process_running(descendant_pid)
+    }));
+}
+
+#[test]
+fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
+    let fixture = CheckFixture::new("normal", 2);
+    let first_reload = fixture.manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
+    else {
+        panic!("initial dynamic reload failed: {:?}", first_reload.error);
+    };
+    let dynamic_v1 = providers[0].provider_instance_id.clone();
+    let startup = fixture.manager.startup_catalog();
+    let v1_schema = startup[0].tools[0].schema_observation();
+    let state_before_check = provider_state(&fixture.manager);
+
+    fixture.rewrite_candidate("check_v2", 2);
+    let report = checked_report(fixture.check());
+    assert!(report.ready);
+    assert_eq!(report.tools[0].name, "echo_v2");
+    assert_eq!(provider_state(&fixture.manager), state_before_check);
+
+    let v1_call = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v1.clone(),
+        name: "echo".to_string(),
+        arguments: json!({"value":"still-v1"}),
+        expected_schema: v1_schema,
+    });
+    assert!(
+        v1_call.error.is_none(),
+        "check must not disturb current dynamic v1"
+    );
+
+    let reload_v2 = fixture.manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = reload_v2.payload else {
+        panic!("v2 reload failed: {:?}", reload_v2.error);
+    };
+    let dynamic_v2 = providers[0].provider_instance_id.clone();
+    assert_ne!(dynamic_v2, dynamic_v1);
+    let tools = fixture.manager.handle(PluginGatewayRequest::ToolsList {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v2,
+    });
+    let Some(PluginGatewayResponsePayload::Tools { tools }) = tools.payload else {
+        panic!("v2 tools/list failed: {:?}", tools.error);
+    };
+    assert_eq!(tools[0].name, "echo_v2");
+    fixture.manager.shutdown();
+}
+
+#[test]
+fn check_failures_are_structured_diagnostic_results_and_cleanup_process_trees() {
+    for (scenario, timeout_secs, phase, code) in [
+        (
+            "check_bad_version_tree",
+            2,
+            PluginCheckPhase::Initialize,
+            "plugin_protocol_version_mismatch",
+        ),
+        (
+            "check_init_timeout",
+            1,
+            PluginCheckPhase::Initialize,
+            "plugin_timeout",
+        ),
+        (
+            "check_init_crash",
+            2,
+            PluginCheckPhase::Initialize,
+            "plugin_eof",
+        ),
+        (
+            "check_invalid_tools",
+            2,
+            PluginCheckPhase::Validation,
+            "plugin_tools_list_invalid",
+        ),
+        (
+            "check_oversized_schema",
+            2,
+            PluginCheckPhase::Validation,
+            "plugin_tools_list_invalid",
+        ),
+    ] {
+        let fixture = CheckFixture::new(scenario, timeout_secs);
+        let report = checked_report(fixture.check());
+        assert!(!report.ready, "{scenario}");
+        assert_eq!(report.phase, phase, "{scenario}");
+        assert_eq!(report.code.as_deref(), Some(code), "{scenario}");
+        assert!(report.detail.is_some(), "{scenario}");
+        assert!(report.tools.is_empty(), "{scenario}");
+
+        for pid in fixture.marker_pids("candidate-pid:") {
+            assert!(wait_until(Duration::from_secs(2), || {
+                !crate::job_manager_tests::process_running(pid)
+            }));
+        }
+        for pid in fixture.marker_pids("descendant-pid:") {
+            assert!(wait_until(Duration::from_secs(2), || {
+                !crate::job_manager_tests::process_running(pid)
+            }));
+        }
+    }
+}
+
+#[test]
+fn check_reports_executable_config_and_startup_shape_without_sensitive_details() {
+    let fixture = CheckFixture::new("normal", 2);
+    write_runner_toml(
+        &fixture.config_path,
+        fixture._temp.path(),
+        Path::new("webcodex-plugin-definitely-missing-for-check"),
+        &fixture.marker,
+        "normal",
+        2,
+    );
+    let missing = checked_report(fixture.check());
+    assert!(!missing.ready);
+    assert_eq!(missing.phase, PluginCheckPhase::Executable);
+    assert_eq!(
+        missing.code.as_deref(),
+        Some("plugin_executable_unavailable")
+    );
+
+    write_runner_toml_without_plugins(&fixture.config_path, fixture._temp.path());
+    let absent = checked_report(fixture.check());
+    assert_eq!(absent.phase, PluginCheckPhase::Config);
+    assert_eq!(absent.code.as_deref(), Some("plugin_not_configured"));
+
+    fixture.rewrite_candidate("check_startup_large_schema", 2);
+    let shape = checked_report(fixture.check());
+    assert!(shape.ready);
+    let startup_shape = shape.startup_tool_shape.unwrap();
+    assert!(!startup_shape.eligible);
+    assert_eq!(
+        startup_shape.code.as_deref(),
+        Some("plugin_startup_schema_too_large")
+    );
+
+    fixture.rewrite_candidate("stderr", 2);
+    let response = fixture.check();
+    let encoded = serde_json::to_string(&response).unwrap();
+    assert!(!encoded.contains("diagnostic-only-secret-looking-stderr"));
+    assert!(!encoded.contains(fixture._temp.path().to_string_lossy().as_ref()));
+    let report = checked_report(response);
+    assert!(report.ready);
+}
+
+#[test]
+fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers() {
+    let fixture = CheckFixture::new("normal", 2);
+    let first_reload = fixture.manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
+    else {
+        panic!("initial reload failed: {:?}", first_reload.error);
+    };
+    let dynamic_v1 = providers[0].provider_instance_id.clone();
+    let startup = fixture.manager.startup_catalog();
+    let schema = startup[0].tools[0].schema_observation();
+
+    fixture.rewrite_candidate("candidate_block_list_tree", 10);
+    let _ = fs::remove_file(fixture.marker.with_extension("release"));
+    let manager = Arc::clone(&fixture.manager);
+    let check_a = std::thread::spawn(move || {
+        manager.handle(PluginGatewayRequest::Check {
+            provider_id: "fake".to_string(),
+        })
+    });
+    assert!(wait_until(Duration::from_secs(2), || {
+        fixture.marker_count("candidate-blocked") == 1
+    }));
+
+    let check_b = fixture.check();
+    assert_eq!(check_b.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(check_b.error.as_ref().unwrap().code, "plugin_check_busy");
+    let reload = fixture.manager.handle(PluginGatewayRequest::Reload);
+    assert_eq!(reload.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(reload.error.as_ref().unwrap().code, "plugin_reload_busy");
+
+    let current_call = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v1.clone(),
+        name: "echo".to_string(),
+        arguments: json!({"value":"during-check"}),
+        expected_schema: schema.clone(),
+    });
+    assert!(current_call.error.is_none());
+    let direct_startup = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
+        plane: PluginPlane::Startup,
+        provider_id: "fake".to_string(),
+        provider_instance_id: startup[0].provider_instance_id.clone(),
+        name: "echo".to_string(),
+        arguments: json!({"value":"startup-during-check"}),
+        expected_schema: schema,
+    });
+    assert!(direct_startup.error.is_none());
+    assert!(fixture
+        .manager
+        .handle(PluginGatewayRequest::ProvidersList)
+        .error
+        .is_none());
+
+    fs::write(fixture.marker.with_extension("release"), b"release").unwrap();
+    let report = checked_report(check_a.join().unwrap());
+    assert!(report.ready);
+    let (providers, _) = provider_state(&fixture.manager);
+    assert_eq!(providers[0].provider_instance_id, dynamic_v1);
+    for pid in fixture.marker_pids("descendant-pid:") {
+        assert!(wait_until(Duration::from_secs(2), || {
+            !crate::job_manager_tests::process_running(pid)
+        }));
+    }
+    fixture.manager.shutdown();
+}
+
+#[test]
+fn shutdown_interrupts_blocked_check_candidate_and_reaps_tree() {
+    let fixture = CheckFixture::new("candidate_block_list_tree", 10);
+    let _ = fs::remove_file(fixture.marker.with_extension("release"));
+    let manager = Arc::clone(&fixture.manager);
+    let check = std::thread::spawn(move || {
+        manager.handle(PluginGatewayRequest::Check {
+            provider_id: "fake".to_string(),
+        })
+    });
+    assert!(wait_until(Duration::from_secs(2), || {
+        fixture.marker_count("candidate-blocked") == 1
+            && !fixture.marker_pids("descendant-pid:").is_empty()
+    }));
+
+    let started = Instant::now();
+    fixture.manager.shutdown();
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "shutdown waited for the candidate gate"
+    );
+    let response = check.join().unwrap();
+    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "plugin_manager_stopping"
+    );
+    for pid in fixture.marker_pids("descendant-pid:") {
+        assert!(wait_until(Duration::from_secs(2), || {
+            !crate::job_manager_tests::process_running(pid)
+        }));
+    }
+}
+
+fn runner_config(
+    plugins: PluginConfig,
+    shell: ShellConfig,
+    project_registry_dir: &Path,
+) -> RunnerConfig {
+    use super::super::config::{
+        default_websocket_connect_timeout_secs, AcpConfig, McpGatewayConfig, RunnerPolicy,
+        SshConfig, ToolProvidersConfig,
+    };
+    RunnerConfig {
+        server_url: "http://127.0.0.1:8000".to_string(),
+        token: "test-token".to_string(),
+        client_id: "plugin-check-test".to_string(),
+        display_name: None,
+        owner: Some("alice".to_string()),
+        hostname: None,
+        host_context: None,
+        project_registry_dir: Some(project_registry_dir.to_path_buf()),
+        legacy_projects_dir: None,
+        deprecated_temporary_projects_root: None,
+        poll_interval_ms: 1000,
+        capabilities: None,
+        max_concurrent_jobs: None,
+        policy: RunnerPolicy::default(),
+        transport: None,
+        websocket_connect_timeout_secs: default_websocket_connect_timeout_secs(),
+        quic: None,
+        shell,
+        ssh: SshConfig::default(),
+        tool_providers: ToolProvidersConfig::default(),
+        mcp_gateway: McpGatewayConfig::default(),
+        plugins,
+        acp: AcpConfig::default(),
+    }
+}
+
+fn write_runner_toml(
+    path: &Path,
+    project_registry_dir: &Path,
+    executable: &Path,
+    marker: &Path,
+    scenario: &str,
+    request_timeout_secs: u64,
+) {
+    fn quoted(value: &Path) -> String {
+        format!("{:?}", value.to_string_lossy().as_ref())
+    }
+    fs::write(
+        path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test-token\"\nclient_id = \"plugin-check-test\"\nproject_registry_dir = {}\n\n[plugins]\nrequest_timeout_secs = {request_timeout_secs}\n\n[[plugins.providers]]\nid = \"fake\"\nname = \"Fake Plugin\"\ncommand = {}\nargs = [\"{}\", {}]\ncwd = {}\ntimeout_secs = {request_timeout_secs}\n",
+            quoted(project_registry_dir),
+            quoted(executable),
+            scenario,
+            quoted(marker),
+            quoted(project_registry_dir),
+        ),
+    )
+    .unwrap();
+}
+
+fn write_runner_toml_without_plugins(path: &Path, project_registry_dir: &Path) {
+    fn quoted(value: &Path) -> String {
+        format!("{:?}", value.to_string_lossy().as_ref())
+    }
+    fs::write(
+        path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test-token\"\nclient_id = \"plugin-check-test\"\nproject_registry_dir = {}\n\n[plugins]\nrequest_timeout_secs = 2\n",
+            quoted(project_registry_dir),
+        ),
+    )
+    .unwrap();
+}

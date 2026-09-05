@@ -61,6 +61,16 @@ resolved from the prepared snapshot's `PATH`, not only from the Runner parent
 process PATH. Sensitive WebCodex process credentials are filtered from that
 environment.
 
+Plugin candidate preparation may read the complete startup-bound `runner.toml`
+because a provider can reference shell/profile inputs. The committed Plugin
+state does not retain a second generic `ShellConfig` truth: it stores Plugin
+provider config plus a derived Plugin-environment snapshot containing only the
+base program/argv/dialect/PATH/env and referenced/default profile runtime,
+environment, and init-script inputs. Unrelated persistent-shell controls do not
+replace Plugin providers. Conversely, Plugin-relevant profile/environment
+changes create a new provider instance on Plugin reload. `plugin:manage` still
+cannot activate generic Runner shell configuration.
+
 On Windows, native executables follow the Runner's normal `PATH`/`PATHEXT`
 rules. `.cmd` and `.bat` commands are rejected for this ABI because they require
 shell semantics; configure the native runtime executable instead.
@@ -78,6 +88,29 @@ Its ToolSpec is static and registered in the same canonical tool metadata path
 as other WebCodex tools; its schema does not depend on Runner availability or
 Plugin inventory. `tool_manifest(tool_name="plugin_tool")` therefore describes
 the exact gateway contract even when no Plugin-capable Runner is online.
+
+The same canonical `plugin_tool` request parser and action-aware gateway executor
+serve MCP and the generic Tool Runtime used by OpenAPI/GPT Actions. A surface
+that advertises `plugin_tool` can therefore call it; MCP does not have a separate
+Plugin implementation. For generic `callRuntimeTool`, use the canonical nested
+`params` envelope for the complete Plugin contract because the outer `tool`
+field already selects `plugin_tool` and the provider-local `tool` name belongs
+inside Plugin arguments:
+
+```json
+{"tool":"plugin_tool","params":{"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}}
+{"tool":"plugin_tool","params":{"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}}
+```
+
+The static ToolDefinition is intentionally a worst-case discovery contract.
+Execution policy is classified from the validated action before Session or
+permission governance: list/describe require `plugin:inspect` and are read-only;
+call requires `plugin:invoke` and uses local-execution governance; check/reload
+require `plugin:manage` and use management governance. One shared specialized
+executor owns the authoritative Workflow Session lifecycle for both MCP and API
+transports, so one Plugin invocation records one lifecycle. A
+`recording_session_id` is always explicit provenance and is never inferred from
+transport, window, credential, Runner, or a previous call.
 
 Routing always starts from the exact caller-visible Runner:
 

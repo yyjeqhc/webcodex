@@ -867,15 +867,15 @@ fn concurrent_reload_is_busy_while_existing_calls_continue_and_later_reload_wins
 #[test]
 fn generic_config_activation_holds_plugin_gate_through_followup_commit() {
     let fixture = Fixture::new("normal", 2);
-    let (plugins, shell) = {
+    let plugins = {
         let committed = fixture
             .manager
             .committed
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (committed.config.clone(), committed.shell.clone())
+        committed.config.clone()
     };
-    let candidate = runner_config(plugins, shell, fixture._temp.path());
+    let candidate = runner_config(plugins, ShellConfig::default(), fixture._temp.path());
     let manager = Arc::clone(&fixture.manager);
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -897,6 +897,83 @@ fn generic_config_activation_holds_plugin_gate_through_followup_commit() {
     );
     release_tx.send(()).unwrap();
     assert!(activation.join().unwrap().is_ok());
+}
+
+#[test]
+fn plugin_committed_environment_ignores_unrelated_shell_runtime_controls() {
+    let fixture = Fixture::new("normal", 2);
+    let plugins = fixture
+        .manager
+        .committed
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .config
+        .clone();
+    let initial = current_providers(&fixture.manager)[0]
+        .provider_instance_id
+        .clone();
+
+    let mut unrelated_shell = ShellConfig::default();
+    unrelated_shell.max_persistent_shells += 1;
+    unrelated_shell.persistent_shell_idle_timeout_secs += 1;
+    let mut unused_profile = super::super::config::ShellProfileConfig::default();
+    unused_profile.env.insert(
+        "WEBCODEX_UNUSED_PLUGIN_PROFILE".to_string(),
+        "v1".to_string(),
+    );
+    unrelated_shell
+        .profiles
+        .insert("unused".to_string(), unused_profile);
+    let unrelated = runner_config(plugins.clone(), unrelated_shell, fixture._temp.path());
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&unrelated, || {})
+        .unwrap();
+    assert_eq!(
+        current_providers(&fixture.manager)[0].provider_instance_id,
+        initial,
+        "generic persistent-shell controls and unreferenced profiles must not replace the Plugin provider"
+    );
+
+    let mut relevant_shell = ShellConfig::default();
+    relevant_shell.default_profile = Some("plugin".to_string());
+    relevant_shell.profiles.insert(
+        "plugin".to_string(),
+        super::super::config::ShellProfileConfig::default(),
+    );
+    let relevant = runner_config(
+        plugins.clone(),
+        relevant_shell.clone(),
+        fixture._temp.path(),
+    );
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&relevant, || {})
+        .unwrap();
+    let profiled = current_providers(&fixture.manager)[0]
+        .provider_instance_id
+        .clone();
+    assert_ne!(
+        profiled, initial,
+        "selecting the default Plugin profile must replace the provider"
+    );
+
+    relevant_shell
+        .profiles
+        .get_mut("plugin")
+        .unwrap()
+        .env
+        .insert("WEBCODEX_PLUGIN_ENV_TEST".to_string(), "v2".to_string());
+    let changed_profile = runner_config(plugins, relevant_shell, fixture._temp.path());
+    fixture
+        .manager
+        .apply_config_candidate_and_then(&changed_profile, || {})
+        .unwrap();
+    assert_ne!(
+        current_providers(&fixture.manager)[0].provider_instance_id,
+        profiled,
+        "referenced Plugin profile changes must create a new provider instance"
+    );
 }
 
 #[test]

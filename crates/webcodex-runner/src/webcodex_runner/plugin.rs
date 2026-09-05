@@ -5,11 +5,13 @@
 //! a complete candidate set and atomically replace the committed state only
 //! after every configured provider is admitted.
 
-use super::config::{load_config, PluginConfig, PluginProviderConfig, RunnerConfig, ShellConfig};
+use super::config::{
+    load_config, PluginConfig, PluginProviderConfig, RunnerConfig, ShellConfig, ShellDialect,
+};
 use super::shell::{PreparedExecutionEnvironment, PreparedShellProfileCache};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{ChildStdin, Stdio};
@@ -48,7 +50,86 @@ pub(crate) struct PluginManager {
 struct CommittedState {
     providers: BTreeMap<String, Arc<ProviderEntry>>,
     config: PluginConfig,
-    shell: ShellConfig,
+    environment: PluginEnvironmentSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PluginEnvironmentSnapshot {
+    default_profile: Option<String>,
+    profiles: BTreeMap<String, PluginProfileEnvironment>,
+    program: String,
+    args: Vec<String>,
+    dialect: Option<ShellDialect>,
+    path_prepend: Vec<PathBuf>,
+    env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PluginProfileEnvironment {
+    program: Option<String>,
+    args: Option<Vec<String>>,
+    dialect: Option<ShellDialect>,
+    env: BTreeMap<String, String>,
+    init_script: Option<String>,
+}
+
+impl PluginEnvironmentSnapshot {
+    fn from_config(shell: &ShellConfig, plugins: &PluginConfig) -> Self {
+        let mut profile_names = BTreeSet::new();
+        let uses_default_profile = plugins
+            .providers
+            .iter()
+            .any(|provider| provider.profile.is_none());
+        for provider in &plugins.providers {
+            if let Some(profile) = provider.profile.as_ref() {
+                profile_names.insert(profile.clone());
+            } else if let Some(profile) = shell.default_profile.as_ref() {
+                profile_names.insert(profile.clone());
+            }
+        }
+        let has_providers = !plugins.providers.is_empty();
+        Self {
+            default_profile: uses_default_profile
+                .then(|| shell.default_profile.clone())
+                .flatten(),
+            profiles: profile_names
+                .into_iter()
+                .filter_map(|name| {
+                    shell.profiles.get(&name).map(|profile| {
+                        (
+                            name,
+                            PluginProfileEnvironment {
+                                program: profile.program.clone(),
+                                args: profile.args.clone(),
+                                dialect: profile.dialect,
+                                env: profile.env.clone(),
+                                init_script: profile.init_script.clone(),
+                            },
+                        )
+                    })
+                })
+                .collect(),
+            program: has_providers
+                .then(|| shell.program.clone())
+                .unwrap_or_default(),
+            args: has_providers
+                .then(|| shell.args.clone())
+                .unwrap_or_default(),
+            dialect: has_providers.then_some(shell.dialect).flatten(),
+            path_prepend: has_providers
+                .then(|| shell.path_prepend.clone())
+                .unwrap_or_default(),
+            env: if has_providers {
+                shell
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            },
+        }
+    }
 }
 
 struct ProviderEntry {
@@ -258,7 +339,10 @@ impl PluginManager {
             committed: Mutex::new(CommittedState {
                 providers,
                 config: startup.plugins.clone(),
-                shell: startup.shell.clone(),
+                environment: PluginEnvironmentSnapshot::from_config(
+                    &startup.shell,
+                    &startup.plugins,
+                ),
             }),
             candidate_gate: Mutex::new(()),
             last_check_stderr: Mutex::new(BTreeMap::new()),
@@ -556,12 +640,16 @@ impl PluginManager {
     }
 
     fn reload_candidate_locked(&self, candidate: &RunnerConfig) -> PluginReloadAttempt {
+        let candidate_environment =
+            PluginEnvironmentSnapshot::from_config(&candidate.shell, &candidate.plugins);
         {
             let committed = self
                 .committed
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if committed.config == candidate.plugins && committed.shell == candidate.shell {
+            if committed.config == candidate.plugins
+                && committed.environment == candidate_environment
+            {
                 return PluginReloadAttempt::Committed {
                     providers: committed
                         .providers
@@ -631,7 +719,7 @@ impl PluginManager {
                 };
             }
             committed.config = candidate.plugins.clone();
-            committed.shell = candidate.shell.clone();
+            committed.environment = candidate_environment;
             std::mem::replace(&mut committed.providers, prepared)
         };
         drop(retired);

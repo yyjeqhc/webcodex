@@ -57,6 +57,14 @@ Plugin 不再发明一套 runtime/PATH/env 机制，而是真正复用 Runner �
 `uv`、`bun` 这样的 bare command 会从 prepared snapshot 的 `PATH` 解析，而不是
 只看 Runner 父进程的 PATH。敏感 WebCodex 进程凭据会被过滤。
 
+Plugin candidate preparation 可以读取完整的 startup-bound `runner.toml`，因为 provider
+可能引用 shell/profile 输入；但 committed Plugin state 不再保存第二份 generic
+`ShellConfig` truth。它只保存 Plugin provider config，以及派生出的 Plugin environment
+snapshot：base program/argv/dialect/PATH/env，加上 default/referenced profile 真正需要的
+runtime、env 和 init-script 输入。`shell.max_persistent_shells` 等无关 persistent-shell
+控制不会替换 Plugin provider；Plugin 相关 profile/env 改动则会在 reload 时产生新的
+provider instance。`plugin:manage` 因此仍然不能激活 generic Runner shell configuration。
+
 Windows 继续使用 Runner 已有的 `PATH` / `PATHEXT` native executable 规则；
 `.cmd` / `.bat` 需要 shell 语义，因此 Native Plugin ABI 会明确拒绝它们。
 
@@ -72,13 +80,33 @@ Server-global WebCodex tool namespace，也不会被追加到外层 MCP `tools/l
 安装了哪些 Plugin 无关。因此即使当前没有 Plugin-capable Runner，
 `tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
 
+MCP 与 OpenAPI/GPT Actions 使用的 generic Tool Runtime 都复用同一个 canonical
+`plugin_tool` parser 和 action-aware gateway executor；不存在 MCP Plugin 实现和 GPT
+Plugin 实现两套逻辑。任何声明暴露 `plugin_tool` 的 canonical model surface 都可以实际
+调用它。对 generic `callRuntimeTool`，完整 Plugin contract 使用 canonical nested
+`params`：外层 `tool` 已经用于选择 `plugin_tool`，provider-local `tool` 必须留在 Plugin
+业务参数里：
+
+```json
+{"tool":"plugin_tool","params":{"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}}
+{"tool":"plugin_tool","params":{"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}}
+```
+
+静态 ToolDefinition 只表达 worst-case discovery contract。真正执行 policy 会在校验后的
+`action` 上先分类，再进入 Session/permission governance：list/describe 只要求
+`plugin:inspect` 且是 read-only；call 要求 `plugin:invoke` 并走 local-execution governance；
+check/reload 要求 `plugin:manage` 并走 management governance。MCP 与 API transport 共用一个
+specialized executor，它也是 Workflow Session lifecycle 的唯一 owner，因此一次 Plugin
+调用只产生一套 authoritative lifecycle。`recording_session_id` 必须显式提供；不会从
+transport、window、credential、Runner 或之前的调用推断。
+
 routing 永远从 caller-visible 的 exact Runner 开始：
 
 ```text
 plugin_tool(action="list")
     -> 当前 caller 可见且支持 Plugin 的 Runners
 plugin_tool(action="list", runner="my-runner")
-    -> 该 exact Runner 当前 effective providers
+    -> 该 exact Runner 当前 committed providers
 plugin_tool(action="list", runner="my-runner", plugin="repo-tools")
     -> 该 exact provider 当前有界 tool name/title
 plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
@@ -139,7 +167,7 @@ live provider 与最近一次 disposable `check` candidate 保留 bounded、cont
 自己重新读取自己的 `runner.toml`；Server 不会上传 executable、env 或 raw Plugin
 config。candidate management 在 `check` 与 `reload` 之间共同串行：第二个 check 返回
 `plugin_check_busy`，reload 保持已有 `plugin_reload_busy`；都以 `NotStarted` 明确拒绝，
-不排队等待。candidate 准备期间不会长期持有 current dynamic/provider session，因此
+不排队等待。candidate 准备期间不会长期持有 current committed provider session，因此
 list/describe/call 仍可继续使用当前已提交 provider。
 
 reload 会先准备完整 candidate provider set。任意 candidate admission 失败时，旧 committed

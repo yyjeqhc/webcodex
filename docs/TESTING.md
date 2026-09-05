@@ -29,26 +29,31 @@ tests with different cost profiles sharing the same default lane.
 
 The lanes above define test semantics; workflows decide when to run them.
 
-- `.github/workflows/ci.yml` is the ordinary repository gate. Its lightweight
-  `contract` job is the mandatory first lane for every configured pull request
-  and every push to `main`; it never requires the owner-only `run-ci` label. The
-  lane owns frontend install/type/test/dist validation, workspace-boundary
-  self-test/checks, formatting, the heuristic test-inventory self-test/report
-  (without count thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
+- `.github/workflows/ci.yml` is the ordinary repository gate. Its cheap `changes`
+  job classifies the exact PR base...head path set before native scheduling, while
+  the lightweight `contract` job remains mandatory for every configured pull
+  request and every push to `main`. The classifier is deterministic and local to
+  Git: it does not use commit messages or PR titles, and it emits per-platform and
+  per-package-lane requirements. The contract lane owns frontend
+  install/type/test/dist validation, workspace-boundary self-test/checks,
+  formatting, the heuristic test-inventory self-test/report (without count
+  thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
   `test-linux-tooling` both depend on a successful `contract` job and now run for
   every pull request as well as every push to `main`, including owner-authored PRs.
   Release readiness must not be the first place complete Linux package suites or
   release-tooling tests execute. The historical `test` job id remains the aggregate
   Linux status check and always evaluates `contract` plus both Linux lanes, failing
-  unless every required result is `success`. Native macOS and Windows lanes plus
-  Linux arm64 retain the existing main/external-PR/owner-`run-ci` policy so routine
-  owner PRs do not automatically consume the full cross-platform matrix. The
-  always-evaluated `test-native` aggregate fails when those native lanes are skipped
-  instead of treating missing platform evidence as success; it provides one stable
-  check for branch protection once an owner PR opts into `run-ci`. This is CI
-  orchestration, not a claim that the repository now has perfectly pure
-  fast/integration/platform suites.
+  unless every required result is `success`. Pushes to `main`, external-contributor
+  PRs, and owner PRs carrying `run-ci` still force the complete native matrix. Other
+  owner PRs are upgraded automatically according to changed-path risk: native
+  process, shell, Plugin, Computer, platform-specific, and Desktop Rust ownership
+  selects Windows and/or macOS lanes; packaging/signing/release surfaces select the
+  corresponding package lanes or the full matrix. Ordinary Rust domain/control
+  changes remain on the mandatory Linux gates. The stable `test-macos`,
+  `test-windows`, and `test-native` aggregates always resolve and verify each child
+  lane is `success` when required or `skipped` when not required, avoiding a skipped
+  required-check context that could leave branch protection pending.
 - Linux Rust execution is package-sharded without test-name filters: the server
   package `webcodex`, the integration-rich Runner package `webcodex-runner`, and
   the remaining workspace crates run as three complete package groups in
@@ -63,8 +68,12 @@ The lanes above define test semantics; workflows decide when to run them.
 - Linux tooling runs in parallel with the Rust shards and retains
   release-verification tooling, Markdown-link validation, and npm package-smoke
   tooling; within the Linux heavy split, only this tooling lane installs Node
-  because those smoke scripts invoke Node/npm directly. macOS still owns release-surface compilation and the native
-  Runner suite on both published architectures, including detached ownership/restart recovery. The local-`sshd`
+  because those smoke scripts invoke Node/npm directly. macOS native coverage is
+  split into a core two-architecture Runner/Computer lane and a separately selected
+  two-architecture Desktop DMG/package lane, so process/Plugin changes do not
+  mechanically rebuild Desktop packages. macOS still owns release-surface
+  compilation and the native Runner suite on both published architectures,
+  including detached ownership/restart recovery. The local-`sshd`
   SSH integration fixture remains Linux-only because it depends on Linux daemon
   account/auth configuration; Windows still owns its native library, CLI, Runner,
   npm, and artifact-to-install coverage. The Windows Runner + Computer lane caps

@@ -14,14 +14,96 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Full native CI is mandatory for main, external contributors, and explicit
-  # owner opt-in. Owner PRs without run-ci stay on the required Linux fast path.
-  FULL_NATIVE_REQUESTED: ${{ github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner || contains(github.event.pull_request.labels.*.name, 'run-ci') }}
 
 jobs:
+  changes:
+    # Classify only trusted event metadata plus base...head Git data. For PRs the
+    # classifier is loaded from the trusted base commit, so a PR cannot weaken its
+    # own native gates. If the trusted base predates the classifier, fail safe to
+    # the full native matrix instead of executing classifier code from the PR head.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      needs_windows: ${{ steps.classify.outputs.needs_windows }}
+      needs_windows_core: ${{ steps.classify.outputs.needs_windows_core }}
+      needs_windows_runner: ${{ steps.classify.outputs.needs_windows_runner }}
+      needs_windows_package: ${{ steps.classify.outputs.needs_windows_package }}
+      needs_windows_desktop: ${{ steps.classify.outputs.needs_windows_desktop }}
+      needs_windows_arm64: ${{ steps.classify.outputs.needs_windows_arm64 }}
+      needs_macos: ${{ steps.classify.outputs.needs_macos }}
+      needs_macos_desktop: ${{ steps.classify.outputs.needs_macos_desktop }}
+      needs_linux_arm64: ${{ steps.classify.outputs.needs_linux_arm64 }}
+      needs_desktop_package: ${{ steps.classify.outputs.needs_desktop_package }}
+      needs_full_native: ${{ steps.classify.outputs.needs_full_native }}
+      categories: ${{ steps.classify.outputs.categories }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - name: Checkout trusted classifier source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify native CI risk
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXTERNAL_CONTRIBUTOR: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != github.repository_owner }}
+          RUN_CI: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-ci') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        run: |
+          set -euo pipefail
+          classifier="scripts/ci_path_risk.py"
+
+          if [ ! -f "$classifier" ]; then
+            {
+              for key in \
+                needs_windows \
+                needs_windows_core \
+                needs_windows_runner \
+                needs_windows_package \
+                needs_windows_desktop \
+                needs_windows_arm64 \
+                needs_macos \
+                needs_macos_desktop \
+                needs_linux_arm64 \
+                needs_desktop_package \
+                needs_full_native; do
+                echo "$key=true"
+              done
+              echo "categories=bootstrap-full-native"
+              echo "reason=full-native:bootstrap-base-missing"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = pull_request ] && \
+             [ "$EXTERNAL_CONTRIBUTOR" != true ] && \
+             [ "$RUN_CI" != true ] && \
+             ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+            fetched_head="$(git rev-parse FETCH_HEAD)"
+            if [ "$fetched_head" != "$HEAD_SHA" ]; then
+              echo "fetched PR head does not match event head SHA" >&2
+              exit 1
+            fi
+          fi
+
+          python3 "$classifier" \
+            --event-name "$EVENT_NAME" \
+            --external-contributor "$EXTERNAL_CONTRIBUTOR" \
+            --run-ci "$RUN_CI" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
   contract:
-    # Mandatory first lane for every workflow invocation: pull requests and
-    # pushes to main. Owner-authored PRs do not need `run-ci` for this cheap gate.
+    # Mandatory contract lane for every workflow invocation: pull requests and
+    # pushes to main. It runs independently of the cheap changes classifier.
     # Keep it limited to deterministic, in-process/static checks so feedback stays fast.
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -141,11 +223,8 @@ jobs:
   # Linux arm64 cfg/target coverage here so release-readiness does not need a
   # duplicate release-profile build merely to prove the native architecture.
   test-linux-arm64:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_linux_arm64 == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -183,14 +262,49 @@ jobs:
             exit 1
           fi
 
-  test-macos:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
-    # Native macOS gates for both published architectures plus the Runner and
-    # Computer platform suites. Keep these ahead of immutable tagging.
+  test-macos-core:
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_macos == 'true'
+    # Native macOS core gates cover both published architectures plus the Runner
+    # and Computer platform suites without mechanically building Desktop packages.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            host_arch: arm64
+            rust_host: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            host_arch: x86_64
+            rust_host: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-core-ci-${{ matrix.platform }}
+      - name: Verify native macOS host
+        env:
+          EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
+          EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = "$EXPECTED_RUST_HOST"
+      - name: Check macOS workspace production surfaces
+        run: cargo check --locked --workspace
+      - name: Run native macOS Runner and Computer tests
+        run: cargo test --locked -p webcodex-runner -p webcodex-computer
+
+  test-macos-desktop:
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_macos_desktop == 'true'
+    # Keep Desktop package validation separate so process/plugin changes receive
+    # native macOS coverage without paying the DMG build cost unless needed.
     strategy:
       fail-fast: false
       matrix:
@@ -212,7 +326,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: macos-ci-${{ matrix.platform }}
+          shared-key: macos-desktop-ci-${{ matrix.platform }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -226,10 +340,6 @@ jobs:
           test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
           rust_host="$(rustc -vV | sed -n 's/^host: //p')"
           test "$rust_host" = "$EXPECTED_RUST_HOST"
-      - name: Check macOS release production surfaces
-        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner -p webcodex-computer
-      - name: Run native macOS Runner and Computer tests
-        run: cargo test --locked -p webcodex-runner -p webcodex-computer
       - name: Install Desktop dependencies
         run: npm ci --prefix apps/desktop
       - name: Check Desktop frontend
@@ -315,6 +425,43 @@ jobs:
             --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
             --signing-mode adhoc
 
+  test-macos:
+    needs: [contract, changes, test-macos-core, test-macos-desktop]
+    # Stable aggregate context: every configured macOS sublane must either succeed
+    # when required by policy or be intentionally skipped when not required.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate macOS lane policy
+        env:
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NEEDS_CORE: ${{ needs.changes.outputs.needs_macos }}
+          NEEDS_DESKTOP: ${{ needs.changes.outputs.needs_macos_desktop }}
+          CORE_RESULT: ${{ needs.test-macos-core.result }}
+          DESKTOP_RESULT: ${{ needs.test-macos-desktop.result }}
+        run: |
+          set -euo pipefail
+          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT desktop=$DESKTOP_RESULT needs_core=$NEEDS_CORE needs_desktop=$NEEDS_DESKTOP"
+          if [ "$CHANGES_RESULT" != success ] || [ "$CONTRACT_RESULT" != success ]; then
+            echo "CI policy or contract classification did not succeed" >&2
+            exit 1
+          fi
+          require_lane() {
+            label="$1"
+            required="$2"
+            actual="$3"
+            expected=skipped
+            if [ "$required" = true ]; then expected=success; fi
+            if [ "$actual" != "$expected" ]; then
+              echo "$label macOS lane expected $expected, got $actual" >&2
+              exit 1
+            fi
+          }
+          require_lane core "$NEEDS_CORE" "$CORE_RESULT"
+          require_lane desktop "$NEEDS_DESKTOP" "$DESKTOP_RESULT"
+
   # Keep Windows process-heavy suites isolated on separate hosted VMs. The
   # webcodex-runner lane caps libtest at two concurrent test functions: default
   # parallelism can starve real PowerShell/process-tree startup on hosted Windows,
@@ -323,11 +470,8 @@ jobs:
   # running after the Computer runtime was split out of the Runner crate.
   # Core/library and packaging coverage can run independently in parallel.
   test-windows-core:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_windows_core == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -343,15 +487,14 @@ jobs:
           "WEBCODEX_TEST_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run Windows persistent-shell tests (PowerShell 5.1 + PowerShell 7)
         run: cargo test --locked -p webcodex-persistent-shell
+      - name: Check Windows workspace production surfaces
+        run: cargo check --locked --workspace
       - name: Run Windows library and CLI tests
         run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
 
   test-windows-runner:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_windows_runner == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -366,11 +509,8 @@ jobs:
         run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=2
 
   test-windows-package:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_windows_package == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -394,11 +534,8 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm_install_windows_smoke.ps1
 
   test-windows-desktop:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_windows_desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -493,15 +630,11 @@ jobs:
             -SourceSha "${{ steps.runtime.outputs.source }}" `
             -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}")
 
-  # The x64 Windows lanes above exercise full process/package behavior. Keep one
-  # native ARM64 compile gate on exact main so the release workflow is not the
-  # first place target-specific Windows code is compiled.
+  # Keep native ARM64 compile coverage path-aware as well; full-native overrides
+  # and explicit aarch64 cfg/target changes still require it before merge.
   test-windows-arm64:
-    needs: contract
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.user.login != github.repository_owner ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    needs: [contract, changes]
+    if: needs.changes.outputs.needs_windows_arm64 == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 30
     steps:
@@ -520,10 +653,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE" }
 
   test-windows:
-    needs: [contract, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop, test-windows-arm64]
-    # Preserve the historical required Windows context in both modes. Full-native
-    # runs require every eligible lane to succeed; fast owner PRs instead prove
-    # that every heavy Windows lane was intentionally skipped by policy.
+    needs: [contract, changes, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop, test-windows-arm64]
+    # Preserve the stable Windows aggregate while allowing each heavy lane to be
+    # selected independently by the deterministic path-risk classifier.
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -531,42 +663,45 @@ jobs:
       - name: Validate Windows lane policy
         env:
           CONTRACT_RESULT: ${{ needs.contract.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NEEDS_CORE: ${{ needs.changes.outputs.needs_windows_core }}
+          NEEDS_RUNNER: ${{ needs.changes.outputs.needs_windows_runner }}
+          NEEDS_PACKAGE: ${{ needs.changes.outputs.needs_windows_package }}
+          NEEDS_DESKTOP: ${{ needs.changes.outputs.needs_windows_desktop }}
+          NEEDS_ARM64: ${{ needs.changes.outputs.needs_windows_arm64 }}
           CORE_RESULT: ${{ needs.test-windows-core.result }}
           RUNNER_RESULT: ${{ needs.test-windows-runner.result }}
           PACKAGE_RESULT: ${{ needs.test-windows-package.result }}
           DESKTOP_RESULT: ${{ needs.test-windows-desktop.result }}
           ARM64_RESULT: ${{ needs.test-windows-arm64.result }}
         run: |
-          echo "full_native=$FULL_NATIVE_REQUESTED contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
-          if [ "$CONTRACT_RESULT" != success ]; then
-            echo "contract CI did not succeed" >&2
+          set -euo pipefail
+          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
+          if [ "$CHANGES_RESULT" != success ] || [ "$CONTRACT_RESULT" != success ]; then
+            echo "CI policy or contract classification did not succeed" >&2
             exit 1
           fi
-          if [ "$FULL_NATIVE_REQUESTED" = true ]; then
-            if [ "$CORE_RESULT" != success ] || \
-               [ "$RUNNER_RESULT" != success ] || \
-               [ "$PACKAGE_RESULT" != success ] || \
-               [ "$DESKTOP_RESULT" != success ] || \
-               [ "$ARM64_RESULT" != success ]; then
-              echo "requested Windows CI lane failed or was unexpectedly skipped" >&2
+          require_lane() {
+            label="$1"
+            required="$2"
+            actual="$3"
+            expected=skipped
+            if [ "$required" = true ]; then expected=success; fi
+            if [ "$actual" != "$expected" ]; then
+              echo "$label Windows lane expected $expected, got $actual" >&2
               exit 1
             fi
-          else
-            if [ "$CORE_RESULT" != skipped ] || \
-               [ "$RUNNER_RESULT" != skipped ] || \
-               [ "$PACKAGE_RESULT" != skipped ] || \
-               [ "$DESKTOP_RESULT" != skipped ] || \
-               [ "$ARM64_RESULT" != skipped ]; then
-              echo "fast owner PR expected every heavy Windows lane to be intentionally skipped" >&2
-              exit 1
-            fi
-          fi
+          }
+          require_lane core "$NEEDS_CORE" "$CORE_RESULT"
+          require_lane runner "$NEEDS_RUNNER" "$RUNNER_RESULT"
+          require_lane package "$NEEDS_PACKAGE" "$PACKAGE_RESULT"
+          require_lane desktop "$NEEDS_DESKTOP" "$DESKTOP_RESULT"
+          require_lane arm64 "$NEEDS_ARM64" "$ARM64_RESULT"
 
   test-native:
-    needs: [contract, test-linux-arm64, test-macos, test-windows]
-    # Keep a stable required native aggregate. Fast owner PRs accept only the
-    # exact intentional-skip shape; full-native invocations require every heavy
-    # aggregate to succeed, so an eligible lane that is unexpectedly skipped is red.
+    needs: [contract, changes, test-linux-arm64, test-macos, test-windows]
+    # Stable branch-protection context: platform aggregates always resolve, while
+    # Linux arm64 must match the classifier's required-or-skipped decision.
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -574,27 +709,25 @@ jobs:
       - name: Validate native lane policy
         env:
           CONTRACT_RESULT: ${{ needs.contract.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NEEDS_LINUX_ARM64: ${{ needs.changes.outputs.needs_linux_arm64 }}
           LINUX_ARM64_RESULT: ${{ needs.test-linux-arm64.result }}
           MACOS_RESULT: ${{ needs.test-macos.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
         run: |
-          echo "full_native=$FULL_NATIVE_REQUESTED contract=$CONTRACT_RESULT linux_arm64=$LINUX_ARM64_RESULT macos=$MACOS_RESULT windows=$WINDOWS_RESULT"
-          if [ "$CONTRACT_RESULT" != success ]; then
-            echo "contract CI did not succeed" >&2
+          set -euo pipefail
+          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT linux_arm64=$LINUX_ARM64_RESULT macos=$MACOS_RESULT windows=$WINDOWS_RESULT needs_linux_arm64=$NEEDS_LINUX_ARM64"
+          if [ "$CHANGES_RESULT" != success ] || [ "$CONTRACT_RESULT" != success ]; then
+            echo "CI policy or contract classification did not succeed" >&2
             exit 1
           fi
-          if [ "$FULL_NATIVE_REQUESTED" = true ]; then
-            if [ "$LINUX_ARM64_RESULT" != success ] || \
-               [ "$MACOS_RESULT" != success ] || \
-               [ "$WINDOWS_RESULT" != success ]; then
-              echo "requested native CI lane failed or was unexpectedly skipped" >&2
-              exit 1
-            fi
-          else
-            if [ "$LINUX_ARM64_RESULT" != skipped ] || \
-               [ "$MACOS_RESULT" != skipped ] || \
-               [ "$WINDOWS_RESULT" != success ]; then
-              echo "fast owner PR native lane shape was not the intentional policy skip" >&2
-              exit 1
-            fi
+          if [ "$MACOS_RESULT" != success ] || [ "$WINDOWS_RESULT" != success ]; then
+            echo "native platform aggregate failed" >&2
+            exit 1
+          fi
+          expected_linux_arm64=skipped
+          if [ "$NEEDS_LINUX_ARM64" = true ]; then expected_linux_arm64=success; fi
+          if [ "$LINUX_ARM64_RESULT" != "$expected_linux_arm64" ]; then
+            echo "Linux arm64 lane expected $expected_linux_arm64, got $LINUX_ARM64_RESULT" >&2
+            exit 1
           fi

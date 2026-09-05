@@ -224,7 +224,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeStyles, /send-btn\.is-ready/);
   assert.match(runtimeStyles, /session-state-chips \.chip:not\(:last-child\)\{display:none/);
   assert.match(runtimeStyles, /message-card\.message-group-continuation \.message-author\{display:none/);
-  assert.match(runtimeStyles, /session-evidence/);
+  assert.match(runtimeStyles, /context-navigation/);
   await exec(process.execPath, ["--check", resolve(outputDirectory, "app.js")]);
   const admin = await readFile(resolve(outputDirectory, "admin.js"), "utf8");
   await exec(process.execPath, ["--check", resolve(outputDirectory, "admin.js")]);

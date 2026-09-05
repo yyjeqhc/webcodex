@@ -456,12 +456,17 @@ of finding its PID or sending signals manually:
 4. Inspect `runtime_status(client_id=...)` (or `list_runners`) after reload.
 
 `runner_config_reload` never writes `runner.toml`; it only activates the candidate
-already on disk. Hot-reloadable policy, shell, and static SSH-resource changes can
+already on disk. Hot-reloadable policy, shell, Native Plugin, and static SSH-resource changes can
 become active immediately, while fields reported in `restart_required_fields`
 remain startup-only until the Runner restarts. Invalid candidates leave the active
 snapshot and generation unchanged. Managed `ssh_resource` mutations are different:
 they use a frozen startup snapshot and require a Runner restart exactly when the
 tool reports `restart_required=true`.
+
+Plugin configuration is live-applied through the same validated Plugin candidate
+admission/commit primitive used by `plugin_tool reload`; changing `[plugins]` is
+not a restart-only operation. `plugin_tool reload` remains the narrower
+`plugin:manage`-scoped entry when only Plugin state should be reloaded.
 
 On Unix, service reload/SIGHUP remains an optional compatibility trigger and calls
 the same authoritative reload primitive. Windows and macOS use the first-class

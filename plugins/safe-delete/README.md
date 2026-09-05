@@ -65,21 +65,20 @@ timeout_secs = 30
 During development, use the normal Plugin loop:
 
 ```text
-plugin_tool check
--> plugin_tool reload
--> plugin_tool list
--> plugin_tool describe
--> plugin_tool call
+plugin_tool(action="check", runner="my-runner", plugin="safe-delete")
+-> plugin_tool(action="reload", runner="my-runner")
+-> plugin_tool(action="list", runner="my-runner", plugin="safe-delete")
+-> plugin_tool(action="describe", runner="my-runner", plugin="safe-delete", tool="safe_delete")
+-> plugin_tool(action="call", binding="wc_pbind_...", arguments={"path":"build/old-output.bin"})
 ```
 
-Restart the Runner when you want the newly admitted `safe_delete` tool to become
-eligible for first-class startup exposure.
+No Runner restart is required for Plugin discovery after a successful reload.
+`safe_delete` remains provider-local and never becomes an outer MCP tool name.
 
 ## Tool
 
-```text
-safe_delete({"path":"build/old-output.bin"})
-```
+Call it only through the opaque binding returned by `plugin_tool describe`; do
+not call outer MCP `tools/call(name="safe_delete")`.
 
 Possible structured outcomes are `trashed`, `already_absent`, `rejected`,
 `failed`, and `unknown`.

@@ -54,20 +54,20 @@ timeout_secs = 30
 开发阶段使用标准 Plugin 闭环：
 
 ```text
-plugin_tool check
--> plugin_tool reload
--> plugin_tool list
--> plugin_tool describe
--> plugin_tool call
+plugin_tool(action="check", runner="my-runner", plugin="safe-delete")
+-> plugin_tool(action="reload", runner="my-runner")
+-> plugin_tool(action="list", runner="my-runner", plugin="safe-delete")
+-> plugin_tool(action="describe", runner="my-runner", plugin="safe-delete", tool="safe_delete")
+-> plugin_tool(action="call", binding="wc_pbind_...", arguments={"path":"build/old-output.bin"})
 ```
 
-需要让新的 `safe_delete` 进入 startup first-class 候选时，再重启 Runner。
+成功 reload 后不需要重启 Runner 才能发现/调用 Plugin。`safe_delete` 始终是
+provider-local Tool，不会成为外层 MCP tool name。
 
 ## Tool
 
-```text
-safe_delete({"path":"build/old-output.bin"})
-```
+只能使用 `plugin_tool describe` 返回的 opaque binding 调用它；不要直接调用外层 MCP
+`tools/call(name="safe_delete")`。
 
 结构化结果可能是 `trashed`、`already_absent`、`rejected`、`failed` 或 `unknown`。
 

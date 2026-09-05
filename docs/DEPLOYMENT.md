@@ -381,6 +381,11 @@ same reload primitive, but is not required for first-class config control. Ident
 server/auth, project source, concurrency, capabilities, and transport changes
 remain restart-only where reported.
 
+`[plugins]` is live-reloadable: generic Runner config reload and `plugin_tool reload`
+share the same Plugin candidate admission/atomic-commit primitive. Plugin provider
+tools remain Runner-local capabilities behind `plugin_tool`; they are never promoted
+into outer MCP `tools/list` and do not require a Runner restart for discovery.
+
 For a foreground test, run `webcodex-runner --profile workstation`. Advanced
 manual config generation uses `webcodex runner init`.
 

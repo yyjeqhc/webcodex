@@ -60,49 +60,19 @@ Plugin 不再发明一套 runtime/PATH/env 机制，而是真正复用 Runner �
 Windows 继续使用 Runner 已有的 `PATH` / `PATHEXT` native executable 规则；
 `.cmd` / `.bat` 需要 shell 语义，因此 Native Plugin ABI 会明确拒绝它们。
 
-## Startup 与 Dynamic 两个平面
+## Runner-owned gateway 模型
 
-Plugin 只有两个状态平面，没有额外 draft/stable/published 状态。
+Native Plugin 是 Runner-owned capability。provider 的具体 Tool 永远不会加入
+Server-global WebCodex tool namespace，也不会被追加到外层 MCP `tools/list`。Plugin
+可以定义 `safe_delete`、`runtime_status` 或其他合法 provider-local 名称；它们不需要
+和 WebCodex builtin、其他 Runner 或同一 Runner 的其他 provider 做全局避让。
 
-### Startup
+唯一稳定的 model-facing 入口是一等 WebCodex 工具 `plugin_tool`。它的 ToolSpec 走和
+其他 WebCodex 工具相同的 canonical metadata/registry 链路，schema 与 Runner 是否在线、
+安装了哪些 Plugin 无关。因此即使当前没有 Plugin-capable Runner，
+`tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
 
-Runner 启动时读取 `[plugins]`，为每个 provider 准备环境并启动进程，依次完成
-`initialize`、**一次** `tools/list` 和 bounded schema validation，然后 canonicalize
-catalog，并把它冻结到 exact `provider_instance_id`。成功 admission 的 provider 进程会
-保持 persistent，但普通 list/describe/call 不会再要求同一个 provider instance 重新
-执行 `tools/list`。
-
-冻结后的 provider catalog 在这个 provider-instance 生命周期内 immutable。canonical
-validated catalog 会生成稳定 SHA-256 digest，并保留 exact Tool count，供 stale detection、
-audit 和后续 surface pinning 使用。catalog 只能通过 reload/restart 产生新的 provider
-instance 后改变；startup plane 本身在整个 Runner process lifetime 中 immutable。修改 Plugin 源码、
-`runner.toml` 或执行 `plugin_tool reload` 都不会改变一级工具。只有 Runner restart
-才会创建新的 Runner/provider instance 并重新做 startup admission。
-
-完整 provider catalog 与 startup direct-eligible subset 是两个不同 contract。
-`PLUGIN_STARTUP_MAX_DIRECT_TOOLS`（当前为 64）只是 Runner 对 direct subset 的安全上限，
-不是“provider 最多只能有 64 个 Tool”，也不是每个 model/surface 的 routing budget。只要
-完整 provider catalog 仍在自身有界 contract 内，即使 direct subset 没有被 admission，
-它仍可通过 `plugin_tool` 使用；Server-side surface budget 属于独立 governance 层。
-
-如果 startup tool 名称合法、schema 在边界内、在当前 caller-visible startup
-inventory 中唯一，并且没有和 WebCodex reserved tool 冲突，它会直接进入 MCP
-`tools/list`。模型可以直接调用：
-
-```text
-search_symbol({"query":"RunnerRegistry"})
-```
-
-重名或 reserved-name 冲突不会做一级暴露，但仍然可以在 `plugin_tool` dynamic
-流程中，于 describe 阶段明确指定 Runner + Plugin 后获得 binding 使用。
-
-单个 startup provider 启动失败不会拖死整个 Runner registration。已经 admission 的
-startup provider 如果之后失效，WebCodex 会 retire 这个 exact provider instance，
-direct call fail closed；不会在同一个 identity 下静默重启。
-
-### Dynamic
-
-已提交 Plugin 的 canonical discovery 使用三级 ladder：
+routing 永远从 caller-visible 的 exact Runner 开始：
 
 ```text
 plugin_tool(action="list")
@@ -111,26 +81,34 @@ plugin_tool(action="list", runner="my-runner")
     -> 该 exact Runner 当前 effective providers
 plugin_tool(action="list", runner="my-runner", plugin="repo-tools")
     -> 该 exact provider 当前有界 tool name/title
+plugin_tool(action="check", runner="my-runner", plugin="repo-tools")
+    -> disposable initialize + tools/list 校验；不提交，也不执行 tools/call
+plugin_tool(action="reload", runner="my-runner")
+    -> reread runner.toml，admit candidates，原子替换 committed provider set
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
     -> { ..., "binding": "wc_pbind_..." }
 plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
 
-`list(runner, plugin)` 只观察已经 committed/effective 的 runtime provider。它先解析
-caller-visible exact Runner 和 provider instance，然后直接读取这个 instance 的 frozen
-catalog；**不会**再向 provider 发出 `tools/list` round trip。它也不会重新读取
-`runner.toml`、启动 disposable candidate、调用 `check`、reload provider、修改 dynamic
-overlay、创建 binding 或改变 `firstClassRestartRequired`。如果 exact Runner/provider 已被
-replacement，discovery 会 fail closed 并要求重新 list；WebCodex 不会把同名 logical
-provider 静默重解析到 replacement，也不会 replay。完整 schema 仍然只能由 `describe`
-观察；list 只返回 tool name、可选 title 等有界 discovery metadata。
+identity 层级固定为：
 
-provider list 中的 `status` 只表示当前 effective runtime health。logical provider 如果也存在于
-frozen startup catalog，则 `startupAdmission` 单独表示冻结的 startup admission（`direct`、
-`secondary` 或 `failed`），必要时带 `startupAdmissionCode`。dynamic reload 不会重写这份
-startup admission。即使 `startupAdmission=direct`，也**不保证**所有 caller 最终都能在 MCP
-`tools/list` 看见一级工具：Server 仍会因为 reserved name 或 caller-visible duplicate Plugin tool
-name 抑制 direct exposure。
+```text
+exact Runner instance
+    -> exact provider instance
+        -> provider-local tool + frozen schema observation
+```
+
+不同 Runner 使用同名 provider、不同 Runner 使用同名 Tool、同一 Runner 的不同 provider
+使用同名 Tool 都是正常情况。只要求单个 provider 自己的 Tool name 唯一。
+
+Runner 启动时会 eager prepare 配置中的 provider，执行 initialize + 一次 tools/list，形成
+第一版 committed provider set。成功 provider instance 的 validated catalog 在其生命周期内
+冻结；普通 list/describe/call 只读这份 frozen catalog，不会偷偷 re-list。schema/catalog
+变化必须通过 reload 产生新的 provider instance。
+
+`list(runner, plugin)` 只观察当前 committed provider instance；不会重新读取
+`runner.toml`、启动 candidate、执行 check/reload、创建 binding 或调用 Plugin Tool。完整
+schema 仍只由 `describe` 返回；list 只返回 bounded name/title 与安全 health metadata。
 
 `check` 是开发时 `reload` 之前推荐使用的预检。Runner 会重新读取当前
 `runner.toml`，只定位 requested provider，使用正常 Plugin runtime 的同一套
@@ -152,11 +130,6 @@ executable，完成 `initialize`、`tools/list` 与普通 Plugin protocol/bounds
 live provider 与最近一次 disposable `check` candidate 保留 bounded、control-sanitized 的
 本机 stderr ring；这个 local projection 不属于 Plugin gateway response。
 
-`startupToolShape.eligible=true` 只表示这个 checked provider 自己的 Tool definitions 满足
-更严格的 provider-local startup Tool bounds；它**不保证**最终成为一级 MCP tool。实际
-startup admission 还受 whole-catalog bounds 影响，而 Server 一级暴露还取决于 reserved
-name 与 caller-visible name uniqueness。
-
 `call` 的 dispatch identity 只有这个 opaque `binding`；call 阶段不再接受
 `runner`、`plugin`、`tool` 作为路由字段。每次 describe 都会创建独立 binding，精确
 记录当时观察到的 Runner instance、provider instance、tool name 和 schema；handle
@@ -167,11 +140,11 @@ name 与 caller-visible name uniqueness。
 config。candidate management 在 `check` 与 `reload` 之间共同串行：第二个 check 返回
 `plugin_check_busy`，reload 保持已有 `plugin_reload_busy`；都以 `NotStarted` 明确拒绝，
 不排队等待。candidate 准备期间不会长期持有 current dynamic/provider session，因此
-list/describe/call 与 startup direct tools 仍可继续使用当前已提交 provider。
+list/describe/call 仍可继续使用当前已提交 provider。
 
-changed provider 会先准备 candidate，只有 initialize/list 成功后才替换旧 dynamic
-instance；candidate 失败会保留已有可工作的 dynamic instance。被删除的 provider 会从
-dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
+reload 会先准备完整 candidate provider set。任意 candidate admission 失败时，旧 committed
+set 原样保留；全部成功后才原子替换。被删除的 provider 会立即消失，旧 provider instance
+会 retire，因此旧 binding fail closed。不会 fallback 到任何已 retire 或已删除的 provider instance。
 
 标准开发闭环是：
 
@@ -185,18 +158,21 @@ dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
     -> 收到 opaque binding
     -> plugin_tool call(binding, arguments)
     -> 调试完成
-    -> restart Runner
-    -> 新 startup admission / 一级工具 promotion
 ```
 
-如果 startup provider A 已经提供一级 `search_symbol`，reload 后产生 dynamic provider
-B，那么直接 `search_symbol(...)` 仍然调用 A；新的 dynamic `describe` 会观察 B，返回的
-binding 也只会调用那个 exact B instance。只有 Runner restart 才能替换一级 startup
-绑定。
+reload 前运行 `check` 不会替换当前 committed provider set，也不会创建 binding。成功的
+check candidate 会被销毁，不会偷偷复用成下一次 reload provider。
 
-在 reload 前运行 `check` 不会替换 A 或当前 dynamic provider，不会改变
-`firstClassRestartRequired`，不会创建 binding，也不会改变 direct MCP tool inventory。
-成功的 check candidate 会被销毁，不会偷偷复用成下一次 reload provider。
+`runner_config_reload` 与 `plugin_tool reload` 共用同一个 Plugin candidate
+admission/commit primitive。修改 `[plugins]` 不需要为了 Plugin 生效而重启 Runner：generic
+Runner config reload 会在同一次 activation 中 live apply Plugin candidate；`plugin_tool
+reload` 则提供更窄、只需要 `plugin:manage` 的专门入口。Plugin management authority 不会
+因此获得修改其他 Runner config 的权限。
+
+`runner_config_check` 仍然只是 Runner config 的结构性检查：读取/解析 startup-bound
+`runner.toml`、验证配置边界并分类 restart-only 字段，不会启动 disposable Plugin process。
+需要检查 executable resolution 以及 Plugin `initialize -> tools/list` protocol/admission 时，
+使用 `plugin_tool check(runner, plugin)`。
 
 ## WebCodex Plugin Protocol v1
 
@@ -295,15 +271,14 @@ loss、process death 或 response timeout 都返回 `OutcomeUnknown`，不会自
 stdout 只用于 protocol。stderr 由独立 worker 持续 drain，因此 stderr flood 不会反向
 阻塞 stdout protocol。local ring 最多保留 64 行、每行 1 KiB、aggregate 32 KiB；control /
 非 UTF-8 byte 会做安全 projection，超长行会标记 truncated。stderr 不会被当作 protocol，
-不会进入 model ToolResult 或 Workflow Session ledger，也不会自动发送到 Server / startup
-registration catalog。
+不会进入 model ToolResult 或 Workflow Session ledger，也不会自动复制进 Runner registration。
 
 ## OAuth
 
 Native Plugin authority 按 operation 拆分：
 
 - `plugin:inspect` 允许 list、describe 等纯 metadata observation；
-- `plugin:invoke` 允许 `plugin_tool call` 和 startup Plugin 一级工具；
+- `plugin:invoke` 允许 `plugin_tool call`；
 - `plugin:manage` 允许会启动或改变本地 Plugin process 的开发/管理操作，目前是 check 和
   reload；它本身不会隐式授予 `plugin:invoke`；
 - 以上 scope 都不属于 direct shared-key model baseline；
@@ -321,9 +296,7 @@ permission policy；WebCodex 不会从 MCP transport identity 推断 Workflow Se
 Plugin 无法启动时，优先检查 profile、prepared `PATH`、绝对 `cwd`、runtime executable，
 以及 stdout 是否只包含 protocol JSON line；本地诊断写 stderr。
 
-如果 dynamic 修改通过 `plugin_tool` 已经生效，但一级工具仍然是旧行为，这是预期语义：
-restart Runner 后才会生成新的 startup catalog 并完成 promotion。
-
-如果 tool 能通过 `plugin_tool` 使用，却没有直接出现在 MCP `tools/list`，检查当前
-caller-visible inventory 是否存在同名 Plugin tool，或是否与 WebCodex reserved name
-冲突。
+provider Tool **本来就不会**直接出现在外层 MCP `tools/list`；使用
+`plugin_tool list -> describe -> call`。Runner/provider replacement 或 schema 变化后旧
+binding 失效时，重新 list + describe。只要 dispatch certainty 是 `outcome_unknown`，就不要
+盲目重试。

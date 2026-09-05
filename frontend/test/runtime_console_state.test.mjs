@@ -575,9 +575,9 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /\.fleet-row/);
   assert.match(css, /\.device-group/);
   assert.match(css, /@media \(max-width: 900px\)/);
-  assert.match(css, /@media \(min-width: 1600px\)/);
-  assert.match(css, /--context-rail-width:\s*clamp\(320px,\s*18vw,\s*360px\)/);
-  assert.match(css, /\.runtime-shell\.context-docked\s*\{[^}]*--content-width:\s*1160px[^}]*grid-template-columns:\s*var\(--sidebar-width\)\s+minmax\(0,\s*1fr\)\s+var\(--context-rail-width\)/);
+  assert.match(css, /@media \(min-width: 1280px\)/);
+  assert.match(css, /--context-rail-width:\s*clamp\(360px,\s*30vw,\s*560px\)/);
+  assert.match(css, /\.runtime-shell\.context-docked\s*\{[^}]*--content-width:\s*760px[^}]*grid-template-columns:\s*var\(--sidebar-width\)\s+minmax\(0,\s*1fr\)\s+var\(--context-rail-width\)/);
   assert.match(css, /translateX\(-102%\)/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
   assert.match(css, /env\(safe-area-inset-top\)/);
@@ -592,7 +592,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /--layout-major:\s*61\.8%/);
   assert.match(css, /--layout-minor:\s*38\.2%/);
   assert.match(css, /--sidebar-width:\s*clamp\(300px,\s*21vw,\s*356px\)/);
-  assert.match(css, /--content-width:\s*1120px/);
+  assert.match(css, /--content-width:\s*760px/);
   assert.match(css, /\.message-card\.message-incoming\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
   assert.match(css, /\.message-card\.message-neutral\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
   assert.match(css, /\.message-card\.message-outgoing\s*\{[^}]*max-width:\s*min\(68%,\s*680px\)[^}]*align-self:\s*flex-end/);
@@ -630,6 +630,8 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(source, /runtimeProjectIdentityText\(project\)/);
   assert.match(source, /runtimeCollaborationMessageSides\(messages, locallyAuthoredCollaborationMessageIds\)/);
   assert.match(source, /provenance-unknown/);
+  assert.match(source, /sessionListMetaSnapshot = \{\s*total: typeof response\.data\.total === "number" \? Math\.max\(sessionRows\.length, response\.data\.total\) : sessionRows\.length,\s*truncated: !!response\.data\.truncated,\s*\}/);
+  assert.match(source, /runtime-session-search"\)\?\.addEventListener\("input", \(\) => renderSessionList\(sessionRows, sessionListMetaSnapshot\)\)/);
   assert.match(source, /rememberLocalCollaborationMessage/);
   assert.match(source, /message-group-continuation/);
   assert.match(source, /syncCollaborationComposerLayout/);
@@ -725,9 +727,9 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   const renderProjectsStart = source.indexOf("function renderProjectSelectors");
   const renderProjectsEnd = source.indexOf("function switchProject", renderProjectsStart);
   const renderProjects = source.slice(renderProjectsStart, renderProjectsEnd);
-  assert.match(renderProjects, /document\.createElement\("button"\)/);
+  assert.match(renderProjects, /document\.createElement\("summary"\)/);
   assert.match(renderProjects, /signature === renderedProjectSelectorsSignature/);
-  assert.match(renderProjects, /row\.type = "button"/);
+  assert.match(renderProjects, /workspace\.addEventListener\("toggle"/);
   assert.doesNotMatch(renderProjects, /addEventListener\("keydown"/);
   assert.match(renderProjects, /all\.textContent = tr\("All Runners"\)/);
   assert.match(renderProjects, /switchProject\(String\(project\.client_id \|\| ""\), String\(project\.id \|\| ""\)\)/);
@@ -737,7 +739,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(renderProjects, /row\.title = \[projectName, projectId/);
   assert.match(renderProjects, /projectsByDevice/);
   assert.match(renderProjects, /projectDeviceFilter/);
-  assert.match(renderProjects, /deviceProjectList\.appendChild\(sessionsPanel\)/);
+  assert.match(renderProjects, /workspace\.appendChild\(sessionsPanel\)/);
   assert.match(renderProjects, /deviceMeta\.textContent = tr\(status\) \+ " · " \+ countLabel\(deviceProjects\.length, "Project"\)/);
   assert.match(source, /appendRichMessage\(bubble, message\?\.message\);\s*content\.appendChild\(bubble\)/);
   assert.match(source, /footer\.appendChild\(actions\);\s*content\.appendChild\(footer\);\s*card\.appendChild\(content\)/);
@@ -1072,33 +1074,33 @@ test("context user intent reducer and lifecycle transitions ensure programmatic 
   const toggledOpen = reduceRuntimeContextUserIntent(null, { type: "toggle_trigger", currentVisible: false });
   assert.equal(toggledOpen, true);
 
-  // 1599 <-> 1600 transitions with explicit open intent preserve intent and only switch presentation mode.
+  // 1279 <-> 1280 transitions with explicit open intent preserve intent and only switch presentation mode.
   userIntent = true;
-  const at1599 = resolveRuntimeContextState({
+  const at1279 = resolveRuntimeContextState({
     userIntent,
     isWideViewport: false,
     isMobileViewport: false,
     hasSelectedSession: true,
     workspaceView: "sessions",
   });
-  assert.equal(at1599.visible, true);
-  assert.equal(at1599.presentationMode, "popover");
-  assert.equal(at1599.isDocked, false);
+  assert.equal(at1279.visible, true);
+  assert.equal(at1279.presentationMode, "popover");
+  assert.equal(at1279.isDocked, false);
 
-  const at1600 = resolveRuntimeContextState({
+  const at1280 = resolveRuntimeContextState({
     userIntent,
     isWideViewport: true,
     isMobileViewport: false,
     hasSelectedSession: true,
     workspaceView: "sessions",
   });
-  assert.equal(at1600.visible, true);
-  assert.equal(at1600.presentationMode, "docked");
-  assert.equal(at1600.isDocked, true);
+  assert.equal(at1280.visible, true);
+  assert.equal(at1280.presentationMode, "docked");
+  assert.equal(at1280.isDocked, true);
 });
 
 test("context focus transition preserves accessible focus across breakpoint and close actions", () => {
-  // P2 Case 1: Popover is open and trigger is focused. Viewport resizes 1599 -> 1600.
+  // P2 Case 1: Popover is open and trigger is focused. Viewport resizes 1279 -> 1280.
   // Trigger will be hidden by CSS (display: none), so focus MUST transfer to #runtime-inspector-close.
   assert.equal(
     resolveRuntimeContextFocusTransition({
@@ -1110,7 +1112,7 @@ test("context focus transition preserves accessible focus across breakpoint and 
   );
 
   // P2 Case 2: Popover is open but focus was elsewhere (e.g. inside chat or timeline).
-  // Resize to 1600 must NOT steal focus!
+  // Resize to 1280 must NOT steal focus!
   assert.equal(
     resolveRuntimeContextFocusTransition({
       wasDocked: false,
@@ -1120,7 +1122,7 @@ test("context focus transition preserves accessible focus across breakpoint and 
     "none"
   );
 
-  // P2 Case 3: Context is closed and user resizes across 1599 <-> 1600.
+  // P2 Case 3: Context is closed and user resizes across 1279 <-> 1280.
   // nextDocked is false because closed context never docks; focus must never be stolen.
   assert.equal(
     resolveRuntimeContextFocusTransition({
@@ -1131,7 +1133,7 @@ test("context focus transition preserves accessible focus across breakpoint and 
     "none"
   );
 
-  // P2 Case 4: Already docked; resize within >=1600 range does not transfer focus.
+  // P2 Case 4: Already docked; resize within >=1280 range does not transfer focus.
   assert.equal(
     resolveRuntimeContextFocusTransition({
       wasDocked: true,
@@ -1141,7 +1143,7 @@ test("context focus transition preserves accessible focus across breakpoint and 
     "none"
   );
 
-  // P2 Case 5: Reverse transition from docked (1600) to popover (1599).
+  // P2 Case 5: Reverse transition from docked (1280) to popover (1279).
   // Close button remains visible in popover header; no focus jump needed.
   assert.equal(
     resolveRuntimeContextFocusTransition({

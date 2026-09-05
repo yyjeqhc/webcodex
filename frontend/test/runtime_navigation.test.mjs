@@ -85,3 +85,69 @@ test("closing mobile navigation fences its delayed focus callback", async () => 
   callbacks.shift()();
   assert.equal(focused, true);
 });
+
+test("retained message search matches body and resolution without mutating messages", async () => {
+  const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
+  const start = source.indexOf("function runtimeSearchMatches(");
+  const end = source.indexOf("function renderCollaboration(", start);
+  const messages = [
+    { message_id: "a", message: "Build failed", resolution: "Fixed Unicode 路径" },
+    { message_id: "b", message: "Pending", author_session_id: "worker-2" },
+  ];
+  const original = JSON.stringify(messages);
+  const cards = messages.map((message) => ({ dataset: { messageId: message.message_id }, hidden: false }));
+  const separator = { hidden: false };
+  const input = { value: "FIXED 路径" };
+  let status;
+  const context = vm.createContext({
+    state: { collaboration: { messages } },
+    el: () => input,
+    setText: (_id, text) => { status = text; },
+    document: { querySelectorAll: (selector) => selector.includes(".message-card") ? cards : [separator] },
+  });
+  vm.runInContext(source.slice(start, end), context);
+  context.filterCollaborationMessages();
+  assert.deepEqual(cards.map((card) => card.hidden), [false, true]);
+  assert.equal(status, "1 / 2");
+  assert.equal(separator.hidden, true);
+  input.value = "missing";
+  context.filterCollaborationMessages();
+  assert.equal(status, "0 / 2");
+  input.value = "";
+  context.filterCollaborationMessages();
+  assert.deepEqual(cards.map((card) => card.hidden), [false, false]);
+  assert.equal(separator.hidden, false);
+  assert.equal(JSON.stringify(messages), original);
+});
+
+test("workspace disclosure survives rerender and ignores detached toggle events", async () => {
+  const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
+  const start = source.indexOf('const workspace = document.createElement("details")');
+  const end = source.indexOf('const row = document.createElement("summary")', start);
+  const stored = new Map();
+  let disclosure;
+  const context = vm.createContext({
+    clientId: "runner-a", project: { id: "project-a" }, state: { selectedProject: "project-a" },
+    window: { localStorage: { getItem: (key) => stored.get(key), setItem: (key, value) => stored.set(key, value) } },
+    document: { createElement: () => (disclosure = {
+      isConnected: true,
+      addEventListener(_name, handler) { this.toggle = handler; },
+    }) },
+  });
+  const render = () => vm.runInContext("(() => {" + source.slice(start, end) + "})()", context);
+  render();
+  assert.equal(disclosure.open, true);
+  disclosure.open = false;
+  disclosure.toggle();
+  render();
+  assert.equal(disclosure.open, false);
+  const detached = disclosure;
+  detached.isConnected = false;
+  detached.open = true;
+  detached.toggle();
+  render();
+  assert.equal(disclosure.open, false);
+  context.clientId = "runner-b";
+  render();
+  assert.equal(disclosure.open, true);
+});

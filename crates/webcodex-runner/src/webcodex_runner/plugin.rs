@@ -17,13 +17,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_core::plugin::{
-    validate_request, validate_startup_catalog, validate_startup_tool, validate_tool_result,
-    validate_tools, PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary,
-    PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
-    PluginPlane, PluginProviderView, PluginReloadFailure, PluginSchemaObservation,
-    PluginStartupToolShape, PluginTool, PluginToolResult, StartupPluginProvider,
-    PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION, PLUGIN_STARTUP_CATALOG_MAX_BYTES,
-    PLUGIN_STARTUP_MAX_DIRECT_TOOLS,
+    diagnose_invalid_tools, validate_request, validate_startup_catalog, validate_startup_tool,
+    validate_tool_result, validate_tools, PluginCheckDiagnostic, PluginCheckPhase,
+    PluginCheckReport, PluginCheckToolSummary, PluginDispatchState, PluginGatewayRequest,
+    PluginGatewayResponse, PluginGatewayResponsePayload, PluginPlane, PluginProviderView,
+    PluginReloadFailure, PluginSchemaObservation, PluginStartupToolShape, PluginTool,
+    PluginToolResult, StartupPluginProvider, PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
+    PLUGIN_STARTUP_CATALOG_MAX_BYTES, PLUGIN_STARTUP_MAX_DIRECT_TOOLS,
 };
 use webcodex_process::ManagedChild;
 
@@ -105,10 +105,16 @@ struct ProviderFailure {
     fatal: bool,
 }
 
+struct PluginToolsListFailure {
+    failure: ProviderFailure,
+    diagnostic: Option<PluginCheckDiagnostic>,
+}
+
 struct ProviderPreparationFailure {
     phase: PluginCheckPhase,
     code: &'static str,
     detail: &'static str,
+    diagnostic: Option<PluginCheckDiagnostic>,
 }
 
 fn initialize_failure_detail(code: &str) -> &'static str {
@@ -146,6 +152,7 @@ fn failed_check_report(
     phase: PluginCheckPhase,
     code: &str,
     detail: &str,
+    diagnostic: Option<PluginCheckDiagnostic>,
 ) -> PluginCheckReport {
     PluginCheckReport {
         provider_id: provider_id.to_string(),
@@ -155,6 +162,7 @@ fn failed_check_report(
         detail: Some(detail.to_string()),
         tool_count: 0,
         tools: Vec::new(),
+        diagnostic,
         startup_tool_shape: None,
     }
 }
@@ -164,12 +172,23 @@ fn startup_tool_shape(tools: &[PluginTool]) -> PluginStartupToolShape {
         return PluginStartupToolShape {
             eligible: false,
             code: Some("plugin_startup_tool_count_exceeded".to_string()),
+            tool: None,
+            field: None,
         };
     }
-    if let Some(error) = tools
+    if let Some((tool, error)) = tools
         .iter()
-        .find_map(|tool| validate_startup_tool(tool).err())
+        .find_map(|tool| validate_startup_tool(tool).err().map(|error| (tool, error)))
     {
+        let field = if error.contains("inputSchema") {
+            Some("inputSchema".to_string())
+        } else if error.contains("outputSchema") {
+            Some("outputSchema".to_string())
+        } else if error.contains("annotations") {
+            Some("annotations".to_string())
+        } else {
+            None
+        };
         return PluginStartupToolShape {
             eligible: false,
             code: Some(
@@ -180,11 +199,15 @@ fn startup_tool_shape(tools: &[PluginTool]) -> PluginStartupToolShape {
                 }
                 .to_string(),
             ),
+            tool: Some(tool.name.clone()),
+            field,
         };
     }
     PluginStartupToolShape {
         eligible: true,
         code: None,
+        tool: None,
+        field: None,
     }
 }
 
@@ -455,6 +478,7 @@ impl PluginManager {
                         PluginCheckPhase::Config,
                         code,
                         plugin_config_check_detail(code),
+                        None,
                     ),
                 });
             }
@@ -471,6 +495,7 @@ impl PluginManager {
                     PluginCheckPhase::Config,
                     "plugin_not_configured",
                     "requested Plugin provider is not configured in current runner.toml",
+                    None,
                 ),
             });
         };
@@ -496,7 +521,13 @@ impl PluginManager {
             );
         }
         let report = if let Some(failure) = failure {
-            failed_check_report(provider_id, failure.phase, failure.code, failure.detail)
+            failed_check_report(
+                provider_id,
+                failure.phase,
+                failure.code,
+                failure.detail,
+                failure.diagnostic,
+            )
         } else {
             let tools = tools.unwrap_or_default();
             PluginCheckReport {
@@ -513,6 +544,7 @@ impl PluginManager {
                         title: tool.title.clone(),
                     })
                     .collect(),
+                diagnostic: None,
                 startup_tool_shape: Some(startup_tool_shape(&tools)),
             }
         };
@@ -863,6 +895,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Environment,
                     code: "plugin_environment_prepare_failed",
                     detail: "configured shell/profile environment could not be prepared",
+                    diagnostic: None,
                 }),
             );
         }
@@ -888,6 +921,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Executable,
                     code,
                     detail,
+                    diagnostic: None,
                 }),
             );
         }
@@ -907,6 +941,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Spawn,
                     code: "plugin_spawn_failed",
                     detail: "configured Plugin executable could not be started",
+                    diagnostic: None,
                 }),
             );
         }
@@ -923,6 +958,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Stdio,
                     code: "plugin_stdio_unavailable",
                     detail: "Plugin protocol stdio pipes could not be created",
+                    diagnostic: None,
                 }),
             );
         }
@@ -939,6 +975,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Stdio,
                     code: "plugin_stdio_unavailable",
                     detail: "Plugin protocol stdio pipes could not be created",
+                    diagnostic: None,
                 }),
             );
         }
@@ -955,6 +992,7 @@ fn prepare_provider(
                     phase: PluginCheckPhase::Stdio,
                     code: "plugin_stdio_unavailable",
                     detail: "Plugin protocol stdio pipes could not be created",
+                    diagnostic: None,
                 }),
             );
         }
@@ -977,6 +1015,7 @@ fn prepare_provider(
                 phase: PluginCheckPhase::Stdio,
                 code: "plugin_reader_unavailable",
                 detail: "Plugin stdout/stderr protocol workers could not be started",
+                diagnostic: None,
             }),
         );
     }
@@ -996,6 +1035,7 @@ fn prepare_provider(
                 phase: PluginCheckPhase::Stdio,
                 code: "plugin_reader_unavailable",
                 detail: "Plugin stdout/stderr protocol workers could not be started",
+                diagnostic: None,
             }),
         );
     }
@@ -1015,6 +1055,7 @@ fn prepare_provider(
                 phase: PluginCheckPhase::Stdio,
                 code: "plugin_writer_unavailable",
                 detail: "Plugin stdin writer worker could not be started",
+                diagnostic: None,
             }),
         );
     }
@@ -1029,6 +1070,7 @@ fn prepare_provider(
                 phase: PluginCheckPhase::Initialize,
                 code: "plugin_manager_stopping",
                 detail: "Plugin manager began stopping during candidate preparation",
+                diagnostic: None,
             }),
         );
     }
@@ -1053,12 +1095,17 @@ fn prepare_provider(
                 phase: PluginCheckPhase::Initialize,
                 code: failure.code,
                 detail: initialize_failure_detail(failure.code),
+                diagnostic: None,
             }),
         );
     }
-    let tools = match connection.tools_list(timeout) {
+    let tools = match connection.tools_list_with_diagnostic(timeout) {
         Ok(tools) => tools,
-        Err(failure) => {
+        Err(list_failure) => {
+            let PluginToolsListFailure {
+                failure,
+                diagnostic,
+            } = list_failure;
             process.terminate();
             entry.retire(failure.code);
             let phase = if failure.code == "plugin_tools_list_invalid" {
@@ -1078,6 +1125,7 @@ fn prepare_provider(
                     phase,
                     code: failure.code,
                     detail,
+                    diagnostic,
                 }),
             );
         }
@@ -1120,11 +1168,43 @@ impl ProviderConnection {
     }
 
     fn tools_list(&mut self, timeout: Duration) -> Result<Vec<PluginTool>, ProviderFailure> {
-        let result = self.request("tools/list", json!({}), timeout, false)?;
-        let result: PluginToolsListResult = serde_json::from_value(result)
-            .map_err(|_| ProviderFailure::not_started("plugin_tools_list_invalid"))?;
-        validate_tools(&result.tools)
-            .map_err(|_| ProviderFailure::not_started("plugin_tools_list_invalid"))?;
+        self.tools_list_internal(timeout, false)
+            .map_err(|failure| failure.failure)
+    }
+
+    fn tools_list_with_diagnostic(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Vec<PluginTool>, PluginToolsListFailure> {
+        self.tools_list_internal(timeout, true)
+    }
+
+    fn tools_list_internal(
+        &mut self,
+        timeout: Duration,
+        include_diagnostic: bool,
+    ) -> Result<Vec<PluginTool>, PluginToolsListFailure> {
+        let result = self
+            .request("tools/list", json!({}), timeout, false)
+            .map_err(|failure| PluginToolsListFailure {
+                failure,
+                diagnostic: None,
+            })?;
+        let result: PluginToolsListResult =
+            serde_json::from_value(result).map_err(|_| PluginToolsListFailure {
+                failure: ProviderFailure::not_started("plugin_tools_list_invalid"),
+                diagnostic: include_diagnostic.then(|| PluginCheckDiagnostic {
+                    code: "tools_list_result_malformed".to_string(),
+                    tool: None,
+                    field: None,
+                }),
+            })?;
+        if validate_tools(&result.tools).is_err() {
+            return Err(PluginToolsListFailure {
+                failure: ProviderFailure::not_started("plugin_tools_list_invalid"),
+                diagnostic: include_diagnostic.then(|| diagnose_invalid_tools(&result.tools)),
+            });
+        }
         Ok(result.tools)
     }
 

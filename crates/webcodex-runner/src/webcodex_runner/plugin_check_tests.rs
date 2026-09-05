@@ -304,6 +304,80 @@ fn check_failures_are_structured_diagnostic_results_and_cleanup_process_trees() 
 }
 
 #[test]
+fn check_tool_validation_failures_have_safe_actionable_diagnostics() {
+    for (scenario, code, tool, field) in [
+        (
+            "check_malformed_tools_list",
+            "tools_list_result_malformed",
+            None,
+            None,
+        ),
+        (
+            "check_duplicate_tools",
+            "duplicate_tool_name",
+            Some("echo"),
+            Some("name"),
+        ),
+        (
+            "check_invalid_tool_name",
+            "invalid_tool_name",
+            None,
+            Some("name"),
+        ),
+        (
+            "check_invalid_tools",
+            "input_schema_invalid",
+            Some("echo"),
+            Some("inputSchema"),
+        ),
+        (
+            "check_oversized_schema",
+            "schema_bounds_exceeded",
+            Some("echo"),
+            Some("inputSchema"),
+        ),
+    ] {
+        let fixture = CheckFixture::new(scenario, 2);
+        let report = checked_report(fixture.check());
+        assert!(!report.ready, "{scenario}");
+        assert_eq!(report.phase, PluginCheckPhase::Validation, "{scenario}");
+        assert_eq!(
+            report.code.as_deref(),
+            Some("plugin_tools_list_invalid"),
+            "{scenario}"
+        );
+        let diagnostic = report.diagnostic.as_ref().expect("validation diagnostic");
+        assert_eq!(diagnostic.code, code, "{scenario}");
+        assert_eq!(diagnostic.tool.as_deref(), tool, "{scenario}");
+        assert_eq!(diagnostic.field.as_deref(), field, "{scenario}");
+
+        let encoded = serde_json::to_string(&report).unwrap();
+        for forbidden in [
+            "command",
+            "argv",
+            "\"cwd\"",
+            "\"env\"",
+            "stderr",
+            "PID",
+            "runner_instance_id",
+            "provider_instance_id",
+            "\"properties\"",
+            "\"type\":\"object\"",
+        ] {
+            assert!(
+                !encoded.contains(forbidden),
+                "{scenario} diagnostic leaked {forbidden}: {encoded}"
+            );
+        }
+        for pid in fixture.marker_pids("candidate-pid:") {
+            assert!(wait_until(Duration::from_secs(2), || {
+                !crate::job_manager_tests::process_running(pid)
+            }));
+        }
+    }
+}
+
+#[test]
 fn check_reports_executable_config_and_startup_shape_without_sensitive_details() {
     let fixture = CheckFixture::new("normal", 2);
     write_runner_toml(
@@ -336,6 +410,8 @@ fn check_reports_executable_config_and_startup_shape_without_sensitive_details()
         startup_shape.code.as_deref(),
         Some("plugin_startup_schema_too_large")
     );
+    assert_eq!(startup_shape.tool.as_deref(), Some("echo"));
+    assert_eq!(startup_shape.field.as_deref(), Some("inputSchema"));
 
     fixture.rewrite_candidate("stderr", 2);
     let response = fixture.check();

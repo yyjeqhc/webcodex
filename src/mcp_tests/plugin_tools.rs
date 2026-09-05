@@ -166,12 +166,46 @@ async fn register_plugin_runner_with_status(
                         provider_instance_id: provider_instance_id.to_string(),
                         name: "Repo Tools".to_string(),
                         status: status.to_string(),
-                        error_code: (status != "ready")
-                            .then(|| "plugin_initialize_failed".to_string()),
+                        error_code: match status {
+                            "ready" => None,
+                            "ready_secondary" => Some("first_class_catalog_too_large".to_string()),
+                            _ => Some("plugin_initialize_failed".to_string()),
+                        },
                         tools,
                     }]),
                     ..Default::default()
                 }),
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+            },
+        ))
+        .await
+        .unwrap();
+}
+
+async fn register_non_plugin_runner_for_owner(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    runner_instance_id: &str,
+    owner: &str,
+) {
+    runtime
+        .runner_registry
+        .register(crate::test_support::current_runner_registration(
+            RunnerRegisterRequest {
+                client_id: client_id.to_string(),
+                runner_instance_id: runner_instance_id.to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                display_name: Some(format!("Plain {client_id}")),
+                owner: Some(owner.to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities: RunnerCapabilities::default(),
+                policy: Some(RunnerPolicySummary::default()),
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -320,6 +354,627 @@ fn spawn_binding_call(
         )
         .await
     })
+}
+
+fn spawn_plugin_metadata_call(
+    runtime: &Arc<ToolRuntime>,
+    auth: &crate::auth::AuthContext,
+    arguments: Value,
+    rpc_id: u64,
+) -> tokio::task::JoinHandle<McpOutcome> {
+    let request_runtime = Arc::clone(runtime);
+    let request_auth = auth.clone();
+    tokio::spawn(async move {
+        handle_mcp_request(
+            &request_runtime,
+            rpc(
+                "tools/call",
+                Some(json!(rpc_id)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": arguments
+                }),
+            ),
+            Some(&request_auth),
+        )
+        .await
+    })
+}
+
+#[tokio::test]
+async fn plugin_tool_list_discovers_only_visible_plugin_capable_runners() {
+    let runtime = test_runtime();
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-visible",
+        "runner-visible-instance",
+        "repo-tools",
+        "visible-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    register_plugin_runner_for_owner(
+        &runtime,
+        "runner-private",
+        "runner-private-instance",
+        "private-tools",
+        "private-provider-instance",
+        "bob",
+        vec![plugin_tool("private_search")],
+    )
+    .await;
+    register_non_plugin_runner_for_owner(
+        &runtime,
+        "runner-plain",
+        "runner-plain-instance",
+        "alice",
+    )
+    .await;
+
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(760)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"list"}
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("plugin_tool list failed: {outcome:?}");
+    };
+    let runners = value["result"]["structuredContent"]["runners"]
+        .as_array()
+        .expect("runner discovery array");
+    assert_eq!(runners.len(), 1);
+    assert_eq!(runners[0]["runner"], "runner-visible");
+    let encoded = serde_json::to_string(&value["result"]["structuredContent"]).unwrap();
+    for forbidden in [
+        "runner-visible-instance",
+        "visible-provider-instance",
+        "runner-private",
+        "runner-plain",
+        "runner_instance_id",
+        "provider_instance_id",
+    ] {
+        assert!(
+            !encoded.contains(forbidden),
+            "runner list leaked {forbidden}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn plugin_tool_list_provider_and_tools_is_bounded_and_binding_free() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner_with_status(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        "alice",
+        "ready_secondary",
+        vec![],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "dynamic-provider-instance".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 0,
+    };
+
+    let provider_task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a"}),
+        761,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        providers_request.plugin_gateway,
+        Some(PluginGatewayRequest::ProvidersList)
+    ));
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider.clone()],
+            first_class_restart_required: true,
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(provider_result) = provider_task.await.unwrap() else {
+        panic!("provider discovery failed");
+    };
+    let provider_view = &provider_result["result"]["structuredContent"]["plugins"][0];
+    assert_eq!(provider_view["plugin"], "repo-tools");
+    assert_eq!(provider_view["status"], "ready");
+    assert_eq!(provider_view["source"], "dynamic");
+    assert_eq!(provider_view["startupAdmission"], "secondary");
+    assert_eq!(
+        provider_view["startupAdmissionCode"],
+        "first_class_catalog_too_large"
+    );
+    assert_eq!(provider_view["startupDirectToolCount"], 0);
+
+    let bindings_before = runtime.plugin_gateway.binding_count();
+    let tools_task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({
+            "action":"list",
+            "runner":"runner-a",
+            "plugin":"repo-tools"
+        }),
+        762,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        providers_request.plugin_gateway,
+        Some(PluginGatewayRequest::ProvidersList)
+    ));
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider.clone()],
+            first_class_restart_required: true,
+        }),
+    )
+    .await;
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        tools_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            plane: PluginPlane::Effective,
+            ref provider_id,
+            ref provider_instance_id,
+        }) if provider_id == "repo-tools" && provider_instance_id == "dynamic-provider-instance"
+    ));
+    complete_plugin_request(
+        &runtime,
+        tools_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Tools {
+            tools: vec![plugin_tool("search_symbol")],
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(tools_result) = tools_task.await.unwrap() else {
+        panic!("tool discovery failed");
+    };
+    let discovery = &tools_result["result"]["structuredContent"];
+    assert_eq!(discovery["runner"], "runner-a");
+    assert_eq!(discovery["plugin"], "repo-tools");
+    assert_eq!(discovery["name"], "Repo Tools");
+    assert_eq!(discovery["status"], "ready");
+    assert_eq!(discovery["source"], "dynamic");
+    assert_eq!(discovery["startupAdmission"], "secondary");
+    assert_eq!(discovery["toolCount"], 1);
+    assert_eq!(discovery["tools"][0]["name"], "search_symbol");
+    assert_eq!(discovery["tools"][0]["title"], "Repository Search");
+    assert_eq!(discovery["firstClassRestartRequired"], true);
+    assert_eq!(runtime.plugin_gateway.binding_count(), bindings_before);
+    let encoded = serde_json::to_string(discovery).unwrap();
+    for forbidden in [
+        "inputSchema",
+        "outputSchema",
+        "annotations",
+        "description",
+        "binding",
+        "dynamic-provider-instance",
+        "startup-provider-instance",
+        "runner-instance-a",
+        "provider_instance_id",
+        "runner_instance_id",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+    ] {
+        assert!(!encoded.contains(forbidden), "tool list leaked {forbidden}");
+    }
+}
+
+#[tokio::test]
+async fn plugin_tool_list_unknown_provider_fails_without_tools_request() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Startup,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a","plugin":"missing-tools"}),
+        763,
+    );
+    let request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::ProvidersList)
+    ));
+    complete_plugin_request(
+        &runtime,
+        request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider],
+            first_class_restart_required: false,
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(result) = task.await.unwrap() else {
+        panic!("unknown provider should render a Plugin tool error");
+    };
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "plugin_unavailable"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn plugin_tool_list_provider_replacement_fails_closed_without_reresolve_or_replay() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a","plugin":"repo-tools"}),
+        764,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider],
+            first_class_restart_required: true,
+        }),
+    )
+    .await;
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        tools_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            ref provider_instance_id,
+            ..
+        }) if provider_instance_id == "provider-instance-a"
+    ));
+    complete_plugin_request(
+        &runtime,
+        tools_request,
+        "runner-instance-a",
+        PluginGatewayResponse::error(
+            PluginDispatchState::NotStarted,
+            "stale_plugin_provider",
+            "provider A was replaced",
+        ),
+    )
+    .await;
+    let McpOutcome::Ok(result) = task.await.unwrap() else {
+        panic!("provider replacement should render a Plugin tool error");
+    };
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "plugin_replaced"
+    );
+    assert_eq!(
+        result["result"]["structuredContent"]["dispatchState"],
+        "not_started"
+    );
+    assert!(result["result"]["structuredContent"]["recovery"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Re-list the Plugin"));
+    assert!(result["result"]["structuredContent"]["recovery"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("did not retarget or replay"));
+    assert_eq!(runtime.plugin_gateway.binding_count(), 0);
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn plugin_tool_list_provider_busy_is_not_started_and_not_replayed() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-instance",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a","plugin":"repo-tools"}),
+        765,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider],
+            first_class_restart_required: false,
+        }),
+    )
+    .await;
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        tools_request,
+        "runner-instance-a",
+        PluginGatewayResponse::error(
+            PluginDispatchState::NotStarted,
+            "plugin_provider_busy",
+            "provider is already serving one request",
+        ),
+    )
+    .await;
+    let McpOutcome::Ok(result) = task.await.unwrap() else {
+        panic!("busy provider should render a Plugin tool error");
+    };
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "plugin_provider_busy"
+    );
+    assert_eq!(
+        result["result"]["structuredContent"]["dispatchState"],
+        "not_started"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn plugin_tool_list_runner_replacement_fails_closed_and_never_replays_on_replacement() {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "startup-provider-a",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        plane: PluginPlane::Effective,
+        status: "ready".to_string(),
+        error_code: None,
+        startup_direct_tool_count: 1,
+    };
+    let task = spawn_plugin_metadata_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a","plugin":"repo-tools"}),
+        766,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider],
+            first_class_restart_required: false,
+        }),
+    )
+    .await;
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        tools_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            ref provider_instance_id,
+            ..
+        }) if provider_instance_id == "provider-instance-a"
+    ));
+
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-b",
+        "repo-tools",
+        "startup-provider-b",
+        vec![plugin_tool("replacement_tool")],
+    )
+    .await;
+    drop(tools_request);
+
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("Runner replacement must resolve the exact discovery promptly")
+        .unwrap();
+    let McpOutcome::Ok(result) = outcome else {
+        panic!("Runner replacement should render a Plugin tool error");
+    };
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "plugin_replaced"
+    );
+    assert!(result["result"]["structuredContent"]["recovery"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("did not retarget or replay"));
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-b".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(runtime.plugin_gateway.binding_count(), 0);
+}
+
+#[tokio::test]
+async fn plugin_tool_list_argument_matrix_rejects_ambiguous_inputs_before_dispatch() {
+    let runtime = test_runtime();
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+
+    for (rpc_id, arguments) in [
+        (767, json!({"action":"list","plugin":"repo-tools"})),
+        (
+            768,
+            json!({"action":"list","runner":"runner-a","tool":"search_symbol"}),
+        ),
+        (
+            769,
+            json!({"action":"list","runner":"runner-a","binding":"wc_pbind_00000000000000000000000000000000"}),
+        ),
+        (
+            770,
+            json!({"action":"list","runner":"runner-a","arguments":{}}),
+        ),
+        (
+            771,
+            json!({"action":"list","runner":"runner-a","plugin":"repo-tools","tool":"search_symbol"}),
+        ),
+    ] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(rpc_id)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": arguments
+                }),
+            ),
+            Some(&auth),
+        )
+        .await;
+        let McpOutcome::Ok(result) = outcome else {
+            panic!("invalid list arguments should render a Plugin tool error");
+        };
+        assert_eq!(
+            result["result"]["structuredContent"]["error"]["code"],
+            "invalid_arguments"
+        );
+    }
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

@@ -215,10 +215,24 @@ pub struct PluginCheckToolSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PluginCheckDiagnostic {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginStartupToolShape {
     pub eligible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +248,8 @@ pub struct PluginCheckReport {
     pub tool_count: usize,
     #[serde(default)]
     pub tools: Vec<PluginCheckToolSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<PluginCheckDiagnostic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_tool_shape: Option<PluginStartupToolShape>,
 }
@@ -413,6 +429,97 @@ pub fn validate_tools(tools: &[PluginTool]) -> Result<(), String> {
         validate_schema_observation(&tool.schema_observation())?;
     }
     Ok(())
+}
+
+/// Return a bounded, stable WebCodex-generated authoring diagnostic for a Tool
+/// list that failed `validate_tools`. This helper is diagnostic-only: callers
+/// must continue to use `validate_tools` as the authoritative acceptance gate.
+pub fn diagnose_invalid_tools(tools: &[PluginTool]) -> PluginCheckDiagnostic {
+    fn diagnostic(code: &str, tool: Option<&str>, field: Option<&str>) -> PluginCheckDiagnostic {
+        PluginCheckDiagnostic {
+            code: code.to_string(),
+            tool: tool.map(str::to_string),
+            field: field.map(str::to_string),
+        }
+    }
+
+    fn schema_failure(
+        tool: &str,
+        field: &'static str,
+        value: &Value,
+        invalid_code: &'static str,
+    ) -> Option<PluginCheckDiagnostic> {
+        if !value.is_object() {
+            return Some(diagnostic(invalid_code, Some(tool), Some(field)));
+        }
+        if let Err(error) = validate_json_value(value, PLUGIN_MAX_SCHEMA_BYTES, field) {
+            let code = if error.contains("exceeds") || error.contains("oversized") {
+                "schema_bounds_exceeded"
+            } else {
+                invalid_code
+            };
+            return Some(diagnostic(code, Some(tool), Some(field)));
+        }
+        None
+    }
+
+    if tools.len() > PLUGIN_MAX_TOOL_COUNT {
+        return diagnostic("tool_count_exceeded", None, None);
+    }
+    let mut names = HashSet::new();
+    for tool in tools {
+        if validate_tool_name(&tool.name).is_err() {
+            return diagnostic("invalid_tool_name", None, Some("name"));
+        }
+        if !names.insert(tool.name.as_str()) {
+            return diagnostic("duplicate_tool_name", Some(&tool.name), Some("name"));
+        }
+        if let Some(title) = tool.title.as_deref() {
+            if title.is_empty()
+                || title.len() > PLUGIN_MAX_PROVIDER_NAME_BYTES
+                || validate_text_controls(title, "tool title").is_err()
+            {
+                return diagnostic("invalid_tool_title", Some(&tool.name), Some("title"));
+            }
+        }
+        if let Some(description) = tool.description.as_deref() {
+            if description.len() > PLUGIN_MAX_DESCRIPTION_BYTES
+                || validate_text_controls(description, "tool description").is_err()
+            {
+                return diagnostic(
+                    "invalid_tool_description",
+                    Some(&tool.name),
+                    Some("description"),
+                );
+            }
+        }
+        if let Some(diagnostic) = schema_failure(
+            &tool.name,
+            "inputSchema",
+            &tool.input_schema,
+            "input_schema_invalid",
+        ) {
+            return diagnostic;
+        }
+        if let Some(output) = tool.output_schema.as_ref() {
+            if let Some(diagnostic) =
+                schema_failure(&tool.name, "outputSchema", output, "output_schema_invalid")
+            {
+                return diagnostic;
+            }
+        }
+        if let Some(annotations) = tool.annotations.as_ref() {
+            if let Some(diagnostic) = schema_failure(
+                &tool.name,
+                "annotations",
+                annotations,
+                "annotations_invalid",
+            ) {
+                return diagnostic;
+            }
+        }
+    }
+    diagnostic("tool_definition_invalid", None, None)
 }
 
 pub fn validate_schema_observation(observation: &PluginSchemaObservation) -> Result<(), String> {
@@ -624,6 +731,7 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
         if report.phase != PluginCheckPhase::Ready
             || report.code.is_some()
             || report.detail.is_some()
+            || report.diagnostic.is_some()
         {
             return Err("ready Plugin check report has inconsistent status fields".to_string());
         }
@@ -637,6 +745,15 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
         if report.tool_count != 0 || !report.tools.is_empty() || report.startup_tool_shape.is_some()
         {
             return Err("failed Plugin check report must not retain tool inventory".to_string());
+        }
+        if report.diagnostic.is_some()
+            && (report.phase != PluginCheckPhase::Validation
+                || report.code.as_deref() != Some("plugin_tools_list_invalid"))
+        {
+            return Err(
+                "Plugin check diagnostic is only valid for tools/list validation failures"
+                    .to_string(),
+            );
         }
     }
     if let Some(code) = report.code.as_deref() {
@@ -660,14 +777,65 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
             validate_text_controls(title, "Plugin check tool title")?;
         }
     }
+    if let Some(diagnostic) = report.diagnostic.as_ref() {
+        validate_check_diagnostic(diagnostic)?;
+    }
     if let Some(shape) = report.startup_tool_shape.as_ref() {
-        match (shape.eligible, shape.code.as_deref()) {
-            (true, None) => {}
-            (false, Some(code)) => validate_status_atom(code, "Plugin startup tool shape code")?,
+        match (
+            shape.eligible,
+            shape.code.as_deref(),
+            shape.tool.as_deref(),
+            shape.field.as_deref(),
+        ) {
+            (true, None, None, None) => {}
+            (false, Some(code), tool, field) => {
+                validate_status_atom(code, "Plugin startup tool shape code")?;
+                if let Some(tool) = tool {
+                    validate_tool_name(tool)?;
+                }
+                if let Some(field) = field {
+                    validate_diagnostic_field(field)?;
+                }
+            }
             _ => return Err("Plugin startup tool shape status is inconsistent".to_string()),
         }
     }
     Ok(())
+}
+
+fn validate_check_diagnostic(diagnostic: &PluginCheckDiagnostic) -> Result<(), String> {
+    match diagnostic.code.as_str() {
+        "tools_list_result_malformed"
+        | "tool_count_exceeded"
+        | "invalid_tool_name"
+        | "duplicate_tool_name"
+        | "invalid_tool_title"
+        | "invalid_tool_description"
+        | "input_schema_invalid"
+        | "schema_bounds_exceeded"
+        | "output_schema_invalid"
+        | "annotations_invalid"
+        | "tool_definition_invalid" => {}
+        _ => return Err("Plugin check diagnostic code is invalid".to_string()),
+    }
+    if let Some(tool) = diagnostic.tool.as_deref() {
+        validate_tool_name(tool)?;
+    }
+    if let Some(field) = diagnostic.field.as_deref() {
+        validate_diagnostic_field(field)?;
+    }
+    Ok(())
+}
+
+fn validate_diagnostic_field(field: &str) -> Result<(), String> {
+    if matches!(
+        field,
+        "name" | "title" | "description" | "inputSchema" | "outputSchema" | "annotations"
+    ) {
+        Ok(())
+    } else {
+        Err("Plugin diagnostic field is invalid".to_string())
+    }
 }
 
 fn validate_provider_views(providers: &[PluginProviderView]) -> Result<(), String> {
@@ -828,9 +996,12 @@ mod tests {
                 name: "echo".to_string(),
                 title: Some("Echo".to_string()),
             }],
+            diagnostic: None,
             startup_tool_shape: Some(PluginStartupToolShape {
                 eligible: true,
                 code: None,
+                tool: None,
+                field: None,
             }),
         };
         validate_check_report(&report).unwrap();
@@ -894,6 +1065,90 @@ mod tests {
             is_error: false,
         };
         assert!(validate_tool_result(&oversized_result).is_err());
+    }
+
+    #[test]
+    fn tool_validation_diagnostics_use_a_finite_authoring_taxonomy() {
+        let mut duplicate = tool();
+        duplicate.name = "echo".to_string();
+        let duplicate_tools = vec![tool(), duplicate];
+        assert!(validate_tools(&duplicate_tools).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&duplicate_tools),
+            PluginCheckDiagnostic {
+                code: "duplicate_tool_name".to_string(),
+                tool: Some("echo".to_string()),
+                field: Some("name".to_string()),
+            }
+        );
+
+        let mut invalid_name = tool();
+        invalid_name.name = "bad name".to_string();
+        assert!(validate_tools(&[invalid_name.clone()]).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&[invalid_name]).code,
+            "invalid_tool_name"
+        );
+
+        let mut invalid_title = tool();
+        invalid_title.title = Some(String::new());
+        assert!(validate_tools(&[invalid_title.clone()]).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&[invalid_title]).code,
+            "invalid_tool_title"
+        );
+
+        let mut invalid_description = tool();
+        invalid_description.description = Some("x".repeat(PLUGIN_MAX_DESCRIPTION_BYTES + 1));
+        assert!(validate_tools(&[invalid_description.clone()]).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&[invalid_description]).code,
+            "invalid_tool_description"
+        );
+
+        let mut invalid_input = tool();
+        invalid_input.input_schema = json!([]);
+        assert!(validate_tools(&[invalid_input.clone()]).is_err());
+        let diagnostic = diagnose_invalid_tools(&[invalid_input]);
+        assert_eq!(diagnostic.code, "input_schema_invalid");
+        assert_eq!(diagnostic.field.as_deref(), Some("inputSchema"));
+
+        let mut invalid_output = tool();
+        invalid_output.output_schema = Some(json!([]));
+        assert!(validate_tools(&[invalid_output.clone()]).is_err());
+        let diagnostic = diagnose_invalid_tools(&[invalid_output]);
+        assert_eq!(diagnostic.code, "output_schema_invalid");
+        assert_eq!(diagnostic.field.as_deref(), Some("outputSchema"));
+
+        let mut invalid_annotations = tool();
+        invalid_annotations.annotations = Some(json!([]));
+        assert!(validate_tools(&[invalid_annotations.clone()]).is_err());
+        let diagnostic = diagnose_invalid_tools(&[invalid_annotations]);
+        assert_eq!(diagnostic.code, "annotations_invalid");
+        assert_eq!(diagnostic.field.as_deref(), Some("annotations"));
+
+        let mut oversized_schema = tool();
+        oversized_schema.input_schema = json!({
+            "type": "object",
+            "description": "x".repeat(PLUGIN_MAX_SCHEMA_BYTES)
+        });
+        assert!(validate_tools(&[oversized_schema.clone()]).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&[oversized_schema]).code,
+            "schema_bounds_exceeded"
+        );
+
+        let too_many = (0..=PLUGIN_MAX_TOOL_COUNT)
+            .map(|index| PluginTool {
+                name: format!("tool_{index}"),
+                ..tool()
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_tools(&too_many).is_err());
+        assert_eq!(
+            diagnose_invalid_tools(&too_many).code,
+            "tool_count_exceeded"
+        );
     }
 
     #[test]

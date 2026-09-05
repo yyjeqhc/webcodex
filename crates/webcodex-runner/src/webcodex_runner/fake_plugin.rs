@@ -153,6 +153,33 @@ fn main() -> io::Result<()> {
                     )?;
                     continue;
                 }
+                if scenario == "check_malformed_tools_list" {
+                    send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"notTools":[]}}}}"#
+                        ),
+                    )?;
+                    continue;
+                }
+                if scenario == "check_duplicate_tools" {
+                    send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","inputSchema":{{"type":"object"}}}},{{"name":"echo","inputSchema":{{"type":"object"}}}}]}}}}"#
+                        ),
+                    )?;
+                    continue;
+                }
+                if scenario == "check_invalid_tool_name" {
+                    send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"bad name","inputSchema":{{"type":"object"}}}}]}}}}"#
+                        ),
+                    )?;
+                    continue;
+                }
                 if matches!(scenario, "invalid_tools" | "check_invalid_tools") {
                     send(
                         &mut writer,

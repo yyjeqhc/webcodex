@@ -283,10 +283,10 @@ impl PluginManager {
             };
 
             if let Some(tools) = listed_tools {
-                let provider_direct_admissible =
-                    tools.iter().all(|tool| validate_startup_tool(tool).is_ok())
-                        && direct_tool_count.saturating_add(tools.len())
-                            <= PLUGIN_STARTUP_MAX_DIRECT_TOOLS;
+                let provider_shape = startup_tool_shape(&tools);
+                let provider_direct_admissible = provider_shape.eligible
+                    && direct_tool_count.saturating_add(tools.len())
+                        <= PLUGIN_STARTUP_MAX_DIRECT_TOOLS;
                 if provider_direct_admissible {
                     advertised.tools = tools;
                     let mut tentative = startup_catalog.clone();
@@ -303,7 +303,11 @@ impl PluginManager {
                     }
                 } else {
                     advertised.status = "ready_secondary".to_string();
-                    advertised.error_code = Some("first_class_catalog_too_large".to_string());
+                    advertised.error_code = if provider_shape.eligible {
+                        Some("first_class_catalog_too_large".to_string())
+                    } else {
+                        provider_shape.code
+                    };
                 }
             }
             startup_entries.insert(provider.id.clone(), entry);

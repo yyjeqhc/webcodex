@@ -250,7 +250,7 @@ fn startup_secondary_admission_stays_separate_from_runtime_provider_health() {
     assert_eq!(fixture.provider.status, "ready_secondary");
     assert_eq!(
         fixture.provider.error_code.as_deref(),
-        Some("first_class_catalog_too_large")
+        Some("plugin_startup_schema_too_large")
     );
     assert!(fixture.provider.tools.is_empty());
 

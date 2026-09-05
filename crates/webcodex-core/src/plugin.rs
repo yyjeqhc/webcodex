@@ -781,50 +781,59 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
         validate_check_diagnostic(diagnostic)?;
     }
     if let Some(shape) = report.startup_tool_shape.as_ref() {
-        match (
-            shape.eligible,
-            shape.code.as_deref(),
-            shape.tool.as_deref(),
-            shape.field.as_deref(),
-        ) {
-            (true, None, None, None) => {}
-            (false, Some(code), tool, field) => {
-                validate_status_atom(code, "Plugin startup tool shape code")?;
-                if let Some(tool) = tool {
-                    validate_tool_name(tool)?;
-                }
-                if let Some(field) = field {
-                    validate_diagnostic_field(field)?;
-                }
-            }
-            _ => return Err("Plugin startup tool shape status is inconsistent".to_string()),
-        }
+        validate_startup_tool_shape(shape)?;
     }
     Ok(())
 }
 
+fn validate_startup_tool_shape(shape: &PluginStartupToolShape) -> Result<(), String> {
+    let tool = shape.tool.as_deref();
+    let field = shape.field.as_deref();
+    match (shape.eligible, shape.code.as_deref(), tool, field) {
+        (true, None, None, None) => Ok(()),
+        (false, Some("plugin_startup_tool_count_exceeded"), None, None) => Ok(()),
+        (
+            false,
+            Some("plugin_startup_schema_too_large"),
+            Some(tool),
+            Some("inputSchema" | "outputSchema" | "annotations"),
+        ) => validate_tool_name(tool),
+        (false, Some("plugin_startup_tool_invalid"), Some(tool), field) => {
+            validate_tool_name(tool)?;
+            if let Some(field) = field {
+                validate_diagnostic_field(field)?;
+            }
+            Ok(())
+        }
+        _ => Err("Plugin startup tool shape status is inconsistent".to_string()),
+    }
+}
+
 fn validate_check_diagnostic(diagnostic: &PluginCheckDiagnostic) -> Result<(), String> {
-    match diagnostic.code.as_str() {
-        "tools_list_result_malformed"
-        | "tool_count_exceeded"
-        | "invalid_tool_name"
-        | "duplicate_tool_name"
-        | "invalid_tool_title"
-        | "invalid_tool_description"
-        | "input_schema_invalid"
-        | "schema_bounds_exceeded"
-        | "output_schema_invalid"
-        | "annotations_invalid"
-        | "tool_definition_invalid" => {}
-        _ => return Err("Plugin check diagnostic code is invalid".to_string()),
+    let tool = diagnostic.tool.as_deref();
+    let field = diagnostic.field.as_deref();
+    let validate_tool = |tool: Option<&str>| -> Result<(), String> {
+        let tool = tool.ok_or_else(|| "Plugin check diagnostic requires tool".to_string())?;
+        validate_tool_name(tool)
+    };
+    match (diagnostic.code.as_str(), tool, field) {
+        (
+            "tools_list_result_malformed" | "tool_count_exceeded" | "tool_definition_invalid",
+            None,
+            None,
+        ) => Ok(()),
+        ("invalid_tool_name", None, Some("name")) => Ok(()),
+        ("duplicate_tool_name", tool, Some("name")) => validate_tool(tool),
+        ("invalid_tool_title", tool, Some("title")) => validate_tool(tool),
+        ("invalid_tool_description", tool, Some("description")) => validate_tool(tool),
+        ("input_schema_invalid", tool, Some("inputSchema")) => validate_tool(tool),
+        ("output_schema_invalid", tool, Some("outputSchema")) => validate_tool(tool),
+        ("annotations_invalid", tool, Some("annotations")) => validate_tool(tool),
+        ("schema_bounds_exceeded", tool, Some("inputSchema" | "outputSchema" | "annotations")) => {
+            validate_tool(tool)
+        }
+        _ => Err("Plugin check diagnostic fields are inconsistent with its code".to_string()),
     }
-    if let Some(tool) = diagnostic.tool.as_deref() {
-        validate_tool_name(tool)?;
-    }
-    if let Some(field) = diagnostic.field.as_deref() {
-        validate_diagnostic_field(field)?;
-    }
-    Ok(())
 }
 
 fn validate_diagnostic_field(field: &str) -> Result<(), String> {
@@ -1149,6 +1158,75 @@ mod tests {
             diagnose_invalid_tools(&too_many).code,
             "tool_count_exceeded"
         );
+    }
+
+    #[test]
+    fn check_diagnostic_validation_rejects_semantically_impossible_combinations() {
+        for diagnostic in [
+            PluginCheckDiagnostic {
+                code: "tool_count_exceeded".to_string(),
+                tool: Some("echo".to_string()),
+                field: None,
+            },
+            PluginCheckDiagnostic {
+                code: "invalid_tool_name".to_string(),
+                tool: Some("echo".to_string()),
+                field: Some("name".to_string()),
+            },
+            PluginCheckDiagnostic {
+                code: "duplicate_tool_name".to_string(),
+                tool: Some("echo".to_string()),
+                field: Some("title".to_string()),
+            },
+            PluginCheckDiagnostic {
+                code: "schema_bounds_exceeded".to_string(),
+                tool: Some("echo".to_string()),
+                field: Some("name".to_string()),
+            },
+        ] {
+            assert!(validate_check_diagnostic(&diagnostic).is_err());
+        }
+
+        assert!(validate_check_diagnostic(&PluginCheckDiagnostic {
+            code: "schema_bounds_exceeded".to_string(),
+            tool: Some("echo".to_string()),
+            field: Some("inputSchema".to_string()),
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn startup_tool_shape_validation_rejects_unknown_or_inconsistent_diagnostics() {
+        for shape in [
+            PluginStartupToolShape {
+                eligible: false,
+                code: Some("unknown_startup_reason".to_string()),
+                tool: None,
+                field: None,
+            },
+            PluginStartupToolShape {
+                eligible: false,
+                code: Some("plugin_startup_tool_count_exceeded".to_string()),
+                tool: Some("echo".to_string()),
+                field: None,
+            },
+            PluginStartupToolShape {
+                eligible: false,
+                code: Some("plugin_startup_schema_too_large".to_string()),
+                tool: Some("echo".to_string()),
+                field: Some("name".to_string()),
+            },
+        ] {
+            assert!(validate_startup_tool_shape(&shape).is_err());
+        }
+
+        assert!(validate_startup_tool_shape(&PluginStartupToolShape {
+            eligible: false,
+            code: Some("plugin_startup_schema_too_large".to_string()),
+            tool: Some("echo".to_string()),
+            field: Some("inputSchema".to_string()),
+        })
+        .is_ok());
     }
 
     #[test]

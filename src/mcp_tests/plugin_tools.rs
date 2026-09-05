@@ -569,7 +569,7 @@ async fn plugin_tool_list_provider_and_tools_is_bounded_and_binding_free() {
     assert_eq!(discovery["toolCount"], 1);
     assert_eq!(discovery["tools"][0]["name"], "search_symbol");
     assert_eq!(discovery["tools"][0]["title"], "Repository Search");
-    assert_eq!(discovery["firstClassRestartRequired"], true);
+    assert!(discovery.get("firstClassRestartRequired").is_none());
     assert_eq!(runtime.plugin_gateway.binding_count(), bindings_before);
     let encoded = serde_json::to_string(discovery).unwrap();
     for forbidden in [

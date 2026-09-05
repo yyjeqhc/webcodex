@@ -268,7 +268,7 @@ async fn list(
         let runner = resolve_runner(runtime, runner, auth).await?;
         if let Some(plugin) = args.plugin.as_deref() {
             let plugin = required_provider(Some(plugin))?;
-            let (provider, tools, restart_required) =
+            let (provider, tools) =
                 observe_effective_provider_tools(runtime, &runner, plugin, auth).await?;
             let mut value = sanitize_provider_view_for_runner(&runner, provider);
             value["runner"] = Value::String(runner.client_id.clone());
@@ -279,7 +279,6 @@ async fn list(
                     .map(sanitize_tool_summary)
                     .collect::<Vec<_>>(),
             );
-            value["firstClassRestartRequired"] = Value::Bool(restart_required);
             return Ok(value);
         }
         let response =
@@ -403,7 +402,7 @@ async fn describe(
     let plugin_id = required_provider(args.plugin.as_deref())?;
     let tool_name = required_tool(args.tool.as_deref())?;
     let runner = resolve_runner(runtime, runner_id, auth).await?;
-    let (provider, tools, _) =
+    let (provider, tools) =
         observe_effective_provider_tools(runtime, &runner, plugin_id, auth).await?;
     let tool = tools
         .into_iter()
@@ -436,10 +435,10 @@ async fn observe_effective_provider_tools(
     runner: &ResolvedPluginRunner,
     plugin_id: &str,
     auth: Option<&AuthContext>,
-) -> Result<(PluginProviderView, Vec<PluginTool>, bool), GatewayError> {
+) -> Result<(PluginProviderView, Vec<PluginTool>), GatewayError> {
     let providers_response =
         execute_exact(runtime, runner, PluginGatewayRequest::ProvidersList, auth).await?;
-    let (providers, restart_required) = match response_providers(providers_response) {
+    let (providers, _) = match response_providers(providers_response) {
         Ok(value) => value,
         Err(mut error) if matches!(error.code.as_str(), "stale_runner" | "runner_unavailable") => {
             error.code = "plugin_replaced".to_string();
@@ -488,7 +487,7 @@ async fn observe_effective_provider_tools(
         }
         Err(error) => return Err(error),
     };
-    Ok((provider, tools, restart_required))
+    Ok((provider, tools))
 }
 
 async fn call_plugin(

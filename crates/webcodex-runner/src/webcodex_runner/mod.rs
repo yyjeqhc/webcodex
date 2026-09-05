@@ -85,6 +85,8 @@ pub(crate) use shell::{
 pub(crate) use shell::{run_shell, run_shell_with_profiles};
 pub(crate) use skill_store::handle_skill_store_request;
 pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, SshConnectionPool};
+#[cfg(all(test, unix))]
+pub(crate) use transport::install_reload_listener;
 #[cfg(test)]
 pub(crate) use transport::{
     auto_transport_plan, build_ws_request, effective_transport, non_empty_token,

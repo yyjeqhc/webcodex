@@ -229,6 +229,10 @@ pub(super) struct PendingShellRequest {
     /// management. Revalidated at dequeue so a replacement Runner can never
     /// inherit a host-configuration mutation.
     pub(super) expected_ssh_resource_runner_instance_id: Option<String>,
+    /// Exact Runner process lease captured for first-class config check/reload.
+    /// Revalidated at dequeue so neither check nor reload can silently retarget
+    /// a replacement process using the same client_id.
+    pub(super) expected_runner_config_runner_instance_id: Option<String>,
     /// Exact Runner process lease plus read/manage mode captured for a
     /// Runner-global Skill store request. Revalidated at dequeue so a
     /// replacement process using the same client_id cannot inherit authority.

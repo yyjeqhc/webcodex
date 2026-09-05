@@ -17,6 +17,7 @@ mod jobs;
 mod lsp;
 mod memory;
 mod projects;
+mod runner_config;
 mod sessions;
 mod skills;
 mod testing;
@@ -43,6 +44,9 @@ pub fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = projects::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = runner_config::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = coding_tasks::output_schema_for_tool(name) {

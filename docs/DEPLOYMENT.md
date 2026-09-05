@@ -370,11 +370,16 @@ max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
 
-After editing `runner.toml`, reload the matching service
-(`systemctl --user reload webcodex-runner` for user scope, or
-`sudo systemctl reload webcodex-runner` for system scope) to apply policy,
-shell, and SSH-resource settings. Identity, server/auth, project source,
-concurrency, capabilities, and transport changes require a restart.
+After editing the already-running Runner's startup-bound `runner.toml`, use
+`runner_config_check(client_id=...)`, then pass its `current_generation` to
+`runner_config_reload(client_id=..., expected_generation=...)`, then inspect
+`runtime_status(client_id=...)`. Check never activates the candidate; reload never
+writes the file. Invalid candidates preserve the active snapshot/generation, and
+`restart_required_fields` names startup-only changes that are not claimed live
+until restart. Unix service reload/SIGHUP remains a compatibility trigger for the
+same reload primitive, but is not required for first-class config control. Identity,
+server/auth, project source, concurrency, capabilities, and transport changes
+remain restart-only where reported.
 
 For a foreground test, run `webcodex-runner --profile workstation`. Advanced
 manual config generation uses `webcodex runner init`.

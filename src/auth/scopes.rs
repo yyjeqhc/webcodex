@@ -24,8 +24,8 @@ pub use webcodex_core::authority::{
     SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_LAUNCH, SCOPE_COMPUTER_POINTER_CONTROL,
     SCOPE_COMPUTER_READ, SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_MCP_LOCAL, SCOPE_MEMORY_MANAGE,
     SCOPE_MEMORY_READ, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE,
-    SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
-    SCOPE_SSH_LOCAL,
+    SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ,
+    SCOPE_SESSION_COLLABORATE, SCOPE_SSH_LOCAL,
 };
 
 /// True when `scope` is one of the Runner transport scopes.
@@ -761,6 +761,20 @@ mod tests {
                 "{tool}"
             );
         }
+    }
+
+    #[test]
+    fn runner_manage_scope_is_not_inherited_by_project_anonymous_or_plugin_authority() {
+        assert!(
+            crate::auth::shared_key_context("runner-manage-check").has_scope(SCOPE_RUNNER_MANAGE)
+        );
+        assert!(!crate::auth::open_anonymous_context().has_scope(SCOPE_RUNNER_MANAGE));
+        assert!(
+            !crate::auth::shared_key::project_credential_context("wc_pgrant_runnermanage")
+                .has_scope(SCOPE_RUNNER_MANAGE)
+        );
+        assert_ne!(SCOPE_RUNNER_MANAGE, SCOPE_PLUGIN_MANAGE);
+        assert!(KNOWN_SCOPES.contains(&SCOPE_RUNNER_MANAGE));
     }
 
     #[test]

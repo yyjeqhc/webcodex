@@ -162,6 +162,7 @@ pub struct ToolMetadata {
 }
 
 pub const RUNTIME_READ: &str = webcodex_core::authority::SCOPE_RUNTIME_READ;
+pub const RUNNER_MANAGE: &str = webcodex_core::authority::SCOPE_RUNNER_MANAGE;
 pub const SESSION_COLLABORATE: &str = webcodex_core::authority::SCOPE_SESSION_COLLABORATE;
 pub const COMMUNICATION_READ: &str = webcodex_core::authority::SCOPE_COMMUNICATION_READ;
 pub const COMMUNICATION_MANAGE: &str = webcodex_core::authority::SCOPE_COMMUNICATION_MANAGE;

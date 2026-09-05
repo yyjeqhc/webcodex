@@ -360,9 +360,24 @@ sudo webcodex runner status --scope system --profile <profile>
 install、status、start、stop、restart、logs、uninstall 请使用相同的 `--scope`。
 User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`。
 
-编辑静态 `runner.toml` SSH resource 后，仍与 policy、shell 一样遵循普通 config reload
-语义。`ssh_resource` managed mutation 不同：它使用 frozen startup snapshot，且只在工具
-返回 `restart_required=true` 时要求重启 Runner。身份、server/auth、传输与并发变更仍
-需要重启。无效 reload 会保留当前生效的 generation。对于可安全分类的 validation failure，reload status 只报告闭集、非 secret 的
+对已经运行的 Runner，修改配置时使用正式的 first-class 流程，不再查 PID 或手工发信号：
+
+1. 编辑该 Runner 启动时绑定的现有 `runner.toml`。
+2. 调用 `runner_config_check(client_id=...)`。它只读取这个绑定路径，不激活 candidate，
+   返回当前 generation 以及有界的 validation/restart 元数据。
+3. candidate 有效后调用
+   `runner_config_reload(client_id=..., expected_generation=<current_generation>)`。
+   optimistic generation fence 会在激活前拒绝 stale caller。
+4. reload 后调用 `runtime_status(client_id=...)`（或 `list_runners`）检查当前运行状态。
+
+`runner_config_reload` 不写 `runner.toml`，只激活磁盘上已经存在的 candidate。policy、
+shell 与静态 SSH resource 中可热加载的字段可以立即生效；`restart_required_fields`
+报告的字段仍保持 startup-only，重启前不会假装已在线生效。无效 candidate 保留旧 active
+snapshot 与 generation。`ssh_resource` managed mutation 不同：它使用 frozen startup
+snapshot，且只在工具返回 `restart_required=true` 时要求重启 Runner。
+
+Unix 上 service reload/SIGHUP 仍可作为兼容 trigger，并调用同一个 authoritative reload
+primitive。Windows 与 macOS 直接使用 first-class operation，不模拟信号，也不需要 PID
+管理。对于可安全分类的 validation failure，config operation 只报告闭集、非 secret 的
 原子信息，例如 `field=max_concurrent_jobs` 与 `reason=out_of_range`；不会投影 raw TOML、
-配置值、路径、credential 或 parser 文本。
+配置值、路径、credential、parser 文本或 shell environment value。

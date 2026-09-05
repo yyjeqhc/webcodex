@@ -21,6 +21,7 @@ mod jobs;
 mod lsp;
 mod memory;
 mod patches;
+mod runner_config;
 mod sessions;
 mod skills;
 mod testing;
@@ -77,8 +78,9 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS, RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_GIT, RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
     RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION, RUNNER_CAPABILITY_PERSISTENT_SHELL,
-    RUNNER_CAPABILITY_SHELL, RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
-    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV, RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL, RUNNER_CAPABILITY_SHELL,
+    RUNNER_CAPABILITY_SKILL_STORE_MANAGE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
 /// Runner capability or owner-boundary requirement that must hold before a
@@ -148,6 +150,9 @@ pub enum RunnerCapabilityRequirement {
     /// Runner-owned delegated ACP coding-agent execution. Never inferred from
     /// shell, Job, MCP, or file-write capability.
     CodingAgentRuns,
+    /// Exact Runner process-local first-class config check/reload. Never inferred
+    /// from SIGHUP, generic shell execution, Plugin support, or protocol generation.
+    RunnerConfigControl,
     /// Runner-global operator Skill store management. Never inferred from read.
     SkillStoreManage,
 }
@@ -183,6 +188,7 @@ impl RunnerCapabilityRequirement {
             Self::LspReadOnlyNavigation => RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
             Self::LspCallHierarchy => RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
             Self::CodingAgentRuns => RUNNER_CAPABILITY_CODING_AGENT_RUNS,
+            Self::RunnerConfigControl => RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL,
             Self::SkillStoreManage => RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
         }
     }
@@ -224,6 +230,7 @@ impl RunnerCapabilityRequirement {
             Self::LspReadOnlyNavigation => &[RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
             Self::LspCallHierarchy => &[RUNNER_CAPABILITY_LSP_CALL_HIERARCHY],
             Self::CodingAgentRuns => &[RUNNER_CAPABILITY_CODING_AGENT_RUNS],
+            Self::RunnerConfigControl => &[RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL],
             Self::SkillStoreManage => &[RUNNER_CAPABILITY_SKILL_STORE_MANAGE],
         }
     }
@@ -564,6 +571,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     computer::DEFINITIONS,
     diagnostics::DEFINITIONS,
     discovery::DEFINITIONS,
+    runner_config::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,
     git::SUMMARY_DEFINITIONS,

@@ -104,6 +104,12 @@ fn detached_process_capability_matches_supported_native_backends() {
 }
 
 #[test]
+fn runner_config_control_capability_is_platform_neutral() {
+    let capabilities = runner_register_capabilities(&test_config(PathBuf::new()));
+    assert!(capabilities.runner_config_control);
+}
+
+#[test]
 fn pointer_capability_matches_supported_native_backends() {
     let capabilities = runner_register_capabilities(&test_config(PathBuf::new()));
     assert_eq!(

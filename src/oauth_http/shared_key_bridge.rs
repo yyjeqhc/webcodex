@@ -12,6 +12,7 @@ use crate::auth::{
 };
 use crate::models::OAuthAuthorizationCodeRecord;
 use crate::runner_http::{RunnerFeature, RunnerFeatureSet};
+use webcodex_core::authority::SCOPE_RUNNER_MANAGE;
 
 use super::{
     apply_oauth_no_store_headers, authorize_bridge_html, decoded_authorize_param, form_field,
@@ -37,6 +38,7 @@ pub(crate) const SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
 /// same fixed optional Computer scopes.
 pub(crate) const SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
+    SCOPE_RUNNER_MANAGE,
     SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,

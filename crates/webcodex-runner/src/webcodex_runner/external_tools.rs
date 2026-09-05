@@ -173,7 +173,6 @@ impl ExternalToolRouter {
         )
     }
 
-    #[cfg(any(unix, test))]
     pub(crate) fn configuration_status_changed(&self) {
         self.metadata_revision.fetch_add(1, Ordering::SeqCst);
     }

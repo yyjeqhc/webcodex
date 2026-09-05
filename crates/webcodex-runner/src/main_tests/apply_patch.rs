@@ -103,16 +103,50 @@ fn file_apply_patch_strict_matching_rejects_fuzzy_and_ambiguous_before_write() {
         assert_eq!(out["execution_state"], "not_started");
         assert_eq!(out["match_mode"], expected_mode);
         assert_eq!(out["candidate_count"], expected_candidates);
+        assert_eq!(out["search_start_line"], 1);
+        assert!(out["source_line_count"].as_u64().unwrap() >= expected_candidates);
         assert_eq!(out["strict_match"], false);
-        assert_eq!(
-            out["recovery_action"],
-            "refine_patch_or_relax_strict_matching"
-        );
+        assert_eq!(out["recovery_action"], "refine_strict_patch");
+        assert!(out["retry_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("strict_matching=true"));
+        assert!(!out["retry_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("strict_matching=false"));
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
             original
         );
     }
+}
+
+#[test]
+fn file_apply_patch_strict_matching_reports_the_ambiguous_component() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let original = "ctx\n foo \nctx\nother\n";
+    std::fs::write(tmp.path().join("target.txt"), original).unwrap();
+    let patch = "*** Begin Patch\n*** Update File: target.txt\n@@ ctx\n-foo\n+new\n*** End Patch";
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_patch_request_with_strict(tmp.path(), patch, false, true),
+    ));
+
+    assert_eq!(out["error_kind"], "strict_match_rejected");
+    assert_eq!(out["match_source"], "change_context");
+    assert_eq!(out["match_mode"], "exact");
+    assert_eq!(out["candidate_count"], 2);
+    assert_eq!(out["matched_start_line"], 1);
+    assert_eq!(out["search_start_line"], 1);
+    assert_eq!(out["source_line_count"], 4);
+    assert_eq!(out["strict_match"], false);
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
+        original
+    );
 }
 
 #[test]

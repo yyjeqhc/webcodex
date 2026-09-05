@@ -86,14 +86,42 @@ fn apply_patch_match_diagnostic_schema() -> Value {
     })
 }
 
+fn apply_patch_strict_match_diagnostic_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Server-validated, body-free classification of a deterministic strict-match rejection. Runner target metadata is checked against the original parsed patch before projection. Ambiguous matches intentionally omit the selected Runner location by returning matched_start_line=null.",
+        "properties": {
+            "classification": {"type": "string", "enum": ["unique_fuzzy_candidate", "ambiguous_candidate"]},
+            "chunk_index": {"type": "integer", "minimum": 0},
+            "match_mode": {"type": "string", "enum": ["exact", "trim_end", "trim"]},
+            "match_source": {"type": "string", "enum": ["old_lines", "change_context"]},
+            "matched_start_line": {
+                "description": "Validated 1-based candidate location only for a unique fuzzy candidate; null for ambiguous candidates so no first match is presented as authoritative.",
+                "anyOf": [
+                    {"type": "integer", "minimum": 1},
+                    {"type": "null"}
+                ]
+            },
+            "candidate_count": {"type": "integer", "minimum": 1},
+            "expected_line_count": {"type": "integer", "minimum": 1},
+            "strict_match": {"type": "boolean", "const": false}
+        },
+        "required": [
+            "classification", "chunk_index", "match_mode", "match_source",
+            "matched_start_line", "candidate_count", "expected_line_count", "strict_match"
+        ]
+    })
+}
+
 fn apply_patch_recovery_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "Server-derived, body-free reread hint for a validated deterministic apply_patch context mismatch. Copy `items` into the direct `read_files` tool for the same project. It is emitted only when the failed target and structural diagnostic prove a no-write reread is safe; the Runner cannot choose the tool, path, or arguments.",
+        "description": "Server-derived, body-free reread hint for a validated deterministic no-write apply_patch rejection. Copy `items` into the direct `read_files` tool for the same project. It is emitted only when the failed target and structural facts prove a bounded reread is safe; the Runner cannot choose the tool, path, or arguments.",
         "properties": {
             "action": {"type": "string", "enum": ["read_files"]},
-            "reason": {"type": "string", "enum": ["context_mismatch"]},
+            "reason": {"type": "string", "enum": ["context_mismatch", "strict_match_rejected_unique_fuzzy"]},
             "items": {
                 "type": "array",
                 "minItems": 1,
@@ -317,7 +345,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("execution_state", json!({"type":"string","enum":["not_started","completed","outcome_unknown"],"description":"Transactional patch mutation effect state."})),
             ("error_kind", nullable_schema("string", "Stable parse, preflight, conflict, capability, transaction, or uncertainty classification.")),
             ("failure_kind", nullable_schema("string", "not_started, capability_unavailable, or outcome_unknown for delivery/admission failures.")),
-            ("recovery_action", nullable_schema("string", "Bounded next action such as regenerate_patch, reread_or_regenerate_patch, refine_patch_or_relax_strict_matching, upgrade_or_reconnect_runner, or inspect_workspace_before_retry.")),
+            ("recovery_action", nullable_schema("string", "Bounded next action such as regenerate_patch, reread_or_regenerate_patch, reread_and_regenerate_strict_patch, add_exact_unique_context, upgrade_or_reconnect_runner, or inspect_workspace_before_retry.")),
             ("rollback_complete", nullable_schema("boolean", "Whether a failed transactional apply fully restored all earlier changes.")),
             ("change_index", nullable_schema("integer", "Zero-based failed file-operation index when known.")),
             ("kind", nullable_schema("string", "Failed patch file-operation kind when known.")),
@@ -325,6 +353,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("patch_line", nullable_schema("integer", "One-based patch line for a syntax error when known.")),
             ("expected_format", nullable_schema("string", "codex_patch for parse-format recovery; null otherwise.")),
             ("match_diagnostic", apply_patch_match_diagnostic_schema()),
+            ("strict_match_diagnostic", apply_patch_strict_match_diagnostic_schema()),
             ("recovery", apply_patch_recovery_schema()),
             ("retry_guidance", schema_type("string", "Bounded recovery guidance for deterministic no-mutation rejection.")),
         ])),

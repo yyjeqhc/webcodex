@@ -357,13 +357,29 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         patch_output.get("match_diagnostic").is_some(),
         "apply_patch failures must expose body-free match diagnostics"
     );
+    let strict_diagnostic = patch_output
+        .get("strict_match_diagnostic")
+        .expect("apply_patch strict failures must expose validated body-free diagnostics");
+    assert_eq!(strict_diagnostic["additionalProperties"], false);
+    assert_eq!(
+        strict_diagnostic["properties"]["classification"]["enum"],
+        json!(["unique_fuzzy_candidate", "ambiguous_candidate"])
+    );
+    assert_eq!(
+        strict_diagnostic["properties"]["matched_start_line"]["anyOf"][1]["type"],
+        "null"
+    );
     let recovery = patch_output
         .get("recovery")
-        .expect("apply_patch must publish bounded context-mismatch recovery");
+        .expect("apply_patch must publish bounded reread recovery");
     assert_eq!(recovery["additionalProperties"], false);
     assert_eq!(
         recovery["properties"]["action"]["enum"],
         json!(["read_files"])
+    );
+    assert_eq!(
+        recovery["properties"]["reason"]["enum"],
+        json!(["context_mismatch", "strict_match_rejected_unique_fuzzy"])
     );
     assert_eq!(recovery["properties"]["items"]["maxItems"], 1);
     assert_eq!(
@@ -411,6 +427,9 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
             "apply_patch edit summary must expose {field}"
         );
     }
+    assert!(patch_spec.description.contains("multiple chunks"));
+    assert!(patch_spec.description.contains("duplicate file operations"));
+    assert!(patch_spec.description.contains("never relax"));
     let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];
     for field in ["project", "diff", "deny_sensitive_paths"] {
         assert!(

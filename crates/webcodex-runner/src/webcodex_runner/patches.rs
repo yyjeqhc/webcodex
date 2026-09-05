@@ -1240,6 +1240,7 @@ fn apply_patch_strict_match_rejection(
     matched: &CodexPatchChunkMatch,
     start: Instant,
 ) -> CommandResult {
+    let rejection = matched.strict_rejection;
     line_edit_stdout(
         serde_json::json!({
             "changed": false,
@@ -1249,13 +1250,15 @@ fn apply_patch_strict_match_rejection(
             "change_index": index,
             "path": path,
             "chunk_index": matched.chunk_index,
-            "match_mode": matched.match_mode.map(|mode| mode.as_str()),
-            "match_source": matched.match_source.as_str(),
-            "matched_start_line": matched.matched_start_line,
-            "candidate_count": matched.candidate_count,
+            "match_mode": rejection.map(|fact| fact.match_mode.as_str()),
+            "match_source": rejection.map(|fact| fact.match_source.as_str()),
+            "matched_start_line": rejection.map(|fact| fact.matched_start_line),
+            "candidate_count": rejection.map(|fact| fact.candidate_count),
+            "search_start_line": rejection.map(|fact| fact.search_start_line),
+            "source_line_count": rejection.map(|fact| fact.source_line_count),
             "strict_match": false,
-            "recovery_action": "refine_patch_or_relax_strict_matching",
-            "retry_guidance": "add exact unique context and retry strict_matching=true; use strict_matching=false only when ordinary Codex fuzzy/first-match positioning is acceptable",
+            "recovery_action": "refine_strict_patch",
+            "retry_guidance": "add exact unique context and retry with strict_matching=true; do not relax strict matching to recover from this rejection",
             "error": format!(
                 "Rejected strict Codex patch before write: {path} chunk {} was not positioned by exact unique matching. No files were modified.",
                 matched.chunk_index

@@ -21,7 +21,12 @@ use webcodex_runner_config::paths::paths_equal;
 
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const PROJECT_GIT_TIMEOUT: Duration = Duration::from_secs(2);
-const PROJECT_GIT_CLEANUP_TIMEOUT: Duration = Duration::from_millis(500);
+// Tree shutdown also has to let the bounded stdout/stderr readers observe EOF.
+// Darwin process-group teardown and reader scheduling can legitimately take
+// longer than 500ms on loaded native CI hosts, so keep a short but realistic
+// bounded cleanup budget rather than turning successful direct-child exit into
+// a spurious reader-timeout failure.
+const PROJECT_GIT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 const PROJECT_GIT_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 const EXPLICIT_REGISTRATION_SOURCE: &str = "explicit";
 const AUTO_REGISTERED_REGISTRATION_SOURCE: &str = "auto_registered";

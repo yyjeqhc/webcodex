@@ -974,10 +974,10 @@ mod tests {
         ));
         let script = concat!(
             "$child = Start-Process powershell.exe ",
-            "-ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 8' ",
+            "-ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30' ",
             "-PassThru; ",
             "Set-Content -Path $args[0] -Value \"$PID $($child.Id)\" -NoNewline; ",
-            "Start-Sleep -Seconds 8"
+            "Start-Sleep -Seconds 30"
         );
         let args = vec![
             "-NoProfile".to_string(),
@@ -987,20 +987,34 @@ mod tests {
             marker.to_string_lossy().to_string(),
         ];
         let payload = vec![b'x'; CLI_INPUT_BYTES];
-        let cancellation = CancellationContext::never();
         let started = Instant::now();
-        let error = run_bounded_with_timeout(
-            Path::new("powershell.exe"),
-            &args,
-            Some(&payload),
-            false,
-            &cancellation,
-            Duration::from_millis(1200),
-        )
-        .await
-        .unwrap_err();
+        let command = tokio::spawn(async move {
+            let cancellation = CancellationContext::never();
+            run_bounded_with_timeout(
+                Path::new("powershell.exe"),
+                &args,
+                Some(&payload),
+                false,
+                &cancellation,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+        let marker_deadline = Instant::now() + Duration::from_secs(4);
+        while !marker.is_file() {
+            assert!(
+                Instant::now() < marker_deadline,
+                "blocked-stdin fixture must publish owned pids before timeout"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let error = tokio::time::timeout(Duration::from_secs(5), command)
+            .await
+            .expect("blocked-stdin command must finish within its bounded cleanup")
+            .expect("blocked-stdin fixture task")
+            .unwrap_err();
         assert_eq!(error.code, "webcodex_command_timeout");
-        assert!(started.elapsed() < Duration::from_secs(6));
+        assert!(started.elapsed() < Duration::from_secs(9));
         let pids = std::fs::read_to_string(&marker)
             .expect("fixture must publish owned pids")
             .split_whitespace()

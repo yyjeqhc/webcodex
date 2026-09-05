@@ -443,7 +443,7 @@ mod tests {
             .arg("-NonInteractive")
             .arg("-Command")
             .arg(format!(
-                "$null = [Console]::In.ReadToEnd(); Set-Content -LiteralPath '{escaped_marker}' -Value 'eof'"
+                "$marker = '{escaped_marker}'; Set-Content -LiteralPath $marker -Value 'ready'; $null = [Console]::In.ReadToEnd(); Set-Content -LiteralPath $marker -Value 'eof'"
             ));
 
         let activity = ActivityLog::default();
@@ -452,11 +452,28 @@ mod tests {
             .spawn_owned(ProcessKind::RegularTunnel, command, false)
             .await
             .expect("start EOF fixture");
+        let ready_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if std::fs::read_to_string(&marker)
+                .ok()
+                .is_some_and(|value| value.trim() == "ready")
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < ready_deadline,
+                "regular tunnel EOF fixture must become ready before stop"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
         supervisor.stop(ProcessKind::RegularTunnel).await;
 
-        assert!(
-            marker.is_file(),
-            "regular tunnel child must observe stdin EOF before the graceful stop completes"
+        assert_eq!(
+            std::fs::read_to_string(&marker)
+                .expect("regular tunnel EOF fixture marker")
+                .trim(),
+            "eof",
+            "regular tunnel child must observe stdin EOF before the graceful stop completes",
         );
         let _ = std::fs::remove_file(marker);
     }

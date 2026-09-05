@@ -241,6 +241,8 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_projects",
             "list_runners",
             "runtime_status",
+            "runner_config_check",
+            "runner_config_reload",
             "tool_manifest",
             "plugin_tool",
         ],

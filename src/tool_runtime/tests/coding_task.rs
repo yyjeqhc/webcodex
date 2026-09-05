@@ -2558,7 +2558,18 @@ async fn finish_coding_task_summary_only_keeps_cargo_fmt_failure_blocking_when_o
         "cargo_test",
         json!({"project": fixture.project.clone()}),
         true,
-        json!({"exit_code": 0}),
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 1,
+            "tests_failed": 0,
+            "zero_tests_run": false
+        }),
     );
 
     let result = finish_coding_task_summary_only_with_agent(
@@ -2811,7 +2822,18 @@ async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_a
         "cargo_test",
         json!({"project": fixture.project.clone()}),
         true,
-        json!({"exit_code": 0}),
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 1,
+            "tests_failed": 0,
+            "zero_tests_run": false
+        }),
     );
 
     let result = finish_coding_task_summary_only_with_agent(

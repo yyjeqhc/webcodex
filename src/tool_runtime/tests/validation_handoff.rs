@@ -1779,7 +1779,10 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
     let validation = runtime
         .validation_summary_for_session_with_jobs(&summary, 50, Some(&auth))
         .await;
-    assert_eq!(validation["status"], "passed");
+    // The frozen Session summary only has the conservative truncated status
+    // snapshot. Observer-specific job_log material can prove three tests ran,
+    // but must not retroactively strengthen that Session evidence.
+    assert_eq!(validation["status"], "inconclusive");
     let latest = &validation["latest"];
     assert_eq!(latest["tool_name"], "cargo_test");
     for field in [

@@ -41,6 +41,16 @@ fn oauth_discovery_scopes_include_offline_access_but_permission_registry_does_no
 }
 
 #[test]
+fn direct_shared_key_model_scopes_are_all_oauth_delegable() {
+    for scope in crate::auth::DIRECT_SHARED_KEY_MODEL_SCOPES {
+        assert!(
+            oauth_scopes_supported().contains(scope),
+            "direct shared-key model scope {scope} must be present in the OAuth permission registry"
+        );
+    }
+}
+
+#[test]
 fn normalize_oauth_scopes_deduplicates_and_orders() {
     let normalized = normalize_oauth_scopes(
         Some("project:write runtime:read runtime:read"),

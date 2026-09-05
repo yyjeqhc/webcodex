@@ -358,7 +358,6 @@ pub const RUNNER_CONFIG_RESTART_REQUIRED_FIELDS: &[&str] = &[
     "max_concurrent_jobs",
     "mcp_gateway",
     "owner",
-    "plugins",
     "poll_interval_ms",
     "project_registry_dir",
     "quic",
@@ -705,8 +704,8 @@ pub struct RunnerCapabilities {
     #[serde(default, skip_serializing_if = "is_false")]
     pub coding_agent_runs: bool,
     /// Runner-owned native Tool Plugin lifecycle and typed Plugin gateway.
-    /// This remains useful even when the startup Plugin inventory is empty,
-    /// because `plugin_tool reload` can activate a dynamic provider later.
+    /// Registration carries capability only; provider/tool inventory remains
+    /// Runner-owned and is observed through the exact `plugin_tool` gateway.
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_tool_plugins: bool,
     /// Runner-local managed SSH resource list/register/remove lifecycle.
@@ -849,6 +848,8 @@ impl RunnerConfigOperationResponse {
                     | "config_parse_failed"
                     | "config_validation_failed"
                     | "provider_config_invalid"
+                    | "plugin_reload_failed"
+                    | "plugin_reload_busy"
                     | "config_generation_conflict"
                     | "runner_unavailable"
                     | "runner_replaced"
@@ -1161,12 +1162,6 @@ pub struct RunnerPolicySummary {
     /// are never projected to the Server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
-    /// Frozen, bounded, sanitized startup native Tool Plugin catalog. This is
-    /// registration-time first-class inventory only; executable paths, argv,
-    /// cwd, prepared environment, PIDs, stderr, and credentials never cross
-    /// the Runner boundary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin_providers: Option<Vec<crate::plugin::StartupPluginProvider>>,
 }
 
 impl Default for RunnerPolicySummary {
@@ -1180,7 +1175,6 @@ impl Default for RunnerPolicySummary {
             shell_profiles: None,
             tool_providers: None,
             mcp_gateway_providers: None,
-            plugin_providers: None,
         }
     }
 }

@@ -1,15 +1,15 @@
 //! Runner-owned native stdio Tool Plugin runtime.
 //!
-//! Startup providers are eagerly initialized exactly once and their admitted
-//! catalog is frozen for the Runner process lifetime. Explicit reloads build a
-//! separate dynamic overlay; they never replace startup instances or direct
-//! first-class bindings.
+//! Configured providers are eagerly initialized into one committed state. Each
+//! admitted provider instance has one frozen catalog. Explicit reloads prepare
+//! a complete candidate set and atomically replace the committed state only
+//! after every configured provider is admitted.
 
 use super::config::{load_config, PluginConfig, PluginProviderConfig, RunnerConfig, ShellConfig};
 use super::shell::{PreparedExecutionEnvironment, PreparedShellProfileCache};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{ChildStdin, Stdio};
@@ -18,13 +18,11 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_core::plugin::{
     diagnose_invalid_tools, validate_plugin_input_arguments, validate_plugin_structured_output,
-    validate_request, validate_startup_catalog, validate_startup_tool, validate_tool_result,
-    validate_tools, PluginCatalog, PluginCheckDiagnostic, PluginCheckPhase, PluginCheckReport,
-    PluginCheckToolSummary, PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse,
-    PluginGatewayResponsePayload, PluginPlane, PluginProviderView, PluginReloadFailure,
-    PluginSchemaObservation, PluginStartupToolShape, PluginTool, PluginToolResult,
-    StartupPluginProvider, PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
-    PLUGIN_STARTUP_CATALOG_MAX_BYTES, PLUGIN_STARTUP_MAX_DIRECT_TOOLS,
+    validate_request, validate_tool_result, validate_tools, PluginCatalog, PluginCheckDiagnostic,
+    PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary, PluginDispatchState,
+    PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload, PluginProviderView,
+    PluginReloadFailure, PluginSchemaObservation, PluginTool, PluginToolResult,
+    PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
 };
 use webcodex_process::ManagedChild;
 
@@ -38,11 +36,7 @@ const PLUGIN_STDERR_MAX_LINE_BYTES: usize = 1024;
 const PLUGIN_STDERR_MAX_BYTES: usize = 32 * 1024;
 
 pub(crate) struct PluginManager {
-    startup: BTreeMap<String, Arc<ProviderEntry>>,
-    startup_catalog: Vec<StartupPluginProvider>,
-    startup_config: PluginConfig,
-    startup_shell: ShellConfig,
-    dynamic: Mutex<DynamicState>,
+    committed: Mutex<CommittedState>,
     candidate_gate: Mutex<()>,
     last_check_stderr: Mutex<BTreeMap<String, PluginStderrSnapshot>>,
     config_path: PathBuf,
@@ -51,14 +45,10 @@ pub(crate) struct PluginManager {
     stopping: Arc<AtomicBool>,
 }
 
-struct DynamicState {
-    overlay: BTreeMap<String, DynamicEntry>,
-    first_class_restart_required: bool,
-}
-
-enum DynamicEntry {
-    Provider(Arc<ProviderEntry>),
-    Removed,
+struct CommittedState {
+    providers: BTreeMap<String, Arc<ProviderEntry>>,
+    config: PluginConfig,
+    shell: ShellConfig,
 }
 
 struct ProviderEntry {
@@ -144,6 +134,20 @@ struct ProviderPreparationFailure {
     diagnostic: Option<PluginCheckDiagnostic>,
 }
 
+enum PluginReloadAttempt {
+    Committed {
+        providers: Vec<PluginProviderView>,
+    },
+    Rejected {
+        providers: Vec<PluginProviderView>,
+        failures: Vec<PluginReloadFailure>,
+    },
+    NotStarted {
+        code: &'static str,
+        message: &'static str,
+    },
+}
+
 fn initialize_failure_detail(code: &str) -> &'static str {
     match code {
         "plugin_protocol_version_mismatch" => {
@@ -190,51 +194,6 @@ fn failed_check_report(
         tool_count: 0,
         tools: Vec::new(),
         diagnostic,
-        startup_tool_shape: None,
-    }
-}
-
-fn startup_tool_shape(tools: &[PluginTool]) -> PluginStartupToolShape {
-    if tools.len() > PLUGIN_STARTUP_MAX_DIRECT_TOOLS {
-        return PluginStartupToolShape {
-            eligible: false,
-            code: Some("plugin_startup_tool_count_exceeded".to_string()),
-            tool: None,
-            field: None,
-        };
-    }
-    if let Some((tool, error)) = tools
-        .iter()
-        .find_map(|tool| validate_startup_tool(tool).err().map(|error| (tool, error)))
-    {
-        let field = if error.contains("inputSchema") {
-            Some("inputSchema".to_string())
-        } else if error.contains("outputSchema") {
-            Some("outputSchema".to_string())
-        } else if error.contains("annotations") {
-            Some("annotations".to_string())
-        } else {
-            None
-        };
-        return PluginStartupToolShape {
-            eligible: false,
-            code: Some(
-                if error.contains("startup tool") && error.contains("exceeds maximum") {
-                    "plugin_startup_schema_too_large"
-                } else {
-                    "plugin_startup_tool_invalid"
-                }
-                .to_string(),
-            ),
-            tool: Some(tool.name.clone()),
-            field,
-        };
-    }
-    PluginStartupToolShape {
-        eligible: true,
-        code: None,
-        tool: None,
-        field: None,
     }
 }
 
@@ -281,12 +240,10 @@ impl PluginManager {
         let prepared_profiles = PreparedShellProfileCache::default();
         let stopping = Arc::new(AtomicBool::new(false));
         let request_timeout = Duration::from_secs(startup.plugins.request_timeout_secs);
-        let mut startup_entries = BTreeMap::new();
-        let mut startup_catalog = Vec::with_capacity(startup.plugins.providers.len());
-        let mut direct_tool_count = 0usize;
+        let mut providers = BTreeMap::new();
 
         for provider in &startup.plugins.providers {
-            let (entry, listed_tools, failure) = prepare_provider(
+            let (entry, _listed_tools, _failure) = prepare_provider(
                 provider,
                 &startup.shell,
                 1,
@@ -294,72 +251,14 @@ impl PluginManager {
                 &prepared_profiles,
                 &stopping,
             );
-            let instance_id = entry.instance_id.clone();
-            let failure_code = failure.as_ref().map(|failure| failure.code.to_string());
-            let catalog_tool_count = entry
-                .catalog
-                .get()
-                .map_or(0, |catalog| catalog.tools().len());
-            let catalog_digest = entry
-                .catalog
-                .get()
-                .map(|catalog| catalog.digest().to_string());
-            let mut advertised = StartupPluginProvider {
-                provider_id: provider.id.clone(),
-                provider_instance_id: instance_id,
-                name: provider.name.clone(),
-                status: if failure_code.is_some() {
-                    "failed".to_string()
-                } else {
-                    "ready".to_string()
-                },
-                error_code: failure_code,
-                catalog_tool_count,
-                catalog_digest,
-                tools: Vec::new(),
-            };
-
-            if let Some(tools) = listed_tools {
-                let provider_shape = startup_tool_shape(&tools);
-                let provider_direct_admissible = provider_shape.eligible
-                    && direct_tool_count.saturating_add(tools.len())
-                        <= PLUGIN_STARTUP_MAX_DIRECT_TOOLS;
-                if provider_direct_admissible {
-                    advertised.tools = tools;
-                    let mut tentative = startup_catalog.clone();
-                    tentative.push(advertised.clone());
-                    let within_aggregate = serde_json::to_vec(&tentative)
-                        .is_ok_and(|encoded| encoded.len() <= PLUGIN_STARTUP_CATALOG_MAX_BYTES)
-                        && validate_startup_catalog(&tentative).is_ok();
-                    if within_aggregate {
-                        direct_tool_count += advertised.tools.len();
-                    } else {
-                        advertised.tools.clear();
-                        advertised.status = "ready_secondary".to_string();
-                        advertised.error_code = Some("first_class_catalog_too_large".to_string());
-                    }
-                } else {
-                    advertised.status = "ready_secondary".to_string();
-                    advertised.error_code = if provider_shape.eligible {
-                        Some("first_class_catalog_too_large".to_string())
-                    } else {
-                        provider_shape.code
-                    };
-                }
-            }
-            startup_entries.insert(provider.id.clone(), entry);
-            startup_catalog.push(advertised);
+            providers.insert(provider.id.clone(), entry);
         }
 
-        debug_assert!(validate_startup_catalog(&startup_catalog).is_ok());
         Self {
-            startup: startup_entries,
-            startup_catalog,
-            startup_config: startup.plugins.clone(),
-            startup_shell: startup.shell.clone(),
-            dynamic: Mutex::new(DynamicState {
-                overlay: BTreeMap::new(),
-                first_class_restart_required: false,
+            committed: Mutex::new(CommittedState {
+                providers,
+                config: startup.plugins.clone(),
+                shell: startup.shell.clone(),
             }),
             candidate_gate: Mutex::new(()),
             last_check_stderr: Mutex::new(BTreeMap::new()),
@@ -370,20 +269,15 @@ impl PluginManager {
         }
     }
 
-    pub(crate) fn startup_catalog(&self) -> Vec<StartupPluginProvider> {
-        self.startup_catalog.clone()
-    }
-
     /// Runner-local diagnostic projection only. This is intentionally not part
     /// of Plugin gateway responses or any Server-facing protocol contract.
     #[allow(dead_code)]
     pub(crate) fn local_stderr_diagnostics(
         &self,
-        plane: PluginPlane,
         provider_id: &str,
         provider_instance_id: &str,
     ) -> Option<PluginStderrSnapshot> {
-        self.resolve_provider(plane, provider_id, provider_instance_id)
+        self.resolve_provider(provider_id, provider_instance_id)
             .map(|provider| provider.process.stderr_snapshot())
     }
 
@@ -420,24 +314,17 @@ impl PluginManager {
         }
         match request {
             PluginGatewayRequest::Check { provider_id } => self.check_candidate(&provider_id),
-            PluginGatewayRequest::Reload => self.reload_dynamic(),
+            PluginGatewayRequest::Reload => self.reload_from_path(),
             PluginGatewayRequest::ProvidersList => {
                 PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
                     providers: self.provider_views(),
-                    first_class_restart_required: self
-                        .dynamic
-                        .lock()
-                        .unwrap()
-                        .first_class_restart_required,
                 })
             }
             PluginGatewayRequest::ToolsList {
-                plane,
                 provider_id,
                 provider_instance_id,
             } => {
-                let Some(provider) =
-                    self.resolve_provider(plane, &provider_id, &provider_instance_id)
+                let Some(provider) = self.resolve_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
@@ -451,15 +338,13 @@ impl PluginManager {
                 }
             }
             PluginGatewayRequest::ToolsCall {
-                plane,
                 provider_id,
                 provider_instance_id,
                 name,
                 arguments,
                 expected_schema,
             } => {
-                let Some(provider) =
-                    self.resolve_provider(plane, &provider_id, &provider_instance_id)
+                let Some(provider) = self.resolve_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
@@ -477,47 +362,26 @@ impl PluginManager {
 
     fn resolve_provider(
         &self,
-        plane: PluginPlane,
         provider_id: &str,
         provider_instance_id: &str,
     ) -> Option<Arc<ProviderEntry>> {
-        let provider = match plane {
-            PluginPlane::Startup => self.startup.get(provider_id).cloned(),
-            PluginPlane::Effective => {
-                let dynamic = self.dynamic.lock().unwrap();
-                match dynamic.overlay.get(provider_id) {
-                    Some(DynamicEntry::Provider(provider)) => Some(Arc::clone(provider)),
-                    Some(DynamicEntry::Removed) => None,
-                    None => self.startup.get(provider_id).cloned(),
-                }
-            }
-        }?;
+        let provider = self
+            .committed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
+            .get(provider_id)
+            .cloned()?;
         (provider.instance_id == provider_instance_id).then_some(provider)
     }
 
     fn provider_views(&self) -> Vec<PluginProviderView> {
-        let dynamic = self.dynamic.lock().unwrap();
-        let mut ids: BTreeSet<String> = self.startup.keys().cloned().collect();
-        ids.extend(dynamic.overlay.keys().cloned());
-        ids.into_iter()
-            .filter_map(|provider_id| {
-                let (provider, plane) = match dynamic.overlay.get(&provider_id) {
-                    Some(DynamicEntry::Provider(provider)) => {
-                        (Arc::clone(provider), PluginPlane::Effective)
-                    }
-                    Some(DynamicEntry::Removed) => return None,
-                    None => (
-                        Arc::clone(self.startup.get(&provider_id)?),
-                        PluginPlane::Startup,
-                    ),
-                };
-                let direct_count = self
-                    .startup_catalog
-                    .iter()
-                    .find(|entry| entry.provider_id == provider_id)
-                    .map_or(0, |entry| entry.tools.len());
-                Some(provider.view(plane, direct_count))
-            })
+        self.committed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
+            .values()
+            .map(|provider| provider.view())
             .collect()
     }
 
@@ -622,7 +486,6 @@ impl PluginManager {
                     })
                     .collect(),
                 diagnostic: None,
-                startup_tool_shape: Some(startup_tool_shape(&tools)),
             }
         };
         entry.shutdown();
@@ -633,7 +496,7 @@ impl PluginManager {
         PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked { report })
     }
 
-    fn reload_dynamic(&self) -> PluginGatewayResponse {
+    fn reload_from_path(&self) -> PluginGatewayResponse {
         let _candidate_guard = match self.candidate_gate.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::WouldBlock) => {
@@ -647,7 +510,7 @@ impl PluginManager {
                 return gateway_error(
                     PluginDispatchState::NotStarted,
                     "plugin_reload_state_failed",
-                    "Plugin reload state is unavailable; dynamic state was unchanged",
+                    "Plugin reload state is unavailable; committed state was unchanged",
                 )
             }
         };
@@ -658,10 +521,57 @@ impl PluginManager {
                 return gateway_error(
                     PluginDispatchState::NotStarted,
                     code,
-                    "Runner-owned Plugin configuration could not be loaded; dynamic state was unchanged",
+                    "Runner-owned Plugin configuration could not be loaded; committed state was unchanged",
                 );
             }
         };
+        self.reload_attempt_response(self.reload_candidate_locked(&candidate))
+    }
+
+    /// Apply an already parsed/validated runner.toml candidate through the same
+    /// authoritative Plugin admission/commit primitive used by `plugin_tool`
+    /// reload. Callers retain their own runner:manage or plugin:manage boundary.
+    pub(crate) fn apply_config_candidate_and_then(
+        &self,
+        candidate: &RunnerConfig,
+        after_plugin_commit: impl FnOnce(),
+    ) -> Result<(), &'static str> {
+        let _candidate_guard = match self.candidate_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return Err("plugin_reload_busy"),
+            Err(TryLockError::Poisoned(_)) => return Err("plugin_reload_state_failed"),
+        };
+        match self.reload_candidate_locked(candidate) {
+            PluginReloadAttempt::Committed { .. } => {
+                // Keep the Plugin candidate gate held until the caller commits
+                // the rest of the same Runner-config activation. Otherwise a
+                // specialized Plugin reload could interleave after Plugin
+                // commit but before the generic Hot config snapshot advances.
+                after_plugin_commit();
+                Ok(())
+            }
+            PluginReloadAttempt::Rejected { .. } => Err("plugin_reload_failed"),
+            PluginReloadAttempt::NotStarted { code, .. } => Err(code),
+        }
+    }
+
+    fn reload_candidate_locked(&self, candidate: &RunnerConfig) -> PluginReloadAttempt {
+        {
+            let committed = self
+                .committed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if committed.config == candidate.plugins && committed.shell == candidate.shell {
+                return PluginReloadAttempt::Committed {
+                    providers: committed
+                        .providers
+                        .values()
+                        .map(|provider| provider.view())
+                        .collect(),
+                };
+            }
+        }
+
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
         let mut prepared = BTreeMap::new();
         let mut failures = Vec::new();
@@ -679,89 +589,91 @@ impl PluginManager {
                     provider_id: provider.id.clone(),
                     code: failure.code.to_string(),
                 });
-            } else {
-                prepared.insert(provider.id.clone(), entry);
             }
+            prepared.insert(provider.id.clone(), entry);
         }
 
-        let configured: BTreeSet<_> = candidate
-            .plugins
-            .providers
-            .iter()
-            .map(|provider| provider.id.clone())
-            .collect();
-        let mut dynamic = self.dynamic.lock().unwrap();
         if self.stopping.load(Ordering::SeqCst) {
-            drop(dynamic);
-            return gateway_error(
-                PluginDispatchState::NotStarted,
-                "plugin_manager_stopping",
-                "Plugin manager began stopping before reload commit; dynamic state was unchanged",
-            );
+            for provider in prepared.values() {
+                provider.shutdown();
+            }
+            return PluginReloadAttempt::NotStarted {
+                code: "plugin_manager_stopping",
+                message: "Plugin manager began stopping before reload commit; committed state was unchanged",
+            };
         }
-        // Replacing an entry may drop the last ProviderEntry Arc, whose Drop
-        // performs bounded process-tree termination. Keep that cleanup outside
-        // the dynamic-state mutex so unrelated list/describe/call operations do
-        // not wait on old-provider process teardown during an otherwise atomic
-        // reload commit.
-        let mut retired = Vec::new();
-        let previous_ids: BTreeSet<_> = self
-            .startup
-            .keys()
-            .chain(dynamic.overlay.keys())
-            .cloned()
-            .collect();
-        for provider_id in previous_ids {
-            if !configured.contains(&provider_id) {
-                if let Some(previous) = dynamic.overlay.insert(provider_id, DynamicEntry::Removed) {
-                    retired.push(previous);
+
+        if !failures.is_empty() {
+            for provider in prepared.values() {
+                provider.shutdown();
+            }
+            return PluginReloadAttempt::Rejected {
+                providers: self.provider_views(),
+                failures,
+            };
+        }
+
+        // Config/environment identity and provider instances commit together.
+        // Retired provider teardown happens after the lock is released.
+        let retired = {
+            let mut committed = self
+                .committed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.stopping.load(Ordering::SeqCst) {
+                drop(committed);
+                for provider in prepared.values() {
+                    provider.shutdown();
                 }
+                return PluginReloadAttempt::NotStarted {
+                    code: "plugin_manager_stopping",
+                    message: "Plugin manager began stopping before reload commit; committed state was unchanged",
+                };
             }
-        }
-        for (provider_id, provider) in prepared {
-            if let Some(previous) = dynamic
-                .overlay
-                .insert(provider_id, DynamicEntry::Provider(provider))
-            {
-                retired.push(previous);
-            }
-        }
-        dynamic.first_class_restart_required = candidate.plugins != self.startup_config
-            || candidate.shell != self.startup_shell
-            || dynamic
-                .overlay
-                .values()
-                .any(|entry| matches!(entry, DynamicEntry::Provider(_) | DynamicEntry::Removed));
-        let restart_required = dynamic.first_class_restart_required;
-        drop(dynamic);
+            committed.config = candidate.plugins.clone();
+            committed.shell = candidate.shell.clone();
+            std::mem::replace(&mut committed.providers, prepared)
+        };
         drop(retired);
 
-        PluginGatewayResponse::success(PluginGatewayResponsePayload::Reloaded {
+        PluginReloadAttempt::Committed {
             providers: self.provider_views(),
-            failures,
-            first_class_restart_required: restart_required,
-        })
+        }
+    }
+
+    fn reload_attempt_response(&self, attempt: PluginReloadAttempt) -> PluginGatewayResponse {
+        match attempt {
+            PluginReloadAttempt::Committed { providers } => {
+                PluginGatewayResponse::success(PluginGatewayResponsePayload::Reloaded {
+                    providers,
+                    failures: Vec::new(),
+                })
+            }
+            PluginReloadAttempt::Rejected {
+                providers,
+                failures,
+            } => PluginGatewayResponse::success(PluginGatewayResponsePayload::Reloaded {
+                providers,
+                failures,
+            }),
+            PluginReloadAttempt::NotStarted { code, message } => {
+                gateway_error(PluginDispatchState::NotStarted, code, message)
+            }
+        }
     }
 
     pub(crate) fn shutdown(&self) {
         if self.stopping.swap(true, Ordering::SeqCst) {
             return;
         }
-        for provider in self.startup.values() {
-            provider.shutdown();
-        }
-        let dynamic_providers = {
-            let dynamic = self.dynamic.lock().unwrap();
-            dynamic
-                .overlay
-                .values()
-                .filter_map(|entry| match entry {
-                    DynamicEntry::Provider(provider) => Some(Arc::clone(provider)),
-                    DynamicEntry::Removed => None,
-                })
-                .collect::<Vec<_>>()
+        let providers = {
+            let committed = self
+                .committed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            committed.providers.values().cloned().collect::<Vec<_>>()
         };
-        for provider in dynamic_providers {
+        for provider in providers {
             provider.shutdown();
         }
     }
@@ -787,16 +699,14 @@ impl ProviderEntry {
         Ok(self.frozen_catalog()?.tools().to_vec())
     }
 
-    fn view(&self, plane: PluginPlane, startup_direct_tool_count: usize) -> PluginProviderView {
+    fn view(&self) -> PluginProviderView {
         let failed = self.failed.load(Ordering::SeqCst);
         PluginProviderView {
             provider_id: self.config.id.clone(),
             provider_instance_id: self.instance_id.clone(),
             name: self.config.name.clone(),
-            plane,
             status: if failed { "failed" } else { "ready" }.to_string(),
             error_code: self.error_code.lock().unwrap().clone(),
-            startup_direct_tool_count,
         }
     }
 

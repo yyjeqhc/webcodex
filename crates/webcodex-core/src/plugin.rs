@@ -1,9 +1,9 @@
 //! Bounded transport contracts for Runner-owned native Tool Plugins.
 //!
 //! Plugins speak the WebCodex Plugin Protocol over local stdio.  This module is
-//! deliberately independent from MCP: MCP is one adapter that may expose an
-//! admitted startup catalog, while these types describe the native Runner
-//! protocol and the closed Server <-> Runner gateway.
+//! deliberately independent from MCP: concrete provider tools stay behind the
+//! exact Runner gateway, while these types describe the native Runner protocol
+//! and the closed Server <-> Runner gateway.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,11 +15,9 @@ pub const PLUGIN_MAX_PROVIDERS: usize = 8;
 pub const PLUGIN_MAX_PROVIDER_ID_BYTES: usize = 64;
 pub const PLUGIN_MAX_PROVIDER_NAME_BYTES: usize = 128;
 pub const PLUGIN_MAX_TOOL_COUNT: usize = 128;
-pub const PLUGIN_STARTUP_MAX_DIRECT_TOOLS: usize = 64;
 pub const PLUGIN_MAX_TOOL_NAME_BYTES: usize = 128;
 pub const PLUGIN_MAX_DESCRIPTION_BYTES: usize = 4 * 1024;
 pub const PLUGIN_MAX_SCHEMA_BYTES: usize = 64 * 1024;
-pub const PLUGIN_STARTUP_MAX_SCHEMA_BYTES: usize = 32 * 1024;
 pub const PLUGIN_MAX_ARGUMENT_BYTES: usize = 64 * 1024;
 pub const PLUGIN_MAX_STRUCTURED_CONTENT_BYTES: usize = 128 * 1024;
 pub const PLUGIN_MAX_TEXT_CONTENT_BYTES: usize = 64 * 1024;
@@ -29,19 +27,11 @@ pub const PLUGIN_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const PLUGIN_MAX_JSON_DEPTH: usize = 16;
 pub const PLUGIN_MAX_JSON_NODES: usize = 4_096;
 pub const PLUGIN_MAX_JSON_STRING_BYTES: usize = 64 * 1024;
-pub const PLUGIN_STARTUP_CATALOG_MAX_BYTES: usize = 256 * 1024;
 pub const PLUGIN_MAX_CHECK_DETAIL_BYTES: usize = 512;
 pub const PLUGIN_SCHEMA_MAX_PROPERTIES: usize = 128;
 pub const PLUGIN_SCHEMA_MAX_REQUIRED: usize = 128;
 pub const PLUGIN_SCHEMA_MAX_ENUM_VALUES: usize = 128;
 pub const PLUGIN_CATALOG_DIGEST_PREFIX: &str = "sha256:";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginPlane {
-    Startup,
-    Effective,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -52,12 +42,10 @@ pub enum PluginGatewayRequest {
     Reload,
     ProvidersList,
     ToolsList {
-        plane: PluginPlane,
         provider_id: String,
         provider_instance_id: String,
     },
     ToolsCall {
-        plane: PluginPlane,
         provider_id: String,
         provider_instance_id: String,
         name: String,
@@ -67,19 +55,17 @@ pub enum PluginGatewayRequest {
 }
 
 impl PluginGatewayRequest {
-    pub fn provider_binding(&self) -> Option<(&str, &str, PluginPlane)> {
+    pub fn provider_binding(&self) -> Option<(&str, &str)> {
         match self {
             Self::ToolsList {
-                plane,
                 provider_id,
                 provider_instance_id,
             }
             | Self::ToolsCall {
-                plane,
                 provider_id,
                 provider_instance_id,
                 ..
-            } => Some((provider_id, provider_instance_id, *plane)),
+            } => Some((provider_id, provider_instance_id)),
             Self::Check { .. } | Self::Reload | Self::ProvidersList => None,
         }
     }
@@ -188,39 +174,15 @@ pub struct PluginToolResult {
     pub is_error: bool,
 }
 
-/// Frozen, sanitized startup registration entry. `catalog_*` describes the exact
-/// immutable provider-instance catalog while `tools` contains only the bounded
-/// direct-eligible subset. Execution configuration never crosses the Runner
-/// boundary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StartupPluginProvider {
-    pub provider_id: String,
-    pub provider_instance_id: String,
-    pub name: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_code: Option<String>,
-    #[serde(default)]
-    pub catalog_tool_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_digest: Option<String>,
-    #[serde(default)]
-    pub tools: Vec<PluginTool>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginProviderView {
     pub provider_id: String,
     pub provider_instance_id: String,
     pub name: String,
-    pub plane: PluginPlane,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
-    #[serde(default)]
-    pub startup_direct_tool_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,18 +226,6 @@ pub struct PluginCheckDiagnostic {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PluginStartupToolShape {
-    pub eligible: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PluginCheckReport {
     pub provider_id: String,
     pub ready: bool,
@@ -289,8 +239,6 @@ pub struct PluginCheckReport {
     pub tools: Vec<PluginCheckToolSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<PluginCheckDiagnostic>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub startup_tool_shape: Option<PluginStartupToolShape>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -301,12 +249,10 @@ pub enum PluginGatewayResponsePayload {
     },
     Providers {
         providers: Vec<PluginProviderView>,
-        first_class_restart_required: bool,
     },
     Reloaded {
         providers: Vec<PluginProviderView>,
         failures: Vec<PluginReloadFailure>,
-        first_class_restart_required: bool,
     },
     Tools {
         tools: Vec<PluginTool>,
@@ -1072,75 +1018,6 @@ pub fn validate_schema_observation(observation: &PluginSchemaObservation) -> Res
     Ok(())
 }
 
-pub fn validate_startup_tool(tool: &PluginTool) -> Result<(), String> {
-    validate_tools(std::slice::from_ref(tool))?;
-    validate_json_value(
-        &tool.input_schema,
-        PLUGIN_STARTUP_MAX_SCHEMA_BYTES,
-        "startup tool inputSchema",
-    )?;
-    if let Some(output) = tool.output_schema.as_ref() {
-        validate_json_value(
-            output,
-            PLUGIN_STARTUP_MAX_SCHEMA_BYTES,
-            "startup tool outputSchema",
-        )?;
-    }
-    if let Some(annotations) = tool.annotations.as_ref() {
-        validate_json_value(
-            annotations,
-            PLUGIN_STARTUP_MAX_SCHEMA_BYTES,
-            "startup tool annotations",
-        )?;
-    }
-    Ok(())
-}
-
-pub fn validate_startup_catalog(providers: &[StartupPluginProvider]) -> Result<(), String> {
-    if providers.len() > PLUGIN_MAX_PROVIDERS {
-        return Err("startup plugin provider count exceeds bound".to_string());
-    }
-    let mut ids = HashSet::new();
-    let mut instances = HashSet::new();
-    let mut total_direct_tools = 0usize;
-    for provider in providers {
-        validate_provider_id(&provider.provider_id)?;
-        validate_provider_instance_id(&provider.provider_instance_id)?;
-        validate_provider_name(&provider.name)?;
-        if !ids.insert(provider.provider_id.as_str())
-            || !instances.insert(provider.provider_instance_id.as_str())
-        {
-            return Err("duplicate startup plugin provider identity".to_string());
-        }
-        validate_status_atom(&provider.status, "startup plugin status")?;
-        if let Some(code) = provider.error_code.as_deref() {
-            validate_status_atom(code, "startup plugin error code")?;
-        }
-        if provider.catalog_tool_count > PLUGIN_MAX_TOOL_COUNT {
-            return Err("startup plugin provider catalog count exceeds bound".to_string());
-        }
-        if let Some(digest) = provider.catalog_digest.as_deref() {
-            validate_plugin_catalog_digest(digest)?;
-        }
-        if provider.tools.len() > provider.catalog_tool_count {
-            return Err("startup direct subset exceeds provider catalog count".to_string());
-        }
-        total_direct_tools = total_direct_tools.saturating_add(provider.tools.len());
-        if total_direct_tools > PLUGIN_STARTUP_MAX_DIRECT_TOOLS {
-            return Err("startup direct tool count exceeds bound".to_string());
-        }
-        for tool in &provider.tools {
-            validate_startup_tool(tool)?;
-        }
-    }
-    let encoded = serde_json::to_vec(providers)
-        .map_err(|_| "startup plugin catalog could not be serialized".to_string())?;
-    if encoded.len() > PLUGIN_STARTUP_CATALOG_MAX_BYTES {
-        return Err("startup plugin catalog exceeds aggregate byte bound".to_string());
-    }
-    Ok(())
-}
-
 pub fn validate_tool_result(result: &PluginToolResult) -> Result<(), String> {
     if result.content.len() > PLUGIN_MAX_CONTENT_ITEMS {
         return Err("tool result content item count exceeds bound".to_string());
@@ -1199,7 +1076,7 @@ pub fn validate_response(response: &PluginGatewayResponse) -> Result<(), String>
     if let Some(payload) = response.payload.as_ref() {
         match payload {
             PluginGatewayResponsePayload::Checked { report } => validate_check_report(report)?,
-            PluginGatewayResponsePayload::Providers { providers, .. } => {
+            PluginGatewayResponsePayload::Providers { providers } => {
                 validate_provider_views(providers)?
             }
             PluginGatewayResponsePayload::Reloaded {
@@ -1270,15 +1147,11 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
         {
             return Err("ready Plugin check report has inconsistent status fields".to_string());
         }
-        if report.startup_tool_shape.is_none() {
-            return Err("ready Plugin check report requires startup tool shape".to_string());
-        }
     } else {
         if report.phase == PluginCheckPhase::Ready || report.code.is_none() {
             return Err("failed Plugin check report has inconsistent status fields".to_string());
         }
-        if report.tool_count != 0 || !report.tools.is_empty() || report.startup_tool_shape.is_some()
-        {
+        if report.tool_count != 0 || !report.tools.is_empty() {
             return Err("failed Plugin check report must not retain tool inventory".to_string());
         }
         if report.diagnostic.is_some()
@@ -1315,33 +1188,7 @@ pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
     if let Some(diagnostic) = report.diagnostic.as_ref() {
         validate_check_diagnostic(diagnostic)?;
     }
-    if let Some(shape) = report.startup_tool_shape.as_ref() {
-        validate_startup_tool_shape(shape)?;
-    }
     Ok(())
-}
-
-fn validate_startup_tool_shape(shape: &PluginStartupToolShape) -> Result<(), String> {
-    let tool = shape.tool.as_deref();
-    let field = shape.field.as_deref();
-    match (shape.eligible, shape.code.as_deref(), tool, field) {
-        (true, None, None, None) => Ok(()),
-        (false, Some("plugin_startup_tool_count_exceeded"), None, None) => Ok(()),
-        (
-            false,
-            Some("plugin_startup_schema_too_large"),
-            Some(tool),
-            Some("inputSchema" | "outputSchema" | "annotations"),
-        ) => validate_tool_name(tool),
-        (false, Some("plugin_startup_tool_invalid"), Some(tool), field) => {
-            validate_tool_name(tool)?;
-            if let Some(field) = field {
-                validate_diagnostic_field(field)?;
-            }
-            Ok(())
-        }
-        _ => Err("Plugin startup tool shape status is inconsistent".to_string()),
-    }
 }
 
 fn validate_check_diagnostic(diagnostic: &PluginCheckDiagnostic) -> Result<(), String> {
@@ -1374,17 +1221,6 @@ fn validate_check_diagnostic(diagnostic: &PluginCheckDiagnostic) -> Result<(), S
     }
 }
 
-fn validate_diagnostic_field(field: &str) -> Result<(), String> {
-    if matches!(
-        field,
-        "name" | "title" | "description" | "inputSchema" | "outputSchema" | "annotations"
-    ) {
-        Ok(())
-    } else {
-        Err("Plugin diagnostic field is invalid".to_string())
-    }
-}
-
 fn validate_provider_views(providers: &[PluginProviderView]) -> Result<(), String> {
     if providers.len() > PLUGIN_MAX_PROVIDERS {
         return Err("plugin provider count exceeds bound".to_string());
@@ -1397,9 +1233,6 @@ fn validate_provider_views(providers: &[PluginProviderView]) -> Result<(), Strin
         validate_status_atom(&provider.status, "plugin provider status")?;
         if let Some(code) = provider.error_code.as_deref() {
             validate_status_atom(code, "plugin provider error code")?;
-        }
-        if provider.startup_direct_tool_count > PLUGIN_STARTUP_MAX_DIRECT_TOOLS {
-            return Err("startup direct tool count exceeds bound".to_string());
         }
         if !ids.insert(provider.provider_id.as_str()) {
             return Err("duplicate plugin provider id".to_string());
@@ -1493,26 +1326,6 @@ mod tests {
         }
     }
 
-    fn startup_provider(instance_id: &str, tools: Vec<PluginTool>) -> StartupPluginProvider {
-        let catalog = PluginCatalog::admit(tools.clone()).unwrap();
-        StartupPluginProvider {
-            provider_id: "repo-tools".to_string(),
-            provider_instance_id: instance_id.to_string(),
-            name: "Repo Tools".to_string(),
-            status: "ready".to_string(),
-            error_code: None,
-            catalog_tool_count: catalog.tools().len(),
-            catalog_digest: Some(catalog.digest().to_string()),
-            tools,
-        }
-    }
-
-    #[test]
-    fn startup_catalog_is_aggregate_bounded() {
-        let provider = startup_provider("instance_1", vec![tool()]);
-        validate_startup_catalog(&[provider]).unwrap();
-    }
-
     #[test]
     fn result_rejects_unsupported_content_at_deserialize_boundary() {
         let value = json!({"content":[{"type":"image","data":"x"}],"isError":false});
@@ -1522,7 +1335,6 @@ mod tests {
     #[test]
     fn request_requires_object_arguments_and_bounded_schema() {
         let request = PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Effective,
             provider_id: "repo-tools".to_string(),
             provider_instance_id: "instance_1".to_string(),
             name: "echo".to_string(),
@@ -1551,12 +1363,6 @@ mod tests {
                 title: Some("Echo".to_string()),
             }],
             diagnostic: None,
-            startup_tool_shape: Some(PluginStartupToolShape {
-                eligible: true,
-                code: None,
-                tool: None,
-                field: None,
-            }),
         };
         validate_check_report(&report).unwrap();
         validate_response(&PluginGatewayResponse::success(
@@ -1586,7 +1392,6 @@ mod tests {
             &request,
             &PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
                 providers: vec![],
-                first_class_restart_required: false,
             }),
         )
         .is_err());
@@ -1598,7 +1403,6 @@ mod tests {
         invalid.code = Some("plugin_tools_list_invalid".to_string());
         invalid.tool_count = 0;
         invalid.tools.clear();
-        invalid.startup_tool_shape = None;
         assert!(validate_check_report(&invalid).is_err());
     }
 
@@ -1729,25 +1533,16 @@ mod tests {
     }
 
     #[test]
-    fn full_startup_catalog_bound_is_separate_from_direct_subset_bound() {
-        let tools = (0..=PLUGIN_STARTUP_MAX_DIRECT_TOOLS)
+    fn provider_catalog_is_not_limited_by_removed_outer_mcp_direct_bound() {
+        let tools = (0..65)
             .map(|index| PluginTool {
                 name: format!("tool_{index}"),
                 ..tool()
             })
             .collect::<Vec<_>>();
         let catalog = PluginCatalog::admit(tools).unwrap();
-        let provider = StartupPluginProvider {
-            provider_id: "repo-tools".to_string(),
-            provider_instance_id: "instance_secondary".to_string(),
-            name: "Repo Tools".to_string(),
-            status: "ready_secondary".to_string(),
-            error_code: Some("first_class_catalog_too_large".to_string()),
-            catalog_tool_count: catalog.tools().len(),
-            catalog_digest: Some(catalog.digest().to_string()),
-            tools: Vec::new(),
-        };
-        validate_startup_catalog(&[provider]).unwrap();
+        assert_eq!(catalog.tools().len(), 65);
+        assert!(catalog.tools().iter().any(|tool| tool.name == "tool_64"));
     }
 
     #[test]
@@ -1867,66 +1662,5 @@ mod tests {
             field: Some("inputSchema".to_string()),
         })
         .is_ok());
-    }
-
-    #[test]
-    fn startup_tool_shape_validation_rejects_unknown_or_inconsistent_diagnostics() {
-        for shape in [
-            PluginStartupToolShape {
-                eligible: false,
-                code: Some("unknown_startup_reason".to_string()),
-                tool: None,
-                field: None,
-            },
-            PluginStartupToolShape {
-                eligible: false,
-                code: Some("plugin_startup_tool_count_exceeded".to_string()),
-                tool: Some("echo".to_string()),
-                field: None,
-            },
-            PluginStartupToolShape {
-                eligible: false,
-                code: Some("plugin_startup_schema_too_large".to_string()),
-                tool: Some("echo".to_string()),
-                field: Some("name".to_string()),
-            },
-        ] {
-            assert!(validate_startup_tool_shape(&shape).is_err());
-        }
-
-        assert!(validate_startup_tool_shape(&PluginStartupToolShape {
-            eligible: false,
-            code: Some("plugin_startup_schema_too_large".to_string()),
-            tool: Some("echo".to_string()),
-            field: Some("inputSchema".to_string()),
-        })
-        .is_ok());
-    }
-
-    #[test]
-    fn startup_catalog_rejects_total_tool_and_aggregate_byte_overflow() {
-        let too_many_tools = (0..=PLUGIN_STARTUP_MAX_DIRECT_TOOLS)
-            .map(|index| PluginTool {
-                name: format!("tool_{index}"),
-                ..tool()
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            validate_startup_catalog(&[startup_provider("instance_1", too_many_tools)]).is_err()
-        );
-
-        let aggregate_tools = (0..10)
-            .map(|index| PluginTool {
-                name: format!("large_{index}"),
-                input_schema: json!({
-                    "type": "object",
-                    "description": "x".repeat(30 * 1024)
-                }),
-                ..tool()
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            validate_startup_catalog(&[startup_provider("instance_2", aggregate_tools)]).is_err()
-        );
     }
 }

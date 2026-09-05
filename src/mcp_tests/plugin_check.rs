@@ -1,10 +1,9 @@
 use super::*;
-use crate::runner_protocol::{RunnerPolicySummary, RunnerResultPayload};
+use crate::runner_protocol::RunnerResultPayload;
 use std::sync::Arc;
 use webcodex_core::plugin::{
     PluginCheckDiagnostic, PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary,
     PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
-    PluginStartupToolShape, PluginTool, StartupPluginProvider,
 };
 
 fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
@@ -19,28 +18,7 @@ fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
     auth
 }
 
-fn direct_tool(name: &str) -> PluginTool {
-    PluginTool {
-        name: name.to_string(),
-        title: Some("Search Symbol".to_string()),
-        description: Some("Search repository symbols".to_string()),
-        input_schema: json!({
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": false
-        }),
-        output_schema: None,
-        annotations: Some(json!({"readOnlyHint": true})),
-    }
-}
-
-async fn register_plugin_runner(
-    runtime: &ToolRuntime,
-    client_id: &str,
-    runner_instance_id: &str,
-    tool_name: &str,
-) {
+async fn register_plugin_runner(runtime: &ToolRuntime, client_id: &str, runner_instance_id: &str) {
     let mut capabilities = RunnerCapabilities::default();
     capabilities.native_tool_plugins = true;
     runtime
@@ -55,19 +33,7 @@ async fn register_plugin_runner(
                 hostname: None,
                 host_context: None,
                 capabilities,
-                policy: Some(RunnerPolicySummary {
-                    plugin_providers: Some(vec![StartupPluginProvider {
-                        provider_id: "repo-tools".to_string(),
-                        provider_instance_id: format!("startup-{runner_instance_id}"),
-                        name: "Repo Tools".to_string(),
-                        status: "ready".to_string(),
-                        error_code: None,
-                        catalog_tool_count: 1,
-                        catalog_digest: None,
-                        tools: vec![direct_tool(tool_name)],
-                    }]),
-                    ..Default::default()
-                }),
+                policy: Some(Default::default()),
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -168,15 +134,19 @@ async fn tools_list(runtime: &ToolRuntime, auth: &crate::auth::AuthContext) -> V
 
 #[tokio::test]
 async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatch() {
-    let spec = crate::plugin_gateway::tool_spec();
+    let spec = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == crate::plugin_gateway::PLUGIN_TOOL_NAME)
+        .expect("canonical plugin_tool spec");
+    let spec = serde_json::to_value(spec).unwrap();
     assert!(spec["inputSchema"]["properties"]["action"]["enum"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action == "check"));
     let description = spec["description"].as_str().unwrap();
-    assert!(description.contains("Prefer action=check before reload"));
-    assert!(description.contains("never calls tools/call"));
+    assert!(description.contains("Provider tools are never outer WebCodex MCP tools"));
+    assert!(description.contains("call accepts only binding + arguments"));
 
     let runtime = test_runtime();
     let no_scope = handle_mcp_request(
@@ -262,18 +232,22 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
 }
 
 #[tokio::test]
-async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves_direct_inventory()
-{
+async fn plugin_check_routes_exact_runner_and_never_changes_outer_mcp_inventory() {
     let runtime = Arc::new(test_runtime());
     let auth = plugin_auth(true);
-    register_plugin_runner(&runtime, "runner-a", "runner-instance-a", "search_symbol").await;
-    register_plugin_runner(&runtime, "runner-b", "runner-instance-b", "other_symbol").await;
+    register_plugin_runner(&runtime, "runner-a", "runner-instance-a").await;
+    register_plugin_runner(&runtime, "runner-b", "runner-instance-b").await;
     let before = tools_list(&runtime, &auth).await;
-    assert!(before["result"]["tools"]
+    assert!(!before["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "search_symbol"));
+    assert!(before["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::plugin_gateway::PLUGIN_TOOL_NAME));
 
     let task_runtime = Arc::clone(&runtime);
     let task_auth = auth.clone();
@@ -317,12 +291,6 @@ async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves
                     title: Some("Search Symbol".to_string()),
                 }],
                 diagnostic: None,
-                startup_tool_shape: Some(PluginStartupToolShape {
-                    eligible: true,
-                    code: None,
-                    tool: None,
-                    field: None,
-                }),
             },
         }),
     )
@@ -339,7 +307,7 @@ async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves
     assert_eq!(report["phase"], "ready");
     assert_eq!(report["toolCount"], 1);
     assert_eq!(report["tools"][0]["name"], "search_symbol");
-    assert_eq!(report["startupToolShape"]["eligible"], true);
+    assert!(report.get("startupToolShape").is_none());
     assert!(report.get("binding").is_none());
     let encoded = serde_json::to_string(report).unwrap();
     for forbidden in [
@@ -357,18 +325,23 @@ async fn plugin_check_routes_exact_runner_renders_sanitized_report_and_preserves
     }
 
     let after = tools_list(&runtime, &auth).await;
-    assert!(after["result"]["tools"]
+    assert!(!after["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "search_symbol"));
+    assert!(after["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::plugin_gateway::PLUGIN_TOOL_NAME));
 }
 
 #[tokio::test]
 async fn broken_plugin_candidate_is_a_successful_check_diagnostic_result() {
     let runtime = Arc::new(test_runtime());
     let auth = plugin_auth(true);
-    register_plugin_runner(&runtime, "runner-a", "runner-instance-a", "search_symbol").await;
+    register_plugin_runner(&runtime, "runner-a", "runner-instance-a").await;
     let task_runtime = Arc::clone(&runtime);
     let task_auth = auth.clone();
     let task = tokio::spawn(async move {
@@ -400,7 +373,6 @@ async fn broken_plugin_candidate_is_a_successful_check_diagnostic_result() {
                     tool: Some("search_symbol".to_string()),
                     field: Some("name".to_string()),
                 }),
-                startup_tool_shape: None,
             },
         }),
     )

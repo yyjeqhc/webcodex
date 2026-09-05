@@ -116,6 +116,12 @@ pub(crate) fn check_runtime_tool_scope(
         // credential. This derives only from the canonical ToolDefinition
         // authority policy; it is not a tool-name registry.
         let required_explicit_scope = match policy {
+            OAuthToolScopePolicy::RequireAny(scopes) => {
+                return Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: None,
+                    description: format!("missing any required scope: {}", scopes.join(", ")),
+                });
+            }
             OAuthToolScopePolicy::Require(scope)
                 if matches!(
                     scope,
@@ -146,6 +152,16 @@ pub(crate) fn check_runtime_tool_scope(
     };
 
     match policy {
+        OAuthToolScopePolicy::RequireAny(scopes) => {
+            if scopes.iter().copied().any(|scope| auth.has_scope(scope)) {
+                Ok(())
+            } else {
+                Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: None,
+                    description: format!("missing any required scope: {}", scopes.join(", ")),
+                })
+            }
+        }
         OAuthToolScopePolicy::Require(scope) => {
             if auth.has_scope(scope) {
                 Ok(())

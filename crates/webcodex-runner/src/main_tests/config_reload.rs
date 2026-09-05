@@ -20,6 +20,7 @@ token = "test-token"
 client_id = "{client_id}"
 owner = "alice"
 poll_interval_ms = 1000
+plugins.request_timeout_secs = 30
 {max_jobs}
 # Explicit project_registry_dir: load_config materializes the default from the
 # per-user config base, which depends on ambient HOME/USERPROFILE that other
@@ -71,6 +72,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     let mut hot_only = startup.clone();
     hot_only.policy.max_timeout_secs += 1;
     hot_only.shell.program = "bash".to_string();
+    hot_only.plugins.request_timeout_secs += 1;
     hot_only.tool_providers.strategy =
         webcodex_runner::config::ToolProviderStrategy::ClaudeCodeThenNative;
     assert!(webcodex_runner::config::restart_required_fields(&startup, &hot_only).is_empty());
@@ -100,6 +102,40 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
             "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
         );
+}
+
+#[test]
+fn plugin_only_config_change_is_live_and_never_requires_runner_restart() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let candidate = reload_toml(
+        "oe",
+        None,
+        60,
+        1024,
+        "sh",
+        "native",
+        false,
+        "claude",
+        "project_search_generation_1",
+    )
+    .replace(
+        "plugins.request_timeout_secs = 30",
+        "plugins.request_timeout_secs = 31",
+    );
+    std::fs::write(&path, candidate).unwrap();
+
+    let checked = runtime.check_config();
+    assert_eq!(checked.valid, Some(true));
+    assert!(!checked.restart_required);
+    assert!(checked.restart_required_fields.is_empty());
+    assert_eq!(checked.current_generation, Some(1));
+
+    let reloaded = runtime.reload_config(1);
+    assert_eq!(reloaded.valid, Some(true));
+    assert!(!reloaded.restart_required);
+    assert!(reloaded.restart_required_fields.is_empty());
+    assert_eq!(reloaded.current_generation, Some(2));
+    assert_eq!(runtime.snapshot().generation, 2);
 }
 
 #[test]

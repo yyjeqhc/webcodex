@@ -9,6 +9,8 @@ const ERROR_CODES: &[&str] = &[
     "config_parse_failed",
     "config_validation_failed",
     "provider_config_invalid",
+    "plugin_reload_failed",
+    "plugin_reload_busy",
     "config_generation_conflict",
     "runner_unavailable",
     "runner_replaced",

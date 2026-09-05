@@ -1,13 +1,11 @@
 use super::*;
 use crate::runner_protocol::{
-    RunnerPolicySummary, RunnerPollRequest, RunnerRegisterRequest, RunnerResultPayload,
-    RunnerResultRequest,
+    RunnerPollRequest, RunnerRegisterRequest, RunnerResultPayload, RunnerResultRequest,
 };
 use serde_json::json;
 use webcodex_core::plugin::{
     PluginCheckPhase, PluginCheckReport, PluginDispatchState, PluginGatewayRequest,
-    PluginGatewayResponse, PluginGatewayResponsePayload, PluginPlane, PluginSchemaObservation,
-    PluginTool, StartupPluginProvider,
+    PluginGatewayResponse, PluginGatewayResponsePayload, PluginSchemaObservation, PluginTool,
 };
 
 fn plugin_tool() -> PluginTool {
@@ -24,24 +22,7 @@ fn plugin_tool() -> PluginTool {
     }
 }
 
-fn startup_provider(instance_id: &str) -> StartupPluginProvider {
-    StartupPluginProvider {
-        provider_id: "repo-tools".to_string(),
-        provider_instance_id: instance_id.to_string(),
-        name: "Repo Tools".to_string(),
-        status: "ready".to_string(),
-        error_code: None,
-        catalog_tool_count: 1,
-        catalog_digest: None,
-        tools: vec![plugin_tool()],
-    }
-}
-
-fn plugin_registration(
-    client_id: &str,
-    runner_instance_id: &str,
-    providers: Vec<StartupPluginProvider>,
-) -> RunnerRegisterRequest {
+fn plugin_registration(client_id: &str, runner_instance_id: &str) -> RunnerRegisterRequest {
     let mut capabilities = RunnerCapabilities::default();
     capabilities.native_tool_plugins = true;
     current_runner_registration(RunnerRegisterRequest {
@@ -53,10 +34,7 @@ fn plugin_registration(
         hostname: None,
         capabilities,
         host_context: None,
-        policy: Some(RunnerPolicySummary {
-            plugin_providers: Some(providers),
-            ..Default::default()
-        }),
+        policy: Some(Default::default()),
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -68,87 +46,42 @@ fn plugin_registration(
 
 async fn register_plugin_runner(registry: &RunnerRegistry) {
     registry
-        .register(plugin_registration(
-            "plugin-runner",
-            "runner-instance",
-            vec![startup_provider("startup-provider-instance")],
-        ))
+        .register(plugin_registration("plugin-runner", "runner-instance"))
         .await
         .unwrap();
 }
 
-fn startup_list(provider_instance_id: &str) -> PluginGatewayRequest {
+fn provider_list(provider_instance_id: &str) -> PluginGatewayRequest {
     PluginGatewayRequest::ToolsList {
-        plane: PluginPlane::Startup,
         provider_id: "repo-tools".to_string(),
         provider_instance_id: provider_instance_id.to_string(),
     }
 }
 
 #[tokio::test]
-async fn plugin_registration_catalog_is_exact_immutable_and_required_by_capability() {
+async fn plugin_registration_needs_only_native_plugin_capability_not_provider_inventory() {
     let registry = RunnerRegistry::default();
     registry
-        .register(plugin_registration(
-            "valid-plugin-runner",
-            "valid-instance",
-            vec![startup_provider("provider-instance")],
-        ))
+        .register(plugin_registration("valid-plugin-runner", "valid-instance"))
         .await
         .unwrap();
     let view = registry
         .get_runner_view("valid-plugin-runner")
         .await
         .unwrap();
-    assert_eq!(
-        view.policy
-            .as_ref()
-            .and_then(|policy| policy.plugin_providers.as_ref())
-            .unwrap(),
-        &vec![startup_provider("provider-instance")]
-    );
+    assert!(view.capabilities.native_tool_plugins);
 
-    let changed = registry
-        .register(plugin_registration(
-            "valid-plugin-runner",
-            "valid-instance",
-            vec![startup_provider("replacement-provider-instance")],
-        ))
+    registry
+        .register(plugin_registration("valid-plugin-runner", "valid-instance"))
         .await
-        .unwrap_err();
-    assert!(
-        changed.contains("cannot change startup Plugin catalog"),
-        "{changed}"
-    );
-
-    let mut missing_catalog = plugin_registration("missing", "missing-instance", vec![]);
-    missing_catalog.policy.as_mut().unwrap().plugin_providers = None;
-    assert!(registry
-        .register(missing_catalog)
-        .await
-        .unwrap_err()
-        .contains("requires explicit startup Plugin catalog"));
-
-    let mut inventory_without_capability = plugin_registration("no-cap", "no-cap-instance", vec![]);
-    inventory_without_capability
-        .capabilities
-        .native_tool_plugins = false;
-    assert!(registry
-        .register(inventory_without_capability)
-        .await
-        .unwrap_err()
-        .contains("requires native_tool_plugins capability"));
+        .unwrap();
 }
 
 #[tokio::test]
-async fn plugin_reload_can_target_exact_runner_with_zero_startup_plugins() {
+async fn plugin_reload_can_target_exact_plugin_capable_runner_without_registration_catalog() {
     let registry = RunnerRegistry::default();
     registry
-        .register(plugin_registration(
-            "empty-plugin-runner",
-            "empty-instance",
-            vec![],
-        ))
+        .register(plugin_registration("empty-plugin-runner", "empty-instance"))
         .await
         .unwrap();
     let alice = auth_context(Some("alice"), false);
@@ -192,7 +125,6 @@ async fn plugin_reload_can_target_exact_runner_with_zero_startup_plugins() {
                 PluginGatewayResponsePayload::Reloaded {
                     providers: vec![],
                     failures: vec![],
-                    first_class_restart_required: false,
                 },
             )),
             coding_agent: None,
@@ -206,14 +138,10 @@ async fn plugin_reload_can_target_exact_runner_with_zero_startup_plugins() {
 }
 
 #[tokio::test]
-async fn plugin_check_targets_exact_runner_without_requiring_startup_provider_identity() {
+async fn plugin_check_targets_exact_runner_without_registration_provider_inventory() {
     let registry = RunnerRegistry::default();
     registry
-        .register(plugin_registration(
-            "check-plugin-runner",
-            "check-instance",
-            vec![],
-        ))
+        .register(plugin_registration("check-plugin-runner", "check-instance"))
         .await
         .unwrap();
     let alice = auth_context(Some("alice"), false);
@@ -269,7 +197,6 @@ async fn plugin_check_targets_exact_runner_without_requiring_startup_provider_id
                         tool_count: 0,
                         tools: vec![],
                         diagnostic: None,
-                        startup_tool_shape: None,
                     },
                 },
             )),
@@ -287,11 +214,7 @@ async fn plugin_check_targets_exact_runner_without_requiring_startup_provider_id
 async fn plugin_check_rejects_mismatched_provider_report_after_dispatch() {
     let registry = RunnerRegistry::default();
     registry
-        .register(plugin_registration(
-            "check-plugin-runner",
-            "check-instance",
-            vec![],
-        ))
+        .register(plugin_registration("check-plugin-runner", "check-instance"))
         .await
         .unwrap();
     let alice = auth_context(Some("alice"), false);
@@ -343,7 +266,6 @@ async fn plugin_check_rejects_mismatched_provider_report_after_dispatch() {
                         tool_count: 0,
                         tools: vec![],
                         diagnostic: None,
-                        startup_tool_shape: None,
                     },
                 },
             )),
@@ -361,7 +283,7 @@ async fn plugin_check_rejects_mismatched_provider_report_after_dispatch() {
 }
 
 #[tokio::test]
-async fn plugin_enqueue_rechecks_owner_runner_and_startup_provider_identity() {
+async fn plugin_enqueue_rechecks_owner_and_exact_runner_but_not_provider_inventory() {
     let registry = RunnerRegistry::default();
     register_plugin_runner(&registry).await;
     let bob = auth_context(Some("bob"), false);
@@ -369,7 +291,7 @@ async fn plugin_enqueue_rechecks_owner_runner_and_startup_provider_identity() {
         .enqueue_plugin_gateway(
             "plugin-runner",
             "runner-instance",
-            startup_list("startup-provider-instance"),
+            provider_list("runner-owned-provider-instance"),
             Some(&bob),
             "bob".to_string(),
         )
@@ -382,31 +304,71 @@ async fn plugin_enqueue_rechecks_owner_runner_and_startup_provider_identity() {
         .enqueue_plugin_gateway(
             "plugin-runner",
             "stale-runner-instance",
-            startup_list("startup-provider-instance"),
+            provider_list("runner-owned-provider-instance"),
             Some(&alice),
             "alice".to_string(),
         )
         .await
         .unwrap_err()
         .contains("stale Runner"));
-    assert!(registry
+    let (_request_id, receiver) = registry
         .enqueue_plugin_gateway(
             "plugin-runner",
             "runner-instance",
-            startup_list("stale-provider-instance"),
+            provider_list("runner-owned-provider-instance"),
             Some(&alice),
             "alice".to_string(),
         )
         .await
-        .unwrap_err()
-        .contains("stale startup Plugin provider"));
-    let inner = registry.inner.lock().await;
-    assert!(inner.pending_by_id.is_empty());
-    assert!(inner.plugin_gateway_waiters.is_empty());
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "plugin-runner".to_string(),
+            runner_instance_id: "runner-instance".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            ref provider_instance_id,
+            ..
+        }) if provider_instance_id == "runner-owned-provider-instance"
+    ));
+    registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: "plugin-runner".to_string(),
+                runner_instance_id: "runner-instance".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(PluginGatewayResponse::error(
+                PluginDispatchState::NotStarted,
+                "stale_plugin_provider",
+                "provider instance is not current",
+            )),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+    let response = receiver.await.unwrap();
+    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        response.error.as_ref().unwrap().code,
+        "stale_plugin_provider"
+    );
 }
 
 #[tokio::test]
-async fn plugin_dequeue_rechecks_exact_runner_and_startup_provider_before_dispatch() {
+async fn plugin_dequeue_rechecks_exact_runner_before_dispatch() {
     let registry = RunnerRegistry::default();
     register_plugin_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
@@ -414,7 +376,7 @@ async fn plugin_dequeue_rechecks_exact_runner_and_startup_provider_before_dispat
         .enqueue_plugin_gateway(
             "plugin-runner",
             "runner-instance",
-            startup_list("startup-provider-instance"),
+            provider_list("provider-instance"),
             Some(&alice),
             "test".to_string(),
         )
@@ -439,48 +401,10 @@ async fn plugin_dequeue_rechecks_exact_runner_and_startup_provider_before_dispat
     let response = receiver.await.unwrap();
     assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
     assert_eq!(response.error.as_ref().unwrap().code, "stale_runner");
-
-    let registry = RunnerRegistry::default();
-    register_plugin_runner(&registry).await;
-    let (_request_id, receiver) = registry
-        .enqueue_plugin_gateway(
-            "plugin-runner",
-            "runner-instance",
-            startup_list("startup-provider-instance"),
-            Some(&alice),
-            "test".to_string(),
-        )
-        .await
-        .unwrap();
-    {
-        let mut inner = registry.inner.lock().await;
-        inner
-            .runners
-            .get_mut("plugin-runner")
-            .unwrap()
-            .policy
-            .as_mut()
-            .unwrap()
-            .plugin_providers = Some(vec![startup_provider("replacement-provider-instance")]);
-    }
-    assert!(registry
-        .poll(RunnerPollRequest {
-            client_id: "plugin-runner".to_string(),
-            runner_instance_id: "runner-instance".to_string(),
-        })
-        .await
-        .unwrap()
-        .is_none());
-    let response = receiver.await.unwrap();
-    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
-    assert_eq!(
-        response.error.as_ref().unwrap().code,
-        "stale_plugin_provider"
-    );
 }
 
 #[tokio::test]
-async fn dynamic_effective_provider_is_runner_owned_but_exact_and_never_falls_back_to_startup() {
+async fn provider_identity_is_runner_owned_and_forwarded_exactly() {
     let registry = RunnerRegistry::default();
     register_plugin_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
@@ -494,7 +418,6 @@ async fn dynamic_effective_provider_is_runner_owned_but_exact_and_never_falls_ba
             "plugin-runner",
             "runner-instance",
             PluginGatewayRequest::ToolsCall {
-                plane: PluginPlane::Effective,
                 provider_id: "repo-tools".to_string(),
                 provider_instance_id: "dynamic-provider-instance".to_string(),
                 name: "echo".to_string(),
@@ -517,7 +440,6 @@ async fn dynamic_effective_provider_is_runner_owned_but_exact_and_never_falls_ba
     assert!(matches!(
         request.plugin_gateway,
         Some(PluginGatewayRequest::ToolsCall {
-            plane: PluginPlane::Effective,
             ref provider_instance_id,
             ..
         }) if provider_instance_id == "dynamic-provider-instance"

@@ -242,6 +242,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_runners",
             "runtime_status",
             "tool_manifest",
+            "plugin_tool",
         ],
     },
     ToolDiscoveryGroup {
@@ -425,6 +426,7 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     // entry
     "work_on_project",
     "list_projects",
+    "plugin_tool",
     // exact coordinator assignment read + atomic completion
     "get_session_assignment",
     "complete_session_message",

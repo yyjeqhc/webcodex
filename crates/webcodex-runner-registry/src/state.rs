@@ -9,7 +9,7 @@ use webcodex_core::coding_agent::{
     CodingAgentProvider, CodingAgentResponse, CodingAgentRunInventory,
 };
 use webcodex_core::mcp_gateway::McpGatewayResponse;
-use webcodex_core::plugin::{PluginGatewayResponse, PluginPlane};
+use webcodex_core::plugin::PluginGatewayResponse;
 use webcodex_core::runner_protocol::{
     PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
     RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState, ShellJobActivity,
@@ -250,7 +250,7 @@ pub(super) struct CodingAgentDispatchFence {
 #[derive(Debug, Clone)]
 pub(super) struct PluginGatewayDispatchFence {
     pub(super) runner_instance_id: String,
-    pub(super) provider: Option<(String, String, PluginPlane)>,
+    pub(super) provider: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

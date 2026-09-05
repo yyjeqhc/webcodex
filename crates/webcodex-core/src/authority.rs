@@ -159,6 +159,7 @@ pub enum OAuthBodyAwarePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolAuthorityPolicy {
     Require(&'static str),
+    RequireAny(&'static [&'static str]),
     RequireAll(&'static [&'static str]),
     Unknown,
 }

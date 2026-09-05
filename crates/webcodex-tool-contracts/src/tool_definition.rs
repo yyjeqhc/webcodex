@@ -21,6 +21,7 @@ mod jobs;
 mod lsp;
 mod memory;
 mod patches;
+mod plugins;
 mod runner_config;
 mod sessions;
 mod skills;
@@ -486,6 +487,19 @@ const fn require_all_scopes(
     }
 }
 
+const fn require_any_scopes(
+    definition: ToolDefinition,
+    scopes: &'static [&'static str],
+) -> ToolDefinition {
+    ToolDefinition {
+        metadata: ToolMetadata {
+            authority: ToolAuthorityPolicy::RequireAny(scopes),
+            ..definition.metadata
+        },
+        ..definition
+    }
+}
+
 macro_rules! bool_policy_modifier {
     ($function:ident, $field:ident) => {
         const fn $function(definition: ToolDefinition) -> ToolDefinition {
@@ -572,6 +586,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     diagnostics::DEFINITIONS,
     discovery::DEFINITIONS,
     runner_config::DEFINITIONS,
+    plugins::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,
     git::SUMMARY_DEFINITIONS,

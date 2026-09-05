@@ -31,7 +31,7 @@ pub(super) fn normalize_config_reload(
 ) -> Option<RunnerConfigReloadStatus> {
     let mut status = status?;
     const RESULTS: &str = "not_attempted success partial failure unsupported";
-    const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid reload_unsupported";
+    const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid plugin_reload_failed reload_unsupported";
     const ERROR_FIELDS: &str = "max_concurrent_jobs shell.max_persistent_shells shell.persistent_shell_idle_timeout_secs acp.max_concurrent_runs acp.permission_timeout_secs mcp.request_timeout_secs";
     const ERROR_REASONS: &str = "out_of_range";
     if status.generation == 0
@@ -841,5 +841,17 @@ mod provider_status_tests {
             ..RunnerConfigReloadStatus::default()
         }))
         .is_none());
+
+        let plugin_failure = normalize_config_reload(Some(RunnerConfigReloadStatus {
+            generation: 5,
+            last_reload_result: "failure".to_string(),
+            last_reload_error_code: Some("plugin_reload_failed".to_string()),
+            ..RunnerConfigReloadStatus::default()
+        }))
+        .expect("sanitized Plugin reload failure must remain observable");
+        assert_eq!(
+            plugin_failure.last_reload_error_code.as_deref(),
+            Some("plugin_reload_failed")
+        );
     }
 }

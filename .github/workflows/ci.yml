@@ -464,7 +464,6 @@ jobs:
             -SourceSha "${{ steps.runtime.outputs.source }}" `
             -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
             -OutputDir $stage
-          if ($LASTEXITCODE -ne 0) { throw "Desktop bundle staging failed" }
           "config=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_OUTPUT
       - name: Build unsigned NSIS installer
         working-directory: apps/desktop
@@ -484,12 +483,12 @@ jobs:
       - name: Smoke newly-built Desktop installer
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           & .\scripts\desktop_install_windows_smoke.ps1 `
             -Installer $env:DESKTOP_CI_INSTALLER `
             -Version "${{ steps.runtime.outputs.version }}" `
             -SourceSha "${{ steps.runtime.outputs.source }}" `
             -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}")
-          if ($LASTEXITCODE -ne 0) { throw "Desktop installer smoke failed" }
 
   # The x64 Windows lanes above exercise full process/package behavior. Keep one
   # native ARM64 compile gate on exact main so the release workflow is not the

@@ -665,7 +665,6 @@ jobs:
             -SourceSha $env:SOURCE_SHA `
             -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT) `
             -OutputDir $stage
-          if ($LASTEXITCODE -ne 0) { throw "Desktop runtime staging failed" }
 
           $shortSource = $env:SOURCE_SHA.Substring(0, 12)
           if ($env:BUILD_KIND -eq "release") {
@@ -702,12 +701,12 @@ jobs:
         if: matrix.platform == 'win32-x64'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           & .\scripts\desktop_install_windows_smoke.ps1 `
             -Installer (Join-Path "dist" $env:DESKTOP_INSTALLER_NAME) `
             -Version $env:VERSION `
             -SourceSha $env:SOURCE_SHA `
             -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT)
-          if ($LASTEXITCODE -ne 0) { throw "Desktop installer smoke failed" }
 
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4

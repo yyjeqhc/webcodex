@@ -6,6 +6,7 @@ use webcodex_core::ssh_resource::{
 
 fn ssh_auth() -> crate::auth::AuthContext {
     let mut auth = mcp_export_api_auth("ssh-resource-test-pat", "alice");
+    auth.user_id = Some("ssh-resource-test-user-alice".to_string());
     auth.scopes.push(crate::auth::SCOPE_SSH_LOCAL.to_string());
     auth
 }
@@ -387,4 +388,141 @@ async fn managed_ssh_invalid_post_dispatch_response_is_outcome_unknown_and_bindi
         result["structuredContent"]["error"]["code"],
         "ssh_resource_binding_required"
     );
+}
+
+#[tokio::test]
+async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runner_dispatch() {
+    let runtime = Arc::new(test_runtime());
+    let auth = ssh_auth();
+    register_managed_runner(&runtime, "instance-a").await;
+    let session =
+        start_authorized_test_session(&runtime, &auth, crate::tool_runtime::SessionMode::ReadOnly);
+
+    let list_task = call_in_task(
+        Arc::clone(&runtime),
+        auth.clone(),
+        json!({
+            "action":"list",
+            "runner":"runner-a",
+            "recording_session_id":session.session_id
+        }),
+        808,
+    )
+    .await;
+    let list_request = wait_for_request(&runtime, "instance-a").await;
+    complete_response(
+        &runtime,
+        list_request,
+        "instance-a",
+        SshResourceResponse::List {
+            revision: 5,
+            resources: vec![],
+        },
+    )
+    .await;
+    let list_result = tool_result(list_task.await.unwrap());
+    assert_eq!(list_result["isError"], false);
+    let binding = list_result["structuredContent"]["binding"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(809)),
+            json!({
+                "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                "arguments": {
+                    "action":"register",
+                    "binding":binding,
+                    "name":"w10",
+                    "target":"private-user@private-host",
+                    "recording_session_id":session.session_id
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let result = tool_result(denied);
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["output"]["error_kind"],
+        "session_guard_denied"
+    );
+    assert_eq!(
+        result["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+    assert!(!serde_json::to_string(&result)
+        .unwrap()
+        .contains("private-user@private-host"));
+    let ledger = format!(
+        "{:?}",
+        runtime.sessions.summary(&session.session_id, Some(100))
+    );
+    assert!(!ledger.contains("private-user@private-host"));
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn restricted_permission_denies_ssh_management_before_runner_dispatch() {
+    let runtime = Arc::new(test_runtime().with_permission_evaluator(
+        crate::tool_runtime::PermissionEvaluator::with_mode(
+            crate::tool_runtime::AuthorityMode::Restricted,
+        ),
+    ));
+    let auth = ssh_auth();
+    register_managed_runner(&runtime, "instance-a").await;
+
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(810)),
+            json!({
+                "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                "arguments": {
+                    "action":"register",
+                    "binding":"wc_sshbind_0123456789abcdef0123456789abcdef",
+                    "name":"w10",
+                    "target":"private-user@private-host"
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let result = tool_result(denied);
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["output"]["failure_kind"],
+        "permission_denied"
+    );
+    assert_eq!(
+        result["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+    assert!(!serde_json::to_string(&result)
+        .unwrap()
+        .contains("private-user@private-host"));
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
 }

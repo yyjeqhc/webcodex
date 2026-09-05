@@ -68,6 +68,7 @@ pub(crate) mod sessions;
 mod shell;
 mod shell_tools;
 pub(crate) mod skills;
+pub(crate) mod specialized;
 pub(crate) mod startup_brief;
 mod structured_execution;
 mod surface;
@@ -98,11 +99,15 @@ pub(crate) use files::{
 };
 pub(crate) use patch::MAX_UNIFIED_DIFF_BYTES;
 #[cfg(test)]
+pub(crate) use permissions::{AuthorityMode, PermissionEvaluator};
+#[cfg(test)]
 pub(crate) use runner_authorization::required_runner_capability;
 pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;
 #[cfg(test)]
 pub(crate) use session_context::workflow_session_authority_fingerprint;
+#[cfg(test)]
+pub(crate) use sessions::{SessionCreateOptions, SessionGuards, SessionSummary};
 pub use tool_call::{
     ObserveJobsItem, ReadFilesItem, SearchPatternMode, SearchProjectTextsQuery, SearchResultMode,
     ToolCall,

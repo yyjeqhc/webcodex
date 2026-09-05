@@ -79,19 +79,30 @@ impl PermissionEvaluator {
         tool_name: &str,
         project: Option<&str>,
     ) -> Option<PermissionDecision> {
-        if let Some(counter) = self.eval_count.as_ref() {
-            counter.fetch_add(1, Ordering::SeqCst);
-        }
         if !tool_requires_permission(tool_name) {
+            if let Some(counter) = self.eval_count.as_ref() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
             return None;
         }
         let risk = classify_tool_risk(tool_name);
-        Some(decide_for_required_tool(
-            &self.config,
-            tool_name,
-            project,
-            risk,
-        ))
+        Some(self.evaluate_resolved_required(tool_name, project, risk))
+    }
+
+    /// Evaluate a consequential operation whose risk/effect classification was
+    /// authoritatively resolved outside the static ToolDefinition catalog.
+    /// Specialized gateways use this entry after their concrete operation is
+    /// known; annotations and provider metadata never select the policy.
+    pub(crate) fn evaluate_resolved_required(
+        &self,
+        tool_name: &str,
+        project: Option<&str>,
+        risk: &str,
+    ) -> PermissionDecision {
+        if let Some(counter) = self.eval_count.as_ref() {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+        decide_for_required_tool(&self.config, tool_name, project, risk)
     }
 }
 

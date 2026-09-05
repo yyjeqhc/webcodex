@@ -22,7 +22,9 @@ pub const SCOPE_COMPUTER_POINTER_CONTROL: &str = "computer:pointer_control";
 pub const SCOPE_COMPUTER_CLIPBOARD_READ: &str = "computer:clipboard_read";
 pub const SCOPE_COMPUTER_CLIPBOARD_WRITE: &str = "computer:clipboard_write";
 pub const SCOPE_MCP_LOCAL: &str = "mcp:local";
-pub const SCOPE_PLUGIN_LOCAL: &str = "plugin:local";
+pub const SCOPE_PLUGIN_INSPECT: &str = "plugin:inspect";
+pub const SCOPE_PLUGIN_INVOKE: &str = "plugin:invoke";
+pub const SCOPE_PLUGIN_MANAGE: &str = "plugin:manage";
 pub const SCOPE_SSH_LOCAL: &str = "ssh:local";
 pub const SCOPE_CODING_AGENT_RUN: &str = "coding_agent:run";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
@@ -120,7 +122,9 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_LAUNCH,
     SCOPE_COMPUTER_DISPLAY_READ,
     SCOPE_MCP_LOCAL,
-    SCOPE_PLUGIN_LOCAL,
+    SCOPE_PLUGIN_INSPECT,
+    SCOPE_PLUGIN_INVOKE,
+    SCOPE_PLUGIN_MANAGE,
     SCOPE_SSH_LOCAL,
     SCOPE_CODING_AGENT_RUN,
     SCOPE_ACCOUNT_MANAGE,

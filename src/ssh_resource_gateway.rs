@@ -5,6 +5,7 @@
 //! authentication material.
 
 use crate::auth::{AuthContext, AuthKind, SCOPE_SSH_LOCAL};
+use crate::tool_runtime::specialized::{SpecializedOperationPolicy, SpecializedSource};
 use crate::tool_runtime::ToolRuntime;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -128,6 +129,58 @@ struct Arguments {
     default_cwd: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SshResourceOperation {
+    List,
+    Register,
+    Remove,
+}
+
+impl SshResourceOperation {
+    fn parse(action: &str) -> Option<Self> {
+        match action {
+            "list" => Some(Self::List),
+            "register" => Some(Self::Register),
+            "remove" => Some(Self::Remove),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn policy(self) -> SpecializedOperationPolicy {
+        match self {
+            Self::List => SpecializedOperationPolicy::read(
+                SpecializedSource::SshResource,
+                "list",
+                SCOPE_SSH_LOCAL,
+            ),
+            Self::Register => SpecializedOperationPolicy::management(
+                SpecializedSource::SshResource,
+                "register",
+                SCOPE_SSH_LOCAL,
+                false,
+            ),
+            Self::Remove => SpecializedOperationPolicy::management(
+                SpecializedSource::SshResource,
+                "remove",
+                SCOPE_SSH_LOCAL,
+                false,
+            ),
+        }
+    }
+}
+
+pub(crate) fn operation_policy(
+    arguments: &Value,
+) -> Result<SpecializedOperationPolicy, &'static str> {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .ok_or("ssh_resource action is required")?;
+    SshResourceOperation::parse(action)
+        .map(SshResourceOperation::policy)
+        .ok_or("ssh_resource action must be one of list, register, or remove")
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedRunner {
     client_id: String,
@@ -139,6 +192,7 @@ struct GatewayError {
     code: &'static str,
     message: &'static str,
     recovery: Option<&'static str>,
+    dispatch_state: &'static str,
 }
 
 impl GatewayError {
@@ -147,11 +201,22 @@ impl GatewayError {
             code,
             message,
             recovery: None,
+            dispatch_state: "not_started",
         }
     }
 
     fn recovery(mut self, recovery: &'static str) -> Self {
         self.recovery = Some(recovery);
+        self
+    }
+
+    fn completed(mut self) -> Self {
+        self.dispatch_state = "completed";
+        self
+    }
+
+    fn outcome_unknown(mut self) -> Self {
+        self.dispatch_state = "outcome_unknown";
         self
     }
 }
@@ -197,6 +262,11 @@ pub(crate) fn tool_spec() -> Value {
                     "minLength": 1,
                     "maxLength": SSH_RESOURCE_DEFAULT_CWD_MAX_BYTES,
                     "description": "Optional remote default cwd for register."
+                },
+                "recording_session_id": {
+                    "type": "string",
+                    "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                    "description": "Optional explicit Workflow Session used for authority, read-only/guard, permission, and audit governance. It is never inferred from MCP transport identity."
                 }
             },
             "required": ["action"],
@@ -225,12 +295,6 @@ pub(crate) async fn call(
     arguments: Value,
     auth: Option<&AuthContext>,
 ) -> Value {
-    if !authorized(auth) {
-        return error_result(GatewayError::new(
-            "insufficient_scope",
-            "Runner-local SSH resource management requires the ssh:local scope",
-        ));
-    }
     let parsed: Arguments = match serde_json::from_value(arguments) {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -240,14 +304,22 @@ pub(crate) async fn call(
             ))
         }
     };
-    let result = match parsed.action.as_str() {
-        "list" => list(runtime, parsed, auth).await,
-        "register" => register(runtime, parsed, auth).await,
-        "remove" => remove(runtime, parsed, auth).await,
-        _ => Err(GatewayError::new(
+    let Some(operation) = SshResourceOperation::parse(&parsed.action) else {
+        return error_result(GatewayError::new(
             "ssh_resource_invalid",
             "action must be one of list, register, or remove",
-        )),
+        ));
+    };
+    if !authorized(auth) {
+        return error_result(GatewayError::new(
+            "insufficient_scope",
+            "Runner-local SSH resource access requires the ssh:local scope",
+        ));
+    }
+    let result = match operation {
+        SshResourceOperation::List => list(runtime, parsed, auth).await,
+        SshResourceOperation::Register => register(runtime, parsed, auth).await,
+        SshResourceOperation::Remove => remove(runtime, parsed, auth).await,
     };
     match result {
         Ok(value) => success_result(value),
@@ -541,6 +613,7 @@ async fn execute_exact(
                     "ssh_resource_outcome_unknown",
                     "managed SSH resource request may have reached the Runner; list resources before any retry",
                 )
+                .outcome_unknown()
                 .recovery("List SSH resources again before attempting another mutation.")
             });
         }
@@ -586,12 +659,14 @@ fn invalid_runner_response_error(request: &SshResourceRequest) -> GatewayError {
             "ssh_resource_outcome_unknown",
             "managed SSH resource request reached the Runner but no valid correlated response was returned",
         )
+        .outcome_unknown()
         .recovery("List SSH resources again before attempting another mutation.")
     } else {
         GatewayError::new(
             "ssh_resource_registry_unavailable",
             "Runner returned an invalid managed SSH resource response",
         )
+        .completed()
     }
 }
 
@@ -642,12 +717,18 @@ fn response_to_error<T>(response: SshResourceResponse) -> Result<T, GatewayError
             };
             let mut error = GatewayError::new(code, message);
             error.recovery = recovery;
+            error.dispatch_state = if code == "ssh_resource_outcome_unknown" {
+                "outcome_unknown"
+            } else {
+                "completed"
+            };
             Err(error)
         }
         _ => Err(GatewayError::new(
             "ssh_resource_registry_unavailable",
             "Runner returned an unexpected managed SSH resource response",
-        )),
+        )
+        .completed()),
     }
 }
 
@@ -685,7 +766,10 @@ fn success_result(value: Value) -> Value {
 }
 
 fn error_result(error: GatewayError) -> Value {
-    let mut structured = json!({"error": {"code": error.code, "message": error.message}});
+    let mut structured = json!({
+        "error": {"code": error.code, "message": error.message},
+        "dispatchState": error.dispatch_state,
+    });
     if let Some(recovery) = error.recovery {
         structured["recovery"] = Value::String(recovery.to_string());
     }
@@ -718,5 +802,23 @@ mod tests {
         assert_eq!(audit["resource_name"], "w10");
         assert_eq!(audit["target_present"], true);
         assert_eq!(audit["default_cwd_present"], true);
+    }
+
+    #[test]
+    fn operation_policy_keeps_list_read_like_and_mutations_management_like() {
+        use crate::tool_runtime::specialized::SpecializedEffect;
+
+        assert_eq!(
+            SshResourceOperation::List.policy().effect,
+            SpecializedEffect::Read
+        );
+        assert_eq!(
+            SshResourceOperation::Register.policy().effect,
+            SpecializedEffect::Management
+        );
+        assert_eq!(
+            SshResourceOperation::Remove.policy().effect,
+            SpecializedEffect::Management
+        );
     }
 }

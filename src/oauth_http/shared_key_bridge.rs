@@ -6,8 +6,9 @@ use crate::auth::{
     SCOPE_COMMUNICATION_READ, SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE,
     SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_LAUNCH,
     SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_MCP_LOCAL,
-    SCOPE_MEMORY_MANAGE, SCOPE_MEMORY_READ, SCOPE_PLUGIN_LOCAL, SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE, SCOPE_SSH_LOCAL,
+    SCOPE_MEMORY_MANAGE, SCOPE_MEMORY_READ, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE,
+    SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
+    SCOPE_SSH_LOCAL,
 };
 use crate::models::OAuthAuthorizationCodeRecord;
 use crate::runner_http::{RunnerFeature, RunnerFeatureSet};
@@ -177,7 +178,11 @@ fn bridge_scope_ceiling_without_optional_class_scopes(scopes: &[String]) -> Opti
             .filter(|scope| {
                 !matches!(
                     scope.as_str(),
-                    SCOPE_MCP_LOCAL | SCOPE_PLUGIN_LOCAL | SCOPE_SSH_LOCAL | SCOPE_CODING_AGENT_RUN
+                    SCOPE_MCP_LOCAL
+                        | SCOPE_PLUGIN_INSPECT
+                        | SCOPE_PLUGIN_INVOKE
+                        | SCOPE_SSH_LOCAL
+                        | SCOPE_CODING_AGENT_RUN
                 )
             })
             .cloned()
@@ -212,7 +217,8 @@ fn bridge_scope_ceiling_with_options(
         desired.push(SCOPE_MCP_LOCAL.to_string());
     }
     if local_plugins {
-        desired.push(SCOPE_PLUGIN_LOCAL.to_string());
+        desired.push(SCOPE_PLUGIN_INSPECT.to_string());
+        desired.push(SCOPE_PLUGIN_INVOKE.to_string());
     }
     if local_ssh {
         desired.push(SCOPE_SSH_LOCAL.to_string());
@@ -255,11 +261,10 @@ fn bridge_client_has_local_mcp_scope(client: &crate::models::OAuthClientRecord) 
         .any(|scope| scope == SCOPE_MCP_LOCAL)
 }
 
-fn bridge_client_has_local_plugin_scope(client: &crate::models::OAuthClientRecord) -> bool {
-    client
-        .allowed_scopes_vec()
-        .iter()
-        .any(|scope| scope == SCOPE_PLUGIN_LOCAL)
+fn bridge_client_has_local_plugin_scopes(client: &crate::models::OAuthClientRecord) -> bool {
+    let scopes = client.allowed_scopes_vec();
+    scopes.iter().any(|scope| scope == SCOPE_PLUGIN_INSPECT)
+        && scopes.iter().any(|scope| scope == SCOPE_PLUGIN_INVOKE)
 }
 
 fn bridge_client_has_local_ssh_scope(client: &crate::models::OAuthClientRecord) -> bool {
@@ -307,7 +312,8 @@ pub(crate) fn normalize_bridge_oauth_scopes(
     if normalized.split_whitespace().any(|scope| {
         scope != OAUTH_OFFLINE_ACCESS_SCOPE
             && scope != SCOPE_MCP_LOCAL
-            && scope != SCOPE_PLUGIN_LOCAL
+            && scope != SCOPE_PLUGIN_INSPECT
+            && scope != SCOPE_PLUGIN_INVOKE
             && scope != SCOPE_SSH_LOCAL
             && scope != SCOPE_CODING_AGENT_RUN
             && !SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES.contains(&scope)
@@ -337,7 +343,8 @@ impl BridgeAuthorizeValidated {
                     || matches!(
                         *scope,
                         SCOPE_MCP_LOCAL
-                            | SCOPE_PLUGIN_LOCAL
+                            | SCOPE_PLUGIN_INSPECT
+                            | SCOPE_PLUGIN_INVOKE
                             | SCOPE_SSH_LOCAL
                             | SCOPE_CODING_AGENT_RUN
                     )
@@ -449,7 +456,8 @@ fn selected_bridge_grant_scopes(
             *scope == OAUTH_OFFLINE_ACCESS_SCOPE
                 || bridge_oauth_scopes().contains(scope)
                 || *scope == SCOPE_MCP_LOCAL
-                || *scope == SCOPE_PLUGIN_LOCAL
+                || *scope == SCOPE_PLUGIN_INSPECT
+                || *scope == SCOPE_PLUGIN_INVOKE
                 || *scope == SCOPE_SSH_LOCAL
                 || *scope == SCOPE_CODING_AGENT_RUN
                 || optional_scopes.contains(scope)
@@ -584,7 +592,7 @@ pub(super) fn validate_bridge_authorize_request(
     let local_mcp_enabled =
         client.is_shared_key_owned() && bridge_client_has_local_mcp_scope(&client);
     let local_plugins_enabled =
-        client.is_shared_key_owned() && bridge_client_has_local_plugin_scope(&client);
+        client.is_shared_key_owned() && bridge_client_has_local_plugin_scopes(&client);
     let local_ssh_enabled =
         client.is_shared_key_owned() && bridge_client_has_local_ssh_scope(&client);
     let coding_agent_enabled =
@@ -597,7 +605,8 @@ pub(super) fn validate_bridge_authorize_request(
     if requestable_scopes.split_whitespace().any(|scope| {
         scope != OAUTH_OFFLINE_ACCESS_SCOPE
             && !(scope == SCOPE_MCP_LOCAL && local_mcp_enabled)
-            && !(scope == SCOPE_PLUGIN_LOCAL && local_plugins_enabled)
+            && !(matches!(scope, SCOPE_PLUGIN_INSPECT | SCOPE_PLUGIN_INVOKE)
+                && local_plugins_enabled)
             && !(scope == SCOPE_SSH_LOCAL && local_ssh_enabled)
             && !(scope == SCOPE_CODING_AGENT_RUN && coding_agent_enabled)
             && !client_bridge_ceiling.contains(&scope)
@@ -855,7 +864,7 @@ pub(crate) async fn oauth_shared_key_client_provision(
                     })));
                     return;
                 }
-                if !body.local_plugins && bridge_client_has_local_plugin_scope(&client) {
+                if !body.local_plugins && bridge_client_has_local_plugin_scopes(&client) {
                     res.status_code(StatusCode::CONFLICT);
                     res.render(Json(serde_json::json!({
                         "error": "OAuth client has local Plugin authority enabled; reconnect with --oauth-local-plugins to reuse this client"
@@ -977,7 +986,11 @@ pub(crate) async fn oauth_shared_key_client_provision(
         })));
         return;
     }
-    if !body.local_plugins && base_scopes.iter().any(|scope| scope == SCOPE_PLUGIN_LOCAL) {
+    if !body.local_plugins
+        && base_scopes
+            .iter()
+            .any(|scope| matches!(scope.as_str(), SCOPE_PLUGIN_INSPECT | SCOPE_PLUGIN_INVOKE))
+    {
         res.status_code(StatusCode::CONFLICT);
         res.render(Json(serde_json::json!({
             "error": "persisted OAuth profile has local Plugin authority enabled; reconnect with --oauth-local-plugins"

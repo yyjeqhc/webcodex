@@ -67,9 +67,20 @@ fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
 fn plugin_auth_for(owner: &str, include_scope: bool) -> crate::auth::AuthContext {
     let mut auth = mcp_export_api_auth("plugin-test-pat", owner);
     if include_scope {
-        auth.scopes
-            .push(crate::auth::SCOPE_PLUGIN_LOCAL.to_string());
+        auth.scopes.extend([
+            crate::auth::SCOPE_PLUGIN_INSPECT.to_string(),
+            crate::auth::SCOPE_PLUGIN_INVOKE.to_string(),
+            crate::auth::SCOPE_PLUGIN_MANAGE.to_string(),
+        ]);
     }
+    auth
+}
+
+fn plugin_auth_with_scopes(scopes: &[&str]) -> crate::auth::AuthContext {
+    let mut auth = mcp_export_api_auth("plugin-test-pat", "alice");
+    auth.user_id = Some("plugin-test-user-alice".to_string());
+    auth.scopes
+        .extend(scopes.iter().map(|scope| (*scope).to_string()));
     auth
 }
 
@@ -381,6 +392,364 @@ fn spawn_plugin_metadata_call(
         )
         .await
     })
+}
+
+#[tokio::test]
+async fn plugin_operation_scopes_are_independent_and_fail_closed() {
+    let runtime = test_runtime();
+    let inspect = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    let invoke = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INVOKE]);
+    let manage = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_MANAGE]);
+
+    let inspect_list = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(680)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"list"}
+            }),
+        ),
+        Some(&inspect),
+    )
+    .await;
+    let McpOutcome::Ok(inspect_list) = inspect_list else {
+        panic!("plugin:inspect must allow list");
+    };
+    assert_eq!(inspect_list["result"]["isError"], false);
+
+    for (id, arguments, required) in [
+        (
+            681,
+            json!({"action":"call"}),
+            crate::auth::SCOPE_PLUGIN_INVOKE,
+        ),
+        (
+            682,
+            json!({"action":"check"}),
+            crate::auth::SCOPE_PLUGIN_MANAGE,
+        ),
+        (
+            683,
+            json!({"action":"reload"}),
+            crate::auth::SCOPE_PLUGIN_MANAGE,
+        ),
+    ] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id)),
+                json!({"name": crate::plugin_gateway::PLUGIN_TOOL_NAME, "arguments": arguments}),
+            ),
+            Some(&inspect),
+        )
+        .await;
+        match outcome {
+            McpOutcome::Forbidden { required_scope, .. } => {
+                assert_eq!(required_scope, Some(required));
+            }
+            other => panic!("plugin:inspect must not escalate to {required}: {other:?}"),
+        }
+    }
+
+    let invoke_call = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(684)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"call"}
+            }),
+        ),
+        Some(&invoke),
+    )
+    .await;
+    let McpOutcome::Ok(invoke_call) = invoke_call else {
+        panic!("plugin:invoke must pass scope governance for call");
+    };
+    assert_eq!(invoke_call["result"]["isError"], true);
+    assert_eq!(
+        invoke_call["result"]["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+    for (id, action) in [(685, "check"), (686, "reload")] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id)),
+                json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": {"action":action}
+                }),
+            ),
+            Some(&invoke),
+        )
+        .await;
+        match outcome {
+            McpOutcome::Forbidden { required_scope, .. } => {
+                assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_MANAGE));
+            }
+            other => panic!("plugin:invoke must not manage Plugins: {other:?}"),
+        }
+    }
+
+    let manage_call = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(687)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"call"}
+            }),
+        ),
+        Some(&manage),
+    )
+    .await;
+    match manage_call {
+        McpOutcome::Forbidden { required_scope, .. } => {
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_INVOKE));
+        }
+        other => panic!("plugin:manage must not imply plugin:invoke: {other:?}"),
+    }
+
+    let manage_reload = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(688)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {"action":"reload"}
+            }),
+        ),
+        Some(&manage),
+    )
+    .await;
+    let McpOutcome::Ok(manage_reload) = manage_reload else {
+        panic!("plugin:manage must pass scope governance for reload");
+    };
+    assert_eq!(manage_reload["result"]["isError"], true);
+    assert_eq!(
+        manage_reload["result"]["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+}
+
+#[tokio::test]
+async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider_dispatch() {
+    let runtime = test_runtime();
+    let auth = plugin_auth_with_scopes(&[
+        crate::auth::SCOPE_PLUGIN_INSPECT,
+        crate::auth::SCOPE_PLUGIN_INVOKE,
+    ]);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![plugin_tool("search_symbol")],
+    )
+    .await;
+    let session =
+        start_authorized_test_session(&runtime, &auth, crate::tool_runtime::SessionMode::ReadOnly);
+
+    let inspect = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(689)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"list",
+                    "recording_session_id":session.session_id
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(inspect) = inspect else {
+        panic!("read-only Session must allow Plugin inspection");
+    };
+    assert_eq!(inspect["result"]["isError"], false);
+
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(690)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":"wc_pbind_0123456789abcdef0123456789abcdef",
+                    "arguments":{"query":"must-not-run"},
+                    "recording_session_id":session.session_id
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(denied) = denied else {
+        panic!("Session guard denial must render a normal MCP tool result");
+    };
+    assert_eq!(denied["result"]["isError"], true);
+    assert_eq!(
+        denied["result"]["structuredContent"]["output"]["error_kind"],
+        "session_guard_denied"
+    );
+    assert_eq!(
+        denied["result"]["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+    let ledger = format!(
+        "{:?}",
+        runtime.sessions.summary(&session.session_id, Some(100))
+    );
+    assert!(!ledger.contains("must-not-run"));
+    assert!(!ledger.contains("wc_pbind_0123456789abcdef0123456789abcdef"));
+}
+
+#[tokio::test]
+async fn specialized_recording_session_authority_fails_closed_at_mcp_boundary() {
+    let runtime = test_runtime();
+    let owner = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    let session =
+        start_authorized_test_session(&runtime, &owner, crate::tool_runtime::SessionMode::Normal);
+    let mut foreign = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    foreign.username = Some("bob".to_string());
+    foreign.user_id = Some("plugin-test-user-bob".to_string());
+    foreign.api_key_id = Some("plugin-test-pat-bob".to_string());
+
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(693)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"list",
+                    "recording_session_id":session.session_id
+                }
+            }),
+        ),
+        Some(&foreign),
+    )
+    .await;
+    let McpOutcome::Ok(denied) = denied else {
+        panic!("Session authority denial must render a normal MCP tool result");
+    };
+    assert_eq!(denied["result"]["isError"], true);
+    assert_eq!(
+        denied["result"]["structuredContent"]["output"]["failure_kind"],
+        "session_authority_denied"
+    );
+    assert_eq!(
+        denied["result"]["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+}
+
+#[tokio::test]
+async fn restricted_permission_denies_plugin_call_and_direct_tool_before_provider_dispatch() {
+    let runtime = test_runtime().with_permission_evaluator(
+        crate::tool_runtime::PermissionEvaluator::with_mode(
+            crate::tool_runtime::AuthorityMode::Restricted,
+        ),
+    );
+    let auth = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INVOKE]);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![plugin_tool("permission_search")],
+    )
+    .await;
+
+    let call = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(691)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding":"wc_pbind_0123456789abcdef0123456789abcdef",
+                    "arguments":{"query":"must-not-run"}
+                }
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(call) = call else {
+        panic!("permission denial must render a normal MCP tool result");
+    };
+    assert_eq!(call["result"]["isError"], true);
+    assert_eq!(
+        call["result"]["structuredContent"]["output"]["failure_kind"],
+        "permission_denied"
+    );
+    assert_eq!(
+        call["result"]["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(692)),
+            json!({
+                "name":"permission_search",
+                "arguments":{"query":"must-not-run"}
+            }),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(direct) = direct else {
+        panic!("direct Plugin permission denial must render a normal MCP tool result");
+    };
+    assert_eq!(direct["result"]["isError"], true);
+    assert_eq!(
+        direct["result"]["structuredContent"]["output"]["failure_kind"],
+        "permission_denied"
+    );
+    assert_eq!(
+        direct["result"]["structuredContent"]["output"]["dispatch_certainty"],
+        "not_started"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -1115,6 +1484,69 @@ async fn startup_plugin_direct_tools_are_scoped_unique_and_keep_exact_schema() {
 }
 
 #[tokio::test]
+async fn startup_plugin_direct_inventory_requires_invoke_not_inspect_or_manage() {
+    for (id, scope) in [
+        (704, crate::auth::SCOPE_PLUGIN_INSPECT),
+        (705, crate::auth::SCOPE_PLUGIN_MANAGE),
+    ] {
+        let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
+        register_plugin_runner(
+            &runtime,
+            "runner-a",
+            "runner-instance-a",
+            "repo-tools",
+            "provider-instance-a",
+            vec![plugin_tool("invoke_only_direct")],
+        )
+        .await;
+        let auth = plugin_auth_with_scopes(&[scope]);
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(json!(id)), json!({})),
+            Some(&auth),
+        )
+        .await;
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("tools/list must succeed for {scope}");
+        };
+        let names = value["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&crate::plugin_gateway::PLUGIN_TOOL_NAME));
+        assert!(!names.contains(&"invoke_only_direct"));
+
+        let spoof = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id + 10)),
+                json!({"name":"invoke_only_direct","arguments":{"query":"x"}}),
+            ),
+            Some(&auth),
+        )
+        .await;
+        match spoof {
+            McpOutcome::Forbidden { required_scope, .. } => {
+                assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_INVOKE));
+            }
+            other => panic!("direct Plugin spoof must require invoke: {other:?}"),
+        }
+        assert!(runtime
+            .runner_registry
+            .poll(RunnerPollRequest {
+                client_id: "runner-a".to_string(),
+                runner_instance_id: "runner-instance-a".to_string(),
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[tokio::test]
 async fn startup_plugin_reserved_and_duplicate_names_are_not_directly_exposed() {
     let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
     let auth = plugin_auth(true);
@@ -1157,7 +1589,7 @@ async fn startup_plugin_reserved_and_duplicate_names_are_not_directly_exposed() 
 #[tokio::test]
 async fn direct_startup_plugin_call_routes_exact_startup_provider_and_renders_result() {
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::LocalCoding));
-    let auth = plugin_auth(true);
+    let auth = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INVOKE]);
     register_plugin_runner(
         &runtime,
         "runner-a",
@@ -1281,7 +1713,7 @@ async fn direct_plugin_scope_and_ambiguity_fail_before_runner_dispatch() {
     .await;
     match outcome {
         McpOutcome::Forbidden { required_scope, .. } => {
-            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_LOCAL));
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_INVOKE));
         }
         other => panic!("missing Plugin scope must be forbidden, got {other:?}"),
     }

@@ -12,7 +12,8 @@ const BRIDGE_PROFILE_VERSION: u32 = 1;
 const BRIDGE_PROFILE_PREFIX: &str = "shared-key-oauth-";
 const BRIDGE_SECRET_DISCLOSED_PREFIX: &str = ".shared-key-oauth-secret-disclosed-";
 const LOCAL_MCP_SCOPE: &str = "mcp:local";
-const LOCAL_PLUGIN_SCOPE: &str = "plugin:local";
+const LOCAL_PLUGIN_INSPECT_SCOPE: &str = "plugin:inspect";
+const LOCAL_PLUGIN_INVOKE_SCOPE: &str = "plugin:invoke";
 const LOCAL_SSH_SCOPE: &str = "ssh:local";
 const CODING_AGENT_SCOPE: &str = "coding_agent:run";
 const BRIDGE_BASELINE_SCOPES: &[&str] = &[
@@ -144,7 +145,11 @@ fn without_optional_class_scopes(scopes: &[String]) -> Vec<String> {
         .filter(|scope| {
             !matches!(
                 scope.as_str(),
-                LOCAL_MCP_SCOPE | LOCAL_PLUGIN_SCOPE | LOCAL_SSH_SCOPE | CODING_AGENT_SCOPE
+                LOCAL_MCP_SCOPE
+                    | LOCAL_PLUGIN_INSPECT_SCOPE
+                    | LOCAL_PLUGIN_INVOKE_SCOPE
+                    | LOCAL_SSH_SCOPE
+                    | CODING_AGENT_SCOPE
             )
         })
         .cloned()
@@ -204,11 +209,17 @@ fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
     if local_mcp_present != profile.local_mcp_enabled {
         return false;
     }
-    let local_plugins_present = profile
+    let local_plugin_inspect_present = profile
         .allowed_scopes
         .iter()
-        .any(|scope| scope == LOCAL_PLUGIN_SCOPE);
-    if local_plugins_present != profile.local_plugins_enabled {
+        .any(|scope| scope == LOCAL_PLUGIN_INSPECT_SCOPE);
+    let local_plugin_invoke_present = profile
+        .allowed_scopes
+        .iter()
+        .any(|scope| scope == LOCAL_PLUGIN_INVOKE_SCOPE);
+    if local_plugin_inspect_present != profile.local_plugins_enabled
+        || local_plugin_invoke_present != profile.local_plugins_enabled
+    {
         return false;
     }
     let local_ssh_present = profile
@@ -355,10 +366,15 @@ async fn provision_client(
                 .to_string(),
         );
     }
-    let local_plugins_present = allowed_scopes
+    let local_plugin_inspect_present = allowed_scopes
         .iter()
-        .any(|scope| scope == LOCAL_PLUGIN_SCOPE);
-    if local_plugins_present != opts.oauth_local_plugins {
+        .any(|scope| scope == LOCAL_PLUGIN_INSPECT_SCOPE);
+    let local_plugin_invoke_present = allowed_scopes
+        .iter()
+        .any(|scope| scope == LOCAL_PLUGIN_INVOKE_SCOPE);
+    if local_plugin_inspect_present != opts.oauth_local_plugins
+        || local_plugin_invoke_present != opts.oauth_local_plugins
+    {
         return Err(
             "Server changed local Plugin OAuth authority without matching the explicit connect opt-in"
                 .to_string(),
@@ -935,11 +951,37 @@ mod tests {
         local_plugins.local_plugins_enabled = true;
         local_plugins
             .allowed_scopes
-            .push(LOCAL_PLUGIN_SCOPE.to_string());
+            .push(LOCAL_PLUGIN_INSPECT_SCOPE.to_string());
+        local_plugins
+            .allowed_scopes
+            .push(LOCAL_PLUGIN_INVOKE_SCOPE.to_string());
         assert!(profile_scope_ceiling_is_valid(&local_plugins));
         let mut mismatched_local_plugins = local_plugins.clone();
         mismatched_local_plugins.local_plugins_enabled = false;
         assert!(!profile_scope_ceiling_is_valid(&mismatched_local_plugins));
+        let mut inspect_only_plugins = baseline.clone();
+        inspect_only_plugins.local_plugins_enabled = true;
+        inspect_only_plugins
+            .allowed_scopes
+            .push(LOCAL_PLUGIN_INSPECT_SCOPE.to_string());
+        assert!(!profile_scope_ceiling_is_valid(&inspect_only_plugins));
+        let mut invoke_only_plugins = baseline.clone();
+        invoke_only_plugins.local_plugins_enabled = true;
+        invoke_only_plugins
+            .allowed_scopes
+            .push(LOCAL_PLUGIN_INVOKE_SCOPE.to_string());
+        assert!(!profile_scope_ceiling_is_valid(&invoke_only_plugins));
+        let mut legacy_plugin_scope = baseline.clone();
+        legacy_plugin_scope.local_plugins_enabled = true;
+        legacy_plugin_scope
+            .allowed_scopes
+            .push("plugin:local".to_string());
+        assert!(!profile_scope_ceiling_is_valid(&legacy_plugin_scope));
+        let mut manage_plugin_scope = local_plugins.clone();
+        manage_plugin_scope
+            .allowed_scopes
+            .push("plugin:manage".to_string());
+        assert!(!profile_scope_ceiling_is_valid(&manage_plugin_scope));
 
         let mut local_ssh = baseline.clone();
         local_ssh.local_ssh_enabled = true;

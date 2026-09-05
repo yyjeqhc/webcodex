@@ -10,8 +10,11 @@ use webcodex_core::plugin::{
 fn plugin_auth(include_scope: bool) -> crate::auth::AuthContext {
     let mut auth = mcp_export_api_auth("plugin-check-test-pat", "alice");
     if include_scope {
-        auth.scopes
-            .push(crate::auth::SCOPE_PLUGIN_LOCAL.to_string());
+        auth.scopes.extend([
+            crate::auth::SCOPE_PLUGIN_INSPECT.to_string(),
+            crate::auth::SCOPE_PLUGIN_INVOKE.to_string(),
+            crate::auth::SCOPE_PLUGIN_MANAGE.to_string(),
+        ]);
     }
     auth
 }
@@ -184,9 +187,9 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
     .await;
     match no_scope {
         McpOutcome::Forbidden { required_scope, .. } => {
-            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_LOCAL));
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_MANAGE));
         }
-        other => panic!("check without plugin:local must be forbidden: {other:?}"),
+        other => panic!("check without plugin:manage must be forbidden: {other:?}"),
     }
 
     let auth = plugin_auth(true);

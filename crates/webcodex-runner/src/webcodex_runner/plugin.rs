@@ -32,6 +32,7 @@ const PLUGIN_READER_QUEUE: usize = 16;
 const PLUGIN_WRITER_QUEUE: usize = 1;
 const PLUGIN_STOP_POLL: Duration = Duration::from_millis(25);
 const PLUGIN_TERMINATION_BUDGET: Duration = Duration::from_secs(1);
+const PLUGIN_STDERR_DRAIN_BUDGET: Duration = Duration::from_millis(100);
 const PLUGIN_STDERR_MAX_LINES: usize = 64;
 const PLUGIN_STDERR_MAX_LINE_BYTES: usize = 1024;
 const PLUGIN_STDERR_MAX_BYTES: usize = 32 * 1024;
@@ -74,6 +75,7 @@ struct ProviderEntry {
 struct ProviderProcess {
     child: Mutex<Option<ManagedChild>>,
     stderr: Arc<Mutex<PluginStderrDiagnostics>>,
+    stderr_drained: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -579,16 +581,16 @@ impl PluginManager {
             &self.prepared_profiles,
             &self.stopping,
         );
-        self.last_check_stderr
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(provider_id.to_string(), entry.process.stderr_snapshot());
         if self.stopping.load(Ordering::SeqCst)
             || failure
                 .as_ref()
                 .is_some_and(|failure| failure.code == "plugin_manager_stopping")
         {
             entry.shutdown();
+            self.last_check_stderr
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(provider_id.to_string(), entry.process.stderr_snapshot());
             return gateway_error(
                 PluginDispatchState::NotStarted,
                 "plugin_manager_stopping",
@@ -624,6 +626,10 @@ impl PluginManager {
             }
         };
         entry.shutdown();
+        self.last_check_stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(provider_id.to_string(), entry.process.stderr_snapshot());
         PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked { report })
     }
 
@@ -923,6 +929,7 @@ impl ProviderProcess {
         Self {
             child: Mutex::new(None),
             stderr: Arc::new(Mutex::new(PluginStderrDiagnostics::default())),
+            stderr_drained: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -951,6 +958,18 @@ impl ProviderProcess {
         if let Some(mut child) = child {
             terminate_provider_process(&mut child);
         }
+        self.wait_for_stderr_drain();
+    }
+
+    fn wait_for_stderr_drain(&self) {
+        let deadline = Instant::now() + PLUGIN_STDERR_DRAIN_BUDGET;
+        while !self.stderr_drained.load(Ordering::Acquire) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1).min(remaining));
+        }
     }
 }
 
@@ -964,6 +983,7 @@ impl Drop for ProviderProcess {
         if let Some(mut child) = child {
             terminate_provider_process(&mut child);
         }
+        self.wait_for_stderr_drain();
     }
 }
 
@@ -1121,11 +1141,17 @@ fn prepare_provider(
     };
     let stderr_thread_name = format!("wc-plugin-stderr-{}", config.id);
     let stderr_diagnostics = Arc::clone(&process.stderr);
+    let stderr_drained = Arc::clone(&process.stderr_drained);
+    stderr_drained.store(false, Ordering::Release);
     if std::thread::Builder::new()
         .name(stderr_thread_name)
-        .spawn(move || provider_stderr_reader(stderr, stderr_diagnostics))
+        .spawn(move || {
+            provider_stderr_reader(stderr, stderr_diagnostics);
+            stderr_drained.store(true, Ordering::Release);
+        })
         .is_err()
     {
+        process.stderr_drained.store(true, Ordering::Release);
         let _ = child.terminate_tree();
         entry.retire("plugin_reader_unavailable");
         return (

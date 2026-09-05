@@ -469,6 +469,21 @@ fn check_reports_executable_config_and_startup_shape_without_sensitive_details()
         .any(|line| line.text == "diagnostic-only-secret-looking-stderr"));
     let report = checked_report(response);
     assert!(report.ready);
+
+    fixture.rewrite_candidate("check_stderr_at_list", 2);
+    let late_response = fixture.check();
+    let late_encoded = serde_json::to_string(&late_response).unwrap();
+    assert!(!late_encoded.contains("diagnostic-written-before-list-response"));
+    let late_local = fixture
+        .manager
+        .local_check_stderr_diagnostics("fake")
+        .expect("completed check stderr projection");
+    assert!(late_local
+        .lines
+        .iter()
+        .any(|line| line.text == "diagnostic-written-before-list-response"));
+    let late_report = checked_report(late_response);
+    assert!(late_report.ready);
 }
 
 #[test]

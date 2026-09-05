@@ -244,6 +244,11 @@ fn main() -> io::Result<()> {
                 } else {
                     String::new()
                 };
+                if scenario == "check_stderr_at_list" {
+                    let mut stderr = io::stderr().lock();
+                    writeln!(stderr, "diagnostic-written-before-list-response")?;
+                    stderr.flush()?;
+                }
                 send(
                     &mut writer,
                     &format!(

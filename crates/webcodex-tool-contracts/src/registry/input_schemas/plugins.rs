@@ -51,7 +51,10 @@ pub fn plugin_tool_input_schema() -> Value {
             },
             {
                 "if": {"properties": {"action": {"const": "reload"}}, "required": ["action"]},
-                "then": {"required": ["runner"]}
+                "then": {
+                    "required": ["runner"],
+                    "not": {"required": ["plugin"]}
+                }
             },
             {
                 "if": {"properties": {"action": {"const": "describe"}}, "required": ["action"]},

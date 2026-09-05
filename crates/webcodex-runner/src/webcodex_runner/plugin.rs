@@ -609,7 +609,10 @@ impl PluginManager {
                 );
             }
         };
-        self.reload_attempt_response(self.reload_candidate_locked(&candidate))
+        // An explicit Plugin reload is also the code-reload primitive: the
+        // executable or script may have changed without changing runner.toml.
+        // Always prepare a fresh provider set for this path.
+        self.reload_attempt_response(self.reload_candidate_locked(&candidate, true))
     }
 
     /// Apply an already parsed/validated runner.toml candidate through the same
@@ -625,7 +628,7 @@ impl PluginManager {
             Err(TryLockError::WouldBlock) => return Err("plugin_reload_busy"),
             Err(TryLockError::Poisoned(_)) => return Err("plugin_reload_state_failed"),
         };
-        match self.reload_candidate_locked(candidate) {
+        match self.reload_candidate_locked(candidate, false) {
             PluginReloadAttempt::Committed { .. } => {
                 // Keep the Plugin candidate gate held until the caller commits
                 // the rest of the same Runner-config activation. Otherwise a
@@ -639,7 +642,11 @@ impl PluginManager {
         }
     }
 
-    fn reload_candidate_locked(&self, candidate: &RunnerConfig) -> PluginReloadAttempt {
+    fn reload_candidate_locked(
+        &self,
+        candidate: &RunnerConfig,
+        force_provider_restart: bool,
+    ) -> PluginReloadAttempt {
         let candidate_environment =
             PluginEnvironmentSnapshot::from_config(&candidate.shell, &candidate.plugins);
         {
@@ -647,7 +654,8 @@ impl PluginManager {
                 .committed
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if committed.config == candidate.plugins
+            if !force_provider_restart
+                && committed.config == candidate.plugins
                 && committed.environment == candidate_environment
             {
                 return PluginReloadAttempt::Committed {

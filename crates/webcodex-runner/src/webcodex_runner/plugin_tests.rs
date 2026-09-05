@@ -745,6 +745,31 @@ fn reload_replaces_committed_provider_and_invalidates_old_instance() {
 }
 
 #[test]
+fn explicit_reload_restarts_provider_when_config_is_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = super::super::config::load_config(&config_path).unwrap();
+    let manager = PluginManager::new(&config, config_path);
+    let old_instance = current_providers(&manager)[0].provider_instance_id.clone();
+
+    // The executable/script may have changed on disk even though runner.toml
+    // did not. An explicit plugin_tool reload must therefore re-instantiate it.
+    let reloaded = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded {
+        providers,
+        failures,
+    }) = reloaded.payload
+    else {
+        panic!("reload failed: {:?}", reloaded.error);
+    };
+    assert!(failures.is_empty());
+    assert_ne!(providers[0].provider_instance_id, old_instance);
+}
+
+#[test]
 fn concurrent_reload_is_busy_while_existing_calls_continue_and_later_reload_wins() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");

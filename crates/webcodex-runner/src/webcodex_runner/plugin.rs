@@ -37,6 +37,7 @@ pub(crate) struct PluginManager {
     startup_config: PluginConfig,
     startup_shell: ShellConfig,
     dynamic: Mutex<DynamicState>,
+    reload_gate: Mutex<()>,
     config_path: PathBuf,
     prepared_profiles: PreparedShellProfileCache,
     next_generation: AtomicU64,
@@ -211,6 +212,7 @@ impl PluginManager {
                 overlay: BTreeMap::new(),
                 first_class_restart_required: false,
             }),
+            reload_gate: Mutex::new(()),
             config_path,
             prepared_profiles,
             next_generation: AtomicU64::new(2),
@@ -342,6 +344,23 @@ impl PluginManager {
     }
 
     fn reload_dynamic(&self) -> PluginGatewayResponse {
+        let _reload_guard = match self.reload_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => {
+                return gateway_error(
+                    PluginDispatchState::NotStarted,
+                    "plugin_reload_busy",
+                    "Another Plugin reload is already preparing candidates; this reload was not started",
+                )
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                return gateway_error(
+                    PluginDispatchState::NotStarted,
+                    "plugin_reload_state_failed",
+                    "Plugin reload state is unavailable; dynamic state was unchanged",
+                )
+            }
+        };
         let candidate = match load_config(&self.config_path) {
             Ok(candidate) => candidate,
             Err(error) => {
@@ -388,6 +407,14 @@ impl PluginManager {
             .map(|provider| provider.id.clone())
             .collect();
         let mut dynamic = self.dynamic.lock().unwrap();
+        if self.stopping.load(Ordering::SeqCst) {
+            drop(dynamic);
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "plugin_manager_stopping",
+                "Plugin manager began stopping before reload commit; dynamic state was unchanged",
+            );
+        }
         let previous_ids: BTreeSet<_> = self
             .startup
             .keys()

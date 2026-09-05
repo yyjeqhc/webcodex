@@ -617,6 +617,199 @@ fn direct_startup_catalog_remains_frozen_across_dynamic_reload() {
 }
 
 #[test]
+fn concurrent_reload_is_busy_while_existing_dynamic_calls_continue_and_later_reload_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let release = marker.with_extension("release");
+    let fake = fake_binary();
+    let startup_plugins = PluginConfig {
+        request_timeout_secs: 2,
+        providers: vec![PluginProviderConfig {
+            id: "fake".to_string(),
+            name: "Fake Plugin".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+            cwd: Some(temp.path().to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: None,
+        }],
+    };
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let manager = Arc::new(PluginManager::new(&config, config_path.clone()));
+    let startup = manager.startup_catalog();
+    let expected_schema = startup[0].tools[0].schema_observation();
+
+    let first_reload = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
+    else {
+        panic!("initial dynamic reload failed: {:?}", first_reload.error);
+    };
+    let dynamic_v1 = providers[0].provider_instance_id.clone();
+
+    let _ = fs::remove_file(&release);
+    write_runner_toml_with_timeout(
+        &config_path,
+        temp.path(),
+        &fake.path,
+        &marker,
+        "reload_block_list",
+        10,
+    );
+    let reload_manager = Arc::clone(&manager);
+    let reload_a = std::thread::spawn(move || reload_manager.handle(PluginGatewayRequest::Reload));
+    assert!(wait_until(Duration::from_secs(2), || {
+        fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .any(|line| line == "reload-blocked")
+    }));
+
+    // A has already read the old config and is blocked preparing its candidate.
+    // Publish a different config while A owns the reload gate.
+    write_runner_toml_with_timeout(
+        &config_path,
+        temp.path(),
+        &fake.path,
+        &marker,
+        "reload_new",
+        2,
+    );
+    let busy_started = Instant::now();
+    let busy = manager.handle(PluginGatewayRequest::Reload);
+    assert_eq!(busy.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(busy.error.as_ref().unwrap().code, "plugin_reload_busy");
+    assert!(
+        busy_started.elapsed() < Duration::from_secs(1),
+        "a second reload must fail busy instead of waiting for candidate preparation"
+    );
+
+    let current = manager.handle(PluginGatewayRequest::ProvidersList);
+    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = current.payload else {
+        panic!("current dynamic provider list failed: {:?}", current.error);
+    };
+    assert_eq!(providers[0].provider_instance_id, dynamic_v1);
+    let call_while_reloading = manager.handle(PluginGatewayRequest::ToolsCall {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v1.clone(),
+        name: "echo".to_string(),
+        arguments: json!({"value":"during-reload"}),
+        expected_schema: expected_schema.clone(),
+    });
+    assert!(
+        call_while_reloading.error.is_none(),
+        "candidate preparation must not hold the dynamic-state lock or block the current provider"
+    );
+    assert_eq!(manager.startup_catalog(), startup);
+
+    fs::write(&release, b"release").unwrap();
+    let completed_a = reload_a.join().unwrap();
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = completed_a.payload else {
+        panic!("reload A failed after release: {:?}", completed_a.error);
+    };
+    let dynamic_a = providers[0].provider_instance_id.clone();
+    assert_ne!(dynamic_a, dynamic_v1);
+    assert_eq!(
+        fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "reload-new-start")
+            .count(),
+        0,
+        "busy reload B must not have started a candidate from the new config"
+    );
+
+    let reload_c = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = reload_c.payload else {
+        panic!("later reload C failed: {:?}", reload_c.error);
+    };
+    let dynamic_c = providers[0].provider_instance_id.clone();
+    assert_ne!(dynamic_c, dynamic_a);
+    assert_eq!(
+        fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "reload-new-start")
+            .count(),
+        1,
+        "reload C must read and prepare the new config after A releases the gate"
+    );
+    assert_eq!(manager.startup_catalog(), startup);
+
+    let final_view = manager.handle(PluginGatewayRequest::ProvidersList);
+    let Some(PluginGatewayResponsePayload::Providers { providers, .. }) = final_view.payload else {
+        panic!("final provider list failed: {:?}", final_view.error);
+    };
+    assert_eq!(providers[0].provider_instance_id, dynamic_c);
+    manager.shutdown();
+}
+
+#[test]
+fn shutdown_during_blocked_reload_does_not_wait_for_gate_or_allow_late_commit() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let startup_plugins = PluginConfig {
+        request_timeout_secs: 2,
+        providers: vec![PluginProviderConfig {
+            id: "fake".to_string(),
+            name: "Fake Plugin".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+            cwd: Some(temp.path().to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: None,
+        }],
+    };
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml_with_timeout(
+        &config_path,
+        temp.path(),
+        &fake.path,
+        &marker,
+        "reload_block_list",
+        10,
+    );
+    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let manager = Arc::new(PluginManager::new(&config, config_path));
+    let reload_manager = Arc::clone(&manager);
+    let reload = std::thread::spawn(move || reload_manager.handle(PluginGatewayRequest::Reload));
+    assert!(wait_until(Duration::from_secs(2), || {
+        fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .any(|line| line == "reload-blocked")
+    }));
+
+    let shutdown_started = Instant::now();
+    manager.shutdown();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_millis(1500),
+        "shutdown must not wait for the reload gate held by candidate preparation"
+    );
+    let reload_response = reload.join().unwrap();
+    assert_eq!(
+        reload_response.dispatch_state,
+        PluginDispatchState::NotStarted
+    );
+    assert_eq!(
+        reload_response.error.as_ref().unwrap().code,
+        "plugin_manager_stopping"
+    );
+    assert_eq!(
+        fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "reload-released")
+            .count(),
+        0,
+        "the blocked candidate must terminate from manager stopping rather than reaching commit"
+    );
+}
+
+#[test]
 fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");
@@ -714,13 +907,24 @@ fn write_runner_toml(
     marker: &Path,
     scenario: &str,
 ) {
+    write_runner_toml_with_timeout(path, project_registry_dir, executable, marker, scenario, 2);
+}
+
+fn write_runner_toml_with_timeout(
+    path: &Path,
+    project_registry_dir: &Path,
+    executable: &Path,
+    marker: &Path,
+    scenario: &str,
+    request_timeout_secs: u64,
+) {
     fn quoted(value: &Path) -> String {
         format!("{:?}", value.to_string_lossy().as_ref())
     }
     fs::write(
         path,
         format!(
-            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test-token\"\nclient_id = \"plugin-test\"\nproject_registry_dir = {}\n\n[plugins]\nrequest_timeout_secs = 2\n\n[[plugins.providers]]\nid = \"fake\"\nname = \"Fake Plugin\"\ncommand = {}\nargs = [\"{}\", {}]\ncwd = {}\n",
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test-token\"\nclient_id = \"plugin-test\"\nproject_registry_dir = {}\n\n[plugins]\nrequest_timeout_secs = {request_timeout_secs}\n\n[[plugins.providers]]\nid = \"fake\"\nname = \"Fake Plugin\"\ncommand = {}\nargs = [\"{}\", {}]\ncwd = {}\n",
             quoted(project_registry_dir),
             quoted(executable),
             scenario,

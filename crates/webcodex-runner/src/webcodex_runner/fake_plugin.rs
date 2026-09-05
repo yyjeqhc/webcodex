@@ -20,6 +20,9 @@ fn main() -> io::Result<()> {
         }
     }
     append(marker, "start\n")?;
+    if scenario == "reload_new" {
+        append(marker, "reload-new-start\n")?;
+    }
     if scenario == "execution_context" {
         append(
             marker,
@@ -81,6 +84,16 @@ fn main() -> io::Result<()> {
             "tools/list" => {
                 lists += 1;
                 append(marker, "list\n")?;
+                if scenario == "reload_block_list" && lists == 1 {
+                    append(marker, "reload-blocked\n")?;
+                    let release = marker
+                        .map(|path| path.with_extension("release"))
+                        .expect("reload_block_list requires marker path");
+                    while !release.exists() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    append(marker, "reload-released\n")?;
+                }
                 if scenario == "split_timeout" && lists >= 2 {
                     thread::sleep(Duration::from_millis(750));
                 }

@@ -86,7 +86,8 @@ search_symbol({"query":"RunnerRegistry"})
 ```
 
 Duplicate or reserved names are not exposed directly. They remain reachable
-through `plugin_tool` with an explicit Runner and Plugin provider.
+through the dynamic `plugin_tool` describe/binding flow with an explicit Runner
+and Plugin provider at describe time.
 
 A provider process failure does not prevent the Runner itself from registering.
 If an admitted startup provider later fails, WebCodex retires that exact
@@ -101,12 +102,21 @@ After startup, Plugin development uses the dynamic plane:
 plugin_tool(action="reload", runner="my-runner")
 plugin_tool(action="list", runner="my-runner")
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
-plugin_tool(action="call", runner="my-runner", plugin="repo-tools", tool="search_symbol", arguments={"query":"foo"})
+    -> { ..., "binding": "wc_pbind_..." }
+plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`call` has one dispatch identity: the opaque `binding` returned by that exact
+`describe`. It does not accept `runner`, `plugin`, or `tool` as call-time
+routing fields. Each describe creates an independent binding for the exact
+Runner instance, provider instance, tool name, and schema observation seen at
+that moment. The handle does not encode or expose those internal identities.
 
 `reload` is the cross-platform authoritative reload path on Windows, macOS, and
 Linux. The Runner rereads its own `runner.toml`; the Server does not upload an
-executable, environment, or raw Plugin config.
+executable, environment, or raw Plugin config. Reload management is serialized:
+if another reload is already preparing candidates, the second reload is not
+queued and returns `plugin_reload_busy` with `NotStarted`.
 
 A changed provider is initialized and listed successfully before it replaces
 the previous dynamic instance. A failed candidate leaves the previous working
@@ -118,15 +128,18 @@ This creates the normal development loop:
 ```text
 edit Plugin code/config
     -> plugin_tool reload
-    -> describe/call the dynamic Plugin
+    -> plugin_tool describe
+    -> receive opaque binding
+    -> plugin_tool call(binding, arguments)
     -> finish debugging
     -> restart Runner
     -> new startup admission / first-class promotion
 ```
 
 If startup provider A is first-class and reload creates dynamic provider B,
-direct `search_symbol(...)` still calls A. `plugin_tool call` uses B. Only a
-Runner restart can replace the first-class binding.
+direct `search_symbol(...)` still calls A. A fresh dynamic `describe` observes B
+and its returned binding calls only that exact B instance. Only a Runner restart
+can replace the first-class startup binding.
 
 ## WebCodex Plugin Protocol v1
 
@@ -182,15 +195,24 @@ a complete no-dependency Node example.
 Each provider handles one request at a time. Concurrent calls receive a
 provider-busy result instead of being silently queued without bound.
 
-`plugin_tool call` requires a preceding `describe`. WebCodex records the exact
-Runner instance, provider instance, tool name, and observed schema internally.
-If the provider or schema changes before the call, the call is `NotStarted` and
-must be described again. Those internal instance identifiers are not exposed to
-the model.
+`plugin_tool call` requires an opaque binding from a preceding `describe`.
+Bindings are bounded server-side observations, not bearer authorization tokens:
+every call still requires current `plugin:local` authority and current access to
+the logical Runner. A binding can also be evicted. If its Runner/provider
+instance disappears, the tool is removed, or its schema changes, the stale call
+fails `NotStarted` and must be described again. WebCodex never re-resolves the
+binding to a newer same-named provider/tool, never manufactures a replacement
+binding, and never replays the call. Internal Runner/provider instance ids and
+schema revision machinery are not exposed in the handle.
 
-For effectful `tools/call`, a transport/process failure after the request may
-have been sent is reported as `OutcomeUnknown`; WebCodex does not automatically
-retry or replay it. Failures known to happen before send are `NotStarted`.
+The provider timeout is one total request budget. It starts before request
+encoding/validation and covers bounded stdin queue admission, the complete
+frame write plus flush confirmation, and the response wait. A Plugin that stops
+reading stdin therefore cannot make `write_all` escape the provider timeout.
+For effectful `tools/call`, once a frame may have started writing, a write
+timeout/failure, connection loss, process death, or response timeout is
+`OutcomeUnknown`; WebCodex does not automatically retry or replay it. Failures
+proven to happen before any possible send are `NotStarted`.
 
 Plugin stdout is protocol-only. Plugin stderr is drained separately for local
 diagnostics and is never treated as protocol, inserted into a model result, or

@@ -79,8 +79,8 @@ inventory 中唯一，并且没有和 WebCodex reserved tool 冲突，它会直�
 search_symbol({"query":"RunnerRegistry"})
 ```
 
-重名或 reserved-name 冲突不会做一级暴露，但仍然可以通过指定 Runner + Plugin 的
-`plugin_tool` 使用。
+重名或 reserved-name 冲突不会做一级暴露，但仍然可以在 `plugin_tool` dynamic
+流程中，于 describe 阶段明确指定 Runner + Plugin 后获得 binding 使用。
 
 单个 startup provider 启动失败不会拖死整个 Runner registration。已经 admission 的
 startup provider 如果之后失效，WebCodex 会 retire 这个 exact provider instance，
@@ -94,12 +94,19 @@ Runner 启动后的 Plugin 开发统一走 dynamic plane：
 plugin_tool(action="reload", runner="my-runner")
 plugin_tool(action="list", runner="my-runner")
 plugin_tool(action="describe", runner="my-runner", plugin="repo-tools", tool="search_symbol")
-plugin_tool(action="call", runner="my-runner", plugin="repo-tools", tool="search_symbol", arguments={"query":"foo"})
+    -> { ..., "binding": "wc_pbind_..." }
+plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
+
+`call` 的 dispatch identity 只有这个 opaque `binding`；call 阶段不再接受
+`runner`、`plugin`、`tool` 作为路由字段。每次 describe 都会创建独立 binding，精确
+记录当时观察到的 Runner instance、provider instance、tool name 和 schema；handle
+本身不会编码或暴露这些内部 identity。
 
 `reload` 是 Windows、macOS、Linux 都可用的 authoritative reload 入口。Runner
 自己重新读取自己的 `runner.toml`；Server 不会上传 executable、env 或 raw Plugin
-config。
+config。reload 管理操作严格串行：如果已经有一个 reload 正在准备 candidate，第二个
+reload 不排队，直接返回 `plugin_reload_busy` + `NotStarted`。
 
 changed provider 会先准备 candidate，只有 initialize/list 成功后才替换旧 dynamic
 instance；candidate 失败会保留已有可工作的 dynamic instance。被删除的 provider 会从
@@ -110,15 +117,18 @@ dynamic view 中消失。这些操作都不会修改 frozen startup catalog。
 ```text
 修改 Plugin code/config
     -> plugin_tool reload
-    -> describe/call dynamic Plugin
+    -> plugin_tool describe
+    -> 收到 opaque binding
+    -> plugin_tool call(binding, arguments)
     -> 调试完成
     -> restart Runner
     -> 新 startup admission / 一级工具 promotion
 ```
 
 如果 startup provider A 已经提供一级 `search_symbol`，reload 后产生 dynamic provider
-B，那么直接 `search_symbol(...)` 仍然调用 A；`plugin_tool call` 使用 B。只有 Runner
-restart 才能替换一级绑定。
+B，那么直接 `search_symbol(...)` 仍然调用 A；新的 dynamic `describe` 会观察 B，返回的
+binding 也只会调用那个 exact B instance。只有 Runner restart 才能替换一级 startup
+绑定。
 
 ## WebCodex Plugin Protocol v1
 
@@ -168,14 +178,21 @@ message、schema、arguments、JSON depth/node/string、tool count 和 result �
 每个 provider 同一时间只处理一个 request。并发请求会得到 provider-busy，而不是无限
 排队。
 
-`plugin_tool call` 必须先 `describe`。WebCodex 在内部记录 exact Runner instance、
-provider instance、tool name 和 schema observation；如果 call 前 provider/schema 已变化，
-请求会以 `NotStarted` 失败并要求重新 describe，不会 retarget。内部 instance id 不暴露
-给模型。
+`plugin_tool call` 必须使用前一次 `describe` 返回的 opaque binding。binding 是
+Server 端有界保存的一次 exact observation，不是 bearer authorization token：每次 call
+仍然重新要求当前 credential 具有 `plugin:local`，并且当前 caller 仍有权访问对应 logical
+Runner。binding 也可能因为容量上限被 eviction。Runner/provider instance 被替换、tool 被
+删除或 schema 改变时，旧 binding 以 `NotStarted` fail closed，必须重新 describe；
+WebCodex 不会把它 re-resolve 到新的同名 provider/tool，不会自动生成新 binding，也不会
+replay。内部 Runner/provider instance id 和 schema revision 不会编码到 handle 里或暴露给
+模型。
 
-对于 effectful `tools/call`，如果 request 可能已经发送后才发生 transport/process
-failure，会返回 `OutcomeUnknown`，WebCodex 不会自动 retry/replay；明确发生在 send 之前
-的失败是 `NotStarted`。
+provider timeout 是一次 RPC 的总预算：从 request encode/validation 前开始，同时覆盖
+bounded stdin queue admission、完整 frame 的 write + flush confirmation，以及 response
+wait。因此 Plugin 即使停止读取 stdin，`write_all` 也不能逃逸 provider timeout。对于
+effectful `tools/call`，只要 frame 已经可能开始写入，write timeout/failure、connection
+loss、process death 或 response timeout 都返回 `OutcomeUnknown`，不会自动 retry/replay；
+只有能证明任何 byte 都不可能发送的失败才是 `NotStarted`。
 
 stdout 只用于 protocol。stderr 单独 drain，仅作为本机 diagnostic，不会自动进入模型
 result，也不会进入 startup registration catalog。

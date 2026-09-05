@@ -157,12 +157,14 @@ impl SshResourceOperation {
                 SpecializedSource::SshResource,
                 "register",
                 SCOPE_SSH_LOCAL,
+                true,
                 false,
             ),
             Self::Remove => SpecializedOperationPolicy::management(
                 SpecializedSource::SshResource,
                 "remove",
                 SCOPE_SSH_LOCAL,
+                true,
                 false,
             ),
         }
@@ -820,5 +822,9 @@ mod tests {
             SshResourceOperation::Remove.policy().effect,
             SpecializedEffect::Management
         );
+        assert!(SshResourceOperation::Register.policy().write_like);
+        assert!(!SshResourceOperation::Register.policy().shell_like);
+        assert!(SshResourceOperation::Remove.policy().write_like);
+        assert!(!SshResourceOperation::Remove.policy().shell_like);
     }
 }

@@ -196,15 +196,18 @@ impl PluginOperation {
                 "call",
                 SCOPE_PLUGIN_INVOKE,
             ),
-            Self::Check => SpecializedOperationPolicy::local_execution(
+            Self::Check => SpecializedOperationPolicy::management(
                 SpecializedSource::Plugin,
                 "check",
                 SCOPE_PLUGIN_MANAGE,
+                false,
+                true,
             ),
             Self::Reload => SpecializedOperationPolicy::management(
                 SpecializedSource::Plugin,
                 "reload",
                 SCOPE_PLUGIN_MANAGE,
+                true,
                 true,
             ),
         }
@@ -1435,7 +1438,7 @@ mod tests {
         );
         assert_eq!(
             PluginOperation::Check.policy().effect,
-            SpecializedEffect::LocalExecution
+            SpecializedEffect::Management
         );
         assert_eq!(
             PluginOperation::Reload.policy().effect,
@@ -1445,6 +1448,10 @@ mod tests {
             PluginOperation::Check.policy().required_scope,
             SCOPE_PLUGIN_MANAGE
         );
+        assert!(!PluginOperation::Check.policy().write_like);
+        assert!(PluginOperation::Check.policy().shell_like);
+        assert!(PluginOperation::Reload.policy().write_like);
+        assert!(PluginOperation::Reload.policy().shell_like);
         assert_eq!(
             PluginOperation::Call.policy().required_scope,
             SCOPE_PLUGIN_INVOKE

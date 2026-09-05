@@ -105,6 +105,7 @@ impl SpecializedOperationPolicy {
         source: SpecializedSource,
         operation: &'static str,
         required_scope: &'static str,
+        write_like: bool,
         shell_like: bool,
     ) -> Self {
         Self {
@@ -113,7 +114,7 @@ impl SpecializedOperationPolicy {
             required_scope,
             effect: SpecializedEffect::Management,
             risk: "specialized_management",
-            write_like: true,
+            write_like,
             shell_like,
         }
     }

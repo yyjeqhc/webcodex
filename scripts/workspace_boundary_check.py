@@ -44,7 +44,8 @@ EXCLUDED_DIRECTORIES = frozenset(
     }
 )
 
-PARENT_SOURCE_PATH = re.compile(r'#\s*\[\s*path\s*=\s*"\.\./')
+PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*"([^"\r\n]+)"')
+PARENT_PATH_COMPONENT = re.compile(r'(^|[/\\])\.\.([/\\]|$)')
 
 
 class PolicyError(ValueError):
@@ -332,6 +333,14 @@ def check_metadata(metadata: dict[str, Any], policy: BoundaryPolicy) -> list[str
             "policy package(s) absent from workspace: " + ", ".join(unknown_policy)
         )
 
+    workspace_paths: dict[str, Path] = {}
+    for name, package in packages_by_name.items():
+        manifest_path = package.get("manifest_path")
+        if not isinstance(manifest_path, str) or not manifest_path:
+            violations.append(f"workspace package {name} has no valid manifest_path")
+            continue
+        workspace_paths[name] = Path(manifest_path).resolve().parent
+
     feature = policy.root_test_support_feature
     actual_providers = {
         name
@@ -380,7 +389,15 @@ def check_metadata(metadata: dict[str, Any], policy: BoundaryPolicy) -> list[str
                 )
                 continue
             all_direct_dependency_names.add(dependency_name)
-            if dependency_name not in workspace_names:
+            dependency_path = dependency.get("path")
+            workspace_dependency_path = workspace_paths.get(dependency_name)
+            is_workspace_dependency = (
+                workspace_dependency_path is not None
+                and isinstance(dependency_path, str)
+                and bool(dependency_path)
+                and Path(dependency_path).resolve() == workspace_dependency_path
+            )
+            if not is_workspace_dependency:
                 continue
             kind = _dependency_kind(dependency)
             if kind not in actual_by_kind:
@@ -497,7 +514,8 @@ def check_parent_source_paths(root: Path) -> list[str]:
                 continue
             relative_path = path.relative_to(root).as_posix()
             for line_number, line in enumerate(lines, start=1):
-                if PARENT_SOURCE_PATH.search(line):
+                path_attribute = PATH_ATTRIBUTE.search(line)
+                if path_attribute and PARENT_PATH_COMPONENT.search(path_attribute.group(1)):
                     violations.append(
                         f"{relative_path}:{line_number}: cross-parent #[path] source sharing"
                     )

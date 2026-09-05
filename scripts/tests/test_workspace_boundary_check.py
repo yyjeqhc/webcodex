@@ -62,6 +62,11 @@ def fixture_metadata(
                     "name": dependency_name,
                     "kind": None if kind == "normal" else kind,
                     "features": list(features),
+                    "path": (
+                        f"/fixture/{dependency_name}"
+                        if dependency_name in package_dependencies
+                        else None
+                    ),
                 }
             )
         packages.append(
@@ -70,6 +75,7 @@ def fixture_metadata(
                 "name": name,
                 "dependencies": dependencies,
                 "features": {feature: [] for feature in package_features.get(name, ())},
+                "manifest_path": f"/fixture/{name}/Cargo.toml",
             }
         )
         members.append(package_id)
@@ -103,7 +109,13 @@ class MetadataBoundaryTests(unittest.TestCase):
         policy, metadata = valid_policy_and_metadata()
         new_id = "path+file:///fixture#webcodex-new@0.4.0"
         metadata["packages"].append(
-            {"id": new_id, "name": "webcodex-new", "dependencies": [], "features": {}}
+            {
+                "id": new_id,
+                "name": "webcodex-new",
+                "dependencies": [],
+                "features": {},
+                "manifest_path": "/fixture/webcodex-new/Cargo.toml",
+            }
         )
         metadata["workspace_members"].append(new_id)
         self.assertEqual(
@@ -149,6 +161,24 @@ class MetadataBoundaryTests(unittest.TestCase):
             [
                 "package webcodex-app has unlisted normal workspace dependency(ies): "
                 "webcodex-helper"
+            ],
+        )
+
+    def test_external_same_named_package_does_not_satisfy_workspace_edge(self) -> None:
+        policy, metadata = valid_policy_and_metadata()
+        app = next(
+            package
+            for package in metadata["packages"]
+            if package["name"] == "webcodex-app"
+        )
+        dependency = app["dependencies"][0]
+        dependency["path"] = None
+        dependency["source"] = "registry+https://github.com/rust-lang/crates.io-index"
+        self.assertEqual(
+            boundary.check_metadata(metadata, policy),
+            [
+                "package webcodex-app policy lists absent normal workspace "
+                "dependency(ies): webcodex-core"
             ],
         )
 
@@ -328,18 +358,24 @@ class ParentSourcePathTests(unittest.TestCase):
             root = Path(temp)
             (root / "src").mkdir()
             (root / "tests").mkdir()
+            (root / "benches").mkdir()
             (root / "src" / "lib.rs").write_text(
                 '#[path = "../shared.rs"]\nmod shared;\n', encoding="utf-8"
             )
             (root / "tests" / "integration.rs").write_text(
                 '#[path="../support.rs"]\nmod support;\n', encoding="utf-8"
             )
+            (root / "benches" / "nested.rs").write_text(
+                '#[path = "fixtures/../../support.rs"]\nmod support;\n',
+                encoding="utf-8",
+            )
             violations = boundary.check_parent_source_paths(root)
-            self.assertEqual(len(violations), 2)
+            self.assertEqual(len(violations), 3)
             self.assertTrue(any("src/lib.rs:1" in item for item in violations))
             self.assertTrue(
                 any("tests/integration.rs:1" in item for item in violations)
             )
+            self.assertTrue(any("benches/nested.rs:1" in item for item in violations))
 
     def test_generated_and_non_rust_files_are_excluded(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -478,6 +478,97 @@ fn direct_startup_catalog_remains_frozen_across_dynamic_reload() {
     assert!(direct.error.is_none());
 }
 
+#[test]
+fn failed_dynamic_candidate_keeps_previous_instance_and_removal_is_tombstoned() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let startup_plugins = PluginConfig {
+        request_timeout_secs: 2,
+        providers: vec![PluginProviderConfig {
+            id: "fake".to_string(),
+            name: "Fake Plugin".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+            cwd: Some(temp.path().to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: None,
+        }],
+    };
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = runner_config(startup_plugins, ShellConfig::default(), temp.path());
+    let manager = PluginManager::new(&config, config_path.clone());
+    let startup_instance = manager.startup_catalog()[0].provider_instance_id.clone();
+
+    let first_reload = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = first_reload.payload
+    else {
+        panic!("first dynamic reload failed: {:?}", first_reload.error);
+    };
+    let dynamic_instance = providers[0].provider_instance_id.clone();
+    assert_ne!(dynamic_instance, startup_instance);
+
+    write_runner_toml(
+        &config_path,
+        temp.path(),
+        &fake.path,
+        &marker,
+        "bad_version",
+    );
+    let failed_reload = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded {
+        providers,
+        failures,
+        ..
+    }) = failed_reload.payload
+    else {
+        panic!(
+            "failed candidate reload response missing: {:?}",
+            failed_reload.error
+        );
+    };
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].provider_id, "fake");
+    assert_eq!(
+        providers[0].provider_instance_id, dynamic_instance,
+        "a failed candidate must not destroy the previous working dynamic instance"
+    );
+
+    write_runner_toml_without_plugins(&config_path, temp.path());
+    let removal = manager.handle(PluginGatewayRequest::Reload);
+    let Some(PluginGatewayResponsePayload::Reloaded { providers, .. }) = removal.payload else {
+        panic!("removal reload failed: {:?}", removal.error);
+    };
+    assert!(
+        providers.is_empty(),
+        "removed provider must disappear from effective dynamic view"
+    );
+    let effective_fallback = manager.handle(PluginGatewayRequest::ToolsList {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: startup_instance.clone(),
+    });
+    assert_eq!(
+        effective_fallback
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("stale_plugin_provider"),
+        "dynamic removal tombstone must prevent fallback to startup for plugin_tool"
+    );
+
+    let direct_startup = manager.handle(PluginGatewayRequest::ToolsList {
+        plane: PluginPlane::Startup,
+        provider_id: "fake".to_string(),
+        provider_instance_id: startup_instance,
+    });
+    assert!(
+        direct_startup.error.is_none(),
+        "dynamic removal must not mutate the frozen direct startup plane"
+    );
+}
+
 fn write_runner_toml(
     path: &Path,
     project_registry_dir: &Path,
@@ -496,6 +587,20 @@ fn write_runner_toml(
             quoted(executable),
             scenario,
             quoted(marker),
+            quoted(project_registry_dir),
+        ),
+    )
+    .unwrap();
+}
+
+fn write_runner_toml_without_plugins(path: &Path, project_registry_dir: &Path) {
+    fn quoted(value: &Path) -> String {
+        format!("{:?}", value.to_string_lossy().as_ref())
+    }
+    fs::write(
+        path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test-token\"\nclient_id = \"plugin-test\"\nproject_registry_dir = {}\n\n[plugins]\nrequest_timeout_secs = 2\n",
             quoted(project_registry_dir),
         ),
     )

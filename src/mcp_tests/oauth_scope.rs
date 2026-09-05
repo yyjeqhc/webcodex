@@ -18,6 +18,66 @@ fn oauth_mcp_service(scopes: &str) -> (tempfile::TempDir, Service, String) {
     oauth_mcp_service_with_surface(scopes, ModelSurface::LocalCoding)
 }
 
+async fn oauth_mcp_service_with_startup_plugin(
+    scopes: &str,
+    tool_name: &str,
+) -> (tempfile::TempDir, Service, String) {
+    let config = test_config_oauth2(Some("secret"));
+    let (tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client = seed_oauth_client(&db, &user);
+    let token = seed_oauth_access_token(&db, &client, &user, scopes);
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::LocalCoding));
+    let mut capabilities = RunnerCapabilities::default();
+    capabilities.native_tool_plugins = true;
+    runtime
+        .runner_registry
+        .register(crate::test_support::current_runner_registration(
+            RunnerRegisterRequest {
+                client_id: "oauth-plugin-runner".to_string(),
+                runner_instance_id: "oauth-plugin-runner-instance".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                display_name: Some("OAuth Plugin Runner".to_string()),
+                owner: Some("alice".to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities,
+                policy: Some(crate::runner_protocol::RunnerPolicySummary {
+                    plugin_providers: Some(vec![webcodex_core::plugin::StartupPluginProvider {
+                        provider_id: "repo-tools".to_string(),
+                        provider_instance_id: "oauth-plugin-provider-instance".to_string(),
+                        name: "Repo Tools".to_string(),
+                        status: "ready".to_string(),
+                        error_code: None,
+                        tools: vec![webcodex_core::plugin::PluginTool {
+                            name: tool_name.to_string(),
+                            title: None,
+                            description: Some("OAuth first-class Plugin test tool".to_string()),
+                            input_schema: json!({
+                                "type": "object",
+                                "properties": {"value": {"type": "string"}},
+                                "additionalProperties": false
+                            }),
+                            output_schema: None,
+                            annotations: None,
+                        }],
+                    }]),
+                    ..Default::default()
+                }),
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+            },
+        ))
+        .await
+        .unwrap();
+    let service = Service::new(build_test_router(config, db, runtime));
+    (tmp, service, token)
+}
+
 fn assert_mcp_oauth_scope_rejected(
     status: StatusCode,
     body: &Value,
@@ -216,6 +276,44 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
         body["result"]["structuredContent"]["error"]["code"],
         "describe_required"
     );
+}
+
+#[tokio::test]
+async fn oauth2_first_class_startup_plugin_visibility_and_direct_spoof_require_plugin_scope() {
+    let tool_name = "oauth_plugin_echo";
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_startup_plugin("runtime:read", tool_name).await;
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(!body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == tool_name));
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({"name": tool_name, "arguments": {"value": "hidden"}}),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_PLUGIN_LOCAL),
+    );
+
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_startup_plugin("runtime:read plugin:local", tool_name).await;
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == tool_name));
 }
 
 #[tokio::test]

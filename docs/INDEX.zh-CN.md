@@ -38,6 +38,7 @@
 
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
+- [Native Tool Plugins](PLUGINS.zh-CN.md) —— 用任意可执行语言为 Runner 增加本地工具，不需要 MCP SDK
 - [Computer Use roadmap](COMPUTER_USE.md) —— semantic-first desktop automation 方向与验证优先级
 
 ## 我想参与开发或发布

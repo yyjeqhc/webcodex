@@ -25,6 +25,8 @@ use crate::tool_runtime::ToolResult;
 use crate::tool_runtime::{registered_tool_specs, ToolRuntime, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
     if auth.is_some_and(AuthContext::is_oauth_token) {
@@ -135,6 +137,90 @@ fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -
     adaptive_runtime_gateway_target_specs(stateless_2026)
         .iter()
         .any(|spec| spec.name == target)
+}
+
+fn startup_plugin_reserved_tool_names() -> &'static BTreeSet<String> {
+    static RESERVED: OnceLock<BTreeSet<String>> = OnceLock::new();
+    RESERVED.get_or_init(|| {
+        let mut names = registered_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<BTreeSet<_>>();
+        for spec in crate::tool_runtime::skill_runtime_tool_specs()
+            .into_iter()
+            .chain(crate::tool_runtime::skill_management_tool_specs())
+            .chain(crate::tool_runtime::memory_runtime_tool_specs())
+            .chain(crate::tool_runtime::memory_management_tool_specs())
+            .chain(crate::tool_runtime::operator_diagnostic_tool_specs())
+        {
+            names.insert(spec.name);
+        }
+        names.insert(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
+        names.insert(crate::mcp_gateway::MCP_TOOL_NAME.to_string());
+        names.insert(crate::plugin_gateway::PLUGIN_TOOL_NAME.to_string());
+        names
+    })
+}
+
+enum StartupPluginDirectResolution {
+    None,
+    Unique(crate::plugin_gateway::StartupPluginToolCandidate),
+    Ambiguous,
+}
+
+async fn resolve_startup_plugin_direct_tool(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+    name: &str,
+) -> StartupPluginDirectResolution {
+    if startup_plugin_reserved_tool_names().contains(name) {
+        return StartupPluginDirectResolution::None;
+    }
+    let mut matches = crate::plugin_gateway::startup_tool_candidates(runtime, auth)
+        .await
+        .into_iter()
+        .filter(|candidate| candidate.tool.name == name);
+    let Some(first) = matches.next() else {
+        return StartupPluginDirectResolution::None;
+    };
+    if matches.next().is_some() {
+        StartupPluginDirectResolution::Ambiguous
+    } else {
+        StartupPluginDirectResolution::Unique(first)
+    }
+}
+
+async fn append_startup_plugin_direct_tools(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+    result: &mut Value,
+) {
+    if !crate::plugin_gateway::authorized(auth) {
+        return;
+    }
+    let reserved = startup_plugin_reserved_tool_names();
+    let mut by_name =
+        BTreeMap::<String, Vec<crate::plugin_gateway::StartupPluginToolCandidate>>::new();
+    for candidate in crate::plugin_gateway::startup_tool_candidates(runtime, auth).await {
+        if reserved.contains(&candidate.tool.name) {
+            continue;
+        }
+        by_name
+            .entry(candidate.tool.name.clone())
+            .or_default()
+            .push(candidate);
+    }
+    let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for candidates in by_name.into_values() {
+        if candidates.len() != 1 {
+            continue;
+        }
+        if let Ok(tool) = serde_json::to_value(&candidates[0].tool) {
+            tools.push(tool);
+        }
+    }
 }
 
 fn unwrap_adaptive_runtime_gateway_arguments(
@@ -536,7 +622,7 @@ pub(super) fn mcp_runtime_tool_result(
     }
 }
 
-pub(super) fn handle_list(
+pub(super) async fn handle_list(
     runtime: &ToolRuntime,
     id: Option<Value>,
     auth: Option<&AuthContext>,
@@ -568,6 +654,11 @@ pub(super) fn handle_list(
             if stateless_2026 {
                 add_stateless_workflow_recorder_metadata(&mut result, model_surface);
             }
+            // Plugin ToolSpecs are appended only after WebCodex stateless
+            // metadata augmentation so arbitrary Plugin schemas remain exact.
+            // The list is derived solely from frozen startup registration and
+            // caller-visible unique names; no provider process is contacted.
+            append_startup_plugin_direct_tools(runtime, auth, &mut result).await;
             if crate::mcp_gateway::authorized(auth) {
                 if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
                     tools.push(crate::mcp_gateway::tool_spec());
@@ -1224,6 +1315,61 @@ pub(super) async fn handle_call(
                 result
             },
         ));
+    }
+    match resolve_startup_plugin_direct_tool(runtime, auth, &params.name).await {
+        StartupPluginDirectResolution::Unique(candidate) => {
+            if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_PLUGIN_LOCAL) {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("forbidden");
+                    lc.dispatch_finished(false, Some(false), "forbidden");
+                }
+                return outcome;
+            }
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.capture_payload("effective_arguments", &params.arguments);
+            }
+            let result = crate::plugin_gateway::call_startup_direct(
+                runtime,
+                &candidate,
+                params.arguments,
+                auth,
+            )
+            .await;
+            let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+            }
+            return McpOutcome::Ok(rpc_result(
+                id,
+                if stateless_2026 {
+                    mcp_stateless_result(result, false)
+                } else {
+                    result
+                },
+            ));
+        }
+        StartupPluginDirectResolution::Ambiguous => {
+            if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_PLUGIN_LOCAL) {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("forbidden");
+                    lc.dispatch_finished(false, Some(false), "forbidden");
+                }
+                return outcome;
+            }
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_failed("ambiguous_plugin_tool");
+                lc.dispatch_finished(false, Some(false), "ambiguous_plugin_tool");
+            }
+            return McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                format!(
+                    "startup Plugin tool '{}' is ambiguous across caller-visible Runners/providers; use plugin_tool with an exact runner and plugin",
+                    params.name
+                ),
+            ));
+        }
+        StartupPluginDirectResolution::None => {}
     }
     // Focused model surfaces reject direct tools they do not advertise at the
     // MCP boundary. Adaptive gateway calls are already reduced to an allowed

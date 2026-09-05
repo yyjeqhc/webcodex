@@ -495,9 +495,12 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 computer_text_input: true,
                 job_state_reconciliation: true,
                 coding_agent_runs: true,
-                native_tool_plugins: false,
+                native_tool_plugins: true,
             },
-            policy: None,
+            policy: Some(crate::runner_protocol::RunnerPolicySummary {
+                plugin_providers: Some(Vec::new()),
+                ..Default::default()
+            }),
         })
         .await
         .unwrap();

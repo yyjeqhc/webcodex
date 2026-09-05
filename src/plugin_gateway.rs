@@ -90,6 +90,18 @@ pub(crate) struct ResolvedPluginRunner {
     pub(crate) display_name: Option<String>,
 }
 
+/// One exact startup Tool binding projected from the current caller-visible
+/// frozen Runner registrations.  The adapter recomputes uniqueness from these
+/// candidates for every list/call; it is not a Server-side Plugin cache.
+#[derive(Debug, Clone)]
+pub(crate) struct StartupPluginToolCandidate {
+    pub(crate) client_id: String,
+    pub(crate) runner_instance_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_instance_id: String,
+    pub(crate) tool: PluginTool,
+}
+
 #[derive(Debug)]
 pub(crate) struct GatewayError {
     code: String,
@@ -485,6 +497,124 @@ pub(crate) async fn visible_plugin_runners(
     runners
 }
 
+/// Return exact startup Tool candidates from sanitized immutable registration
+/// inventory.  This helper intentionally does not require `plugin:local`: call
+/// dispatch uses it before the scope check so a spoofed direct Plugin name is
+/// rejected as forbidden instead of falling through to an unrelated unknown
+/// static tool path. Runner visibility policy remains authoritative.
+pub(crate) async fn startup_tool_candidates(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+) -> Vec<StartupPluginToolCandidate> {
+    let access = crate::runner_http::runner_access_from_auth(auth);
+    let mut candidates = Vec::new();
+    for runner in runtime
+        .runner_registry
+        .list_runners_for_auth(access.as_ref())
+        .await
+    {
+        if !runner.connected
+            || !runner.capabilities.native_tool_plugins
+            || runtime
+                .runner_registry
+                .assert_runner_access(access.as_ref(), &runner.client_id)
+                .await
+                .is_err()
+        {
+            continue;
+        }
+        let Some(providers) = runner
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.plugin_providers.as_ref())
+        else {
+            continue;
+        };
+        for provider in providers {
+            if provider.status != "ready" {
+                continue;
+            }
+            // Failed/secondary-only startup providers have no admitted direct
+            // ToolSpecs. Do not infer process health or fetch tools remotely.
+            for tool in &provider.tools {
+                candidates.push(StartupPluginToolCandidate {
+                    client_id: runner.client_id.clone(),
+                    runner_instance_id: runner.runner_instance_id.clone(),
+                    provider_id: provider.provider_id.clone(),
+                    provider_instance_id: provider.provider_instance_id.clone(),
+                    tool: tool.clone(),
+                });
+            }
+        }
+    }
+    candidates
+}
+
+pub(crate) async fn call_startup_direct(
+    runtime: &ToolRuntime,
+    candidate: &StartupPluginToolCandidate,
+    arguments: Value,
+    auth: Option<&AuthContext>,
+) -> Value {
+    if !authorized(auth) {
+        return gateway_error_result(GatewayError::local(
+            "insufficient_scope",
+            "direct native Plugin calls require the plugin:local scope",
+        ));
+    }
+    if !arguments.is_object() {
+        return gateway_error_result(GatewayError::local(
+            "invalid_arguments",
+            "direct Plugin arguments must be a JSON object",
+        ));
+    }
+    if validate_json_value(&arguments, PLUGIN_MAX_ARGUMENT_BYTES, "tool arguments").is_err() {
+        return gateway_error_result(GatewayError::local(
+            "invalid_arguments",
+            "direct Plugin arguments exceed Plugin bounds",
+        ));
+    }
+    let runner = ResolvedPluginRunner {
+        client_id: candidate.client_id.clone(),
+        runner_instance_id: candidate.runner_instance_id.clone(),
+        display_name: None,
+    };
+    let response = match execute_exact(
+        runtime,
+        &runner,
+        PluginGatewayRequest::ToolsCall {
+            plane: PluginPlane::Startup,
+            provider_id: candidate.provider_id.clone(),
+            provider_instance_id: candidate.provider_instance_id.clone(),
+            name: candidate.tool.name.clone(),
+            arguments,
+            expected_schema: candidate.tool.schema_observation(),
+        },
+        auth,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return gateway_error_result(error),
+    };
+    if let Some(error) = response.error {
+        return gateway_error_result(response_error(response.dispatch_state, error));
+    }
+    match response.payload {
+        Some(PluginGatewayResponsePayload::ToolResult { result }) => serde_json::to_value(result)
+            .unwrap_or_else(|_| {
+                gateway_error_result(GatewayError::local(
+                    "invalid_plugin_result",
+                    "Plugin result could not be encoded",
+                ))
+            }),
+        _ => gateway_error_result(GatewayError::local(
+            "invalid_plugin_result",
+            "Runner returned an unexpected direct Plugin tool result",
+        )),
+    }
+}
+
 pub(crate) async fn resolve_runner(
     runtime: &ToolRuntime,
     runner_id: &str,
@@ -699,5 +829,24 @@ fn dispatch_state_name(state: PluginDispatchState) -> &'static str {
         PluginDispatchState::NotStarted => "not_started",
         PluginDispatchState::OutcomeUnknown => "outcome_unknown",
         PluginDispatchState::Completed => "completed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_plugin_tool_catalog_hides_runtime_identity_and_provider_defined_output_schema() {
+        let spec = tool_spec();
+        let encoded = serde_json::to_string(&spec).unwrap();
+        assert_eq!(spec["name"], PLUGIN_TOOL_NAME);
+        assert!(spec.get("outputSchema").is_none());
+        assert!(!encoded.contains("provider_instance_id"));
+        assert!(!encoded.contains("runner_instance_id"));
+        assert!(!encoded.contains("revision"));
+        assert!(!encoded.contains("command"));
+        assert!(!encoded.contains("cwd"));
+        assert!(!encoded.contains("env"));
     }
 }

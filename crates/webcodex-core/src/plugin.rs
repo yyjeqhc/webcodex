@@ -664,4 +664,62 @@ mod tests {
         };
         assert!(validate_request(&request).is_err());
     }
+
+    #[test]
+    fn schema_and_result_bounds_fail_closed() {
+        let mut oversized_schema_tool = tool();
+        oversized_schema_tool.input_schema = json!({
+            "type": "object",
+            "description": "x".repeat(PLUGIN_MAX_SCHEMA_BYTES)
+        });
+        assert!(validate_tools(&[oversized_schema_tool]).is_err());
+
+        let oversized_result = PluginToolResult {
+            content: vec![PluginContent::Text {
+                text: "x".repeat(PLUGIN_MAX_TEXT_CONTENT_BYTES + 1),
+            }],
+            structured_content: None,
+            is_error: false,
+        };
+        assert!(validate_tool_result(&oversized_result).is_err());
+    }
+
+    #[test]
+    fn startup_catalog_rejects_total_tool_and_aggregate_byte_overflow() {
+        let too_many_tools = (0..=PLUGIN_STARTUP_MAX_DIRECT_TOOLS)
+            .map(|index| PluginTool {
+                name: format!("tool_{index}"),
+                ..tool()
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_startup_catalog(&[StartupPluginProvider {
+            provider_id: "repo-tools".to_string(),
+            provider_instance_id: "instance_1".to_string(),
+            name: "Repo Tools".to_string(),
+            status: "ready".to_string(),
+            error_code: None,
+            tools: too_many_tools,
+        }])
+        .is_err());
+
+        let aggregate_tools = (0..10)
+            .map(|index| PluginTool {
+                name: format!("large_{index}"),
+                input_schema: json!({
+                    "type": "object",
+                    "description": "x".repeat(30 * 1024)
+                }),
+                ..tool()
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_startup_catalog(&[StartupPluginProvider {
+            provider_id: "repo-tools".to_string(),
+            provider_instance_id: "instance_2".to_string(),
+            name: "Repo Tools".to_string(),
+            status: "ready".to_string(),
+            error_code: None,
+            tools: aggregate_tools,
+        }])
+        .is_err());
+    }
 }

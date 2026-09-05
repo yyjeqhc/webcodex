@@ -38,6 +38,7 @@ Start with the goal that matches what you are trying to do.
 
 - [Architecture](ARCHITECTURE.md) — how the major components fit together
 - [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
+- [Native Tool Plugins](PLUGINS.md) — add Runner-local tools with any executable language and no MCP SDK
 - [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and validation priorities
 
 ## I want to contribute or release WebCodex

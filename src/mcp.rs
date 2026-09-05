@@ -891,7 +891,7 @@ async fn handle_mcp_request_with_lifecycle(
         ),
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
-            return tools::handle_list(runtime, id, auth, stateless_2026, compact_schemas);
+            return tools::handle_list(runtime, id, auth, stateless_2026, compact_schemas).await;
         }
         "resources/list" if stateless_2026 && runtime_resource_method => {
             return resources::handle_list(id, mcp_app_enabled);

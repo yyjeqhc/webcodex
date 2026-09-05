@@ -49,11 +49,17 @@ try {
             throw "Desktop runtime binary must be a regular non-reparse file: $source"
         }
 
-        $line = @(& $source --version | Select-Object -First 1)[0]
-        if ($LASTEXITCODE -ne 0 -or -not $line) {
-            throw "$name.exe --version failed while staging Desktop resources"
+        # Capture the native process to completion before selecting the first
+        # output line. Piping the native process directly into Select-Object
+        # -First can stop the upstream process early on PowerShell 7 and leave
+        # a non-zero $LASTEXITCODE even though the version line was emitted.
+        $output = @(& $source --version)
+        $exitCode = $LASTEXITCODE
+        $line = @($output | Select-Object -First 1)
+        if ($exitCode -ne 0 -or $line.Count -eq 0 -or -not $line[0]) {
+            throw "$name.exe --version failed while staging Desktop resources (exit code $exitCode)"
         }
-        $line = $line.TrimEnd()
+        $line = $line[0].TrimEnd()
         $expected = "$name $Version (commit $shortSource, dirty=false, built_at=$BuiltAt)"
         if ($line -ne $expected) {
             throw "unexpected $name.exe identity: '$line' (expected '$expected')"

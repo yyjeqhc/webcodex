@@ -439,7 +439,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "WebCodex runtime build failed" }
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
             $binary = Join-Path "target\release" "$name.exe"
-            $actual = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
+            $output = @(& $binary --version)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0 -or $output.Count -eq 0 -or -not $output[0]) {
+              throw "$name --version failed with exit code $exitCode"
+            }
+            $actual = $output[0].TrimEnd()
             $expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"
             if ($actual -ne $expected) { throw "Unexpected $name identity: $actual" }
           }

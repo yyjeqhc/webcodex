@@ -27,7 +27,7 @@ Server 可以在仓库机器本身运行，也可以放在另一台机器。Runn
 
 ## 1. 安装 WebCodex
 
-Windows 或 macOS 用户可以从对应的 [GitHub Release](https://github.com/yyjeqhc/webcodex/releases) 安装 **WebCodex Desktop**。Windows 选择 x64 installer；Mac 按机器架构选择 Intel 或 Apple Silicon DMG。Desktop 界面可以完成本机 Server、Runner、Project 和 ChatGPT 连接，包括普通 OpenAI Secure MCP Tunnel 路径。下面的命令行完整路径仍然保留，适合高级配置和排障。
+Windows 或 macOS 用户可以从对应的 [GitHub Release](https://github.com/yyjeqhc/webcodex/releases) 安装 **WebCodex Desktop**。Windows 选择 x64 installer；Mac 按机器架构选择 Intel 或 Apple Silicon DMG。当前 macOS 构建使用 ad-hoc 签名且没有 Apple notarization，因此 Gatekeeper 可能会拦截新下载构建的首次启动。遇到这种情况时，进入**系统设置 → 隐私与安全 → 仍要打开**，再确认**打开**即可；不要全局关闭 Gatekeeper。以后单独下载的新版本仍可能被 macOS 重新评估。Desktop 界面可以完成本机 Server、Runner、Project 和 ChatGPT 连接，包括普通 OpenAI Secure MCP Tunnel 路径。下面的命令行完整路径仍然保留，适合高级配置和排障。
 
 需要 Node.js 18+ 和 Git：
 

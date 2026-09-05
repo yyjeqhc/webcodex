@@ -440,11 +440,10 @@ jobs:
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-bundle"
+          signing_mode=adhoc
           if [ "$BUILD_KIND" = release ]; then
-            signing_mode=developer-id
             desktop_name="webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           else
-            signing_mode=adhoc
             desktop_name="webcodex-desktop-$INPUT_TAG-${SOURCE_SHA:0:12}-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           fi
           python3 scripts/prepare_desktop_bundle_macos.py \
@@ -462,44 +461,15 @@ jobs:
             echo "desktop_name=$desktop_name"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build signed native macOS Desktop DMG
+      - name: Build ad-hoc signed native macOS Desktop DMG
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
         env:
           CI: "true"
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          key_path=""
-          cleanup_key() {
-            if [ -n "$key_path" ]; then
-              rm -f -- "$key_path"
-            fi
-          }
-          trap cleanup_key EXIT INT TERM
-
-          if [ "$BUILD_KIND" = release ]; then
-            for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY; do
-              if [ -z "${!name:-}" ]; then
-                echo "Formal macOS release signing credential is unavailable: $name" >&2
-                exit 1
-              fi
-            done
-            umask 077
-            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
-            printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
-            chmod 600 "$key_path"
-            export APPLE_API_KEY_PATH="$key_path"
-          else
-            export APPLE_SIGNING_IDENTITY="-"
-            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY
-          fi
+          export APPLE_SIGNING_IDENTITY="-"
 
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-tauri"
           npm exec tauri -- build \
@@ -623,7 +593,12 @@ jobs:
           $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
             $binary = Join-Path $binDir "$name.exe"
-            $output = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
+            $outputLines = @(& $binary --version)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0 -or $outputLines.Count -eq 0 -or -not $outputLines[0]) {
+              throw "$name --version failed with exit code $exitCode"
+            }
+            $output = $outputLines[0].TrimEnd()
             $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
             if ($output -ne $expected) {
               throw "Unexpected $name release identity: $output (expected $expected)"
@@ -852,8 +827,8 @@ jobs:
           from pathlib import Path
 
           root = Path("candidate-input")
-          expected_signing = "developer-id" if os.environ["BUILD_KIND"] == "release" else "adhoc"
-          expected_notarized = os.environ["BUILD_KIND"] == "release"
+          expected_signing = "adhoc"
+          expected_notarized = False
           pairs = (
               ("darwin-x64", os.environ["DESKTOP_DARWIN_X64_FILENAME"]),
               ("darwin-arm64", os.environ["DESKTOP_DARWIN_ARM64_FILENAME"]),

@@ -142,8 +142,9 @@ immutable tag, `release_operator.py build-start` / `build-status` bind one durab
 one same-run native candidate bundle containing the six runtime archives and the three Desktop
 distribution artifacts (Windows x64, macOS Intel, and macOS Apple Silicon). Each Mac lane reuses the
 same unsigned runtime build input for its archive and `.app`, then records the bundled post-signing
-digests separately. Verification builds are ad-hoc signed; formal release builds fail closed unless
-Developer ID signing, Apple notarization, and stapling succeed. The release control host collects that exact bundle
+digests separately. Verification and formal GitHub Release builds are ad-hoc signed and intentionally
+not notarized, so the release pipeline does not depend on paid Apple Developer Program credentials.
+Native macOS smoke still verifies the code signature and exact bundled runtime evidence. The release control host collects that exact bundle
 with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact
 REST download, no `gh run download`) and stages npm with `stage-npm` using the retained
 CI binaries without Cargo. After draft assets are uploaded, `verify-draft` compares the
@@ -158,7 +159,7 @@ bootstrap asset to the same Release; the bootstrap is generated from the reviewe
 publication-workflow source so guarded backfills do not depend on new tooling existing in
 an older application tag. `release-build.yml` remains a read-only candidate producer with
 no package-write authority. One well-connected Linux host performs the single full public-byte
-verifier for npm, native Release archives, and all three bounded Desktop distribution bytes after publication; it hashes macOS DMGs but does not replace native signing/notarization evidence. The image workflow
+verifier for npm, native Release archives, and all three bounded Desktop distribution bytes after publication; it hashes macOS DMGs but does not replace native macOS ad-hoc signing evidence. The image workflow
 independently requires anonymous GHCR availability and verifies the public deployment-asset
 hashes. Do not fan release downloads or rebuilds out to per-platform development
 machines merely to prove that a foreign archive is downloadable. Native

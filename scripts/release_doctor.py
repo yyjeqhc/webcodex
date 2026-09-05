@@ -124,9 +124,8 @@ def _workflow_contract(root: Path) -> str:
             ("desktop_artifacts", build),
             ("webcodex-desktop-v$env:VERSION-win32-x64-setup.exe", build),
             ("webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg", build),
-            ("APPLE_CERTIFICATE", build),
-            ("APPLE_API_KEY_PATH", build),
-            ("APPLE_API_PRIVATE_KEY", build),
+            ("signing_mode=adhoc", build),
+            ('export APPLE_SIGNING_IDENTITY="-"', build),
         ),
     }
     missing = []
@@ -140,6 +139,8 @@ def _workflow_contract(root: Path) -> str:
         raise DoctorError("release-readiness gained publication/upload authority")
     if "prepare_desktop_bundle.ps1" in readiness_workflow or "tauri" in readiness_workflow.lower():
         raise DoctorError("release-readiness gained Desktop candidate build responsibility")
+    if "secrets.APPLE_" in build:
+        raise DoctorError("release-build unexpectedly depends on paid Apple signing credentials")
     return "CI, readiness, and authoritative build workflow contracts are consistent"
 
 

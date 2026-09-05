@@ -27,7 +27,7 @@ The Server may run on the repository machine or elsewhere. The Runner should run
 
 ## 1. Install WebCodex
 
-On Windows or macOS, you can install **WebCodex Desktop** from the matching [GitHub Release](https://github.com/yyjeqhc/webcodex/releases). Choose the Windows x64 installer or the macOS DMG for your Mac architecture (Intel or Apple Silicon). The Desktop UI can set up the local Server, Runner, projects, and ChatGPT connection, including the regular OpenAI Secure MCP Tunnel path. The command-line setup below remains available for advanced configuration and troubleshooting.
+On Windows or macOS, you can install **WebCodex Desktop** from the matching [GitHub Release](https://github.com/yyjeqhc/webcodex/releases). Choose the Windows x64 installer or the macOS DMG for your Mac architecture (Intel or Apple Silicon). Current macOS builds are ad-hoc signed and not notarized, so Gatekeeper may block the first launch of a newly downloaded build. If that happens, use **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**; do not disable Gatekeeper globally. A separately downloaded update can be assessed again by macOS. The Desktop UI can set up the local Server, Runner, projects, and ChatGPT connection, including the regular OpenAI Secure MCP Tunnel path. The command-line setup below remains available for advanced configuration and troubleshooting.
 
 Install Node.js 18+ and Git, then:
 

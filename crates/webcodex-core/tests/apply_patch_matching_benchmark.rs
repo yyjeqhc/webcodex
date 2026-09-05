@@ -451,15 +451,15 @@ fn corpus() -> Vec<Case> {
             false,
         ),
         case(
-            "ambiguous_parent_context",
+            "repeated_parent_context_unique_target",
             file(
                 "a.txt",
                 "ctx\nold\nctx\nother\n",
                 vec![chunk("old", "new", Some("ctx"), false)],
-                "ctx\nold\nctx\nother\n",
+                "ctx\nnew\nctx\nother\n",
             ),
             false,
-            false,
+            true,
         ),
         case(
             "context_mismatch",

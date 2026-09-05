@@ -718,10 +718,18 @@ fn validated_apply_patch_match_rejection(
     let chunk = chunks.get(chunk_index)?;
     let match_source = match failure_output.get("match_source").and_then(Value::as_str)? {
         "old_lines" if !chunk.old_lines.is_empty() => "old_lines",
-        "change_context" if chunk.change_context.is_some() => "change_context",
+        "change_context"
+            if chunk.change_context.is_some()
+                && (expected_matching_mode
+                    == crate::apply_patch_shared::ApplyPatchMatchingMode::ExactUnique
+                    || chunk.old_lines.is_empty()) =>
+        {
+            "change_context"
+        }
         _ => {
             // Unanchored append performs no text matching and is strict-safe;
-            // other sources contradict the parsed chunk shape.
+            // other sources contradict the parsed chunk shape or the selected
+            // matching mode's positioning semantics.
             return None;
         }
     };
@@ -1334,7 +1342,7 @@ fn validate_apply_patch_edit_summary(
     if unique_match && !candidate_is_unique {
         return false;
     }
-    if chunk.change_context.is_none() && unique_match != candidate_is_unique {
+    if unique_match != candidate_is_unique {
         return false;
     }
     if strict_match
@@ -3205,9 +3213,9 @@ mod tests {
     }
 
     #[test]
-    fn apply_patch_unique_ambiguous_context_fact_is_validated_against_chunk_shape() {
+    fn apply_patch_unique_ambiguous_context_fact_is_valid_for_pure_addition() {
         let patch = crate::apply_patch_shared::parse_codex_patch(
-            "*** Begin Patch\n*** Update File: file.txt\n@@ ctx\n-old\n+new\n*** End Patch",
+            "*** Begin Patch\n*** Update File: file.txt\n@@ ctx\n+new\n*** End Patch",
         )
         .unwrap();
         let mut payload = matching_rejection_payload(
@@ -3239,6 +3247,34 @@ mod tests {
             result.output["recovery"]["items"].as_array().unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn apply_patch_unique_rejects_context_only_ambiguity_for_replacement_chunk() {
+        let patch = crate::apply_patch_shared::parse_codex_patch(
+            "*** Begin Patch\n*** Update File: file.txt\n@@ ctx\n-old\n+new\n*** End Patch",
+        )
+        .unwrap();
+        let mut payload = matching_rejection_payload(
+            crate::apply_patch_shared::ApplyPatchMatchingMode::Unique,
+            "exact",
+            &[1, 3],
+            2,
+            4,
+        );
+        payload["match_source"] = json!("change_context");
+
+        let result = apply_patch_agent_stdout_result(
+            &payload.to_string(),
+            &patch,
+            false,
+            crate::apply_patch_shared::ApplyPatchMatchingMode::Unique,
+        );
+        assert!(!result.success);
+        assert!(result.output.get("match_rejection_diagnostic").is_none());
+        assert!(result.output.get("recovery").is_none());
+        assert!(result.output.get("path").is_none());
+        assert!(result.output.get("change_index").is_none());
     }
 
     #[test]

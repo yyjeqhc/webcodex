@@ -168,8 +168,11 @@ pub struct CodexPatchChunkMatch {
     /// Number of candidates at the selected match mode for match_source.
     /// Append operations do not perform text matching and report None.
     pub candidate_count: Option<usize>,
-    /// True only when every textual positioning decision for this chunk was
-    /// unique at its selected tier. Unanchored append is unique-safe.
+    /// True when the actual mutation target is unique at its selected tier.
+    /// For replacement chunks, a repeated change_context does not by itself
+    /// make the target ambiguous when old_lines resolves to one target.
+    /// Anchored pure additions still require a unique change_context.
+    /// Unanchored append is unique-safe.
     pub unique_match: bool,
     /// True only when every text match used to position this chunk was exact
     /// and unique. Unanchored append performs no text match and is strict-safe.
@@ -643,7 +646,9 @@ fn seek_sequence(
         return None;
     }
     let last_start = lines.len() - pattern.len();
-    let start = start.min(last_start);
+    if start > last_start {
+        return None;
+    }
 
     let matches_at = |index: usize, mode: CodexPatchMatchMode| {
         lines[index..index + pattern.len()]
@@ -923,15 +928,25 @@ pub fn derive_codex_patch_update_with_matching_mode(
         };
         let start = found.index;
         replacements.push((start, pattern.len(), replacement.to_vec()));
-        let context_rejection = context_match.as_ref().and_then(|matched| {
-            match_rejection_fact(
-                matched,
-                matching_mode,
-                CodexPatchMatchSource::ChangeContext,
-                original_lines.len(),
-                1,
-            )
-        });
+        // `change_context` narrows where old_lines search begins, but when a
+        // replacement has old_lines the mutation target is the old_lines
+        // candidate itself. Under the normal Unique mode, repeated anchors do
+        // not constitute real target ambiguity if that final candidate is
+        // unique. ExactUnique deliberately keeps the stronger requirement that
+        // every textual positioning decision be exact and unique.
+        let context_rejection = if matching_mode == ApplyPatchMatchingMode::ExactUnique {
+            context_match.as_ref().and_then(|matched| {
+                match_rejection_fact(
+                    matched,
+                    matching_mode,
+                    CodexPatchMatchSource::ChangeContext,
+                    original_lines.len(),
+                    1,
+                )
+            })
+        } else {
+            None
+        };
         let old_lines_rejection = match_rejection_fact(
             &found,
             matching_mode,
@@ -940,8 +955,7 @@ pub fn derive_codex_patch_update_with_matching_mode(
             pattern.len(),
         );
         let match_rejection = select_match_rejection(context_rejection, old_lines_rejection);
-        let unique_match =
-            context_match.as_ref().is_none_or(SequenceMatch::is_unique) && found.is_unique();
+        let unique_match = found.is_unique();
         let strict_match = context_match
             .as_ref()
             .is_none_or(SequenceMatch::is_exact_unique)
@@ -1366,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn unique_rejects_ambiguous_change_context_even_when_first_context_old_lines_are_unique() {
+    fn unique_accepts_repeated_change_context_when_old_lines_target_is_unique() {
         let update = derive_codex_patch_update_with_matching_mode(
             "ctx\nold\nctx\nother\n",
             "file.txt",
@@ -1379,10 +1393,64 @@ mod tests {
             ApplyPatchMatchingMode::Unique,
         )
         .unwrap();
+        assert_eq!(update.content, "ctx\nnew\nctx\nother\n");
+        assert_eq!(update.chunk_matches[0].matched_start_line, 2);
+        assert_eq!(update.chunk_matches[0].candidate_count, Some(1));
+        assert!(update.chunk_matches[0].unique_match);
+        assert!(!update.chunk_matches[0].strict_match);
+        assert!(update.chunk_matches[0].match_rejection.is_none());
+    }
+
+    #[test]
+    fn unique_still_rejects_repeated_change_context_for_pure_addition() {
+        let update = derive_codex_patch_update_with_matching_mode(
+            "ctx\nfirst\nctx\nsecond\n",
+            "file.txt",
+            &[CodexPatchChunk {
+                change_context: Some("ctx".into()),
+                old_lines: Vec::new(),
+                new_lines: vec!["inserted".into()],
+                ..Default::default()
+            }],
+            ApplyPatchMatchingMode::Unique,
+        )
+        .unwrap();
         let rejection = update.chunk_matches[0].match_rejection.as_ref().unwrap();
         assert_eq!(rejection.match_source, CodexPatchMatchSource::ChangeContext);
         assert_eq!(rejection.candidate_count, 2);
         assert!(!update.chunk_matches[0].unique_match);
+    }
+
+    #[test]
+    fn later_chunks_never_backtrack_before_the_prior_match() {
+        for matching_mode in [
+            ApplyPatchMatchingMode::FirstMatch,
+            ApplyPatchMatchingMode::Unique,
+            ApplyPatchMatchingMode::ExactUnique,
+        ] {
+            let error = derive_codex_patch_update_with_matching_mode(
+                "head\nmid\ntail\n",
+                "file.txt",
+                &[
+                    CodexPatchChunk {
+                        old_lines: vec!["tail".into()],
+                        new_lines: vec!["TAIL".into()],
+                        ..Default::default()
+                    },
+                    CodexPatchChunk {
+                        old_lines: vec!["mid".into(), "tail".into()],
+                        new_lines: vec!["must-not-backtrack".into()],
+                        ..Default::default()
+                    },
+                ],
+                matching_mode,
+            )
+            .expect_err("a later chunk must not search before the prior match");
+            assert_eq!(error.kind, "context_mismatch", "{matching_mode:?}");
+            let diagnostic = error.match_diagnostic.expect("match diagnostic");
+            assert_eq!(diagnostic.chunk_index, 1, "{matching_mode:?}");
+            assert_eq!(diagnostic.search_start_line, 4, "{matching_mode:?}");
+        }
     }
 
     #[test]

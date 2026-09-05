@@ -39,7 +39,7 @@ fn apply_patch_edit_summary_schema() -> Value {
             },
             "unique_match": {
                 "type": "boolean",
-                "description": "Validated fact that every textual positioning decision for this chunk was unique at its selected tier."
+                "description": "Validated fact that the final mutation target was unique at its selected tier; for anchored pure additions this means the change_context itself was unique."
             },
             "strict_match": {
                 "type": "boolean",

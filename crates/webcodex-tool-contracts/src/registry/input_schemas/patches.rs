@@ -20,7 +20,7 @@ pub fn apply_patch_input_schema() -> Value {
         (
             "matching_mode",
             "string",
-            "Positioning policy. unique (default) tries Exact, TrimEnd, Trim, then Normalized and requires exactly one eligible candidate for every textual positioning decision. exact_unique additionally requires Exact at every decision and is intended for an explicit stale-context/concurrency fence after reading exact current source. first_match is only for explicitly requested permissive compatibility and deterministically selects the first eligible candidate in the highest-priority tier.",
+            "Positioning policy. unique (default) tries Exact, TrimEnd, Trim, then Normalized and requires exactly one final mutation target at the selected tier; a repeated @@ anchor is allowed when old_lines still resolves to one target, while anchored pure additions require a unique anchor. exact_unique additionally requires Exact and unique at every textual positioning decision and is intended for an explicit stale-context/concurrency fence after reading exact current source. first_match is only for explicitly requested permissive compatibility and deterministically selects the first eligible candidate in the highest-priority tier.",
             false,
         ),
     ]));

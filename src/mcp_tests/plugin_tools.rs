@@ -171,6 +171,8 @@ async fn register_plugin_runner_with_status(
                             "ready_secondary" => Some("first_class_catalog_too_large".to_string()),
                             _ => Some("plugin_initialize_failed".to_string()),
                         },
+                        catalog_tool_count: tools.len(),
+                        catalog_digest: None,
                         tools,
                     }]),
                     ..Default::default()

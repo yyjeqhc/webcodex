@@ -9,20 +9,21 @@ use super::config::{load_config, PluginConfig, PluginProviderConfig, RunnerConfi
 use super::shell::{PreparedExecutionEnvironment, PreparedShellProfileCache};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex, TryLockError};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_core::plugin::{
-    diagnose_invalid_tools, validate_request, validate_startup_catalog, validate_startup_tool,
-    validate_tool_result, validate_tools, PluginCheckDiagnostic, PluginCheckPhase,
-    PluginCheckReport, PluginCheckToolSummary, PluginDispatchState, PluginGatewayRequest,
-    PluginGatewayResponse, PluginGatewayResponsePayload, PluginPlane, PluginProviderView,
-    PluginReloadFailure, PluginSchemaObservation, PluginStartupToolShape, PluginTool,
-    PluginToolResult, StartupPluginProvider, PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
+    diagnose_invalid_tools, validate_plugin_input_arguments, validate_plugin_structured_output,
+    validate_request, validate_startup_catalog, validate_startup_tool, validate_tool_result,
+    validate_tools, PluginCatalog, PluginCheckDiagnostic, PluginCheckPhase, PluginCheckReport,
+    PluginCheckToolSummary, PluginDispatchState, PluginGatewayRequest, PluginGatewayResponse,
+    PluginGatewayResponsePayload, PluginPlane, PluginProviderView, PluginReloadFailure,
+    PluginSchemaObservation, PluginStartupToolShape, PluginTool, PluginToolResult,
+    StartupPluginProvider, PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
     PLUGIN_STARTUP_CATALOG_MAX_BYTES, PLUGIN_STARTUP_MAX_DIRECT_TOOLS,
 };
 use webcodex_process::ManagedChild;
@@ -31,6 +32,9 @@ const PLUGIN_READER_QUEUE: usize = 16;
 const PLUGIN_WRITER_QUEUE: usize = 1;
 const PLUGIN_STOP_POLL: Duration = Duration::from_millis(25);
 const PLUGIN_TERMINATION_BUDGET: Duration = Duration::from_secs(1);
+const PLUGIN_STDERR_MAX_LINES: usize = 64;
+const PLUGIN_STDERR_MAX_LINE_BYTES: usize = 1024;
+const PLUGIN_STDERR_MAX_BYTES: usize = 32 * 1024;
 
 pub(crate) struct PluginManager {
     startup: BTreeMap<String, Arc<ProviderEntry>>,
@@ -39,6 +43,7 @@ pub(crate) struct PluginManager {
     startup_shell: ShellConfig,
     dynamic: Mutex<DynamicState>,
     candidate_gate: Mutex<()>,
+    last_check_stderr: Mutex<BTreeMap<String, PluginStderrSnapshot>>,
     config_path: PathBuf,
     prepared_profiles: PreparedShellProfileCache,
     next_generation: AtomicU64,
@@ -62,11 +67,31 @@ struct ProviderEntry {
     failed: AtomicBool,
     error_code: Mutex<Option<String>>,
     process: Arc<ProviderProcess>,
+    catalog: OnceLock<PluginCatalog>,
     session: Mutex<Option<ProviderConnection>>,
 }
 
 struct ProviderProcess {
     child: Mutex<Option<ManagedChild>>,
+    stderr: Arc<Mutex<PluginStderrDiagnostics>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PluginStderrSnapshot {
+    pub(crate) lines: Vec<PluginStderrLine>,
+    pub(crate) aggregate_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PluginStderrLine {
+    pub(crate) text: String,
+    pub(crate) truncated: bool,
+}
+
+#[derive(Default)]
+struct PluginStderrDiagnostics {
+    lines: VecDeque<PluginStderrLine>,
+    aggregate_bytes: usize,
 }
 
 struct ProviderConnection {
@@ -269,6 +294,14 @@ impl PluginManager {
             );
             let instance_id = entry.instance_id.clone();
             let failure_code = failure.as_ref().map(|failure| failure.code.to_string());
+            let catalog_tool_count = entry
+                .catalog
+                .get()
+                .map_or(0, |catalog| catalog.tools().len());
+            let catalog_digest = entry
+                .catalog
+                .get()
+                .map(|catalog| catalog.digest().to_string());
             let mut advertised = StartupPluginProvider {
                 provider_id: provider.id.clone(),
                 provider_instance_id: instance_id,
@@ -279,6 +312,8 @@ impl PluginManager {
                     "ready".to_string()
                 },
                 error_code: failure_code,
+                catalog_tool_count,
+                catalog_digest,
                 tools: Vec::new(),
             };
 
@@ -325,6 +360,7 @@ impl PluginManager {
                 first_class_restart_required: false,
             }),
             candidate_gate: Mutex::new(()),
+            last_check_stderr: Mutex::new(BTreeMap::new()),
             config_path,
             prepared_profiles,
             next_generation: AtomicU64::new(2),
@@ -334,6 +370,34 @@ impl PluginManager {
 
     pub(crate) fn startup_catalog(&self) -> Vec<StartupPluginProvider> {
         self.startup_catalog.clone()
+    }
+
+    /// Runner-local diagnostic projection only. This is intentionally not part
+    /// of Plugin gateway responses or any Server-facing protocol contract.
+    #[allow(dead_code)]
+    pub(crate) fn local_stderr_diagnostics(
+        &self,
+        plane: PluginPlane,
+        provider_id: &str,
+        provider_instance_id: &str,
+    ) -> Option<PluginStderrSnapshot> {
+        self.resolve_provider(plane, provider_id, provider_instance_id)
+            .map(|provider| provider.process.stderr_snapshot())
+    }
+
+    /// Last disposable `check` candidate stderr for local operator tooling.
+    /// The projection is bounded/sanitized and is never serialized into a
+    /// PluginGatewayResponse.
+    #[allow(dead_code)]
+    pub(crate) fn local_check_stderr_diagnostics(
+        &self,
+        provider_id: &str,
+    ) -> Option<PluginStderrSnapshot> {
+        self.last_check_stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(provider_id)
+            .cloned()
     }
 
     pub(crate) fn handle(&self, request: PluginGatewayRequest) -> PluginGatewayResponse {
@@ -375,8 +439,7 @@ impl PluginManager {
                 else {
                     return stale_provider();
                 };
-                match provider.with_connection(|connection, timeout| connection.tools_list(timeout))
-                {
+                match provider.frozen_tools() {
                     Ok(tools) => {
                         PluginGatewayResponse::success(PluginGatewayResponsePayload::Tools {
                             tools,
@@ -472,6 +535,10 @@ impl PluginManager {
                 )
             }
         };
+        self.last_check_stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(provider_id);
         let candidate = match load_config(&self.config_path) {
             Ok(candidate) => candidate,
             Err(error) => {
@@ -512,6 +579,10 @@ impl PluginManager {
             &self.prepared_profiles,
             &self.stopping,
         );
+        self.last_check_stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(provider_id.to_string(), entry.process.stderr_snapshot());
         if self.stopping.load(Ordering::SeqCst)
             || failure
                 .as_ref()
@@ -697,6 +768,19 @@ impl Drop for PluginManager {
 }
 
 impl ProviderEntry {
+    fn frozen_catalog(&self) -> Result<&PluginCatalog, ProviderFailure> {
+        if self.failed.load(Ordering::SeqCst) {
+            return Err(ProviderFailure::not_started("plugin_provider_unavailable"));
+        }
+        self.catalog
+            .get()
+            .ok_or_else(|| ProviderFailure::not_started("plugin_provider_unavailable"))
+    }
+
+    fn frozen_tools(&self) -> Result<Vec<PluginTool>, ProviderFailure> {
+        Ok(self.frozen_catalog()?.tools().to_vec())
+    }
+
     fn view(&self, plane: PluginPlane, startup_direct_tool_count: usize) -> PluginProviderView {
         let failed = self.failed.load(Ordering::SeqCst);
         PluginProviderView {
@@ -760,38 +844,40 @@ impl ProviderEntry {
         arguments: Value,
         expected_schema: &PluginSchemaObservation,
     ) -> Result<PluginToolResult, ProviderFailure> {
-        self.with_connection(|connection, timeout| {
-            let started = Instant::now();
-            let tools = connection.tools_list(timeout)?;
-            let Some(tool) = tools.iter().find(|tool| tool.name == name) else {
-                return Err(ProviderFailure {
-                    dispatch_state: PluginDispatchState::NotStarted,
-                    code: "plugin_tool_unavailable",
-                    fatal: false,
-                });
-            };
-            if &tool.schema_observation() != expected_schema {
-                return Err(ProviderFailure {
-                    dispatch_state: PluginDispatchState::NotStarted,
-                    code: "plugin_schema_changed",
-                    fatal: false,
-                });
+        let catalog = self.frozen_catalog()?;
+        let Some(tool) = catalog.tool(name) else {
+            return Err(ProviderFailure {
+                dispatch_state: PluginDispatchState::NotStarted,
+                code: "plugin_tool_unavailable",
+                fatal: false,
+            });
+        };
+        if &tool.schema_observation() != expected_schema {
+            return Err(ProviderFailure {
+                dispatch_state: PluginDispatchState::NotStarted,
+                code: "plugin_schema_changed",
+                fatal: false,
+            });
+        }
+        validate_plugin_input_arguments(&tool.input_schema, &arguments).map_err(|_| {
+            ProviderFailure {
+                dispatch_state: PluginDispatchState::NotStarted,
+                code: "plugin_arguments_schema_invalid",
+                fatal: false,
             }
-            let Some(remaining) = timeout
-                .checked_sub(started.elapsed())
-                .filter(|remaining| !remaining.is_zero())
-            else {
-                // The schema preflight completed successfully, so the provider
-                // connection is still trustworthy, but the model-requested
-                // effect must not start after the provider's total call budget
-                // has already been consumed.
-                return Err(ProviderFailure {
-                    dispatch_state: PluginDispatchState::NotStarted,
-                    code: "plugin_timeout",
-                    fatal: false,
-                });
-            };
-            connection.tools_call(name, arguments, remaining)
+        })?;
+        let output_schema = tool.output_schema.clone();
+        self.with_connection(move |connection, timeout| {
+            let result = connection.tools_call(name, arguments, timeout)?;
+            if let Some(output_schema) = output_schema.as_ref() {
+                let structured = result.structured_content.as_ref().ok_or_else(|| {
+                    ProviderFailure::completed("plugin_output_schema_violation", true)
+                })?;
+                validate_plugin_structured_output(output_schema, structured).map_err(|_| {
+                    ProviderFailure::completed("plugin_output_schema_violation", true)
+                })?;
+            }
+            Ok(result)
         })
     }
 
@@ -809,11 +895,42 @@ impl Drop for ProviderEntry {
     }
 }
 
+impl PluginStderrDiagnostics {
+    fn push_line(&mut self, text: String, truncated: bool) {
+        let bytes = text.len();
+        self.aggregate_bytes = self.aggregate_bytes.saturating_add(bytes);
+        self.lines.push_back(PluginStderrLine { text, truncated });
+        while self.lines.len() > PLUGIN_STDERR_MAX_LINES
+            || self.aggregate_bytes > PLUGIN_STDERR_MAX_BYTES
+        {
+            let Some(removed) = self.lines.pop_front() else {
+                break;
+            };
+            self.aggregate_bytes = self.aggregate_bytes.saturating_sub(removed.text.len());
+        }
+    }
+
+    fn snapshot(&self) -> PluginStderrSnapshot {
+        PluginStderrSnapshot {
+            lines: self.lines.iter().cloned().collect(),
+            aggregate_bytes: self.aggregate_bytes,
+        }
+    }
+}
+
 impl ProviderProcess {
     fn new() -> Self {
         Self {
             child: Mutex::new(None),
+            stderr: Arc::new(Mutex::new(PluginStderrDiagnostics::default())),
         }
+    }
+
+    fn stderr_snapshot(&self) -> PluginStderrSnapshot {
+        self.stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .snapshot()
     }
 
     fn install(&self, child: ManagedChild) {
@@ -873,6 +990,7 @@ fn prepare_provider(
         failed: AtomicBool::new(false),
         error_code: Mutex::new(None),
         process: Arc::clone(&process),
+        catalog: OnceLock::new(),
         session: Mutex::new(None),
     });
     let cwd = config
@@ -1002,12 +1120,10 @@ fn prepare_provider(
         }
     };
     let stderr_thread_name = format!("wc-plugin-stderr-{}", config.id);
+    let stderr_diagnostics = Arc::clone(&process.stderr);
     if std::thread::Builder::new()
         .name(stderr_thread_name)
-        .spawn(move || {
-            let mut stderr = stderr;
-            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
-        })
+        .spawn(move || provider_stderr_reader(stderr, stderr_diagnostics))
         .is_err()
     {
         let _ = child.terminate_tree();
@@ -1134,6 +1250,38 @@ fn prepare_provider(
             );
         }
     };
+    let catalog = match PluginCatalog::admit(tools) {
+        Ok(catalog) => catalog,
+        Err(_) => {
+            process.terminate();
+            entry.retire("plugin_tools_list_invalid");
+            return (
+                entry,
+                None,
+                Some(ProviderPreparationFailure {
+                    phase: PluginCheckPhase::Validation,
+                    code: "plugin_tools_list_invalid",
+                    detail: "Plugin tools/list result could not be admitted as a canonical catalog",
+                    diagnostic: None,
+                }),
+            );
+        }
+    };
+    let tools = catalog.tools().to_vec();
+    if entry.catalog.set(catalog).is_err() {
+        process.terminate();
+        entry.retire("plugin_provider_state_failed");
+        return (
+            entry,
+            None,
+            Some(ProviderPreparationFailure {
+                phase: PluginCheckPhase::Validation,
+                code: "plugin_provider_state_failed",
+                detail: "Plugin provider catalog state could not be frozen",
+                diagnostic: None,
+            }),
+        );
+    }
     *entry.session.lock().unwrap() = Some(connection);
     (entry, Some(tools), None)
 }
@@ -1169,11 +1317,6 @@ impl ProviderConnection {
             ));
         }
         Ok(())
-    }
-
-    fn tools_list(&mut self, timeout: Duration) -> Result<Vec<PluginTool>, ProviderFailure> {
-        self.tools_list_internal(timeout, false)
-            .map_err(|failure| failure.failure)
     }
 
     fn tools_list_with_diagnostic(
@@ -1385,6 +1528,50 @@ fn provider_stdin_writer(mut stdin: ChildStdin, requests: mpsc::Receiver<WriteRe
         if failed {
             return;
         }
+    }
+}
+
+fn provider_stderr_reader(mut stderr: impl Read, diagnostics: Arc<Mutex<PluginStderrDiagnostics>>) {
+    let mut buffer = [0u8; 4096];
+    let mut line = Vec::with_capacity(PLUGIN_STDERR_MAX_LINE_BYTES);
+    let mut truncated = false;
+    loop {
+        let read = match stderr.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(_) => break,
+        };
+        for byte in &buffer[..read] {
+            if *byte == b'\n' {
+                let text = String::from_utf8(line.clone()).unwrap_or_default();
+                diagnostics
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push_line(text, truncated);
+                line.clear();
+                truncated = false;
+                continue;
+            }
+            if *byte == b'\r' {
+                continue;
+            }
+            if line.len() < PLUGIN_STDERR_MAX_LINE_BYTES {
+                line.push(match *byte {
+                    b'\t' => b' ',
+                    b' '..=b'~' => *byte,
+                    _ => b'?',
+                });
+            } else {
+                truncated = true;
+            }
+        }
+    }
+    if !line.is_empty() || truncated {
+        let text = String::from_utf8(line).unwrap_or_default();
+        diagnostics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_line(text, truncated);
     }
 }
 

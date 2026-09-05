@@ -49,6 +49,8 @@ async fn oauth_mcp_service_with_startup_plugin(
                         name: "Repo Tools".to_string(),
                         status: "ready".to_string(),
                         error_code: None,
+                        catalog_tool_count: 1,
+                        catalog_digest: None,
                         tools: vec![webcodex_core::plugin::PluginTool {
                             name: tool_name.to_string(),
                             title: None,

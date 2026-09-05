@@ -31,6 +31,8 @@ fn startup_provider(instance_id: &str) -> StartupPluginProvider {
         name: "Repo Tools".to_string(),
         status: "ready".to_string(),
         error_code: None,
+        catalog_tool_count: 1,
+        catalog_digest: None,
         tools: vec![plugin_tool()],
     }
 }

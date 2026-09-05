@@ -223,7 +223,7 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
         provider_instance_id: dynamic_v1.clone(),
         name: "echo".to_string(),
         arguments: json!({"value":"still-v1"}),
-        expected_schema: v1_schema,
+        expected_schema: v1_schema.clone(),
     });
     assert!(
         v1_call.error.is_none(),
@@ -239,12 +239,39 @@ fn check_observes_edited_v2_without_replacing_current_dynamic_v1() {
     let tools = fixture.manager.handle(PluginGatewayRequest::ToolsList {
         plane: PluginPlane::Effective,
         provider_id: "fake".to_string(),
-        provider_instance_id: dynamic_v2,
+        provider_instance_id: dynamic_v2.clone(),
     });
     let Some(PluginGatewayResponsePayload::Tools { tools }) = tools.payload else {
         panic!("v2 tools/list failed: {:?}", tools.error);
     };
     assert_eq!(tools[0].name, "echo_v2");
+
+    let calls_before_stale = fixture.marker_count("call");
+    let stale_v1 = fixture.manager.handle(PluginGatewayRequest::ToolsCall {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v1,
+        name: "echo".to_string(),
+        arguments: json!({"value":"stale-v1"}),
+        expected_schema: v1_schema,
+    });
+    assert_eq!(stale_v1.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(
+        stale_v1.error.as_ref().unwrap().code,
+        "stale_plugin_provider"
+    );
+    assert_eq!(
+        fixture.marker_count("call"),
+        calls_before_stale,
+        "a stale provider instance must never dispatch into the new provider"
+    );
+
+    let v2_list_again = fixture.manager.handle(PluginGatewayRequest::ToolsList {
+        plane: PluginPlane::Effective,
+        provider_id: "fake".to_string(),
+        provider_instance_id: dynamic_v2,
+    });
+    assert!(v2_list_again.error.is_none());
     fixture.manager.shutdown();
 }
 
@@ -277,6 +304,12 @@ fn check_failures_are_structured_diagnostic_results_and_cleanup_process_trees() 
         ),
         (
             "check_oversized_schema",
+            2,
+            PluginCheckPhase::Validation,
+            "plugin_tools_list_invalid",
+        ),
+        (
+            "check_unsupported_schema",
             2,
             PluginCheckPhase::Validation,
             "plugin_tools_list_invalid",
@@ -336,6 +369,12 @@ fn check_tool_validation_failures_have_safe_actionable_diagnostics() {
             Some("echo"),
             Some("inputSchema"),
         ),
+        (
+            "check_unsupported_schema",
+            "schema_keyword_unsupported",
+            Some("echo"),
+            Some("inputSchema"),
+        ),
     ] {
         let fixture = CheckFixture::new(scenario, 2);
         let report = checked_report(fixture.check());
@@ -363,6 +402,8 @@ fn check_tool_validation_failures_have_safe_actionable_diagnostics() {
             "provider_instance_id",
             "\"properties\"",
             "\"type\":\"object\"",
+            "example.invalid",
+            "$ref",
         ] {
             assert!(
                 !encoded.contains(forbidden),
@@ -418,6 +459,14 @@ fn check_reports_executable_config_and_startup_shape_without_sensitive_details()
     let encoded = serde_json::to_string(&response).unwrap();
     assert!(!encoded.contains("diagnostic-only-secret-looking-stderr"));
     assert!(!encoded.contains(fixture._temp.path().to_string_lossy().as_ref()));
+    let local = fixture
+        .manager
+        .local_check_stderr_diagnostics("fake")
+        .expect("local check stderr projection");
+    assert!(local
+        .lines
+        .iter()
+        .any(|line| line.text == "diagnostic-only-secret-looking-stderr"));
     let report = checked_report(response);
     assert!(report.ready);
 }

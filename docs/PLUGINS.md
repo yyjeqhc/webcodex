@@ -10,6 +10,11 @@ stdout. It does **not** need to implement an MCP server or depend on an MCP SDK.
 The Plugin process runs on the Runner machine. The Server never receives its
 command, argv, cwd, prepared environment, PID, stderr, or local credentials.
 
+Native Plugins are **trusted local executables**. WebCodex does not sandbox,
+contain, sign, or otherwise make an untrusted executable safe. A Plugin has the
+same practical local-process trust implications as launching that executable
+directly with the prepared Runner environment.
+
 ## Configure a Plugin
 
 Plugins have their own `runner.toml` section; they are not MCP providers:
@@ -67,14 +72,27 @@ There are exactly two Plugin planes.
 ### Startup
 
 When the Runner process starts, it reads `[plugins]`, prepares each provider,
-starts it, performs `initialize`, calls `tools/list`, validates the bounded tool
-schemas, and freezes the successful startup catalog for that Runner instance.
-The admitted provider process remains persistent for direct calls.
+starts it, performs `initialize`, calls `tools/list` **once**, validates the
+bounded Tool schemas, canonicalizes the result, and freezes that catalog against
+the exact `provider_instance_id`. The admitted provider process remains
+persistent for calls, but ordinary discovery/call paths never ask that same
+instance to list again.
 
-The startup catalog is immutable for the lifetime of that Runner process.
+The frozen provider catalog is immutable for that provider-instance lifetime.
+Its canonical validated form has a stable SHA-256 catalog digest and exact Tool
+count for stale detection/audit. A catalog can change only through a new
+provider instance created by reload/restart. The startup plane itself remains
+immutable for the lifetime of the Runner process.
 Editing Plugin source or `runner.toml`, or using `plugin_tool reload`, does not
 change first-class tools. A Runner restart creates a new Runner/provider
 instance and performs startup admission again.
+
+The complete provider catalog and the startup direct-eligible subset are
+separate contracts. `PLUGIN_STARTUP_MAX_DIRECT_TOOLS` (currently 64) is a Runner
+safety cap for the direct subset, not a claim that a provider can expose only 64
+Tools and not a per-model/per-surface routing policy. A bounded provider catalog
+can therefore remain usable through `plugin_tool` even when no direct subset is
+admitted. Server-side surface budgets remain a separate governance concern.
 
 If a startup tool name is valid, bounded, unique across the caller-visible
 startup inventory, and does not conflict with a WebCodex-reserved tool name, it
@@ -111,16 +129,15 @@ plugin_tool(action="call", binding="wc_pbind_...", arguments={"query":"foo"})
 ```
 
 `list(runner, plugin)` is a runtime observation of the already committed/effective
-provider. It resolves the exact caller-visible Runner, observes the current
-provider instance, and asks only that instance for `tools/list`. It does not
-reread `runner.toml`, start a disposable candidate, run `check`, reload a
-provider, mutate the dynamic overlay, create a binding, or alter
-`firstClassRestartRequired`. If the exact Runner/provider is replaced between
-the provider observation and `tools/list`, discovery fails closed and tells the
-caller to re-list; WebCodex never silently resolves the same logical name to the
-replacement or replays the operation. Full schemas remain exclusive to
-`describe`; list returns only bounded discovery metadata such as tool names and
-optional titles.
+provider. It resolves the exact caller-visible Runner and provider instance, then
+reads that instance's frozen catalog locally. It does **not** issue another
+provider `tools/list` round trip, reread `runner.toml`, start a disposable
+candidate, run `check`, reload a provider, mutate the dynamic overlay, create a
+binding, or alter `firstClassRestartRequired`. If the exact Runner/provider was
+replaced, discovery fails closed and tells the caller to re-list; WebCodex never
+silently resolves the same logical name to the replacement or replays the
+operation. Full schemas remain exclusive to `describe`; list returns only
+bounded discovery metadata such as tool names and optional titles.
 
 Provider-list `status` describes current effective runtime health. When the
 logical provider also existed in the frozen startup catalog, `startupAdmission`
@@ -150,7 +167,10 @@ safe, a validated tool name and finite field label such as `inputSchema`.
 Diagnostics come only from WebCodex protocol parsing/validators; raw serde
 errors, protocol lines, schema fragments, Plugin stdout/stderr, executable
 configuration, environment, and process identities are never copied into the
-report. Plugin stderr remains Runner-local.
+report. Plugin stderr remains Runner-local. The Runner keeps only a bounded,
+control-sanitized local stderr ring for live providers and the most recent
+disposable `check` candidate; this local projection is not part of the Plugin
+gateway response.
 
 `startupToolShape.eligible=true` means only that this checked provider's own Tool
 definitions satisfy the stricter per-provider startup Tool bounds. It is **not**
@@ -250,6 +270,26 @@ Messages, schemas, arguments, JSON structure, tool counts, and results are
 bounded. Malformed or unsupported data fails closed instead of being truncated
 into a different tool contract.
 
+### Native Plugin Schema Profile v1
+
+`inputSchema` and `outputSchema` use a deliberately small WebCodex profile; they
+are **not** advertised as full JSON Schema 2020-12. Every schema node requires a
+single string `type`. Supported types are `object`, `array`, `string`, `number`,
+`integer`, `boolean`, and `null`. Supported keywords are:
+
+- all nodes: `type`, optional `title`, `description`, `enum`, `const`;
+- object: `properties`, `required`, boolean `additionalProperties`;
+- string: `minLength`, `maxLength`;
+- array: `minItems`, `maxItems`, `items`.
+
+Input/output schema roots must be `type: "object"`. Property counts, required
+entries, enum size, schema bytes/depth/nodes/strings, and declared length/item
+bounds are finite. Unknown keywords are rejected at provider admission rather
+than silently ignored. In particular v1 does not support `$ref`/remote refs,
+`$defs`, recursive refs, `pattern`, `format`, numeric `minimum`/`maximum`, schema
+forms of `additionalProperties`, union `type`, `anyOf`, `oneOf`, `allOf`, `not`,
+or arbitrary draft-specific keywords.
+
 See [`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs) for
 a complete no-dependency Node example.
 
@@ -257,6 +297,15 @@ a complete no-dependency Node example.
 
 Each provider handles one request at a time. Concurrent calls receive a
 provider-busy result instead of being silently queued without bound.
+
+Before `tools/call` can enter the provider connection, WebCodex resolves the
+exact frozen catalog entry, checks the caller's exact schema observation, and
+validates `arguments` against that frozen input schema. Any failure here is
+`NotStarted`; the executable sees zero `tools/call` bytes. No `tools/list` is
+performed on this path. After a provider response arrives, ordinary text/result
+bounds still apply. When an `outputSchema` exists, `structuredContent` is also
+required to match that exact frozen output schema. A mismatch is a completed
+provider contract violation and retires that provider instance fail-closed.
 
 `plugin_tool call` requires an opaque binding from a preceding `describe`.
 Bindings are bounded server-side observations, not bearer authorization tokens:
@@ -268,18 +317,23 @@ binding to a newer same-named provider/tool, never manufactures a replacement
 binding, and never replays the call. Internal Runner/provider instance ids and
 schema revision machinery are not exposed in the handle.
 
-The provider timeout is one total request budget. It starts before request
-encoding/validation and covers bounded stdin queue admission, the complete
-frame write plus flush confirmation, and the response wait. A Plugin that stops
-reading stdin therefore cannot make `write_all` escape the provider timeout.
+After the local frozen-schema preflight succeeds, the provider timeout is one
+total RPC budget. It starts before provider-request encoding and covers bounded
+stdin queue admission, the complete frame write plus flush confirmation, and the
+response wait. A Plugin that stops reading stdin therefore cannot make
+`write_all` escape the provider timeout.
 For effectful `tools/call`, once a frame may have started writing, a write
 timeout/failure, connection loss, process death, or response timeout is
 `OutcomeUnknown`; WebCodex does not automatically retry or replay it. Failures
 proven to happen before any possible send are `NotStarted`.
 
-Plugin stdout is protocol-only. Plugin stderr is drained separately for local
-diagnostics and is never treated as protocol, inserted into a model result, or
-published in the startup registration catalog.
+Plugin stdout is protocol-only. Plugin stderr is drained continuously on a
+separate worker so stderr flooding cannot backpressure stdout protocol progress.
+The local ring retains at most 64 lines, 1 KiB per line, and 32 KiB aggregate;
+control/non-UTF-8 bytes are projected safely and overlong lines are marked
+truncated. Stderr is never treated as protocol, inserted into a model ToolResult
+or Workflow Session ledger, or automatically sent to the Server/startup
+registration catalog.
 
 ## OAuth
 

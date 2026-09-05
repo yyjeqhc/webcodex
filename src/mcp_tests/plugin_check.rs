@@ -59,6 +59,8 @@ async fn register_plugin_runner(
                         name: "Repo Tools".to_string(),
                         status: "ready".to_string(),
                         error_code: None,
+                        catalog_tool_count: 1,
+                        catalog_digest: None,
                         tools: vec![direct_tool(tool_name)],
                     }]),
                     ..Default::default()

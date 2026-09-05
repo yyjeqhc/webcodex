@@ -248,6 +248,8 @@ mod tests {
         "apply_patch",
         "apply_text_edits",
         "run_process",
+        "open_session_shell",
+        "session_shell_exec",
         "observe_jobs",
         "list_jobs",
         "cargo_check",

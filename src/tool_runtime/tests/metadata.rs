@@ -1712,6 +1712,7 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
                     "run_process"
                         | "run_script"
                         | "run_shell"
+                        | "session_shell_exec"
                         | "cargo_fmt"
                         | "cargo_check"
                         | "cargo_test"

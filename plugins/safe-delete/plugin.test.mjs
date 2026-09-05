@@ -204,7 +204,7 @@ test("Linux fails closed when no Trash backend is installed", () => {
   }
 });
 
-test("macOS passes the target as argv instead of interpolating it into AppleScript", () => {
+test("macOS uses Foundation Trash and passes the target as argv instead of interpolating it", () => {
   const calls = [];
   const target = `/tmp/quote-'-$HOME-victim`;
   runTrashBackend(target, {
@@ -218,6 +218,9 @@ test("macOS passes the target as argv instead of interpolating it into AppleScri
   assert.equal(calls[0].command, "/usr/bin/osascript");
   assert.equal(calls[0].args.at(-1), target);
   assert.equal(calls[0].args.at(-2).includes(target), false);
+  assert.deepEqual(calls[0].args.slice(0, 3), ["-l", "JavaScript", "-e"]);
+  assert.match(calls[0].args.at(-2), /NSFileManager/);
+  assert.equal(calls[0].args.at(-2).includes("Finder"), false);
 });
 
 test("Windows passes the target through environment and only falls back when powershell is missing", () => {

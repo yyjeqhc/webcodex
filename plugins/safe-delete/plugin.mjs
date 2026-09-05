@@ -45,7 +45,7 @@ export const SAFE_DELETE_TOOL = {
       path: { type: "string", maxLength: MAX_PATH_CHARS },
       backend: {
         type: "string",
-        enum: ["none", "freedesktop", "gio", "trash-put", "finder", "powershell"],
+        enum: ["none", "freedesktop", "gio", "trash-put", "foundation", "powershell"],
       },
       errorCode: { type: "string", maxLength: 128 },
     },
@@ -294,13 +294,19 @@ function spawnBackend(spawnSync, command, args, options = {}) {
   );
 }
 
-const MACOS_TRASH_SCRIPT = String.raw`
-on run argv
-  set targetPath to item 1 of argv
-  tell application "Finder"
-    delete POSIX file targetPath
-  end tell
-end run
+const MACOS_TRASH_JXA = String.raw`
+ObjC.import('Foundation');
+function run(argv) {
+  const url = $.NSURL.fileURLWithPath(argv[0]);
+  const resultURL = Ref();
+  const error = Ref();
+  const ok = $.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError(
+    url,
+    resultURL,
+    error,
+  );
+  if (!ok) throw new Error('Trash operation failed');
+}
 `.trim();
 
 const WINDOWS_TRASH_SCRIPT = String.raw`
@@ -423,8 +429,17 @@ export function runTrashBackend(
   }
 
   if (platform === "darwin") {
-    const finder = spawnBackend(spawnSync, "/usr/bin/osascript", ["-e", MACOS_TRASH_SCRIPT, target]);
-    return { backend: finder.state === "missing" ? "none" : "finder", ...finder };
+    const foundation = spawnBackend(spawnSync, "/usr/bin/osascript", [
+      "-l",
+      "JavaScript",
+      "-e",
+      MACOS_TRASH_JXA,
+      target,
+    ]);
+    return {
+      backend: foundation.state === "missing" ? "none" : "foundation",
+      ...foundation,
+    };
   }
 
   if (platform === "win32") {

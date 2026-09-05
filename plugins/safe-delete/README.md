@@ -34,7 +34,7 @@ is running.
 | Platform | Backend |
 | --- | --- |
 | Linux | freedesktop.org Home Trash (`$XDG_DATA_HOME/Trash`) using same-filesystem atomic rename; then `gio trash`; then `trash-put` only when `gio` is not installed |
-| macOS | Finder Trash through `/usr/bin/osascript` with the path passed as argv |
+| macOS | Foundation `NSFileManager` Trash API through built-in JXA (`/usr/bin/osascript -l JavaScript`), with the path passed as argv |
 | Windows | PowerShell + `Microsoft.VisualBasic.FileIO` with `SendToRecycleBin` |
 
 If no supported backend is available, the operation fails without deleting the

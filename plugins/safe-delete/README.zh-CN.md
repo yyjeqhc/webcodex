@@ -26,7 +26,7 @@
 | 平台 | Backend |
 | --- | --- |
 | Linux | 先按 freedesktop.org Home Trash（`$XDG_DATA_HOME/Trash`）做同文件系统 atomic rename；再尝试 `gio trash`；只有系统未安装 `gio` 时才尝试 `trash-put` |
-| macOS | 通过 `/usr/bin/osascript` 调 Finder Trash，目标路径作为独立 argv 传入 |
+| macOS | 通过系统内置 JXA（`/usr/bin/osascript -l JavaScript`）直接调用 Foundation `NSFileManager` Trash API，目标路径作为独立 argv 传入 |
 | Windows | PowerShell + `Microsoft.VisualBasic.FileIO` 的 `SendToRecycleBin` |
 
 没有可用的安全回收站 backend 时，操作会失败，不会改成永久删除。内建 Linux backend

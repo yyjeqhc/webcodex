@@ -415,6 +415,12 @@ impl PluginManager {
                 "Plugin manager began stopping before reload commit; dynamic state was unchanged",
             );
         }
+        // Replacing an entry may drop the last ProviderEntry Arc, whose Drop
+        // performs bounded process-tree termination. Keep that cleanup outside
+        // the dynamic-state mutex so unrelated list/describe/call operations do
+        // not wait on old-provider process teardown during an otherwise atomic
+        // reload commit.
+        let mut retired = Vec::new();
         let previous_ids: BTreeSet<_> = self
             .startup
             .keys()
@@ -423,13 +429,18 @@ impl PluginManager {
             .collect();
         for provider_id in previous_ids {
             if !configured.contains(&provider_id) {
-                dynamic.overlay.insert(provider_id, DynamicEntry::Removed);
+                if let Some(previous) = dynamic.overlay.insert(provider_id, DynamicEntry::Removed) {
+                    retired.push(previous);
+                }
             }
         }
         for (provider_id, provider) in prepared {
-            dynamic
+            if let Some(previous) = dynamic
                 .overlay
-                .insert(provider_id, DynamicEntry::Provider(provider));
+                .insert(provider_id, DynamicEntry::Provider(provider))
+            {
+                retired.push(previous);
+            }
         }
         dynamic.first_class_restart_required = candidate.plugins != self.startup_config
             || candidate.shell != self.startup_shell
@@ -439,6 +450,7 @@ impl PluginManager {
                 .any(|entry| matches!(entry, DynamicEntry::Provider(_) | DynamicEntry::Removed));
         let restart_required = dynamic.first_class_restart_required;
         drop(dynamic);
+        drop(retired);
 
         PluginGatewayResponse::success(PluginGatewayResponsePayload::Reloaded {
             providers: self.provider_views(),

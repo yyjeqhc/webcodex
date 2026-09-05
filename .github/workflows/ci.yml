@@ -597,7 +597,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $stage = Join-Path $env:GITHUB_WORKSPACE "target\desktop-ci-bundle"
+          $stage = Join-Path $env:RUNNER_TEMP "webcodex-desktop-ci-bundle"
           & .\scripts\prepare_desktop_bundle.ps1 `
             -BinDir "target\dogfood" `
             -Version "${{ steps.runtime.outputs.version }}" `

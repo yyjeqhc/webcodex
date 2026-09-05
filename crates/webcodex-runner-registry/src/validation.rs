@@ -4,7 +4,7 @@ use webcodex_core::runner_protocol::{
     ProviderCallSummary, RunnerConfigReloadStatus, RunnerProjectSummary, ShellFileOpRequest,
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES,
+    PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES, RUNNER_CONFIG_RESTART_REQUIRED_FIELDS,
     STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 
@@ -32,7 +32,6 @@ pub(super) fn normalize_config_reload(
     let mut status = status?;
     const RESULTS: &str = "not_attempted success partial failure unsupported";
     const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid reload_unsupported";
-    const FIELDS: &str = "capabilities client_id display_name host_context hostname max_concurrent_jobs owner poll_interval_ms project_registry_dir projects_dir quic server_url token transport websocket_connect_timeout_secs";
     const ERROR_FIELDS: &str = "max_concurrent_jobs shell.max_persistent_shells shell.persistent_shell_idle_timeout_secs acp.max_concurrent_runs acp.permission_timeout_secs mcp.request_timeout_secs";
     const ERROR_REASONS: &str = "out_of_range";
     if status.generation == 0
@@ -67,7 +66,7 @@ pub(super) fn normalize_config_reload(
     }
     status
         .restart_required_fields
-        .retain(|field| FIELDS.split_whitespace().any(|v| v == field));
+        .retain(|field| RUNNER_CONFIG_RESTART_REQUIRED_FIELDS.contains(&field.as_str()));
     status.restart_required_fields.sort();
     status.restart_required_fields.dedup();
     status.restart_required = !status.restart_required_fields.is_empty();

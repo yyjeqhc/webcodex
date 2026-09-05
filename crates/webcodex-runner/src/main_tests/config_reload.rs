@@ -315,3 +315,286 @@ fn mixed_reload_applies_hot_fields_and_reports_static_restart_fields() {
         (180, 4096, "bash")
     );
 }
+
+#[test]
+fn first_class_check_validates_candidate_without_mutating_active_config() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let before = runtime.snapshot();
+    let before_status = before.reload_status();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe-new",
+            Some(8),
+            180,
+            4096,
+            "bash",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_2",
+        ),
+    )
+    .unwrap();
+
+    let checked = runtime.check_config();
+    assert_eq!(
+        checked.execution_state,
+        runner_protocol::RunnerConfigExecutionState::Completed
+    );
+    assert_eq!(checked.valid, Some(true));
+    assert_eq!(checked.current_generation, Some(1));
+    assert!(checked.restart_required);
+    assert_eq!(
+        checked.restart_required_fields,
+        vec!["client_id".to_string(), "max_concurrent_jobs".to_string()]
+    );
+
+    let after = runtime.snapshot();
+    assert!(Arc::ptr_eq(&before, &after));
+    assert_eq!(after.reload_status(), before_status);
+    assert_eq!(after.policy.max_timeout_secs, 60);
+    assert_eq!(after.shell.program, "sh");
+    assert_eq!(
+        after.external_tools.configured_search_tool_name(),
+        Some("project_search_generation_1")
+    );
+}
+
+#[test]
+fn first_class_check_reports_sanitized_parse_and_structural_failures() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let before = runtime.snapshot();
+
+    std::fs::write(
+        &path,
+        "token = \"never-leak-check-secret\"\nclient_id = \"oe\"\n{ malformed toml",
+    )
+    .unwrap();
+    let malformed = runtime.check_config();
+    assert_eq!(malformed.valid, Some(false));
+    assert_eq!(malformed.current_generation, Some(1));
+    assert_eq!(malformed.error_code.as_deref(), Some("config_parse_failed"));
+    assert!(malformed.error_field.is_none());
+    assert!(malformed.error_reason.is_none());
+
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            Some(999),
+            60,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_1",
+        ),
+    )
+    .unwrap();
+    let structural = runtime.check_config();
+    assert_eq!(structural.valid, Some(false));
+    assert_eq!(structural.current_generation, Some(1));
+    assert_eq!(
+        structural.error_code.as_deref(),
+        Some("config_validation_failed")
+    );
+    assert_eq!(
+        structural.error_field.as_deref(),
+        Some("max_concurrent_jobs")
+    );
+    assert_eq!(structural.error_reason.as_deref(), Some("out_of_range"));
+
+    let serialized = format!(
+        "{} {}",
+        serde_json::to_string(&malformed).unwrap(),
+        serde_json::to_string(&structural).unwrap()
+    );
+    assert!(!serialized.contains("never-leak-check-secret"));
+    assert!(!serialized.contains("test-token"));
+    assert!(!serialized.contains(path.to_string_lossy().as_ref()));
+    assert!(!serialized.contains("999"));
+    assert!(Arc::ptr_eq(&before, &runtime.snapshot()));
+    assert_eq!(runtime.snapshot().reload_status().generation, 1);
+    assert_eq!(
+        runtime.snapshot().reload_status().last_reload_result,
+        "not_attempted"
+    );
+}
+
+#[test]
+fn first_class_reload_applies_hot_candidate_once_and_fences_stale_generation() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let old = runtime.snapshot();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            None,
+            120,
+            2048,
+            "bash",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_2",
+        ),
+    )
+    .unwrap();
+
+    let reloaded = runtime.reload_config(1);
+    assert_eq!(
+        reloaded.execution_state,
+        runner_protocol::RunnerConfigExecutionState::Completed
+    );
+    assert_eq!(reloaded.valid, Some(true));
+    assert_eq!(reloaded.current_generation, Some(2));
+    assert!(!reloaded.restart_required);
+    assert_eq!(runtime.snapshot().policy.max_timeout_secs, 120);
+    assert_eq!(old.policy.max_timeout_secs, 60);
+
+    std::fs::write(&path, "{ malformed but generation fence must win").unwrap();
+    let stale = runtime.reload_config(1);
+    assert_eq!(
+        stale.execution_state,
+        runner_protocol::RunnerConfigExecutionState::NotStarted
+    );
+    assert_eq!(stale.valid, None);
+    assert_eq!(stale.current_generation, Some(2));
+    assert_eq!(
+        stale.error_code.as_deref(),
+        Some("config_generation_conflict")
+    );
+    assert_eq!(runtime.snapshot().generation, 2);
+    assert_eq!(runtime.snapshot().policy.max_timeout_secs, 120);
+}
+
+#[test]
+fn first_class_invalid_reload_preserves_active_snapshot_and_generation() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let before = runtime.snapshot();
+    std::fs::write(&path, "{ invalid runner config").unwrap();
+
+    let rejected = runtime.reload_config(1);
+    assert_eq!(
+        rejected.execution_state,
+        runner_protocol::RunnerConfigExecutionState::Completed
+    );
+    assert_eq!(rejected.valid, Some(false));
+    assert_eq!(rejected.current_generation, Some(1));
+    assert_eq!(rejected.error_code.as_deref(), Some("config_parse_failed"));
+    let after = runtime.snapshot();
+    assert!(Arc::ptr_eq(&before, &after));
+    assert_eq!(after.generation, 1);
+    assert_eq!(after.policy.max_timeout_secs, 60);
+}
+
+#[test]
+fn first_class_partial_reload_reports_exact_restart_only_fields() {
+    let (_tmp, path, runtime) = reload_fixture();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe-new",
+            Some(8),
+            180,
+            4096,
+            "bash",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_2",
+        ),
+    )
+    .unwrap();
+
+    let result = runtime.reload_config(1);
+    assert_eq!(result.valid, Some(true));
+    assert_eq!(result.current_generation, Some(2));
+    assert!(result.restart_required);
+    assert_eq!(
+        result.restart_required_fields,
+        vec!["client_id".to_string(), "max_concurrent_jobs".to_string()]
+    );
+    let active = runtime.snapshot();
+    assert_eq!(active.policy.max_timeout_secs, 180);
+    assert_eq!(active.policy.max_output_bytes, 4096);
+    assert_eq!(active.shell.program, "bash");
+}
+
+#[test]
+fn formal_reload_and_legacy_trigger_share_one_generation_sequence() {
+    let (_tmp, path, runtime) = reload_fixture();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            None,
+            90,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_2",
+        ),
+    )
+    .unwrap();
+    assert_eq!(runtime.reload_config(1).current_generation, Some(2));
+
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            None,
+            120,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_3",
+        ),
+    )
+    .unwrap();
+    let legacy_trigger = runtime.reload();
+    assert_eq!(legacy_trigger.generation, 3);
+    assert_eq!(runtime.snapshot().generation, 3);
+    assert_eq!(runtime.snapshot().policy.max_timeout_secs, 120);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_sighup_listener_still_triggers_authoritative_reload() {
+    let _guard = test_env_lock();
+    let (_tmp, path, runtime) = reload_fixture();
+    let runtime = Arc::new(runtime);
+    let listener = webcodex_runner::install_reload_listener(Arc::clone(&runtime)).unwrap();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            None,
+            150,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_sighup",
+        ),
+    )
+    .unwrap();
+
+    let sent = unsafe { libc::kill(libc::getpid(), libc::SIGHUP) };
+    assert_eq!(sent, 0);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while runtime.snapshot().generation == 1 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(runtime.snapshot().generation, 2);
+    assert_eq!(runtime.snapshot().policy.max_timeout_secs, 150);
+    runtime.begin_shutdown();
+    listener.join().unwrap();
+}

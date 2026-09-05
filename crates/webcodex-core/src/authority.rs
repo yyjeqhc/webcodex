@@ -5,6 +5,9 @@
 //! names and policy values consumed by auth, route metadata, and tool contracts.
 
 pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
+/// Consequential management of one exact caller-visible Runner process. This is
+/// deliberately independent from Project, Job, Plugin, and administrator scopes.
+pub const SCOPE_RUNNER_MANAGE: &str = "runner:manage";
 pub const SCOPE_SESSION_COLLABORATE: &str = "session:collaborate";
 pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
@@ -108,6 +111,7 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_CLIPBOARD_READ,
     SCOPE_COMPUTER_CLIPBOARD_WRITE,
     SCOPE_RUNTIME_READ,
+    SCOPE_RUNNER_MANAGE,
     SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,

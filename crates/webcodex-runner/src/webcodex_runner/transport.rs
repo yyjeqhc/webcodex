@@ -775,7 +775,7 @@ async fn shutdown_signal() {
 }
 
 #[cfg(unix)]
-fn install_reload_listener(
+pub(crate) fn install_reload_listener(
     runtime: Arc<ReloadableRunnerConfig>,
 ) -> Result<std::thread::JoinHandle<()>, String> {
     let signal_runtime = tokio::runtime::Builder::new_current_thread()

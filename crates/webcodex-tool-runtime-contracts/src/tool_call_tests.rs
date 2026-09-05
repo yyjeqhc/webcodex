@@ -41,6 +41,89 @@ fn from_tool_name_parses_unit_tools_with_empty_object() {
 }
 
 #[test]
+fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
+    use webcodex_tool_contracts::{
+        RunnerCapabilityRequirement, ToolApprovalPolicy, ToolEffect, ToolIdempotency, ToolRisk,
+    };
+
+    let check =
+        ToolCall::from_tool_name("runner_config_check", json!({"client_id": "special"})).unwrap();
+    assert!(matches!(
+        check,
+        ToolCall::RunnerConfigCheck { ref client_id } if client_id == "special"
+    ));
+
+    let reload = ToolCall::from_tool_name(
+        "runner_config_reload",
+        json!({"client_id": "special", "expected_generation": 7}),
+    )
+    .unwrap();
+    assert!(matches!(
+        reload,
+        ToolCall::RunnerConfigReload {
+            ref client_id,
+            expected_generation: 7,
+        } if client_id == "special"
+    ));
+
+    for (name, args) in [
+        (
+            "runner_config_check",
+            json!({"client_id": "special", "path": "/tmp/forbidden"}),
+        ),
+        (
+            "runner_config_reload",
+            json!({"client_id": "special", "expected_generation": 7, "path": "/tmp/forbidden"}),
+        ),
+    ] {
+        assert!(ToolCall::from_tool_name(name, args).is_err(), "{name}");
+    }
+    assert!(ToolCall::from_tool_name("runner_config", json!({"action": "check"})).is_err());
+    assert!(lookup_tool_definition("describe_config").is_none());
+
+    let check_definition = lookup_tool_definition("runner_config_check").unwrap();
+    assert_eq!(check_definition.metadata.effect, ToolEffect::Observe);
+    assert_eq!(check_definition.metadata.risk, ToolRisk::Read);
+    assert_eq!(check_definition.metadata.approval, ToolApprovalPolicy::None);
+    assert_eq!(
+        check_definition.metadata.idempotency,
+        ToolIdempotency::PureRead
+    );
+    assert_eq!(
+        check_definition.runner_capability,
+        Some(RunnerCapabilityRequirement::RunnerConfigControl)
+    );
+    assert_eq!(
+        check_definition.metadata.authority,
+        webcodex_core::authority::ToolAuthorityPolicy::Require(
+            webcodex_core::authority::SCOPE_RUNTIME_READ
+        )
+    );
+
+    let reload_definition = lookup_tool_definition("runner_config_reload").unwrap();
+    assert_eq!(reload_definition.metadata.effect, ToolEffect::Mutate);
+    assert_eq!(reload_definition.metadata.risk, ToolRisk::RunControl);
+    assert_eq!(
+        reload_definition.metadata.approval,
+        ToolApprovalPolicy::Standard
+    );
+    assert_eq!(
+        reload_definition.metadata.idempotency,
+        ToolIdempotency::FencedReplay
+    );
+    assert_eq!(
+        reload_definition.runner_capability,
+        Some(RunnerCapabilityRequirement::RunnerConfigControl)
+    );
+    assert_eq!(
+        reload_definition.metadata.authority,
+        webcodex_core::authority::ToolAuthorityPolicy::Require(
+            webcodex_core::authority::SCOPE_RUNNER_MANAGE
+        )
+    );
+}
+
+#[test]
 fn legacy_list_agents_alias_parses_to_canonical_list_runners() {
     let call = ToolCall::from_tool_name(
         "list_agents",

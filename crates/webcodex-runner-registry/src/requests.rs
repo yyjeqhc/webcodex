@@ -32,16 +32,18 @@ use webcodex_core::plugin::{
 };
 use webcodex_core::runner_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
-    RunnerRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
-    ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
-    RUNNER_CAPABILITY_APPLY_PATCH, RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
-    RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING, RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE, RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    RunnerConfigOperationRequest, RunnerRequest, ShellFileOpRequest, ShellJobContext,
+    ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
+    RAW_SHELL_COMMAND_MAX_BYTES, RUNNER_CAPABILITY_APPLY_PATCH,
+    RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA, RUNNER_CAPABILITY_APPLY_PATCH_STRICT_MATCHING,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE, RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD, RUNNER_CONFIG_REQUEST_KIND,
+    RUNNER_CONFIG_REQUEST_MAX_BYTES,
 };
 use webcodex_core::skill_store::SkillStoreRequest;
 use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
@@ -176,6 +178,7 @@ pub(super) fn enqueue_pending_request_locked(
             expected_mcp_gateway_provider_id: None,
             expected_mcp_gateway_provider_instance_id: None,
             expected_ssh_resource_runner_instance_id: None,
+            expected_runner_config_runner_instance_id: None,
             skill_store_fence: None,
             dispatched: false,
         },
@@ -1827,6 +1830,93 @@ impl RunnerRegistry {
             .get_mut(&request_id)
             .expect("SSH resource request was just enqueued")
             .expected_ssh_resource_runner_instance_id =
+            Some(expected_runner_instance_id.to_string());
+        notify_runner_locked(&inner, client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue one bounded first-class config operation against one exact live
+    /// Runner process. No filesystem path is accepted or placed on the wire.
+    pub async fn enqueue_runner_config(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: RunnerConfigOperationRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        operation
+            .validate()
+            .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
+        let content = serde_json::to_string(&operation)
+            .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
+        if content.len() > RUNNER_CONFIG_REQUEST_MAX_BYTES {
+            return Err("invalid_runner_config_request: request was not started".to_string());
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = RunnerRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.to_string(),
+            kind: RUNNER_CONFIG_REQUEST_KIND.to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: Some(content),
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            job_context: None,
+            persistent_shell: None,
+            mcp_gateway: None,
+            plugin_gateway: None,
+            coding_agent: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_runner_access(auth, runner)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if runner.runner_instance_id != expected_runner_instance_id {
+            return Err("runner_replaced: request was not started".to_string());
+        }
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::RunnerConfigControl)
+        {
+            return Err("capability_unavailable: Runner config control is unsupported".to_string());
+        }
+        if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
+            return Err("exact Runner is offline; request was not started".to_string());
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("Runner config request was just enqueued")
+            .expected_runner_config_runner_instance_id =
             Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))

@@ -57,6 +57,7 @@ pub enum RunnerFeature {
     CodingAgentRuns,
     NativeToolPlugins,
     ManagedSshResources,
+    RunnerConfigControl,
     ComputerControl,
     ComputerScrollToElement,
     ComputerKeyInput,
@@ -114,6 +115,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 54] = [
     RunnerFeature::CodingAgentRuns,
     RunnerFeature::NativeToolPlugins,
     RunnerFeature::ManagedSshResources,
+    RunnerFeature::RunnerConfigControl,
     RunnerFeature::ComputerControl,
     RunnerFeature::ComputerScrollToElement,
     RunnerFeature::ComputerKeyInput,
@@ -199,6 +201,7 @@ impl RunnerFeature {
             Self::CodingAgentRuns => wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS,
             Self::NativeToolPlugins => wire::RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS,
             Self::ManagedSshResources => wire::RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES,
+            Self::RunnerConfigControl => wire::RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL,
             Self::ComputerControl => wire::RUNNER_CAPABILITY_COMPUTER_CONTROL,
             Self::ComputerScrollToElement => wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
             Self::ComputerKeyInput => wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
@@ -268,6 +271,7 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_CODING_AGENT_RUNS => Self::CodingAgentRuns,
             wire::RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS => Self::NativeToolPlugins,
             wire::RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES => Self::ManagedSshResources,
+            wire::RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL => Self::RunnerConfigControl,
             wire::RUNNER_CAPABILITY_COMPUTER_CONTROL => Self::ComputerControl,
             wire::RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT => Self::ComputerScrollToElement,
             wire::RUNNER_CAPABILITY_COMPUTER_KEY_INPUT => Self::ComputerKeyInput,
@@ -328,6 +332,7 @@ impl RunnerFeature {
             | Self::CodingAgentRuns
             | Self::NativeToolPlugins
             | Self::ManagedSshResources
+            | Self::RunnerConfigControl
             | Self::ComputerControl
             | Self::ComputerScrollToElement
             | Self::ComputerKeyInput
@@ -393,6 +398,7 @@ impl RunnerFeature {
             Self::CodingAgentRuns => capabilities.coding_agent_runs,
             Self::NativeToolPlugins => capabilities.native_tool_plugins,
             Self::ManagedSshResources => capabilities.managed_ssh_resources,
+            Self::RunnerConfigControl => capabilities.runner_config_control,
             Self::ComputerControl => capabilities.computer_control,
             Self::ComputerScrollToElement => capabilities.computer_scroll_to_element,
             Self::ComputerKeyInput => capabilities.computer_key_input,

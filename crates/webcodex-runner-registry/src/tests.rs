@@ -351,6 +351,8 @@ mod raw_shell;
 mod registration_projection;
 #[path = "tests/run_enqueue.rs"]
 mod run_enqueue;
+#[path = "tests/runner_config.rs"]
+mod runner_config;
 #[path = "tests/runner_liveness.rs"]
 mod runner_liveness;
 #[path = "tests/shared_key_limits.rs"]

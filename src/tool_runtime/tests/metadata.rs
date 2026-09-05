@@ -7,6 +7,10 @@ use crate::runner_protocol::{
     RunnerCapabilities, RunnerRegisterRequest, RunnerResultRequest, ShellProjectInventoryPage,
     RUNNER_PROTOCOL_GENERATION_V2,
 };
+use crate::tool_runtime::kernel::{
+    HostFileImportTrust, ToolCallContext, ToolCallErrorStatus, ToolCallRequest,
+    ToolProtocolCapabilities, ToolTransport,
+};
 use crate::tool_runtime::sessions::{
     TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
 };
@@ -397,6 +401,7 @@ async fn register_agent_projects_for_auth(
                         coding_agent_runs: false,
                         native_tool_plugins: false,
                         managed_ssh_resources: false,
+                        runner_config_control: false,
                     },
                 ),
                 policy: None,
@@ -561,6 +566,88 @@ async fn list_projects_reports_smoke_selection_capabilities() {
         result.output["recommended_for_smoke"],
         json!(["agent:special:webcodex-smoke"])
     );
+}
+
+#[tokio::test]
+async fn runner_config_tools_use_normal_kernel_scope_gate_before_runner_dispatch() {
+    let runtime = test_runtime();
+    let read_only = oauth_bridge_auth_context(
+        "runner-config-read-only",
+        &[crate::auth::SCOPE_RUNTIME_READ],
+    );
+    let context = |auth| ToolCallContext {
+        transport: ToolTransport::Mcp,
+        session_id: None,
+        auth,
+        window: None,
+        record_oauth_scope_denials: false,
+        host_file_import_trust: HostFileImportTrust::Untrusted,
+    };
+
+    let check = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "runner_config_check".to_string(),
+                arguments: json!({"client_id": "missing-runner"}),
+            },
+            context(Some(&read_only)),
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(check.error_status.is_none());
+    let check = check
+        .result
+        .expect("read-like config check should reach dispatch");
+    assert!(!check.success);
+    assert_eq!(check.output["execution_state"], "not_started");
+    assert_eq!(check.output["error_code"], "runner_unavailable");
+
+    let denied_reload = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "runner_config_reload".to_string(),
+                arguments: json!({
+                    "client_id": "missing-runner",
+                    "expected_generation": 1
+                }),
+            },
+            context(Some(&read_only)),
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(denied_reload.result.is_none());
+    assert!(matches!(
+        denied_reload.error_status,
+        Some(ToolCallErrorStatus::InsufficientScope {
+            required_scope: Some(webcodex_core::authority::SCOPE_RUNNER_MANAGE),
+            ..
+        })
+    ));
+
+    let manager = oauth_bridge_auth_context(
+        "runner-config-manager",
+        &[webcodex_core::authority::SCOPE_RUNNER_MANAGE],
+    );
+    let allowed_reload = runtime
+        .call_tool_with_protocol_capabilities(
+            ToolCallRequest {
+                tool_name: "runner_config_reload".to_string(),
+                arguments: json!({
+                    "client_id": "missing-runner",
+                    "expected_generation": 1
+                }),
+            },
+            context(Some(&manager)),
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(allowed_reload.error_status.is_none());
+    let allowed_reload = allowed_reload
+        .result
+        .expect("runner:manage should reach exact Runner dispatch");
+    assert!(!allowed_reload.success);
+    assert_eq!(allowed_reload.output["execution_state"], "not_started");
+    assert_eq!(allowed_reload.output["error_code"], "runner_unavailable");
 }
 
 #[tokio::test]

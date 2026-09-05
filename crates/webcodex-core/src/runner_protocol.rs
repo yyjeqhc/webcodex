@@ -336,6 +336,32 @@ pub const RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS: &str = "native_tool_plugins";
 /// Runner-local durable managed SSH resource registry. Missing on older Runners
 /// is false and is never inferred from one-shot or persistent SSH execution.
 pub const RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES: &str = "managed_ssh_resources";
+/// First-class read/check and fenced activation of the exact Runner process's
+/// startup-bound configuration path. Missing on older Runners is false; Servers
+/// must never fall back to PID/signal emulation for this operation.
+pub const RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL: &str = "runner_config_control";
+pub const RUNNER_CONFIG_REQUEST_KIND: &str = "runner_config";
+pub const RUNNER_CONFIG_REQUEST_MAX_BYTES: usize = 512;
+pub const RUNNER_CONFIG_RESPONSE_MAX_BYTES: usize = 4096;
+pub const RUNNER_CONFIG_RESTART_REQUIRED_FIELDS: &[&str] = &[
+    "acp",
+    "capabilities",
+    "client_id",
+    "display_name",
+    "host_context",
+    "hostname",
+    "max_concurrent_jobs",
+    "mcp_gateway",
+    "owner",
+    "plugins",
+    "poll_interval_ms",
+    "project_registry_dir",
+    "quic",
+    "server_url",
+    "token",
+    "transport",
+    "websocket_connect_timeout_secs",
+];
 /// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
 /// These explicit bools remain wire facts shared by Server and Runner, but a
 /// missing/false baseline bit rejects registration. Downstream consumers may
@@ -417,6 +443,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_CODING_AGENT_RUNS,
     RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS,
     RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES,
+    RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL,
     RUNNER_CAPABILITY_COMPUTER_CONTROL,
     RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
@@ -675,6 +702,11 @@ pub struct RunnerCapabilities {
     /// Runner-local managed SSH resource list/register/remove lifecycle.
     #[serde(default, skip_serializing_if = "is_false")]
     pub managed_ssh_resources: bool,
+    /// First-class bounded config check/reload implemented by this Runner
+    /// process. Missing on older Runners is false and is never inferred from OS,
+    /// transport, Plugin support, or protocol generation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub runner_config_control: bool,
 }
 
 /// Bounded, non-secret status for the Runner's active configuration generation.
@@ -707,6 +739,143 @@ impl Default for RunnerConfigReloadStatus {
             restart_required: false,
             restart_required_fields: Vec::new(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerConfigAction {
+    Check,
+    Reload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerConfigExecutionState {
+    NotStarted,
+    Completed,
+    OutcomeUnknown,
+}
+
+/// Closed Runner config operation. No filesystem path or raw configuration is
+/// accepted: the target Runner always uses its startup-bound config path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerConfigOperationRequest {
+    pub action: RunnerConfigAction,
+    #[serde(default)]
+    pub expected_generation: Option<u64>,
+}
+
+impl RunnerConfigOperationRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match (self.action, self.expected_generation) {
+            (RunnerConfigAction::Check, None) => Ok(()),
+            (RunnerConfigAction::Reload, Some(generation)) if generation > 0 => Ok(()),
+            (RunnerConfigAction::Check, Some(_)) => {
+                Err("check does not accept expected_generation")
+            }
+            (RunnerConfigAction::Reload, _) => {
+                Err("reload requires a positive expected_generation")
+            }
+        }
+    }
+}
+
+/// Bounded, non-secret result for one exact Runner config operation. Generation
+/// is null only when Control cannot truthfully know the current generation after
+/// a delivery failure or replacement; successful Runner responses always carry it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerConfigOperationResponse {
+    pub action: RunnerConfigAction,
+    pub execution_state: RunnerConfigExecutionState,
+    pub valid: Option<bool>,
+    pub current_generation: Option<u64>,
+    pub error_code: Option<String>,
+    pub error_field: Option<String>,
+    pub error_reason: Option<String>,
+    pub restart_required: bool,
+    pub restart_required_fields: Vec<String>,
+}
+
+impl RunnerConfigOperationResponse {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.current_generation == Some(0) {
+            return Err("current_generation must be positive when present");
+        }
+        if self.restart_required != !self.restart_required_fields.is_empty() {
+            return Err("restart_required does not match restart_required_fields");
+        }
+        let mut previous: Option<&str> = None;
+        for field in &self.restart_required_fields {
+            if !RUNNER_CONFIG_RESTART_REQUIRED_FIELDS.contains(&field.as_str()) {
+                return Err("unknown restart-required field");
+            }
+            if previous.is_some_and(|previous| previous >= field.as_str()) {
+                return Err("restart-required fields must be sorted and unique");
+            }
+            previous = Some(field);
+        }
+        match (self.error_field.as_deref(), self.error_reason.as_deref()) {
+            (None, None) => {}
+            (Some(field), Some("out_of_range"))
+                if matches!(
+                    field,
+                    "max_concurrent_jobs"
+                        | "shell.max_persistent_shells"
+                        | "shell.persistent_shell_idle_timeout_secs"
+                        | "acp.max_concurrent_runs"
+                        | "acp.permission_timeout_secs"
+                        | "mcp.request_timeout_secs"
+                ) => {}
+            _ => return Err("invalid config error diagnostic"),
+        }
+        if let Some(code) = self.error_code.as_deref() {
+            if !matches!(
+                code,
+                "invalid_request"
+                    | "config_read_failed"
+                    | "config_parse_failed"
+                    | "config_validation_failed"
+                    | "provider_config_invalid"
+                    | "config_generation_conflict"
+                    | "runner_unavailable"
+                    | "runner_replaced"
+                    | "capability_unavailable"
+                    | "invalid_runner_response"
+                    | "outcome_unknown"
+            ) {
+                return Err("unknown Runner config error code");
+            }
+        }
+        match self.execution_state {
+            RunnerConfigExecutionState::Completed => {
+                if self.current_generation.is_none() || self.valid.is_none() {
+                    return Err("completed config result requires validity and generation");
+                }
+                if self.valid == Some(true)
+                    && (self.error_code.is_some()
+                        || self.error_field.is_some()
+                        || self.error_reason.is_some())
+                {
+                    return Err("valid config result cannot contain an error");
+                }
+            }
+            RunnerConfigExecutionState::NotStarted => {
+                if self.valid.is_some() || self.restart_required {
+                    return Err(
+                        "not-started config result cannot claim validation or restart fields",
+                    );
+                }
+            }
+            RunnerConfigExecutionState::OutcomeUnknown => {
+                if self.valid.is_some() || self.restart_required {
+                    return Err("unknown config outcome cannot claim validation or restart fields");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -767,6 +936,7 @@ impl Default for RunnerCapabilities {
             coding_agent_runs: false,
             native_tool_plugins: false,
             managed_ssh_resources: false,
+            runner_config_control: false,
         }
     }
 }
@@ -3222,6 +3392,72 @@ where
 mod envelope_tests {
     use super::*;
 
+    #[test]
+    fn runner_config_operation_contract_is_closed_bounded_and_fail_closed_by_default() {
+        assert!(!RunnerCapabilities::default().runner_config_control);
+
+        let check = RunnerConfigOperationRequest {
+            action: RunnerConfigAction::Check,
+            expected_generation: None,
+        };
+        assert!(check.validate().is_ok());
+        assert!(RunnerConfigOperationRequest {
+            action: RunnerConfigAction::Check,
+            expected_generation: Some(1),
+        }
+        .validate()
+        .is_err());
+        assert!(RunnerConfigOperationRequest {
+            action: RunnerConfigAction::Reload,
+            expected_generation: None,
+        }
+        .validate()
+        .is_err());
+        assert!(RunnerConfigOperationRequest {
+            action: RunnerConfigAction::Reload,
+            expected_generation: Some(0),
+        }
+        .validate()
+        .is_err());
+        assert!(RunnerConfigOperationRequest {
+            action: RunnerConfigAction::Reload,
+            expected_generation: Some(1),
+        }
+        .validate()
+        .is_ok());
+
+        assert!(
+            serde_json::from_value::<RunnerConfigOperationRequest>(serde_json::json!({
+                "action": "check",
+                "path": "/tmp/not-authorized"
+            }))
+            .is_err()
+        );
+
+        let valid = RunnerConfigOperationResponse {
+            action: RunnerConfigAction::Check,
+            execution_state: RunnerConfigExecutionState::Completed,
+            valid: Some(true),
+            current_generation: Some(1),
+            error_code: None,
+            error_field: None,
+            error_reason: None,
+            restart_required: false,
+            restart_required_fields: Vec::new(),
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut leaked_error = valid.clone();
+        leaked_error.error_code = Some("/private/path?token=secret".to_string());
+        leaked_error.valid = Some(false);
+        assert!(leaked_error.validate().is_err());
+
+        let mut unbounded_field = valid;
+        unbounded_field.restart_required = true;
+        unbounded_field.restart_required_fields = vec!["arbitrary.path".to_string()];
+        assert!(unbounded_field.validate().is_err());
+    }
+
     fn sample_process_request() -> RunnerRequest {
         RunnerRequest {
             request_id: "req-process-1".to_string(),
@@ -3463,6 +3699,7 @@ mod envelope_tests {
                 coding_agent_runs: false,
                 native_tool_plugins: false,
                 managed_ssh_resources: false,
+                runner_config_control: false,
             },
             policy: None,
             job_concurrency_limit: Some(4),

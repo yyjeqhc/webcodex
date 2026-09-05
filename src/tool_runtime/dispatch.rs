@@ -1357,6 +1357,10 @@ impl ToolRuntime {
             | ToolCall::ReadToolTrace { .. }
             | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
 
+            call @ (ToolCall::RunnerConfigCheck { .. } | ToolCall::RunnerConfigReload { .. }) => {
+                self.dispatch_runner_config_tool(call, auth).await
+            }
+
             call @ (ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
             | ToolCall::UpdateSessionContext { .. }

@@ -498,6 +498,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 coding_agent_runs: true,
                 native_tool_plugins: true,
                 managed_ssh_resources: true,
+                runner_config_control: true,
             },
             policy: Some(crate::runner_protocol::RunnerPolicySummary {
                 plugin_providers: Some(Vec::new()),

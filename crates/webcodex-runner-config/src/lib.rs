@@ -323,6 +323,10 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Managed SSH resource lifecycle is likewise a running-binary
             // capability and is never implied by generated static SSH config.
             managed_ssh_resources: false,
+            // First-class config control is implemented by the running binary
+            // against its startup-bound path and must never be inferred from a
+            // generated static runner.toml capability block.
+            runner_config_control: false,
         },
         policy: GeneratedRunnerPolicy {
             allow_raw_shell: true,

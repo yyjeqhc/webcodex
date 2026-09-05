@@ -422,6 +422,7 @@ mod tests {
                         coding_agent_runs: false,
                         native_tool_plugins: false,
                         managed_ssh_resources: false,
+                        runner_config_control: false,
                     },
                 ),
                 policy: Some(RunnerPolicySummary::default()),

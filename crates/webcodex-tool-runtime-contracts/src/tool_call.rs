@@ -2037,6 +2037,19 @@ pub enum ToolCall {
         summary_only: bool,
     },
 
+    /// Validate the candidate at one exact Runner process's startup-bound config
+    /// path without mutating active configuration or instantiating providers.
+    RunnerConfigCheck {
+        client_id: String,
+    },
+
+    /// Activate the disk candidate on one exact Runner process with an optimistic
+    /// active-generation fence. The Runner never accepts a filesystem path here.
+    RunnerConfigReload {
+        client_id: String,
+        expected_generation: u64,
+    },
+
     /// Return a structured runtime health/observability summary.
     ///
     /// This is a read-only observability tool: it never exposes tokens,
@@ -2272,6 +2285,8 @@ fn reject_unknown_targeted_inventory_fields(
             "summary_only",
         ],
         "runtime_status" => &["client_id", "compact", "summary_only"],
+        "runner_config_check" => &["client_id"],
+        "runner_config_reload" => &["client_id", "expected_generation"],
         "list_jobs" => &["limit", "status", "project", "session_id"],
         _ => return Ok(()),
     };
@@ -2425,7 +2440,12 @@ impl ToolCall {
         }
         if matches!(
             name,
-            "list_projects" | "list_runners" | "runtime_status" | "list_jobs"
+            "list_projects"
+                | "list_runners"
+                | "runtime_status"
+                | "list_jobs"
+                | "runner_config_check"
+                | "runner_config_reload"
         ) {
             reject_unknown_targeted_inventory_fields(name, &arguments)?;
         }
@@ -2637,6 +2657,8 @@ impl ToolCall {
             Self::UnregisterProject { .. } => "unregister_project",
             Self::CreateProject { .. } => "create_project",
             Self::ListRunners { .. } => "list_runners",
+            Self::RunnerConfigCheck { .. } => "runner_config_check",
+            Self::RunnerConfigReload { .. } => "runner_config_reload",
             Self::RuntimeStatus { .. } => "runtime_status",
             Self::ReadToolTrace { .. } => "read_tool_trace",
             Self::ToolManifest { .. } => "tool_manifest",

@@ -443,11 +443,30 @@ Use the same `--scope` for install, status, start, stop, restart, logs, and
 uninstall. User scope uses `systemctl --user`; system scope uses
 `/etc/systemd/system`.
 
-After editing static `runner.toml` SSH resources, normal config reload semantics
-still apply together with policy and shell changes. Managed `ssh_resource`
-mutations are different: they use a frozen startup snapshot and require a Runner
-restart exactly when the tool reports `restart_required=true`. Identity,
-server/auth, transport, and concurrency changes still require a restart. Invalid
-reloads keep the active generation. When a validation failure is safely classifiable, reload status reports only
-closed non-secret atoms such as `field=max_concurrent_jobs` and `reason=out_of_range`;
-raw TOML, configured values, paths, credentials, and parser text are not projected.
+For an already-running Runner, use the first-class configuration workflow instead
+of finding its PID or sending signals manually:
+
+1. Edit the Runner's existing startup-bound `runner.toml`.
+2. Call `runner_config_check(client_id=...)`. It reads only that bound path, does
+   not activate the candidate, and returns the current generation plus bounded
+   validation/restart metadata.
+3. If valid, call
+   `runner_config_reload(client_id=..., expected_generation=<current_generation>)`.
+   The optimistic generation fence rejects stale callers before activation.
+4. Inspect `runtime_status(client_id=...)` (or `list_runners`) after reload.
+
+`runner_config_reload` never writes `runner.toml`; it only activates the candidate
+already on disk. Hot-reloadable policy, shell, and static SSH-resource changes can
+become active immediately, while fields reported in `restart_required_fields`
+remain startup-only until the Runner restarts. Invalid candidates leave the active
+snapshot and generation unchanged. Managed `ssh_resource` mutations are different:
+they use a frozen startup snapshot and require a Runner restart exactly when the
+tool reports `restart_required=true`.
+
+On Unix, service reload/SIGHUP remains an optional compatibility trigger and calls
+the same authoritative reload primitive. Windows and macOS use the first-class
+operation directly; no signal emulation or PID management is required. When a
+validation failure is safely classifiable, config operations report only closed
+non-secret atoms such as `field=max_concurrent_jobs` and `reason=out_of_range`;
+raw TOML, configured values, paths, credentials, parser text, and shell environment
+values are not projected.

@@ -13,9 +13,11 @@ use super::{
     ShellCommandResult, SubmitResultError,
 };
 use crate::runner_protocol::{
-    validate_process_argv, validate_raw_shell_wire_command, validate_script_request, RunnerRequest,
-    ShellProcessArgv, ShellScriptPayload, EXTERNAL_SEARCH_REQUEST_PREFIX, PROCESS_CWD_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
+    validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
+    RunnerConfigAction, RunnerConfigOperationRequest, RunnerRequest, ShellProcessArgv,
+    ShellScriptPayload, EXTERNAL_SEARCH_REQUEST_PREFIX, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, RUNNER_CONFIG_REQUEST_KIND, RUNNER_CONFIG_REQUEST_MAX_BYTES,
+    RUNNER_CONFIG_RESPONSE_MAX_BYTES, STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager, PendingJobStart};
 use std::path::Path;
@@ -25,6 +27,69 @@ fn internal_search_script(command: &str) -> Option<&str> {
     let rest = command.strip_prefix(EXTERNAL_SEARCH_REQUEST_PREFIX)?;
     let script = rest.strip_prefix('\n')?;
     (!script.is_empty()).then_some(script)
+}
+
+fn handle_runner_config_request(
+    runtime: &ReloadableRunnerConfig,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let invalid = || {
+        CommandResult {
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        duration_ms: Some(0),
+        error: Some(
+            "invalid_runner_config_request: bounded typed config operation is required; request was not started"
+                .to_string(),
+        ),
+    }
+    };
+    let Some(content) = request.content.as_deref() else {
+        return invalid();
+    };
+    if content.len() > RUNNER_CONFIG_REQUEST_MAX_BYTES {
+        return invalid();
+    }
+    let Ok(operation) = serde_json::from_str::<RunnerConfigOperationRequest>(content) else {
+        return invalid();
+    };
+    if operation.validate().is_err() {
+        return invalid();
+    }
+    let response = match operation.action {
+        RunnerConfigAction::Check => runtime.check_config(),
+        RunnerConfigAction::Reload => runtime.reload_config(
+            operation
+                .expected_generation
+                .expect("validated reload operation has generation"),
+        ),
+    };
+    if response.validate().is_err() {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "invalid_runner_config_response: Runner config operation result was rejected"
+                    .to_string(),
+            ),
+        };
+    }
+    let Ok(stdout) = serde_json::to_string(&response) else {
+        return invalid();
+    };
+    if stdout.len() > RUNNER_CONFIG_RESPONSE_MAX_BYTES {
+        return invalid();
+    }
+    CommandResult {
+        exit_code: Some(0),
+        stdout: Some(stdout),
+        stderr: None,
+        duration_ms: Some(0),
+        error: None,
+    }
 }
 
 pub(super) fn runner_tool_trace_enabled() -> bool {
@@ -203,6 +268,32 @@ pub(crate) fn dispatch_request(
             duration_ms: Some(0),
             error: Some(
                 "invalid_request: plugin_gateway payload is valid only for plugin_gateway requests; command was not started"
+                    .to_string(),
+            ),
+        };
+        return sink
+            .submit_result_with_metadata(request.request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind == RUNNER_CONFIG_REQUEST_KIND {
+        let request_id = request.request_id.clone();
+        let result = handle_runner_config_request(runtime, &request);
+        // A reload may have replaced the snapshot passed into dispatch_request.
+        // Project config/provider status from this completion must therefore use
+        // the authoritative post-operation generation.
+        let current = runtime.snapshot();
+        return sink
+            .submit_result_with_metadata(request_id, result, &current, runtime)
+            .map(|_| true);
+    }
+    if request.kind.starts_with("runner_config") {
+        let result = CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "invalid_runner_config_request: unsupported config operation; request was not started"
                     .to_string(),
             ),
         };

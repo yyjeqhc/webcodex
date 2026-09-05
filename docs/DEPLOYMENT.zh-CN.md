@@ -329,10 +329,14 @@ max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
 
-编辑 `runner.toml` 后 reload 对应服务
-（user scope：`systemctl --user reload webcodex-runner`；system scope：
-`sudo systemctl reload webcodex-runner`），以应用 policy、shell 与 SSH 资源设置。
-身份、server/auth、项目来源、并发、能力与传输变更需要重启。
+编辑已经运行的 Runner 启动时绑定的 `runner.toml` 后，先调用
+`runner_config_check(client_id=...)`，再把返回的 `current_generation` 作为
+`runner_config_reload(client_id=..., expected_generation=...)` 的 fence，最后调用
+`runtime_status(client_id=...)` 检查状态。check 不激活 candidate；reload 也不写配置文件。
+无效 candidate 保留旧 active snapshot/generation，`restart_required_fields` 明确列出仍需
+重启、且不会假装已经在线生效的 startup-only 变更。Unix service reload/SIGHUP 仍保留为
+调用同一 reload primitive 的兼容 trigger，但 first-class config control 不依赖它。身份、
+server/auth、项目来源、并发、能力与传输等字段在被报告为 restart-only 时仍需要重启。
 
 前台测试可运行 `webcodex-runner --profile workstation`。高级手动生成配置用
 `webcodex runner init`。

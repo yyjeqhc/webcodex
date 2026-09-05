@@ -8,6 +8,7 @@ use super::{
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
+use crate::tool_runtime::specialized::SpecializedGovernanceDenial;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,6 +365,70 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            };
+        }
+        // `plugin_tool` is a heterogeneous canonical gateway. Its static
+        // ToolDefinition intentionally describes worst-case visibility/risk,
+        // but exact execution policy comes from the validated `action`. Route
+        // it before the generic static Session/permission lifecycle so
+        // list/describe remain read-only and one invocation owns one ledger.
+        if request.tool_name == crate::plugin_gateway::PLUGIN_TOOL_NAME {
+            let concrete_arguments =
+                strip_tool_call_expectation_metadata(request.arguments.clone());
+            let call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
+                Ok(call) => call,
+                Err(message) => {
+                    return ToolCallOutcome {
+                        success: false,
+                        result: None,
+                        error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                        project: None,
+                        model_ergonomics: None,
+                    }
+                }
+            };
+            let ToolCall::PluginTool(plugin) = call else {
+                unreachable!("plugin_tool parser must yield ToolCall::PluginTool");
+            };
+            return match crate::plugin_gateway::invoke(
+                self,
+                plugin,
+                context.session_id,
+                context.auth,
+                context.transport.into(),
+            )
+            .await
+            {
+                Ok(invocation) => {
+                    let result = invocation.to_tool_result();
+                    ToolCallOutcome {
+                        success: result.success,
+                        result: Some(result),
+                        error_status: None,
+                        project: None,
+                        model_ergonomics: None,
+                    }
+                }
+                Err(SpecializedGovernanceDenial::Scope {
+                    required_scope,
+                    description,
+                }) => ToolCallOutcome {
+                    success: false,
+                    result: None,
+                    error_status: Some(ToolCallErrorStatus::InsufficientScope {
+                        required_scope: Some(required_scope),
+                        description,
+                    }),
+                    project: None,
+                    model_ergonomics: None,
+                },
+                Err(SpecializedGovernanceDenial::Tool(result)) => ToolCallOutcome {
+                    success: result.success,
+                    result: Some(result),
+                    error_status: None,
+                    project: None,
+                    model_ergonomics: None,
+                },
             };
         }
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());

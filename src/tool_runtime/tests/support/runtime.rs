@@ -59,6 +59,9 @@ pub(in crate::tool_runtime::tests) fn sample_tool_args_for_spec(spec: &ToolSpec)
         "observe_jobs" => {
             args.insert("items".to_string(), json!([{"job_id": "job_123"}]));
         }
+        "plugin_tool" => {
+            args.insert("action".to_string(), json!("list"));
+        }
         _ => {}
     }
     Value::Object(args)
@@ -110,7 +113,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "task_id" => json!(format!("wc_agent_task_{}", "1".repeat(32))),
         "attempt_id" => json!(format!("wc_agent_task_attempt_{}", "2".repeat(32))),
         "attempt_fence" => json!(format!("wc_agent_task_fence_{}", "3".repeat(32))),
-        "attempt_controller_generation" => json!(1),
+        "attempt_controller_generation" | "expected_generation" => json!(1),
         "outcome" => json!("succeeded"),
         "agent_ids" => json!([format!("wc_dagent_{}", "a".repeat(32))]),
         "endpoint_id" => json!(format!("wc_endpoint_{}", "b".repeat(32))),

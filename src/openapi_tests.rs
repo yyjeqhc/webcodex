@@ -1048,6 +1048,39 @@ fn openapi_call_runtime_tool_exposes_only_canonical_params_envelope() {
 }
 
 #[test]
+fn openapi_generic_runtime_exposes_plugin_gateway_and_preserves_canonical_nested_schema() {
+    let spec = build_openapi_spec();
+    let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+    let properties = tool_call["properties"].as_object().unwrap();
+    let selector_description = properties[TOOL_CALL_TOOL_FIELD]["description"]
+        .as_str()
+        .unwrap();
+    assert!(selector_description.contains("plugin_tool"));
+    assert!(properties.contains_key("action"));
+    assert!(properties.contains_key("runner"));
+    assert!(properties.contains_key("plugin"));
+    assert!(properties.contains_key("binding"));
+    // `tool` is already the outer runtime selector and `arguments` is a retired
+    // wrapper name, so the complete Plugin describe/call contract intentionally
+    // uses the canonical non-null `params` object rather than aliases.
+    assert_eq!(properties[TOOL_CALL_PARAMS_FIELD]["type"], "object");
+    assert_eq!(
+        properties[TOOL_CALL_PARAMS_FIELD]["additionalProperties"],
+        true
+    );
+
+    let plugin = registered_tool_specs()
+        .into_iter()
+        .find(|candidate| candidate.name == "plugin_tool")
+        .expect("plugin_tool canonical ToolSpec");
+    assert_eq!(plugin.input_schema["properties"]["tool"]["type"], "string");
+    assert_eq!(
+        plugin.input_schema["properties"]["arguments"]["type"],
+        "object"
+    );
+}
+
+#[test]
 fn openapi_call_runtime_tool_declares_flattened_action_fields() {
     // `tool_name` is a tool_manifest argument, distinct from the outer `tool` selector.
     let spec = build_openapi_spec();

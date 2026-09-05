@@ -197,12 +197,13 @@ fn denial_terminal_projection(policy: SpecializedOperationPolicy, kind: &str) ->
 
 impl ToolRuntime {
     /// Resolve the shared authority boundary for one already-classified
-    /// specialized operation. A returned permit is the only path to effectful
-    /// gateway execution from MCP.
+    /// specialized operation. Transport is explicit provenance only; it never
+    /// changes authority or infers a Workflow Session.
     pub(crate) async fn govern_specialized_invocation(
         &self,
         external_tool_name: &str,
         policy: SpecializedOperationPolicy,
+        transport: SessionTransport,
         recording_session_id: Option<&str>,
         auth: Option<&AuthContext>,
         identity: &Value,
@@ -244,7 +245,7 @@ impl ToolRuntime {
         };
         let mut session_start = self.sessions.record_tool_call_started_with_metadata(
             recording_session_id,
-            SessionTransport::Mcp,
+            transport,
             external_tool_name,
             &bounded_ledger_arguments(policy, identity),
             resolved_session_project.clone(),
@@ -401,6 +402,7 @@ mod tests {
                     "list",
                     SCOPE_PLUGIN_INSPECT,
                 ),
+                SessionTransport::Mcp,
                 Some(&session.session_id),
                 Some(&auth),
                 &json!({"plugin": "repo-tools"}),
@@ -417,6 +419,7 @@ mod tests {
                     "call",
                     SCOPE_PLUGIN_INVOKE,
                 ),
+                SessionTransport::Mcp,
                 Some(&session.session_id),
                 Some(&auth),
                 &json!({"plugin": "repo-tools"}),
@@ -447,6 +450,7 @@ mod tests {
                     "list",
                     SCOPE_PLUGIN_INSPECT,
                 ),
+                SessionTransport::Mcp,
                 None,
                 Some(&auth),
                 &json!({}),
@@ -464,6 +468,7 @@ mod tests {
                     "call",
                     SCOPE_PLUGIN_INVOKE,
                 ),
+                SessionTransport::Mcp,
                 None,
                 Some(&auth),
                 &json!({}),
@@ -493,6 +498,7 @@ mod tests {
                     "list",
                     SCOPE_PLUGIN_INSPECT,
                 ),
+                SessionTransport::Mcp,
                 Some(&session.session_id),
                 Some(&foreign),
                 &json!({}),

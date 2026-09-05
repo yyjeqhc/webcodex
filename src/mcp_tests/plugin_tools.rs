@@ -104,6 +104,35 @@ fn plugin_tool(name: &str) -> PluginTool {
     }
 }
 
+fn spawn_generic_plugin_call(
+    runtime: &Arc<ToolRuntime>,
+    auth: &crate::auth::AuthContext,
+    arguments: Value,
+    recording_session_id: Option<String>,
+) -> tokio::task::JoinHandle<crate::tool_runtime::kernel::ToolCallOutcome> {
+    let runtime = Arc::clone(runtime);
+    let auth = auth.clone();
+    tokio::spawn(async move {
+        runtime
+            .call_tool_with_context(
+                crate::tool_runtime::kernel::ToolCallRequest {
+                    tool_name: crate::plugin_gateway::PLUGIN_TOOL_NAME.to_string(),
+                    arguments,
+                },
+                crate::tool_runtime::kernel::ToolCallContext {
+                    transport: crate::tool_runtime::kernel::ToolTransport::Api,
+                    session_id: recording_session_id.as_deref(),
+                    auth: Some(&auth),
+                    window: None,
+                    record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                },
+            )
+            .await
+    })
+}
+
 async fn register_plugin_runner(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -424,17 +453,21 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
     for (id, arguments, required) in [
         (
             681,
-            json!({"action":"call"}),
+            json!({
+                "action":"call",
+                "binding":"wc_pbind_00000000000000000000000000000000",
+                "arguments":{}
+            }),
             crate::auth::SCOPE_PLUGIN_INVOKE,
         ),
         (
             682,
-            json!({"action":"check"}),
+            json!({"action":"check","runner":"runner-a","plugin":"repo-tools"}),
             crate::auth::SCOPE_PLUGIN_MANAGE,
         ),
         (
             683,
-            json!({"action":"reload"}),
+            json!({"action":"reload","runner":"runner-a"}),
             crate::auth::SCOPE_PLUGIN_MANAGE,
         ),
     ] {
@@ -463,7 +496,11 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
             Some(json!(684)),
             json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                "arguments": {"action":"call"}
+                "arguments": {
+                    "action":"call",
+                    "binding":"wc_pbind_00000000000000000000000000000000",
+                    "arguments":{}
+                }
             }),
         ),
         Some(&invoke),
@@ -475,9 +512,15 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
     assert_eq!(invoke_call["result"]["isError"], true);
     assert_eq!(
         invoke_call["result"]["structuredContent"]["error"]["code"],
-        "invalid_arguments"
+        "describe_required"
     );
-    for (id, action) in [(685, "check"), (686, "reload")] {
+    for (id, arguments) in [
+        (
+            685,
+            json!({"action":"check","runner":"runner-a","plugin":"repo-tools"}),
+        ),
+        (686, json!({"action":"reload","runner":"runner-a"})),
+    ] {
         let outcome = handle_mcp_request(
             &runtime,
             rpc(
@@ -485,7 +528,7 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
                 Some(json!(id)),
                 json!({
                     "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                    "arguments": {"action":action}
+                    "arguments": arguments
                 }),
             ),
             Some(&invoke),
@@ -506,7 +549,11 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
             Some(json!(687)),
             json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                "arguments": {"action":"call"}
+                "arguments": {
+                    "action":"call",
+                    "binding":"wc_pbind_00000000000000000000000000000000",
+                    "arguments":{}
+                }
             }),
         ),
         Some(&manage),
@@ -526,7 +573,7 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
             Some(json!(688)),
             json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                "arguments": {"action":"reload"}
+                "arguments": {"action":"reload","runner":"runner-a"}
             }),
         ),
         Some(&manage),
@@ -538,7 +585,7 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
     assert_eq!(manage_reload["result"]["isError"], true);
     assert_eq!(
         manage_reload["result"]["structuredContent"]["error"]["code"],
-        "invalid_arguments"
+        "runner_unavailable"
     );
 }
 
@@ -1301,13 +1348,10 @@ async fn plugin_tool_list_argument_matrix_rejects_ambiguous_inputs_before_dispat
             Some(&auth),
         )
         .await;
-        let McpOutcome::Ok(result) = outcome else {
-            panic!("invalid list arguments should render a Plugin tool error");
+        let McpOutcome::BadRequest(result) = outcome else {
+            panic!("invalid list arguments must fail at the canonical ToolCall parser");
         };
-        assert_eq!(
-            result["result"]["structuredContent"]["error"]["code"],
-            "invalid_arguments"
-        );
+        assert_eq!(result["error"]["code"], -32602);
     }
     assert!(runtime
         .runner_registry
@@ -1318,6 +1362,306 @@ async fn plugin_tool_list_argument_matrix_rejects_ambiguous_inputs_before_dispat
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn generic_runtime_plugin_gateway_list_describe_call_and_error_certainty_share_exact_dispatch(
+) {
+    let runtime = Arc::new(test_runtime());
+    let auth = plugin_auth(true);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![plugin_tool("safe_delete")],
+    )
+    .await;
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        status: "ready".to_string(),
+        error_code: None,
+    };
+    let tool = plugin_tool("safe_delete");
+
+    let list = spawn_generic_plugin_call(
+        &runtime,
+        &auth,
+        json!({"action":"list","runner":"runner-a"}),
+        None,
+    );
+    let list_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        list_request.plugin_gateway,
+        Some(PluginGatewayRequest::ProvidersList)
+    ));
+    complete_plugin_request(
+        &runtime,
+        list_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider.clone()],
+        }),
+    )
+    .await;
+    let list = list.await.unwrap();
+    assert!(list.success);
+    assert_eq!(
+        list.result.as_ref().unwrap().output["plugins"][0]["plugin"],
+        "repo-tools"
+    );
+
+    let describe = spawn_generic_plugin_call(
+        &runtime,
+        &auth,
+        json!({
+            "action":"describe",
+            "runner":"runner-a",
+            "plugin":"repo-tools",
+            "tool":"safe_delete"
+        }),
+        None,
+    );
+    let providers_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        providers_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+            providers: vec![provider.clone()],
+        }),
+    )
+    .await;
+    let tools_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        tools_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsList {
+            ref provider_id,
+            ref provider_instance_id,
+        }) if provider_id == "repo-tools" && provider_instance_id == "provider-instance-a"
+    ));
+    complete_plugin_request(
+        &runtime,
+        tools_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::Tools {
+            tools: vec![tool.clone()],
+        }),
+    )
+    .await;
+    let describe = describe.await.unwrap();
+    assert!(describe.success);
+    let binding = describe.result.as_ref().unwrap().output["binding"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(binding.starts_with("wc_pbind_"));
+
+    let call = spawn_generic_plugin_call(
+        &runtime,
+        &auth,
+        json!({"action":"call","binding":binding,"arguments":{"query":"ok"}}),
+        None,
+    );
+    let call_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        call_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsCall {
+            ref provider_id,
+            ref provider_instance_id,
+            ref name,
+            ..
+        }) if provider_id == "repo-tools"
+            && provider_instance_id == "provider-instance-a"
+            && name == "safe_delete"
+    ));
+    complete_plugin_request(
+        &runtime,
+        call_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
+            result: PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "ok".to_string(),
+                }],
+                structured_content: Some(json!({"matches":[]})),
+                is_error: false,
+            },
+        }),
+    )
+    .await;
+    let call = call.await.unwrap();
+    assert!(call.success);
+    let call_output = &call.result.as_ref().unwrap().output;
+    assert_eq!(call_output["isError"], false);
+    assert_eq!(call_output["dispatch_certainty"], "completed");
+
+    let tool_error = spawn_generic_plugin_call(
+        &runtime,
+        &auth,
+        json!({"action":"call","binding":binding,"arguments":{"query":"business-error"}}),
+        None,
+    );
+    let tool_error_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        tool_error_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
+            result: PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "no".to_string(),
+                }],
+                structured_content: Some(json!({"matches":[]})),
+                is_error: true,
+            },
+        }),
+    )
+    .await;
+    let tool_error = tool_error.await.unwrap();
+    assert!(!tool_error.success);
+    let tool_error_output = &tool_error.result.as_ref().unwrap().output;
+    assert_eq!(tool_error_output["isError"], true);
+    assert_eq!(tool_error_output["failure_kind"], "plugin_tool_error");
+    assert_eq!(tool_error_output["dispatch_certainty"], "completed");
+
+    let unknown = spawn_generic_plugin_call(
+        &runtime,
+        &auth,
+        json!({"action":"call","binding":binding,"arguments":{"query":"unknown"}}),
+        None,
+    );
+    let unknown_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    complete_plugin_request(
+        &runtime,
+        unknown_request,
+        "runner-instance-a",
+        PluginGatewayResponse::error(
+            PluginDispatchState::OutcomeUnknown,
+            "plugin_timeout",
+            "terminal Plugin outcome is unknown",
+        ),
+    )
+    .await;
+    let unknown = unknown.await.unwrap();
+    assert!(!unknown.success);
+    let unknown_output = &unknown.result.as_ref().unwrap().output;
+    assert_eq!(unknown_output["failure_kind"], "plugin_timeout");
+    assert_eq!(unknown_output["dispatch_certainty"], "outcome_unknown");
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn generic_runtime_plugin_governance_is_action_aware_and_records_one_api_lifecycle() {
+    let runtime = Arc::new(test_runtime());
+    let inspect = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    let invoke = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INVOKE]);
+    let manage = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_MANAGE]);
+    let session =
+        start_authorized_test_session(&runtime, &inspect, crate::tool_runtime::SessionMode::Normal);
+    let list = spawn_generic_plugin_call(
+        &runtime,
+        &inspect,
+        json!({"action":"list"}),
+        Some(session.session_id.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(list.success);
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(
+        summary.counts.tool_calls, 1,
+        "Plugin gateway must own one lifecycle"
+    );
+    let finished =
+        crate::tool_runtime::sessions::canonical_tool_call_finished_events(&summary.events);
+    assert_eq!(finished.len(), 1);
+    assert_eq!(
+        finished[0].tool_name,
+        crate::plugin_gateway::PLUGIN_TOOL_NAME
+    );
+    assert_eq!(finished[0].transport, "api");
+    assert!(finished[0].read_like);
+    for auth in [&invoke, &manage] {
+        let denied = spawn_generic_plugin_call(&runtime, auth, json!({"action":"list"}), None)
+            .await
+            .unwrap();
+        assert!(!denied.success);
+        assert!(matches!(
+            denied.error_status,
+            Some(crate::tool_runtime::kernel::ToolCallErrorStatus::InsufficientScope { .. })
+        ));
+    }
+    let inspect_reload = spawn_generic_plugin_call(
+        &runtime,
+        &inspect,
+        json!({"action":"reload","runner":"runner-a"}),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        inspect_reload.error_status,
+        Some(crate::tool_runtime::kernel::ToolCallErrorStatus::InsufficientScope { .. })
+    ));
+    let restricted = Arc::new(test_runtime().with_permission_evaluator(
+        crate::tool_runtime::PermissionEvaluator::with_mode(
+            crate::tool_runtime::AuthorityMode::Restricted,
+        ),
+    ));
+    let permission_denied = spawn_generic_plugin_call(
+        &restricted,
+        &invoke,
+        json!({
+            "action":"call",
+            "binding":"wc_pbind_00000000000000000000000000000000",
+            "arguments":{}
+        }),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!permission_denied.success);
+    let permission_output = &permission_denied.result.as_ref().unwrap().output;
+    assert_eq!(permission_output["failure_kind"], "permission_denied");
+    assert_eq!(permission_output["dispatch_certainty"], "not_started");
+    let read_only = start_authorized_test_session(
+        &runtime,
+        &manage,
+        crate::tool_runtime::SessionMode::ReadOnly,
+    );
+    let session_denied = spawn_generic_plugin_call(
+        &runtime,
+        &manage,
+        json!({"action":"reload","runner":"runner-a"}),
+        Some(read_only.session_id),
+    )
+    .await
+    .unwrap();
+    assert!(!session_denied.success);
+    let session_output = &session_denied.result.as_ref().unwrap().output;
+    assert_eq!(session_output["error_kind"], "session_guard_denied");
+    assert_eq!(session_output["dispatch_certainty"], "not_started");
 }
 
 #[tokio::test]
@@ -1545,6 +1889,25 @@ async fn tool_manifest_returns_canonical_static_plugin_tool_contract_without_run
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "safe_delete"));
+
+    let stateless = tools_list(&runtime, &auth, true).await;
+    let stateless_gateway = stateless["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == crate::plugin_gateway::PLUGIN_TOOL_NAME)
+        .expect("stateless plugin_tool");
+    for field in ["action", "runner", "plugin", "tool", "binding", "arguments"] {
+        assert_eq!(
+            stateless_gateway["inputSchema"]["properties"][field],
+            output["contract"]["input_schema"]["properties"][field],
+            "Stateless MCP must preserve canonical Plugin business schema for {field}"
+        );
+    }
+    assert_eq!(
+        stateless_gateway["inputSchema"]["properties"]["recording_session_id"]["pattern"],
+        "^wc_sess_[A-Za-z0-9_]+$"
+    );
 }
 
 #[tokio::test]

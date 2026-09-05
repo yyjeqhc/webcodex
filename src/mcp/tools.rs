@@ -23,7 +23,7 @@ use crate::tool_runtime::tool_definition::{
 };
 #[cfg(test)]
 use crate::tool_runtime::ToolResult;
-use crate::tool_runtime::{registered_tool_specs, ToolRuntime, ToolSpec};
+use crate::tool_runtime::{registered_tool_specs, ToolCall, ToolRuntime, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -1193,8 +1193,7 @@ pub(super) async fn handle_call(
     }
     if let Some(lc) = lifecycle.as_deref() {
         let audit = if params.name == crate::plugin_gateway::PLUGIN_TOOL_NAME {
-            crate::plugin_gateway::audit_arguments_with_identity(runtime, &params.arguments, auth)
-                .await
+            crate::plugin_gateway::audit_arguments(&params.arguments)
         } else if params.name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
             crate::ssh_resource_gateway::audit_arguments(&params.arguments)
         } else if via_adaptive_runtime_gateway {
@@ -1246,53 +1245,40 @@ pub(super) async fn handle_call(
                 return McpOutcome::BadRequest(rpc_error(id, -32602, message));
             }
         };
-        let policy = match crate::plugin_gateway::operation_policy(&params.arguments) {
-            Ok(policy) => policy,
-            Err(_) => {
-                let audit = crate::plugin_gateway::audit_arguments_with_identity(
-                    runtime,
-                    &params.arguments,
-                    auth,
-                )
-                .await;
+        let call = match ToolCall::from_tool_name(&params.name, params.arguments.clone()) {
+            Ok(call) => call,
+            Err(message) => {
                 if let Some(lc) = lifecycle.as_deref() {
-                    lc.capture_payload("effective_arguments", &audit);
+                    lc.dispatch_failed("invalid_arguments");
+                    lc.dispatch_finished(false, Some(false), "invalid_arguments");
                 }
-                let result = crate::plugin_gateway::call(runtime, params.arguments, auth).await;
-                let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
-                if let Some(lc) = lifecycle.as_deref() {
-                    lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
-                }
-                return McpOutcome::Ok(rpc_result(
-                    id,
-                    if stateless_2026 {
-                        mcp_stateless_result(result, false)
-                    } else {
-                        result
-                    },
-                ));
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
             }
         };
-        let audit =
-            crate::plugin_gateway::audit_arguments_with_identity(runtime, &params.arguments, auth)
-                .await;
-        let permit = match runtime
-            .govern_specialized_invocation(
-                &params.name,
-                policy,
-                recording_session_id.as_deref(),
-                auth,
-                &audit,
-            )
-            .await
+        let ToolCall::PluginTool(plugin) = call else {
+            unreachable!("plugin_tool parser must yield ToolCall::PluginTool");
+        };
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload(
+                "effective_arguments",
+                &crate::plugin_gateway::audit_arguments(&params.arguments),
+            );
+        }
+        let invocation = match crate::plugin_gateway::invoke(
+            runtime,
+            plugin,
+            recording_session_id.as_deref(),
+            auth,
+            crate::tool_runtime::sessions::SessionTransport::Mcp,
+        )
+        .await
         {
-            Ok(permit) => permit,
+            Ok(invocation) => invocation,
             Err(SpecializedGovernanceDenial::Scope {
                 required_scope,
                 description,
             }) => {
                 if let Some(lc) = lifecycle.as_deref() {
-                    lc.capture_payload("specialized_governance", &policy.audit_projection());
                     lc.dispatch_failed("forbidden");
                     lc.dispatch_finished(false, Some(false), "forbidden");
                 }
@@ -1300,7 +1286,6 @@ pub(super) async fn handle_call(
             }
             Err(SpecializedGovernanceDenial::Tool(result)) => {
                 if let Some(lc) = lifecycle.as_deref() {
-                    lc.capture_payload("specialized_governance", &policy.audit_projection());
                     lc.dispatch_failed("specialized_governance_denied");
                     lc.dispatch_finished(true, Some(false), "tool_error");
                 }
@@ -1315,23 +1300,15 @@ pub(super) async fn handle_call(
                 ));
             }
         };
+        let ok = invocation.success();
         if let Some(lc) = lifecycle.as_deref() {
-            lc.capture_payload("effective_arguments", &audit);
-            lc.capture_payload("specialized_governance", &permit.audit_projection());
-        }
-        let result = crate::plugin_gateway::call(runtime, params.arguments, auth).await;
-        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
-        let failure_kind = result
-            .pointer("/structuredContent/error/code")
-            .and_then(Value::as_str);
-        let dispatch_certainty = result
-            .pointer("/structuredContent/dispatchState")
-            .and_then(Value::as_str)
-            .unwrap_or("completed");
-        runtime.finish_specialized_invocation(permit, ok, dispatch_certainty, failure_kind);
-        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload(
+                "specialized_governance",
+                &invocation.policy().audit_projection(),
+            );
             lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
         }
+        let result = invocation.to_mcp_result();
         return McpOutcome::Ok(rpc_result(
             id,
             if stateless_2026 {
@@ -1382,6 +1359,7 @@ pub(super) async fn handle_call(
             .govern_specialized_invocation(
                 &params.name,
                 policy,
+                crate::tool_runtime::sessions::SessionTransport::Mcp,
                 recording_session_id.as_deref(),
                 auth,
                 &audit,

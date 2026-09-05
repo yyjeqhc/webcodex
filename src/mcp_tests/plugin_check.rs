@@ -170,14 +170,12 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
     ] {
         let outcome =
             handle_mcp_request(&runtime, check_call("runner-a", extra), Some(&auth)).await;
-        let McpOutcome::Ok(value) = outcome else {
-            panic!("invalid check arguments should render a tool result: {outcome:?}");
+        let McpOutcome::BadRequest(value) = outcome else {
+            panic!(
+                "invalid check arguments must fail at the canonical ToolCall parser: {outcome:?}"
+            );
         };
-        assert_eq!(value["result"]["isError"], true);
-        assert_eq!(
-            value["result"]["structuredContent"]["error"]["code"],
-            "invalid_arguments"
-        );
+        assert_eq!(value["error"]["code"], -32602);
     }
 
     let missing_runner = handle_mcp_request(
@@ -193,13 +191,10 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
         Some(&auth),
     )
     .await;
-    let McpOutcome::Ok(missing_runner) = missing_runner else {
-        panic!("missing runner should render a tool result");
+    let McpOutcome::BadRequest(missing_runner) = missing_runner else {
+        panic!("missing runner must fail at the canonical ToolCall parser");
     };
-    assert_eq!(
-        missing_runner["result"]["structuredContent"]["error"]["code"],
-        "invalid_arguments"
-    );
+    assert_eq!(missing_runner["error"]["code"], -32602);
 
     let missing_plugin = handle_mcp_request(
         &runtime,
@@ -214,13 +209,10 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
         Some(&auth),
     )
     .await;
-    let McpOutcome::Ok(missing_plugin) = missing_plugin else {
-        panic!("missing plugin should render a tool result");
+    let McpOutcome::BadRequest(missing_plugin) = missing_plugin else {
+        panic!("missing plugin must fail at the canonical ToolCall parser");
     };
-    assert_eq!(
-        missing_plugin["result"]["structuredContent"]["error"]["code"],
-        "invalid_arguments"
-    );
+    assert_eq!(missing_plugin["error"]["code"], -32602);
     assert!(runtime
         .runner_registry
         .poll(RunnerPollRequest {

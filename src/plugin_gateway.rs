@@ -8,9 +8,11 @@
 pub(crate) use webcodex_core::plugin::*;
 
 use crate::auth::{AuthContext, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE};
-use crate::tool_runtime::specialized::{SpecializedOperationPolicy, SpecializedSource};
-use crate::tool_runtime::ToolRuntime;
-use serde::Deserialize;
+use crate::tool_runtime::sessions::SessionTransport;
+use crate::tool_runtime::specialized::{
+    SpecializedGovernanceDenial, SpecializedOperationPolicy, SpecializedSource,
+};
+use crate::tool_runtime::{PluginToolCall, ToolResult, ToolRuntime};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -99,7 +101,7 @@ pub(crate) struct ResolvedPluginRunner {
     pub(crate) display_name: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GatewayError {
     code: String,
     message: String,
@@ -123,26 +125,10 @@ impl GatewayError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum GatewaySuccess {
     Metadata(Value),
     ToolResult(PluginToolResult),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PluginToolArguments {
-    action: String,
-    #[serde(default)]
-    runner: Option<String>,
-    #[serde(default)]
-    plugin: Option<String>,
-    #[serde(default)]
-    tool: Option<String>,
-    #[serde(default)]
-    binding: Option<String>,
-    #[serde(default)]
-    arguments: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,25 +187,8 @@ impl PluginOperation {
     }
 }
 
-pub(crate) fn operation_policy(
-    arguments: &Value,
-) -> Result<SpecializedOperationPolicy, &'static str> {
-    let action = arguments
-        .get("action")
-        .and_then(Value::as_str)
-        .ok_or("plugin_tool action is required")?;
-    PluginOperation::parse(action)
-        .map(PluginOperation::policy)
-        .ok_or("plugin_tool action must be one of list, check, reload, describe, or call")
-}
-
 pub(crate) fn invoke_authorized(auth: Option<&AuthContext>) -> bool {
     auth.is_some_and(|auth| auth.has_scope(SCOPE_PLUGIN_INVOKE))
-}
-
-fn authorized_for_operation(auth: Option<&AuthContext>, operation: PluginOperation) -> bool {
-    let required = operation.policy().required_scope;
-    auth.is_some_and(|auth| auth.has_scope(required))
 }
 
 /// Bounded model/ledger projection. Arbitrary Plugin arguments and opaque
@@ -229,8 +198,13 @@ pub(crate) fn audit_arguments(arguments: &Value) -> Value {
     let action = object
         .and_then(|o| o.get("action"))
         .and_then(Value::as_str)
-        .and_then(PluginOperation::parse)
-        .map(|operation| operation.policy().operation);
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 16
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        });
     let runner = object
         .and_then(|o| o.get("runner"))
         .and_then(Value::as_str)
@@ -265,12 +239,13 @@ fn bounded_runner_id(value: &str) -> bool {
 /// be resolved without executing the Plugin. The binding value, provider
 /// instance identity, schema observation, and arbitrary arguments stay out of
 /// the projection.
-pub(crate) async fn audit_arguments_with_identity(
+async fn audit_request_with_identity(
     runtime: &ToolRuntime,
-    arguments: &Value,
+    request: &PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Value {
-    let audit = audit_arguments(arguments);
+    let arguments = serde_json::to_value(request).unwrap_or_else(|_| json!({}));
+    let audit = audit_arguments(&arguments);
     if !invoke_authorized(auth) {
         return audit;
     }
@@ -300,59 +275,140 @@ fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBindi
     audit
 }
 
-pub(crate) async fn call(
-    runtime: &ToolRuntime,
-    arguments: Value,
-    auth: Option<&AuthContext>,
-) -> Value {
-    let parsed: PluginToolArguments = match serde_json::from_value(arguments) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            return gateway_error_result(GatewayError::local(
-                "invalid_arguments",
-                "plugin_tool arguments are invalid",
-            ))
-        }
-    };
-    let Some(operation) = PluginOperation::parse(&parsed.action) else {
-        return gateway_error_result(GatewayError::local(
-            "invalid_action",
-            "action must be one of list, check, reload, describe, or call",
-        ));
-    };
-    if !authorized_for_operation(auth, operation) {
-        return gateway_error_result(GatewayError::local(
-            "insufficient_scope",
-            format!(
-                "Plugin operation '{}' requires the {} scope",
-                operation.policy().operation,
-                operation.policy().required_scope
-            ),
-        ));
+#[derive(Debug, Clone)]
+pub(crate) struct PluginInvocationResult {
+    operation: PluginOperation,
+    result: Result<GatewaySuccess, GatewayError>,
+}
+
+impl PluginInvocationResult {
+    pub(crate) fn policy(&self) -> SpecializedOperationPolicy {
+        self.operation.policy()
     }
+
+    pub(crate) fn success(&self) -> bool {
+        match &self.result {
+            Ok(GatewaySuccess::Metadata(_)) => true,
+            Ok(GatewaySuccess::ToolResult(result)) => !result.is_error,
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn dispatch_certainty(&self) -> &'static str {
+        match &self.result {
+            Err(error) => dispatch_state_name(
+                error
+                    .dispatch_state
+                    .unwrap_or(PluginDispatchState::NotStarted),
+            ),
+            Ok(_) => "completed",
+        }
+    }
+
+    pub(crate) fn failure_kind(&self) -> Option<&str> {
+        match &self.result {
+            Ok(GatewaySuccess::ToolResult(result)) if result.is_error => Some("plugin_tool_error"),
+            Err(error) => Some(error.code.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn to_mcp_result(&self) -> Value {
+        render_gateway_result(self.result.clone())
+    }
+
+    pub(crate) fn to_tool_result(&self) -> ToolResult {
+        match &self.result {
+            Ok(GatewaySuccess::Metadata(value)) => ToolResult::ok(value.clone()),
+            Ok(GatewaySuccess::ToolResult(result)) => {
+                let mut output = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
+                if let Some(object) = output.as_object_mut() {
+                    object.insert(
+                        "dispatch_certainty".to_string(),
+                        Value::String("completed".to_string()),
+                    );
+                    if result.is_error {
+                        object.insert(
+                            "failure_kind".to_string(),
+                            Value::String("plugin_tool_error".to_string()),
+                        );
+                    }
+                }
+                if result.is_error {
+                    ToolResult::err_with_output("Plugin tool reported an error", output)
+                } else {
+                    ToolResult::ok(output)
+                }
+            }
+            Err(error) => gateway_error_tool_result(error),
+        }
+    }
+}
+
+/// Canonical action-aware Plugin invocation shared by MCP and the generic Tool
+/// Runtime. This is the only owner of Plugin scope/session/permission lifecycle.
+pub(crate) async fn invoke(
+    runtime: &ToolRuntime,
+    request: PluginToolCall,
+    recording_session_id: Option<&str>,
+    auth: Option<&AuthContext>,
+    transport: SessionTransport,
+) -> Result<PluginInvocationResult, SpecializedGovernanceDenial> {
+    let operation = PluginOperation::parse(&request.action)
+        .expect("PluginToolCall parser admits only the closed action vocabulary");
+    let policy = operation.policy();
+    let audit = audit_request_with_identity(runtime, &request, auth).await;
+    let permit = runtime
+        .govern_specialized_invocation(
+            PLUGIN_TOOL_NAME,
+            policy,
+            transport,
+            recording_session_id,
+            auth,
+            &audit,
+        )
+        .await?;
+
+    let result = execute_business(runtime, operation, request, auth).await;
+    let invocation = PluginInvocationResult { operation, result };
+    runtime.finish_specialized_invocation(
+        permit,
+        invocation.success(),
+        invocation.dispatch_certainty(),
+        invocation.failure_kind(),
+    );
+    Ok(invocation)
+}
+
+async fn execute_business(
+    runtime: &ToolRuntime,
+    operation: PluginOperation,
+    request: PluginToolCall,
+    auth: Option<&AuthContext>,
+) -> Result<GatewaySuccess, GatewayError> {
     let result = match operation {
-        PluginOperation::List => list(runtime, parsed, auth)
+        PluginOperation::List => list(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Check => check(runtime, parsed, auth)
+        PluginOperation::Check => check(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Reload => reload(runtime, parsed, auth)
+        PluginOperation::Reload => reload(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Describe => describe(runtime, parsed, auth)
+        PluginOperation::Describe => describe(runtime, request, auth)
             .await
             .map(GatewaySuccess::Metadata),
-        PluginOperation::Call => call_plugin(runtime, parsed, auth)
+        PluginOperation::Call => call_plugin(runtime, request, auth)
             .await
             .map(GatewaySuccess::ToolResult),
     };
-    render_gateway_result(result)
+    result
 }
 
 async fn list(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
@@ -412,7 +468,7 @@ async fn list(
 
 async fn check(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.tool.is_some() || args.binding.is_some() || args.arguments.is_some() {
@@ -449,7 +505,7 @@ async fn check(
 
 async fn reload(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.plugin.is_some()
@@ -489,7 +545,7 @@ async fn reload(
 
 async fn describe(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<Value, GatewayError> {
     if args.binding.is_some() || args.arguments.is_some() {
@@ -591,7 +647,7 @@ async fn observe_effective_provider_tools(
 
 async fn call_plugin(
     runtime: &ToolRuntime,
-    args: PluginToolArguments,
+    args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<PluginToolResult, GatewayError> {
     if args.runner.is_some() || args.plugin.is_some() || args.tool.is_some() {
@@ -992,6 +1048,24 @@ fn render_gateway_result(result: Result<GatewaySuccess, GatewayError>) -> Value 
         }
         Err(error) => gateway_error_result(error),
     }
+}
+
+fn gateway_error_tool_result(error: &GatewayError) -> ToolResult {
+    let state = error
+        .dispatch_state
+        .unwrap_or(PluginDispatchState::NotStarted);
+    let mut output = json!({
+        "error": {
+            "code": error.code,
+            "message": error.message,
+        },
+        "failure_kind": error.code,
+        "dispatch_certainty": dispatch_state_name(state),
+    });
+    if let Some(recovery) = error.recovery {
+        output["recovery"] = Value::String(recovery.to_string());
+    }
+    ToolResult::err_with_output(error.message.clone(), output)
 }
 
 fn gateway_success_result(value: Value) -> Value {

@@ -240,9 +240,7 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
             "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
             "arguments": {
                 "action": "call",
-                "runner": "runner-a",
-                "plugin": "repo-tools",
-                "tool": "echo",
+                "binding": "wc_pbind_00000000000000000000000000000000",
                 "arguments": {"value": "hello"}
             }
         }),
@@ -251,8 +249,8 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert_eq!(body["result"]["isError"], true);
     assert_eq!(
-        body["result"]["structuredContent"]["error"]["code"], "invalid_arguments",
-        "the pre-binding call shape must be rejected instead of treated as a describe lookup"
+        body["result"]["structuredContent"]["error"]["code"], "describe_required",
+        "a syntactically valid call must reach binding resolution after plugin:invoke scope"
     );
 
     let (status, body, challenge) = oauth_mcp_request(
@@ -261,7 +259,7 @@ async fn oauth2_native_plugin_catalog_and_call_require_explicit_plugin_scope() {
         "tools/call",
         json!({
             "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-            "arguments": {"action": "check", "runner": "runner-a"}
+            "arguments": {"action": "check", "runner": "runner-a", "plugin": "repo-tools"}
         }),
     )
     .await;

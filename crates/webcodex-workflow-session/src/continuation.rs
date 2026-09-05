@@ -163,7 +163,8 @@ pub(crate) struct AttemptExploration {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct AttemptValidation {
-    /// Current workspace evidence status: `passed`, `failed`, `stale`, `not_run`, or `unknown`.
+    /// Current workspace evidence status: `passed`, `failed`, `inconclusive`,
+    /// `stale`, `not_run`, or `unknown`.
     pub(crate) status: String,
     /// Latest validation event status inside the current evidence window.
     pub(crate) latest_status: String,
@@ -991,6 +992,9 @@ fn build_attempt_outcome(
     if validation.status == "stale" {
         push_unique(&mut reasons, "validation_stale_after_changes");
     }
+    if validation.status == "inconclusive" {
+        push_unique(&mut reasons, "validation_inconclusive");
+    }
     let status = if reasons.is_empty() {
         "in_progress".to_string()
     } else if unresolved_failures > 0 || jobs.recovering_count > 0 {
@@ -1047,7 +1051,10 @@ fn build_suggested_next_actions(
             "address open guidance on the session message board",
         );
     }
-    if matches!(validation.status.as_str(), "not_run" | "stale") {
+    if matches!(
+        validation.status.as_str(),
+        "not_run" | "stale" | "inconclusive"
+    ) {
         push_unique(
             &mut actions,
             "run validation before proceeding when the task warrants it",
@@ -1547,7 +1554,19 @@ fn current_run_did_not_execute_tests(event: &Value) -> bool {
     {
         return true;
     }
-    let (passed, failed, ignored, total) = test_counts(event);
+    // Missing count metadata is not evidence that zero tests ran. Only fall
+    // back to a parsed test summary when that summary actually exists.
+    let Some(summary) = event
+        .get("diagnostics")
+        .and_then(|diagnostics| diagnostics.get("test_summary"))
+        .filter(|summary| summary.is_object())
+    else {
+        return false;
+    };
+    let passed = summary.get("passed").and_then(Value::as_u64).unwrap_or(0);
+    let failed = summary.get("failed").and_then(Value::as_u64).unwrap_or(0);
+    let ignored = summary.get("ignored").and_then(Value::as_u64).unwrap_or(0);
+    let total = passed + failed + ignored;
     total == 0 && failed == 0 && passed == 0 && ignored == 0
 }
 

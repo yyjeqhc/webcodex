@@ -303,6 +303,7 @@ impl ToolRuntime {
                     features: None,
                     package: None,
                     no_run: None,
+                    require_tests: None,
                     minimum_tests: None,
                     go_packages: None,
                     timeout_secs,
@@ -403,6 +404,7 @@ impl ToolRuntime {
                 features,
                 package,
                 no_run: None,
+                require_tests: None,
                 minimum_tests: None,
                 go_packages: None,
                 timeout_secs,
@@ -524,6 +526,7 @@ impl ToolRuntime {
                 features,
                 package,
                 no_run,
+                require_tests,
                 minimum_tests,
                 go_packages: None,
                 timeout_secs,
@@ -569,6 +572,7 @@ impl ToolRuntime {
                 features: None,
                 package: None,
                 no_run: None,
+                require_tests: None,
                 minimum_tests: None,
                 go_packages: packages,
                 timeout_secs,
@@ -621,6 +625,7 @@ impl ToolRuntime {
                 "features": request.features.as_deref(),
                 "package": request.package.as_deref(),
                 "no_run": request.no_run,
+                "require_tests": request.require_tests,
                 "min_tests": request.minimum_tests,
                 "packages": request.go_packages.as_ref(),
             }),
@@ -696,6 +701,8 @@ impl ToolRuntime {
                 session_id,
                 validation_target_id,
                 request.minimum_tests,
+                request.require_tests,
+                request.no_run,
                 ssh_resource.as_deref(),
                 request.auth,
             )
@@ -736,6 +743,8 @@ impl ToolRuntime {
                 false,
                 false,
                 request.minimum_tests,
+                request.require_tests,
+                request.no_run,
             )
             .await
         }
@@ -761,6 +770,8 @@ impl ToolRuntime {
         session_id: Option<String>,
         validation_target_id: Option<String>,
         minimum_tests: Option<u64>,
+        require_tests: Option<bool>,
+        no_run: Option<bool>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
@@ -834,6 +845,8 @@ impl ToolRuntime {
                         adapter: adapter.tool_identity().to_string(),
                         validation_target_id: validation_target_id.clone(),
                         minimum_tests,
+                        require_tests,
+                        no_run,
                     }),
                     visibility: crate::runner_http::ShellJobVisibility::HiddenUntilHandoff,
                     validation_identity: None,
@@ -869,6 +882,8 @@ impl ToolRuntime {
             executor: "agent".to_string(),
             command_summary: crate::runner_http::command_preview(command),
             minimum_tests,
+            require_tests,
+            no_run,
             auth: access,
         };
         self.await_validation_job(job_id, sync_wait_secs, adapter, handoff)
@@ -1090,7 +1105,7 @@ impl ToolRuntime {
             "sync_wait_secs": handoff.sync_wait_secs,
             "terminal": true,
         });
-        if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection(
+        if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection_with_policy(
             Some(adapter.tool_identity()),
             Some(adapter.validation_kind()),
             job_status,
@@ -1099,6 +1114,8 @@ impl ToolRuntime {
             &stderr_tail,
             stdout_truncated || stderr_truncated,
             handoff.minimum_tests,
+            handoff.require_tests,
+            handoff.no_run,
         ) {
             apply_validation_projection_fields(&mut payload, &projection);
         }
@@ -1163,6 +1180,8 @@ impl ToolRuntime {
         source_stdout_truncated: bool,
         source_stderr_truncated: bool,
         minimum_tests: Option<u64>,
+        require_tests: Option<bool>,
+        no_run: Option<bool>,
     ) -> ToolResult {
         let execution_state = output.execution_state;
         let (stdout_tail, bounded_stdout_truncated) =
@@ -1217,7 +1236,7 @@ impl ToolRuntime {
             ShellCommandExecutionState::Completed if process_passed => "completed",
             ShellCommandExecutionState::Completed => "failed",
         };
-        if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection(
+        if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection_with_policy(
             Some(adapter.tool_identity()),
             Some(adapter.validation_kind()),
             terminal_status,
@@ -1226,6 +1245,8 @@ impl ToolRuntime {
             &stderr_tail,
             stdout_truncated || stderr_truncated,
             minimum_tests,
+            require_tests,
+            no_run,
         ) {
             apply_validation_projection_fields(&mut payload, &projection);
         }
@@ -1347,6 +1368,8 @@ impl ToolRuntime {
             false,
             false,
             None,
+            None,
+            None,
         )
         .await
     }
@@ -1364,6 +1387,7 @@ struct ValidationRunRequest<'a> {
     features: Option<String>,
     package: Option<String>,
     no_run: Option<bool>,
+    require_tests: Option<bool>,
     minimum_tests: Option<u64>,
     go_packages: Option<Vec<String>>,
     timeout_secs: Option<u64>,
@@ -1385,6 +1409,8 @@ struct ValidationHandoff {
     executor: String,
     command_summary: String,
     minimum_tests: Option<u64>,
+    require_tests: Option<bool>,
+    no_run: Option<bool>,
     auth: Option<webcodex_runner_registry::RunnerAccess>,
 }
 

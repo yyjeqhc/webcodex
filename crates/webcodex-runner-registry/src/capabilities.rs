@@ -28,6 +28,7 @@ pub enum RunnerFeature {
     SshPersistentShell,
     StructuredValidationArgv,
     StructuredCargoTestCountAssertion,
+    StructuredCargoTestExecutionPolicy,
     StructuredGoTestJson,
     StructuredGoTestTool,
     StructuredGoTestPackages,
@@ -63,7 +64,7 @@ pub enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 53] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 54] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -84,6 +85,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 53] = [
     RunnerFeature::SshPersistentShell,
     RunnerFeature::StructuredValidationArgv,
     RunnerFeature::StructuredCargoTestCountAssertion,
+    RunnerFeature::StructuredCargoTestExecutionPolicy,
     RunnerFeature::StructuredGoTestJson,
     RunnerFeature::StructuredGoTestTool,
     RunnerFeature::StructuredGoTestPackages,
@@ -162,6 +164,9 @@ impl RunnerFeature {
             Self::StructuredCargoTestCountAssertion => {
                 wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION
             }
+            Self::StructuredCargoTestExecutionPolicy => {
+                wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY
+            }
             Self::StructuredGoTestJson => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
             Self::StructuredGoTestTool => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
             Self::StructuredGoTestPackages => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -227,6 +232,9 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV => Self::StructuredValidationArgv,
             wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION => {
                 Self::StructuredCargoTestCountAssertion
+            }
+            wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY => {
+                Self::StructuredCargoTestExecutionPolicy
             }
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON => Self::StructuredGoTestJson,
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL => Self::StructuredGoTestTool,
@@ -295,6 +303,7 @@ impl RunnerFeature {
             | Self::ProjectPathRegistration => RunnerFeatureInference::GenerationEligible,
             Self::Shell
             | Self::Git
+            | Self::StructuredCargoTestExecutionPolicy
             | Self::ApplyTextEditLineScope
             | Self::ApplyPatch
             | Self::ApplyPatchMatchMetadata
@@ -352,6 +361,9 @@ impl RunnerFeature {
             Self::StructuredValidationArgv => capabilities.structured_validation_argv,
             Self::StructuredCargoTestCountAssertion => {
                 capabilities.structured_cargo_test_count_assertion
+            }
+            Self::StructuredCargoTestExecutionPolicy => {
+                capabilities.structured_cargo_test_execution_policy
             }
             Self::StructuredGoTestJson => capabilities.structured_go_test_json,
             Self::StructuredGoTestTool => capabilities.structured_go_test_tool,

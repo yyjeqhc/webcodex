@@ -79,7 +79,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Preferred structured cargo test with scoped args and bounded output. require_tests/min_tests add a proven minimum executed-test postcondition; long validation continues as the same execution Job.",
+            "Preferred structured cargo test with scoped args and bounded output. Normal execution requires non-zero executed-test evidence; explicit require_tests=false opts out when no min_tests minimum is requested, while require_tests=true/min_tests enforce a proven minimum. no_run=true is compile-only and does not require executed-test-count proof. Long validation continues as the same execution Job.",
             cargo_test_input_schema,
         )),
         100,

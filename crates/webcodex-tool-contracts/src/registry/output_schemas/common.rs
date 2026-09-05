@@ -725,6 +725,7 @@ pub fn handoff_brief_schema(description: &str) -> Value {
                         "enum": [
                             "passed",
                             "failed",
+                            "inconclusive",
                             "stale",
                             "not_run",
                             "not_requested",
@@ -968,11 +969,11 @@ fn attempt_validation_schema() -> Value {
         "properties": {
             "status": {
                 "type": "string",
-                "enum": ["passed", "failed", "stale", "not_run", "unknown"]
+                "enum": ["passed", "failed", "inconclusive", "stale", "not_run", "unknown"]
             },
             "latest_status": {
                 "type": "string",
-                "enum": ["passed", "failed", "not_run", "unknown", "unavailable"]
+                "enum": ["passed", "failed", "inconclusive", "not_run", "unknown", "unavailable"]
             },
             "latest_kind": nullable_schema("string", "Validation kind of the latest run, when present."),
             "latest_at": nullable_schema("integer", "Unix timestamp of the latest run, when present."),

@@ -705,10 +705,11 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
 }
 
 pub(crate) fn validation_has_cargo_test_zero_tests(validation: &Value) -> bool {
-    validation
-        .get("cargo_test_zero_tests_run")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    validation.get("latest_status").and_then(Value::as_str) == Some("inconclusive")
+        && validation
+            .get("cargo_test_zero_tests_run")
+            .and_then(Value::as_bool)
+            == Some(true)
 }
 
 pub(crate) fn review_evidence_summary_for_session(summary: &SessionSummary) -> Value {
@@ -838,6 +839,7 @@ fn compact_validation_latest_status_fallback(validation: &Value) -> Value {
     let latest_status = match validation.get("status").and_then(Value::as_str) {
         Some("passed") => "passed",
         Some("failed") => "failed",
+        Some("inconclusive") => "inconclusive",
         Some("not_run") => "not_run",
         _ => "unknown",
     };
@@ -1040,6 +1042,13 @@ fn compact_workflow_outcomes(
         Some("failed") if current_unresolved_failure_count > 0 => {
             push_unique(&mut blocking_reasons, "validation_failed");
             push_unique_action(&mut actions, VALIDATION_IDENTITY_REUSE_ACTION);
+        }
+        Some("inconclusive") => {
+            push_unique(&mut warning_reasons, "validation_inconclusive");
+            push_unique_action(
+                &mut actions,
+                "run validation that proves the intended test assertion, or explicitly set require_tests=false when zero tests are intentional",
+            );
         }
         Some("unknown") | None => {
             push_unique(&mut warning_reasons, "validation_unknown");
@@ -1302,7 +1311,11 @@ fn install_compact_workflow_outcomes(target: &mut Value, outcomes: Value) {
 }
 
 fn validation_historical_failures_resolved(validation: &Value) -> bool {
-    validation.get("latest_status").and_then(Value::as_str) == Some("passed")
+    validation
+        .get("successes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
         && validation
             .pointer("/historical_failures/resolved")
             .and_then(Value::as_bool)

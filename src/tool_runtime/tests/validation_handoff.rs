@@ -214,6 +214,8 @@ async fn seed_retained_terminal_validation_job(
                     adapter: "cargo_check".to_string(),
                     validation_target_id: Some(validation_target_id.clone()),
                     minimum_tests: None,
+                    require_tests: None,
+                    no_run: None,
                 }),
                 visibility: ShellJobVisibility::Public,
                 ..Default::default()

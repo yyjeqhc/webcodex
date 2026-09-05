@@ -16,6 +16,7 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
             ..Default::default()
         },
     )
@@ -123,6 +124,7 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
             ..Default::default()
         },
     )
@@ -166,6 +168,8 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
         .and_then(|context| context.validation.as_ref())
         .expect("durable validation metadata");
     assert_eq!(validation.minimum_tests, Some(2));
+    assert_eq!(validation.require_tests, Some(true));
+    assert_eq!(validation.no_run, None);
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["promoted_to_job"], true);
@@ -237,4 +241,108 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
         validation["latest"]["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
+}
+
+#[tokio::test]
+async fn durable_cargo_test_explicit_zero_opt_out_survives_job_reconciliation() {
+    let client_id = "vhandoff-zero-opt-out";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(50));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoTest {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        filter: Some("focused".to_string()),
+                        all_targets: None,
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        no_run: None,
+                        require_tests: Some(false),
+                        min_tests: None,
+                        timeout_secs: Some(1800),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
+    let durable = request
+        .job_context
+        .as_ref()
+        .and_then(|context| context.validation.as_ref())
+        .expect("durable validation metadata");
+    assert_eq!(durable.minimum_tests, None);
+    assert_eq!(durable.require_tests, Some(false));
+    assert_eq!(durable.no_run, None);
+
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    assert_eq!(handoff.output["job_id"], job_id);
+
+    runtime
+        .runner_registry
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "completed",
+            "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored\n",
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    let status = runtime
+        .job_status_for_auth(job_id, false, Some(&auth))
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["validation"]["passed"], true);
+    assert_eq!(status.output["validation"]["tests_run_count"], 0);
+    assert_eq!(status.output["validation"]["zero_tests_run"], true);
+    assert_eq!(status.output["validation"]["require_tests"], false);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(50))
+        .unwrap();
+    let validation = runtime
+        .validation_summary_for_session_with_jobs(&summary, 50, Some(&auth))
+        .await;
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest_success"]["require_tests"], false);
+    assert_eq!(validation["latest_success"]["zero_tests_run"], true);
 }

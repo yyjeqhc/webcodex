@@ -695,7 +695,7 @@ fn startup_validation_schema() -> Value {
         "properties": {
             "latest_status": {
                 "type": "string",
-                "enum": ["passed", "failed", "expected", "not_run", "unknown", "unavailable"]
+                "enum": ["passed", "failed", "inconclusive", "expected", "not_run", "unknown", "unavailable"]
             },
             "open_failures": bounded_list_schema(startup_failure_schema(), 10),
             "delta": {

@@ -31,6 +31,8 @@ const VALIDATION_PARSER_SOURCE: &str = "bounded_validation_metadata";
 pub struct ValidationEvent {
     pub tool_name: String,
     pub execution_source: String,
+    #[serde(skip)]
+    adapter_tool_identity: Option<&'static str>,
     pub identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assertion_name: Option<String>,
@@ -77,6 +79,10 @@ pub struct ValidationEvent {
     pub tests_failed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zero_tests_run: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_tests: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_run: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_count_assertion: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -329,6 +335,10 @@ fn current_validation_evidence_for_events(
         .pointer("/unresolved_failures/count")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
+    let current_summary_status = current_validation
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     let (status, reason) = if current_events_total > 0 && unresolved_failure_count > 0 {
         ("failed", Some("current_validation_failures"))
     } else if current_events_total > 0 && successes > 0 {
@@ -337,6 +347,14 @@ fn current_validation_evidence_for_events(
         (
             "expected",
             Some("declared_result_expectation_satisfied_without_validation_pass"),
+        )
+    } else if current_events_total > 0 && current_summary_status == "inconclusive" {
+        (
+            "inconclusive",
+            current_validation
+                .get("reason")
+                .and_then(Value::as_str)
+                .or(Some("validation_evidence_inconclusive")),
         )
     } else if reset_index.is_some() && stale_validation_count > 0 {
         ("stale", Some("validation_stale_after_changes"))
@@ -470,22 +488,29 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
         classify_validation_failures(&mut validation_events);
     let successes = validation_events
         .iter()
-        .filter(|event| event.success)
+        .filter(|event| validation_event_is_proven_success(event))
+        .count();
+    let inconclusive_results = validation_events
+        .iter()
+        .filter(|event| validation_event_is_inconclusive(event))
         .count();
     let failures = historical_failures.count;
     let expected_results = validation_events
         .iter()
         .filter(|event| validation_event_is_expected_result(event))
         .count();
-    let status = validation_status(successes, failures, expected_results);
+    let status = validation_status(successes, failures, expected_results, inconclusive_results);
     let parser = parser_summary_for_events(&validation_events);
-    let cargo_test_zero_tests_run = validation_events.iter().any(cargo_test_zero_tests_success);
     let latest = validation_events.last().cloned();
+    let cargo_test_zero_tests_run = latest.as_ref().is_some_and(cargo_test_zero_tests_success);
     let latest_status = validation_latest_status(latest.as_ref());
+    let reason = (status == "inconclusive")
+        .then(|| latest.as_ref().map(validation_inconclusive_reason))
+        .flatten();
     let latest_success = validation_events
         .iter()
         .rev()
-        .find(|event| event.success)
+        .find(|event| validation_event_is_proven_success(event))
         .cloned();
     let latest_failure = validation_events
         .iter()
@@ -498,7 +523,7 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
     to_value(ValidationSummary {
         available: true,
         status,
-        reason: None,
+        reason,
         latest,
         latest_status,
         historical_failures,
@@ -518,20 +543,32 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
     })
 }
 
-fn validation_status(successes: usize, failures: usize, expected_results: usize) -> &'static str {
-    match (successes > 0, failures > 0, expected_results > 0) {
-        (true, true, _) => "mixed",
-        (true, false, _) => "passed",
-        (false, true, _) => "failed",
-        (false, false, true) => "expected",
-        (false, false, false) => "unknown",
+fn validation_status(
+    successes: usize,
+    failures: usize,
+    expected_results: usize,
+    inconclusive_results: usize,
+) -> &'static str {
+    match (
+        successes > 0,
+        failures > 0,
+        expected_results > 0,
+        inconclusive_results > 0,
+    ) {
+        (true, true, _, _) => "mixed",
+        (true, false, _, _) => "passed",
+        (false, true, _, _) => "failed",
+        (false, false, true, _) => "expected",
+        (false, false, false, true) => "inconclusive",
+        (false, false, false, false) => "unknown",
     }
 }
 
 fn validation_latest_status(latest: Option<&ValidationEvent>) -> &'static str {
     match latest {
-        Some(event) if event.success => "passed",
+        Some(event) if validation_event_is_proven_success(event) => "passed",
         Some(event) if validation_event_is_expected_result(event) => "expected",
+        Some(event) if validation_event_is_inconclusive(event) => "inconclusive",
         Some(_) => "failed",
         None => "not_run",
     }
@@ -558,7 +595,9 @@ fn classify_validation_failures(
     // project A merely because cwd/package/filter/features match.
     let mut latest_success_by_identity = HashMap::<(Option<String>, String, String), usize>::new();
     for (index, event) in events.iter().enumerate() {
-        if event.success && validation_event_decides_historical_failure_status(event) {
+        if validation_event_is_proven_success(event)
+            && validation_event_decides_historical_failure_status(event)
+        {
             latest_success_by_identity.insert(validation_reconciliation_key(event), index);
         }
     }
@@ -626,9 +665,7 @@ fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -
     // A caller-declared expected/observed failure is useful expectation evidence,
     // but it is not proof that the validator passed and therefore can never
     // resolve an earlier real validation failure for the same identity.
-    event.execution_success != Some(false)
-        && !cargo_test_zero_tests_success(event)
-        && !cargo_test_unproven_execution_success(event)
+    validation_event_is_proven_success(event)
 }
 
 // `validation_kind = test` is only an intent/category for generic execution.
@@ -639,10 +676,55 @@ fn structured_test_requires_execution_proof(event: &ValidationEvent) -> bool {
     })
 }
 
-fn cargo_test_unproven_execution_success(event: &ValidationEvent) -> bool {
-    structured_test_requires_execution_proof(event)
-        && event.success
+fn generic_cargo_test_has_reliable_zero_test_evidence(event: &ValidationEvent) -> bool {
+    event.tool_name != "cargo_test"
+        && event.adapter_tool_identity == Some("cargo_test")
+        && event.tests_run_count == Some(0)
+        && event.zero_tests_run == Some(true)
+}
+
+fn validation_event_is_proven_success(event: &ValidationEvent) -> bool {
+    if !event.success || event.execution_success == Some(false) {
+        return false;
+    }
+    // Generic validation preserves its historical proof behavior when count
+    // metadata is unavailable. Once the existing execution adapter positively
+    // identifies Cargo test and bounded metadata proves that zero tests ran,
+    // however, process success is not validation proof.
+    if generic_cargo_test_has_reliable_zero_test_evidence(event) {
+        return false;
+    }
+    if !structured_test_requires_execution_proof(event) {
+        return true;
+    }
+    if event.tool_name == "cargo_test" && event.no_run == Some(true) {
+        return true;
+    }
+    match (event.tests_run_count, event.zero_tests_run) {
+        (Some(count), Some(zero_tests_run)) if zero_tests_run == (count == 0) => {
+            count > 0
+                || (event.tool_name == "cargo_test"
+                    && event.require_tests == Some(false)
+                    && event.test_count_assertion.is_none())
+        }
+        _ => false,
+    }
+}
+
+fn validation_event_is_inconclusive(event: &ValidationEvent) -> bool {
+    event.success && !validation_event_is_proven_success(event)
+}
+
+fn validation_inconclusive_reason(event: &ValidationEvent) -> &'static str {
+    if event.zero_tests_run == Some(true) {
+        "zero_tests_not_validation_proof"
+    } else if structured_test_requires_execution_proof(event)
         && (event.tests_run_count.is_none() || event.zero_tests_run.is_none())
+    {
+        "test_count_metadata_unavailable"
+    } else {
+        "validation_evidence_inconclusive"
+    }
 }
 
 fn no_historical_failures() -> ValidationHistoricalFailures {
@@ -893,6 +975,16 @@ fn validation_event_from_finished(
         .as_ref()
         .and_then(|summary| summary.get("test_count_assertion"))
         .cloned();
+    let require_tests = finished
+        .validation_output_summary
+        .as_ref()
+        .and_then(|summary| summary.get("require_tests"))
+        .and_then(Value::as_bool);
+    let no_run = finished
+        .validation_output_summary
+        .as_ref()
+        .and_then(|summary| summary.get("no_run"))
+        .and_then(Value::as_bool);
     let detected_summary = adapter.map(|adapter| {
         json!({
             "kind": adapter.validation_kind(),
@@ -909,6 +1001,7 @@ fn validation_event_from_finished(
     Some(ValidationEvent {
         tool_name: finished.tool_name.clone(),
         execution_source: finished.tool_name.clone(),
+        adapter_tool_identity: adapter.map(|adapter| adapter.tool_identity()),
         identity,
         assertion_name,
         purpose,
@@ -938,6 +1031,8 @@ fn validation_event_from_finished(
         tests_passed,
         tests_failed,
         zero_tests_run,
+        require_tests,
+        no_run,
         test_count_assertion,
         stdout_lines,
         stderr_lines,
@@ -1428,8 +1523,9 @@ fn validation_test_run_metadata(
 }
 
 fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
-    structured_test_requires_execution_proof(event)
+    event.adapter_tool_identity == Some("cargo_test")
         && event.success
+        && event.tests_run_count == Some(0)
         && event.zero_tests_run == Some(true)
 }
 

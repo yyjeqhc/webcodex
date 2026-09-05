@@ -141,7 +141,14 @@ fn continuation_feedback_schema_enums_and_signed_ints_are_stable() {
         .collect::<Vec<_>>();
     assert_eq!(
         validation_status_enum,
-        ["passed", "failed", "not_run", "unknown", "unavailable"]
+        [
+            "passed",
+            "failed",
+            "inconclusive",
+            "not_run",
+            "unknown",
+            "unavailable"
+        ]
     );
 
     let boundary_source_enum = schema["properties"]["attempt"]["properties"]["boundary"]

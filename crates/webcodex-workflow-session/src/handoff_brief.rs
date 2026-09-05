@@ -112,7 +112,9 @@ pub fn build_handoff_brief(input: HandoffBriefInput<'_>) -> Value {
             .unwrap_or(false),
         HANDOFF_RECENT_FILES_MAX_ITEMS,
     );
-    if input.validation_requested && matches!(validation.status, "passed" | "failed") {
+    if input.validation_requested
+        && matches!(validation.status, "passed" | "failed" | "inconclusive")
+    {
         validation.value["open_failures"] = bounded_failure_list(attempt);
     }
     let meaningful_tool_calls = attempt
@@ -407,6 +409,7 @@ fn project_validation(requested: bool, validation: Option<&Value>) -> Validation
         match status {
             "passed" => "passed",
             "failed" => "failed",
+            "inconclusive" => "inconclusive",
             "stale" => "stale",
             "not_run" => "not_run",
             _ => "unavailable",
@@ -442,7 +445,11 @@ fn project_validation(requested: bool, validation: Option<&Value>) -> Validation
             "unavailable"
         }
     };
-    let reason_code = (projected == "unavailable").then_some("validation_unavailable");
+    let reason_code = match projected {
+        "unavailable" => Some("validation_unavailable"),
+        "inconclusive" => Some("validation_inconclusive"),
+        _ => None,
+    };
     ValidationProjection {
         value: validation_value(projected, reason_code, failures),
         status: projected,
@@ -595,7 +602,7 @@ fn progress_state(
     {
         return "blocked";
     }
-    if validation.status == "stale"
+    if matches!(validation.status, "stale" | "inconclusive")
         || (workspace.dirty == Some(true) && validation.status != "passed")
     {
         return "needs_validation";
@@ -649,7 +656,7 @@ fn next_actions(
     if open_risks.is_some_and(|count| count > 0) {
         push_unique(&mut actions, "review open risk guidance before continuing");
     }
-    if matches!(validation.status, "not_run" | "stale") {
+    if matches!(validation.status, "not_run" | "stale" | "inconclusive") {
         push_known_or(
             &mut actions,
             &known,

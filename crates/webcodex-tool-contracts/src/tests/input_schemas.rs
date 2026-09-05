@@ -162,6 +162,40 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
 }
 
 #[test]
+fn cargo_test_schema_explains_execution_proof_policy() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "cargo_test");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    let require_tests = properties["require_tests"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(require_tests.contains("Omission"), "{require_tests}");
+    assert!(require_tests.contains("non-zero"), "{require_tests}");
+    assert!(
+        require_tests.contains("false is an explicit opt-out"),
+        "{require_tests}"
+    );
+    assert!(
+        require_tests.contains("true requires proof"),
+        "{require_tests}"
+    );
+
+    let no_run = properties["no_run"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(no_run.contains("compile-only"), "{no_run}");
+    assert!(
+        no_run.contains("does not require executed-test-count proof"),
+        "{no_run}"
+    );
+    assert!(spec
+        .description
+        .contains("Normal execution requires non-zero"));
+    assert!(spec.description.contains("require_tests=false opts out"));
+    assert!(spec.description.contains("no_run=true is compile-only"));
+}
+
+#[test]
 fn raw_shell_tools_expose_the_shared_authored_command_bound() {
     let specs = registered_tool_specs();
     for name in ["run_shell", "run_job", "session_shell_exec"] {

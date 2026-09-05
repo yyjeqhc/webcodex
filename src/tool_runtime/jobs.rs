@@ -335,6 +335,7 @@ pub(crate) fn structured_validation_evidence(
     evidence
 }
 
+#[cfg(test)]
 pub(crate) fn validation_job_projection(
     tool: Option<&str>,
     kind: Option<&str>,
@@ -345,6 +346,32 @@ pub(crate) fn validation_job_projection(
     truncated: bool,
     minimum_tests: Option<u64>,
 ) -> Option<Value> {
+    validation_job_projection_with_policy(
+        tool,
+        kind,
+        status,
+        exit_code,
+        stdout,
+        stderr,
+        truncated,
+        minimum_tests,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn validation_job_projection_with_policy(
+    tool: Option<&str>,
+    kind: Option<&str>,
+    status: &str,
+    exit_code: Option<i64>,
+    stdout: &str,
+    stderr: &str,
+    truncated: bool,
+    minimum_tests: Option<u64>,
+    require_tests: Option<bool>,
+    no_run: Option<bool>,
+) -> Option<Value> {
     let tool = tool?;
     let kind = kind.unwrap_or(match tool {
         "cargo_test" | "go_test" => "test",
@@ -352,11 +379,13 @@ pub(crate) fn validation_job_projection(
         _ => "check",
     });
     if !is_terminal_job_status(status) {
-        return Some(json!({
+        let mut value = json!({
             "tool": tool,
             "kind": kind,
             "state": if status == "queued" || status == "agent_queued" { "pending" } else { "running" },
-        }));
+        });
+        apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
+        return Some(value);
     }
     if matches!(
         status,
@@ -391,6 +420,7 @@ pub(crate) fn validation_job_projection(
             }
             _ => {}
         }
+        apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
         return Some(value);
     }
     let process_passed = status == "completed" && exit_code == Some(0);
@@ -445,7 +475,25 @@ pub(crate) fn validation_job_projection(
         }
         _ => {}
     }
+    apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
     Some(value)
+}
+
+fn apply_cargo_test_execution_policy(
+    value: &mut Value,
+    tool: &str,
+    require_tests: Option<bool>,
+    no_run: Option<bool>,
+) {
+    if tool != "cargo_test" {
+        return;
+    }
+    if let Some(require_tests) = require_tests {
+        value["require_tests"] = json!(require_tests);
+    }
+    if let Some(no_run) = no_run {
+        value["no_run"] = json!(no_run);
+    }
 }
 
 fn is_lifecycle_active_status(status: &str) -> bool {
@@ -1161,7 +1209,7 @@ impl ToolRuntime {
                         }
                         Err(_) => (String::new(), String::new(), true),
                     };
-                    if let Some(mut validation) = validation_job_projection(
+                    if let Some(mut validation) = validation_job_projection_with_policy(
                         tool,
                         kind,
                         &status,
@@ -1170,6 +1218,8 @@ impl ToolRuntime {
                         &stderr,
                         truncated,
                         validation_metadata.and_then(|metadata| metadata.minimum_tests),
+                        validation_metadata.and_then(|metadata| metadata.require_tests),
+                        validation_metadata.and_then(|metadata| metadata.no_run),
                     ) {
                         if let Some(target_id) = validation_metadata
                             .and_then(|metadata| metadata.validation_target_id.as_deref())
@@ -1263,7 +1313,7 @@ impl ToolRuntime {
                     .validation
                     .as_ref()
                     .map(|metadata| metadata.kind.as_str());
-                let mut validation = validation_job_projection(
+                let mut validation = validation_job_projection_with_policy(
                     validation_tool,
                     validation_kind,
                     &job.status,
@@ -1274,6 +1324,10 @@ impl ToolRuntime {
                     job.validation
                         .as_ref()
                         .and_then(|metadata| metadata.minimum_tests),
+                    job.validation
+                        .as_ref()
+                        .and_then(|metadata| metadata.require_tests),
+                    job.validation.as_ref().and_then(|metadata| metadata.no_run),
                 );
                 if let (Some(validation), Some(target_id)) = (
                     validation.as_mut(),

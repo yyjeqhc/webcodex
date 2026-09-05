@@ -1323,7 +1323,12 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
         handoff.output["tool_failures"]["expectation_mismatch_count"],
         0
     );
-    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_eq!(handoff.output["validation"]["status"], "inconclusive");
+    assert_eq!(handoff.output["validation"]["successes"], 0);
+    assert_eq!(
+        handoff.output["validation"]["latest_status"],
+        "inconclusive"
+    );
     assert_eq!(
         handoff.output["validation"]["cargo_test_zero_tests_run"],
         true
@@ -1334,6 +1339,7 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
     assert_eq!(verdict["blocking"], false);
     assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_successes");
     assert_reason_list_contains(verdict, "warning_reasons", "unexpected_successes");
+    assert_reason_list_contains(verdict, "warning_reasons", "validation_inconclusive");
     assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
     assert!(verdict["suggested_next_actions"]
         .as_array()
@@ -1341,6 +1347,60 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
         .iter()
         .any(|action| action.as_str()
             == Some("cargo_test ran zero tests; verify the test filter or command")));
+}
+
+#[tokio::test]
+async fn generic_cargo_test_zero_tests_emit_inconclusive_handoff_warning() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("generic cargo zero tests handoff".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "run_process",
+        crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+            "run_process",
+            &json!({
+                "project": "agent:eval:demo",
+                "executable": "cargo",
+                "args": ["test", "missing_filter"],
+                "cwd": ".",
+                "purpose": "test"
+            }),
+        ),
+        true,
+        json!({
+            "exit_code": 0,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["validation"]["status"], "inconclusive");
+    assert_eq!(handoff.output["validation"]["successes"], 0);
+    assert_eq!(
+        handoff.output["validation"]["latest_status"],
+        "inconclusive"
+    );
+    assert_eq!(
+        handoff.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    let verdict = &handoff.output["verdict"];
+    assert_reason_list_contains(verdict, "warning_reasons", "validation_inconclusive");
+    assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
 }
 
 #[tokio::test]
@@ -2679,7 +2739,7 @@ async fn session_handoff_command_derived_unresolved_does_not_claim_original_asse
 }
 
 #[tokio::test]
-async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test_failure() {
+async fn session_handoff_keeps_real_proof_after_later_zero_test_event() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
@@ -2725,6 +2785,23 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
             "zero_tests_run": false
         }),
     );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": project.clone()}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
 
     let result = dispatch_handoff_summary_only_with_agent(
         &runtime,
@@ -2758,7 +2835,7 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         0
     );
     assert_eq!(result.output["validation"]["status"], "mixed");
-    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(result.output["validation"]["latest_status"], "inconclusive");
     assert_eq!(
         result.output["validation"]["current_evidence"]["status"],
         "passed"
@@ -2775,14 +2852,23 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         result.output["validation"]["historical_failures"]["unresolved"],
         false
     );
+    assert_eq!(
+        result.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
     assert_eq!(result.output["task_outcome"]["status"], "pass");
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
-    assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(result.output["verdict"]["status"], "pass");
+    assert_eq!(result.output["evidence_integrity"]["status"], "warning");
+    assert_eq!(result.output["verdict"]["status"], "warn");
     assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "warning_reasons",
+        "cargo_test_zero_tests",
+    );
     assert!(!result.output["advisories"]
         .as_array()
         .unwrap()
@@ -2913,8 +2999,9 @@ async fn session_handoff_summary_only_keeps_cargo_test_failure_blocking_after_ze
     assert_eq!(result.output["workspace_clean"], true);
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
-    assert_eq!(result.output["validation"]["status"], "mixed");
-    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(result.output["validation"]["successes"], 0);
+    assert_eq!(result.output["validation"]["latest_status"], "inconclusive");
     assert_eq!(
         result.output["validation"]["cargo_test_zero_tests_run"],
         true
@@ -2928,10 +3015,7 @@ async fn session_handoff_summary_only_keeps_cargo_test_failure_blocking_after_ze
         true
     );
     assert_eq!(result.output["task_outcome"]["status"], "fail");
-    assert_eq!(
-        result.output["evidence_history"]["status"],
-        "mixed_unresolved"
-    );
+    assert_eq!(result.output["evidence_history"]["status"], "failed");
     assert_eq!(result.output["evidence_integrity"]["status"], "warning");
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);

@@ -167,7 +167,23 @@ fn cargo_output_schema(tool_name: &str) -> Value {
         ]);
     }
     if tool_name == "cargo_test" {
-        fields.push(("test_count_assertion", cargo_test_count_assertion_schema()));
+        fields.extend([
+            (
+                "require_tests",
+                schema_type(
+                    "boolean",
+                    "Echo of an explicitly supplied require_tests policy. false explicitly accepts zero executed tests as proof when no min_tests assertion is present; omission retains the default requirement for non-zero executed-test proof.",
+                ),
+            ),
+            (
+                "no_run",
+                schema_type(
+                    "boolean",
+                    "Echo of an explicitly supplied no_run policy. true is compile-only validation and does not require executed-test count proof.",
+                ),
+            ),
+            ("test_count_assertion", cargo_test_count_assertion_schema()),
+        ]);
     }
     let properties = fields
         .into_iter()

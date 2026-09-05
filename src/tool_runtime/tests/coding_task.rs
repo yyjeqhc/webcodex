@@ -2631,13 +2631,20 @@ async fn finish_coding_task_summary_only_warns_for_cargo_test_zero_tests_success
         result.output["tool_failures"]["expectation_mismatch_count"],
         0
     );
-    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "inconclusive");
+    assert_eq!(result.output["validation"]["successes"], 0);
+    assert_eq!(result.output["validation"]["latest_status"], "inconclusive");
     assert_eq!(
         result.output["validation"]["cargo_test_zero_tests_run"],
         true
     );
-    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["status"], "warn");
     assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "warning_reasons",
+        "validation_inconclusive",
+    );
     assert!(result.output.get("evidence_history").is_none());
     assert_eq!(result.output["evidence_integrity"]["status"], "warning");
     assert_reason_list_contains(
@@ -2705,8 +2712,9 @@ async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
-    assert_eq!(result.output["validation"]["status"], "mixed");
-    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(result.output["validation"]["successes"], 0);
+    assert_eq!(result.output["validation"]["latest_status"], "inconclusive");
     assert_eq!(
         result.output["validation"]["cargo_test_zero_tests_run"],
         true

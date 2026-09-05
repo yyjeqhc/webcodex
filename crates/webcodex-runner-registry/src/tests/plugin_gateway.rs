@@ -281,6 +281,82 @@ async fn plugin_check_targets_exact_runner_without_requiring_startup_provider_id
 }
 
 #[tokio::test]
+async fn plugin_check_rejects_mismatched_provider_report_after_dispatch() {
+    let registry = RunnerRegistry::default();
+    registry
+        .register(plugin_registration(
+            "check-plugin-runner",
+            "check-instance",
+            vec![],
+        ))
+        .await
+        .unwrap();
+    let alice = auth_context(Some("alice"), false);
+    let (_request_id, receiver) = registry
+        .enqueue_plugin_gateway(
+            "check-plugin-runner",
+            "check-instance",
+            PluginGatewayRequest::Check {
+                provider_id: "repo-tools".to_string(),
+            },
+            Some(&alice),
+            "test".to_string(),
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "check-plugin-runner".to_string(),
+            runner_instance_id: "check-instance".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: "check-plugin-runner".to_string(),
+                runner_instance_id: "check-instance".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(PluginGatewayResponse::success(
+                PluginGatewayResponsePayload::Checked {
+                    report: PluginCheckReport {
+                        provider_id: "other-tools".to_string(),
+                        ready: false,
+                        phase: PluginCheckPhase::Config,
+                        code: Some("plugin_not_configured".to_string()),
+                        detail: Some(
+                            "requested Plugin provider is not configured in current runner.toml"
+                                .to_string(),
+                        ),
+                        tool_count: 0,
+                        tools: vec![],
+                        startup_tool_shape: None,
+                    },
+                },
+            )),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+    let response = receiver.await.unwrap();
+    assert_eq!(response.dispatch_state, PluginDispatchState::OutcomeUnknown);
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_runner_response")
+    );
+    assert!(response.payload.is_none());
+}
+
+#[tokio::test]
 async fn plugin_enqueue_rechecks_owner_runner_and_startup_provider_identity() {
     let registry = RunnerRegistry::default();
     register_plugin_runner(&registry).await;

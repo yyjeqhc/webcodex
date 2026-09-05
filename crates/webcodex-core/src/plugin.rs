@@ -581,6 +581,43 @@ pub fn validate_response(response: &PluginGatewayResponse) -> Result<(), String>
     Ok(())
 }
 
+pub fn validate_response_for_request(
+    request: &PluginGatewayRequest,
+    response: &PluginGatewayResponse,
+) -> Result<(), String> {
+    validate_response(response)?;
+    if response.error.is_some() {
+        return Ok(());
+    }
+    match (request, response.payload.as_ref()) {
+        (
+            PluginGatewayRequest::Check { provider_id },
+            Some(PluginGatewayResponsePayload::Checked { report }),
+        ) => {
+            if report.provider_id != *provider_id {
+                return Err("Plugin check response provider_id does not match request".to_string());
+            }
+        }
+        (PluginGatewayRequest::Reload, Some(PluginGatewayResponsePayload::Reloaded { .. }))
+        | (
+            PluginGatewayRequest::ProvidersList,
+            Some(PluginGatewayResponsePayload::Providers { .. }),
+        )
+        | (
+            PluginGatewayRequest::ToolsList { .. },
+            Some(PluginGatewayResponsePayload::Tools { .. }),
+        )
+        | (
+            PluginGatewayRequest::ToolsCall { .. },
+            Some(PluginGatewayResponsePayload::ToolResult { .. }),
+        ) => {}
+        _ => {
+            return Err("Plugin gateway response kind does not match request operation".to_string())
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_check_report(report: &PluginCheckReport) -> Result<(), String> {
     validate_provider_id(&report.provider_id)?;
     if report.ready {
@@ -803,6 +840,31 @@ mod tests {
             },
         ))
         .unwrap();
+        validate_response_for_request(
+            &request,
+            &PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+                report: report.clone(),
+            }),
+        )
+        .unwrap();
+
+        let mut wrong_provider = report.clone();
+        wrong_provider.provider_id = "other-tools".to_string();
+        assert!(validate_response_for_request(
+            &request,
+            &PluginGatewayResponse::success(PluginGatewayResponsePayload::Checked {
+                report: wrong_provider,
+            }),
+        )
+        .is_err());
+        assert!(validate_response_for_request(
+            &request,
+            &PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
+                providers: vec![],
+                first_class_restart_required: false,
+            }),
+        )
+        .is_err());
 
         let mut invalid = report;
         invalid.detail = Some("x".repeat(PLUGIN_MAX_CHECK_DETAIL_BYTES + 1));

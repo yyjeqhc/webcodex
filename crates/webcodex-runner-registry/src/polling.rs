@@ -13,7 +13,7 @@ use webcodex_core::mcp_gateway::{
     validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
 };
 use webcodex_core::plugin::{
-    validate_response as validate_plugin_gateway_response, PluginDispatchState,
+    validate_response_for_request as validate_plugin_gateway_response, PluginDispatchState,
     PluginGatewayResponse, PluginPlane,
 };
 use webcodex_core::runner_protocol::{
@@ -612,7 +612,15 @@ impl RunnerRegistry {
                         && body.stderr.is_none()
                         && body.duration_ms.is_none()
                         && body.error.is_none()
-                        && validate_plugin_gateway_response(&response).is_ok() =>
+                        && validate_plugin_gateway_response(
+                            pending
+                                .request
+                                .plugin_gateway
+                                .as_ref()
+                                .expect("checked above"),
+                            &response,
+                        )
+                        .is_ok() =>
                 {
                     response
                 }

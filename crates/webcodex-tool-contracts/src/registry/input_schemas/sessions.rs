@@ -62,7 +62,7 @@ pub fn session_execution_context_schema(description: &str) -> Value {
                 "minLength": 1,
                 "maxLength": 80,
                 "pattern": "^[A-Za-z0-9_.-]+$",
-                "description": "Optional named SSH resource configured only on the Runner that owns this Session project. It routes supported one-shot, background, and persistent shell execution remotely; structured process/script and Cargo/Go validation reject it before execution. It never contains host, SSH configuration, key, password, or connection data."
+                "description": "Optional logical name of an SSH resource configured only on the Runner that owns this Session project. After binding it, open_session_shell opens the persistent remote shell through that Runner-owned resource; supported one-shot/background shell execution may also use it. Structured process/script and Cargo/Go validation reject it before execution. It never contains host, SSH configuration, key, password, or connection data."
             }
         }
     })

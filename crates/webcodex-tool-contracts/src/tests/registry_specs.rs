@@ -211,10 +211,69 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "structured validation",
         "edit tools",
         "longer work",
+        "open_session_shell + session_shell_exec",
     ] {
         assert!(
             run_shell_desc.contains(phrase),
             "run_shell description should mention {phrase}: {run_shell_desc}"
+        );
+    }
+
+    let run_process_desc = desc("run_process");
+    for phrase in [
+        "isolated one-shot native executable",
+        "literal argv",
+        "open_session_shell + session_shell_exec",
+    ] {
+        assert!(
+            run_process_desc.contains(phrase),
+            "run_process description should mention {phrase}: {run_process_desc}"
+        );
+    }
+
+    let open_shell_desc = desc("open_session_shell");
+    for phrase in [
+        "execution_context.resource",
+        "update_session_context",
+        "no per-shell host/resource parameter",
+        "does not need webcodex runner",
+    ] {
+        assert!(
+            open_shell_desc.contains(phrase),
+            "open_session_shell description should mention {phrase}: {open_shell_desc}"
+        );
+    }
+
+    let update_context_desc = desc("update_session_context");
+    for phrase in ["runner-local named ssh resource", "open_session_shell"] {
+        assert!(
+            update_context_desc.contains(phrase),
+            "update_session_context description should mention {phrase}: {update_context_desc}"
+        );
+    }
+
+    let persistent_exec = spec_named(&specs, "session_shell_exec");
+    assert_eq!(
+        persistent_exec.input_schema["properties"]["result_expectation"]["enum"],
+        json!(["success", "failure", "observe"])
+    );
+    assert!(persistent_exec.input_schema["properties"]
+        .get("accepted_exit_codes")
+        .is_none());
+
+    let resource_desc = spec_named(&specs, "update_session_context").input_schema["properties"]
+        ["execution_context"]["properties"]["resource"]["description"]
+        .as_str()
+        .expect("update_session_context resource description")
+        .to_lowercase();
+    for phrase in [
+        "logical name",
+        "runner-owned resource",
+        "open_session_shell",
+    ] {
+        assert!(
+            resource_desc.contains(phrase),
+            "execution_context.resource should mention {phrase}: {resource_desc}"
         );
     }
 }

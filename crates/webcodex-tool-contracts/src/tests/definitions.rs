@@ -74,6 +74,27 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
             < apply_text_edits.adaptive_runtime_direct_rank()
     );
 
+    for (name, expected_rank) in [("open_session_shell", 71), ("session_shell_exec", 72)] {
+        let definition = derived
+            .iter()
+            .copied()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("{name} must be adaptive-direct"));
+        assert_eq!(
+            definition.adaptive_runtime_direct_rank(),
+            Some(expected_rank)
+        );
+    }
+    for name in ["session_shell_status", "close_session_shell"] {
+        assert_eq!(
+            lookup_tool_definition(name)
+                .expect("persistent shell lifecycle definition")
+                .adaptive_runtime_direct_rank(),
+            None,
+            "{name} should remain long-tail"
+        );
+    }
+
     for (name, expected_rank, expected_authority) in [
         ("session_discussion_summary", 15, RUNTIME_READ),
         ("list_jobs", 85, RUNTIME_READ),

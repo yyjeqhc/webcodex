@@ -419,7 +419,7 @@ pub fn session_shell_exec_input_schema() -> Value {
         "operation",
         "other"
     ]);
-    schema
+    with_optional_result_expectation(schema, false)
 }
 
 pub fn session_shell_identity_input_schema() -> Value {

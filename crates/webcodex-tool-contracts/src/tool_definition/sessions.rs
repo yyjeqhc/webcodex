@@ -130,7 +130,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             true,
             false,
             ),
-            "Update Session defaults. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
+            "Update Session defaults. Binding execution_context.resource selects an already configured Runner-local named SSH resource; open_session_shell then opens the persistent remote shell through it. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
             update_session_context_input_schema,
         ),
         PERMISSION_RISK_WRITE,

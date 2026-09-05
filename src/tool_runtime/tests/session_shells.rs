@@ -152,6 +152,236 @@ fn dispatch(runtime: ToolRuntime, call: ToolCall) -> tokio::task::JoinHandle<Too
     })
 }
 
+fn dispatch_recorded(
+    runtime: ToolRuntime,
+    tool_name: &'static str,
+    arguments: serde_json::Value,
+) -> tokio::task::JoinHandle<ToolResult> {
+    tokio::spawn(async move {
+        let auth = auth_context(None, true);
+        let (call, metadata) =
+            ToolCall::from_tool_name_with_recorder_metadata(tool_name, arguments).unwrap();
+        runtime
+            .dispatch_with_auth_transport_options_and_metadata(
+                call,
+                Some(&auth),
+                crate::tool_runtime::sessions::SessionTransport::Mcp,
+                metadata,
+            )
+            .await
+    })
+}
+
+async fn open_active_shell(runtime: &ToolRuntime, project: &str, session_id: &str) -> String {
+    let open_task = dispatch(
+        runtime.clone(),
+        ToolCall::OpenSessionShell {
+            project: project.to_string(),
+            session_id: session_id.to_string(),
+            cwd: None,
+            shell: None,
+        },
+    );
+    let open_request = next_persistent_request(runtime).await;
+    complete(runtime, &open_request, "running", "opened", "", None, None).await;
+    let opened = open_task.await.unwrap();
+    assert!(opened.success, "{opened:?}");
+    opened.output["shell_id"].as_str().unwrap().to_string()
+}
+
+async fn persistent_shell_handoff(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
+    runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "session_handoff_summary",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "include_workspace": false,
+                    "include_checkpoints": false,
+                }),
+            )
+            .unwrap(),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn persistent_shell_result_expectation_observe_preserves_nonzero_tool_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
+    let shell_id = open_active_shell(&runtime, &project, &session.session_id).await;
+
+    let exec_task = dispatch_recorded(
+        runtime.clone(),
+        "session_shell_exec",
+        serde_json::json!({
+            "project": project,
+            "session_id": session.session_id,
+            "shell_id": shell_id,
+            "command": "test -e missing",
+            "purpose": "diagnostic",
+            "result_expectation": "observe",
+        }),
+    );
+    let exec_request = next_persistent_request(&runtime).await;
+    complete(
+        &runtime,
+        &exec_request,
+        "running",
+        "completed",
+        "",
+        Some(1),
+        None,
+    )
+    .await;
+    let result = exec_task.await.unwrap();
+    assert!(!result.success, "observe must not forge the ToolResult");
+    assert_eq!(result.output["exit_code"], 1);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["tool_failure"], false);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(50))
+        .unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .unwrap();
+    assert_eq!(finished.result_expectation.as_deref(), Some("observe"));
+    assert_eq!(
+        finished.failure_expectation_result.as_deref(),
+        Some("matched_expected_result")
+    );
+    let handoff = persistent_shell_handoff(&runtime, &session.session_id).await;
+    assert!(handoff.success, "{handoff:?}");
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+}
+
+#[tokio::test]
+async fn persistent_shell_result_expectation_success_default_keeps_nonzero_actionable() {
+    let temp = tempfile::tempdir().unwrap();
+    let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
+    let shell_id = open_active_shell(&runtime, &project, &session.session_id).await;
+
+    let exec_task = dispatch_recorded(
+        runtime.clone(),
+        "session_shell_exec",
+        serde_json::json!({
+            "project": project,
+            "session_id": session.session_id,
+            "shell_id": shell_id,
+            "command": "test -e missing",
+            "purpose": "diagnostic",
+        }),
+    );
+    let exec_request = next_persistent_request(&runtime).await;
+    complete(
+        &runtime,
+        &exec_request,
+        "running",
+        "completed",
+        "",
+        Some(1),
+        None,
+    )
+    .await;
+    let result = exec_task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["exit_code"], 1);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(50))
+        .unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .unwrap();
+    assert_eq!(finished.result_expectation, None);
+    assert_eq!(
+        finished.failure_expectation_result.as_deref(),
+        Some("unexpected_failure")
+    );
+    let handoff = persistent_shell_handoff(&runtime, &session.session_id).await;
+    assert!(handoff.success, "{handoff:?}");
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn persistent_shell_result_expectation_observe_keeps_shell_reset_actionable() {
+    let temp = tempfile::tempdir().unwrap();
+    let (runtime, project, session) = setup(temp.path(), true, SessionMode::Normal, None).await;
+    let shell_id = open_active_shell(&runtime, &project, &session.session_id).await;
+
+    let exec_task = dispatch_recorded(
+        runtime.clone(),
+        "session_shell_exec",
+        serde_json::json!({
+            "project": project,
+            "session_id": session.session_id,
+            "shell_id": shell_id,
+            "command": "sleep 10",
+            "timeout_secs": 1,
+            "purpose": "diagnostic",
+            "result_expectation": "observe",
+        }),
+    );
+    let exec_request = next_persistent_request(&runtime).await;
+    complete(
+        &runtime,
+        &exec_request,
+        "lost",
+        "lost",
+        "",
+        None,
+        Some("shell_reset_required"),
+    )
+    .await;
+    let result = exec_task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["error_code"], "shell_reset_required");
+    assert_eq!(result.output["tool_failure"], true);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(50))
+        .unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .unwrap();
+    assert_eq!(finished.result_expectation.as_deref(), Some("observe"));
+    assert_eq!(
+        finished.failure_expectation_result.as_deref(),
+        Some("unexpected_failure")
+    );
+    let handoff = persistent_shell_handoff(&runtime, &session.session_id).await;
+    assert!(handoff.success, "{handoff:?}");
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 0);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+}
+
 #[tokio::test]
 async fn server_lifecycle_uses_distinct_ids_and_never_routes_through_run_shell() {
     let temp = tempfile::tempdir().unwrap();

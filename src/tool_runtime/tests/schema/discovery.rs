@@ -1352,8 +1352,11 @@ async fn tool_manifest_exact_persistent_shell_tool_surfaces_its_reuse_flow() {
         .find(|flow| flow["name"] == "persistent_shell")
         .expect("persistent_shell flow");
     let purpose = flow["purpose"].as_str().expect("persistent_shell purpose");
-    assert!(purpose.contains("repeated local or named-SSH commands"));
+    assert!(purpose.contains("Runner-local named SSH resource"));
+    assert!(purpose.contains("not an arbitrary host"));
+    assert!(purpose.contains("does not run WebCodex Runner"));
     for tool in [
+        "update_session_context",
         "open_session_shell",
         "session_shell_exec",
         "session_shell_status",

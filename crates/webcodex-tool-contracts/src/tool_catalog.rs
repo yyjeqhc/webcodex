@@ -295,10 +295,11 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "persistent_shell",
-        summary: "Persistent shell: for repeated commands in one Workflow Session, especially on a named SSH resource, open_session_shell once and reuse session_shell_exec. Keep run_process for isolated one-shot native commands; inspect status or close the shell when needed.",
+        summary: "Persistent shell: for shared-state sequences, bind a Runner-local named SSH resource with update_session_context for remote work, then open once and reuse session_shell_exec. It is not an arbitrary SSH host; targets need no WebCodex Runner. Keep run_process for isolated one-shot native argv.",
         manifest_purpose:
-            "Persistent shell route: open_session_shell once, reuse session_shell_exec for repeated local or named-SSH commands, inspect with session_shell_status, close with close_session_shell; keep run_process for isolated one-shot native execution.",
+            "Persistent shell route: for remote work use update_session_context to bind an existing Runner-local named SSH resource, then open_session_shell once and reuse session_shell_exec; inspect with session_shell_status only when needed, close with close_session_shell when useful, and keep run_process for isolated one-shot native argv. The resource is not an arbitrary host and the SSH target does not run WebCodex Runner.",
         tools: &[
+            "update_session_context",
             "open_session_shell",
             "session_shell_exec",
             "session_shell_status",

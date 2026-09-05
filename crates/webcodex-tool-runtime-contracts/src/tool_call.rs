@@ -2402,6 +2402,16 @@ impl ToolCall {
         })?;
         validate_model_facing_assertion_name(name, &arguments)?;
         validate_model_facing_result_expectation(name, &arguments)?;
+        if name == "apply_patch"
+            && arguments
+                .as_object()
+                .is_some_and(|object| object.contains_key("strict_matching"))
+        {
+            return Err(
+                "invalid arguments for tool 'apply_patch': field 'strict_matching' is no longer supported; use matching_mode='exact_unique' for former strict_matching=true, matching_mode='first_match' for former strict_matching=false, or omit matching_mode for the current unique default"
+                    .to_string(),
+            );
+        }
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "read_project_artifact"

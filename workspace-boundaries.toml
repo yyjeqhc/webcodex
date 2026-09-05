@@ -1,0 +1,219 @@
+version = 1
+
+[layers]
+leaf = 0
+domain = 1
+runtime = 2
+application = 3
+composition = 4
+entrypoint = 5
+
+[root_test_support]
+feature = "root-test-support"
+providers = [
+    "webcodex-connector-runtime",
+    "webcodex-runner-registry",
+    "webcodex-store",
+    "webcodex-tool-contracts",
+    "webcodex-workflow-session",
+]
+
+[forbidden_external_dependencies]
+webcodex-cli = ["quinn", "rusqlite", "salvo"]
+webcodex-core = ["quinn", "rusqlite", "salvo"]
+webcodex-runner = ["rusqlite", "salvo"]
+
+[packages.webcodex]
+layer = "composition"
+role = "Server composition and protocol adapters."
+normal = [
+    "webcodex-admin",
+    "webcodex-connector-runtime",
+    "webcodex-core",
+    "webcodex-persistent-shell",
+    "webcodex-runner-config",
+    "webcodex-runner-registry",
+    "webcodex-store",
+    "webcodex-tool-contracts",
+    "webcodex-tool-runtime-contracts",
+    "webcodex-validation",
+    "webcodex-workflow-session",
+    "webcodex-workspace",
+]
+dev = [
+    "webcodex-connector-runtime",
+    "webcodex-runner-registry",
+    "webcodex-store",
+    "webcodex-tool-contracts",
+    "webcodex-workflow-session",
+]
+build = []
+test_support = [
+    "webcodex-connector-runtime",
+    "webcodex-runner-registry",
+    "webcodex-store",
+    "webcodex-tool-contracts",
+    "webcodex-workflow-session",
+]
+
+[packages.webcodex-admin]
+layer = "leaf"
+role = "Standalone operator/admin HTTP client support."
+normal = []
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-cli]
+layer = "entrypoint"
+role = "User-facing CLI entrypoint over server composition and shared setup helpers."
+normal = [
+    "webcodex",
+    "webcodex-admin",
+    "webcodex-core",
+    "webcodex-runner-config",
+]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-computer]
+layer = "leaf"
+role = "Platform-native computer-use primitives."
+normal = []
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-connector-runtime]
+layer = "application"
+role = "Project-bound connector application service coordinating domain crates."
+normal = [
+    "webcodex-core",
+    "webcodex-runner-config",
+    "webcodex-runner-registry",
+    "webcodex-store",
+    "webcodex-tool-contracts",
+    "webcodex-validation",
+    "webcodex-workspace",
+]
+dev = ["webcodex-store"]
+build = []
+test_support = ["webcodex-store"]
+
+[packages.webcodex-core]
+layer = "leaf"
+role = "Shared contracts and low-level helpers with no workspace dependencies."
+normal = []
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-persistent-shell]
+layer = "domain"
+role = "Persistent local shell lifecycle built on process primitives."
+normal = ["webcodex-process"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-process]
+layer = "leaf"
+role = "OS process-tree ownership and lifecycle primitives."
+normal = []
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-runner]
+layer = "runtime"
+role = "Runner executable/runtime composition for local project execution."
+normal = [
+    "webcodex-computer",
+    "webcodex-core",
+    "webcodex-persistent-shell",
+    "webcodex-process",
+    "webcodex-runner-config",
+    "webcodex-workspace",
+]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-runner-config]
+layer = "domain"
+role = "Runner configuration contracts and parsing."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-runner-registry]
+layer = "domain"
+role = "Server-side Runner registry, connection lease, queue, and reconciliation domain."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-store]
+layer = "domain"
+role = "Durable SQLite-backed persistence ownership."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-tool-contracts]
+layer = "domain"
+role = "Protocol-neutral tool schemas and parsing contracts."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-tool-runtime-contracts]
+layer = "runtime"
+role = "Tool runtime call, result, audit, and input contracts."
+normal = [
+    "webcodex-core",
+    "webcodex-tool-contracts",
+    "webcodex-workflow-session",
+]
+dev = ["webcodex-tool-contracts"]
+build = []
+test_support = ["webcodex-tool-contracts"]
+
+[packages.webcodex-validation]
+layer = "domain"
+role = "Validation recipes, adapters, and evidence domain."
+normal = [
+    "webcodex-core",
+    "webcodex-workflow-session",
+]
+dev = [
+    "webcodex-tool-contracts",
+    "webcodex-tool-runtime-contracts",
+    "webcodex-workflow-session",
+]
+build = []
+test_support = [
+    "webcodex-tool-contracts",
+    "webcodex-workflow-session",
+]
+
+[packages.webcodex-workflow-session]
+layer = "domain"
+role = "Workflow Session continuity, evidence, and handoff domain."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
+[packages.webcodex-workspace]
+layer = "domain"
+role = "Registered project/workspace path and metadata contracts."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []

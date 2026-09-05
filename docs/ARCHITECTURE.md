@@ -141,6 +141,34 @@ Runtime Console -----------------------> canonical Server HTTP/kernel paths abov
   registry, file/patch/artifact handling, shell execution, and LSP
   navigation.
 
+### Cargo workspace ownership layers
+
+The checked-in [`workspace-boundaries.toml`](../workspace-boundaries.toml) is the
+machine policy for direct dependencies between Cargo workspace packages. It
+records every workspace package, its ownership role, and its exact normal,
+development, and build-time workspace dependencies. Production dependencies
+may stay within a layer or point toward a lower layer; explicit development
+dependencies are test-only exceptions. Uses of the `root-test-support` feature
+are separately pinned to declared development dependencies.
+
+The current layers are:
+
+- **leaf** — `webcodex-core`, `webcodex-process`, `webcodex-computer`, and
+  `webcodex-admin`; these do not depend on another workspace package.
+- **domain** — Runner config/registry, Store, Workspace, Workflow Session,
+  Tool contracts, Validation, and Persistent Shell ownership.
+- **runtime** — `webcodex-runner` and `webcodex-tool-runtime-contracts`.
+- **application** — `webcodex-connector-runtime`, which composes the domain
+  crates needed by the project-bound Connector path.
+- **composition** — the root `webcodex` package, which owns Server composition
+  and protocol adapters rather than forcing those concerns into lower crates.
+- **entrypoint** — `webcodex-cli`, the user-facing executable over the lower
+  composition and setup crates.
+
+CI validates this policy from `cargo metadata`; adding a workspace crate or a
+new direct workspace dependency therefore requires an intentional policy
+update rather than silently changing the architecture.
+
 ## Further reading
 
 - [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md) — persistent Agent identity and planned asynchronous Agent work

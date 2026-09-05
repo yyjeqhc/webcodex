@@ -38,7 +38,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$PROJECT_DIR"
-cargo metadata --no-deps --format-version 1 >"$METADATA_FILE"
+cargo metadata --format-version 1 >"$METADATA_FILE"
 PYTHONDONTWRITEBYTECODE=1 python3 "$SCRIPT_DIR/workspace_boundary_check.py" \
     --root "$PROJECT_DIR" \
     --metadata "$METADATA_FILE"

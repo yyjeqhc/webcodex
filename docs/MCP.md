@@ -98,11 +98,28 @@ A hosted Server can expose Runner-owned local stdio MCP providers through the sa
 
 Configure local providers on the Runner under `[mcp]`. Access requires the explicit `mcp:local` permission; hosted OAuth clients opt in with `webcodex connect ... --oauth-local-mcp`. See [Runner](RUNNER.md#provider-side-gateway-v1-compatibility) for provider compatibility details.
 
+### Managed SSH resource onboarding
+
+The `ssh_resource` tool provides a narrow Runner-local onboarding path for
+named SSH resources. `list` observes safe logical names and returns an opaque
+exact-Runner/revision binding; `register` and `remove` consume that binding and
+change only durable desired state. They never silently retarget a replacement
+Runner or replay after an uncertain outcome. Raw SSH targets are not returned
+in tool results or normal/full trace bodies. When `restart_required=true`,
+restart the Runner and list again before selecting the resource in a Workflow
+Session.
+
+This surface requires the optional `ssh:local` permission. It is not part of the
+ordinary hosted OAuth baseline; opt in explicitly with
+`webcodex connect ... --oauth-local-ssh`. See
+[Runner](RUNNER.md#ssh-session-resources-advanced) for static-vs-managed and
+PersistentShell details.
+
 ### OAuth2
 
 When OAuth is enabled, MCP clients can use the authorization-code flow instead of a static token. Register the client's exact callback URL, keep `offline_access` when the host requests refresh-token support, and follow the connection values produced by `share --auth oauth` or `connect --auth oauth`. Server setup is in [Deployment](DEPLOYMENT.md#oauth2).
 
-For ordinary hosted `connect --auth oauth`, the Runner keeps its hosted credential while the MCP client receives a separate OAuth credential. Add `--oauth-computer-permissions` or `--oauth-local-mcp` only when those optional capabilities are needed. Existing clients are not silently widened; a real permission change requires reauthorization.
+For ordinary hosted `connect --auth oauth`, the Runner keeps its hosted credential while the MCP client receives a separate OAuth credential. Add `--oauth-computer-permissions`, `--oauth-local-mcp`, or `--oauth-local-ssh` only when those optional capabilities are needed. Existing clients are not silently widened; a real permission change requires reauthorization.
 
 Project-first `share --auth oauth` remains bound to that temporary share environment. Managed-user OAuth is a separate advanced flow (`connect --auth managed-oauth`). OAuth credentials are never valid on Runner transport.
 

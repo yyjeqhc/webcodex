@@ -92,11 +92,24 @@ hosted Server 可以通过同一个 `/mcp` 暴露 Runner-owned 本地 stdio MCP 
 
 在 Runner 的 `[mcp]` 中配置 provider。访问需要显式 `mcp:local` permission；hosted OAuth client 通过 `webcodex connect ... --oauth-local-mcp` opt in。Provider compatibility 细节见 [Runner](RUNNER.zh-CN.md#provider-side-gateway-v1-compatibility)。
 
+### Managed SSH resource 接入
+
+`ssh_resource` 工具提供一条窄化的 Runner-local 命名 SSH resource 接入路径。`list`
+观察安全逻辑名称并返回 opaque exact-Runner/revision binding；`register` 与 `remove`
+消费该 binding，只修改 durable desired state。它们不会把旧 mutation 静默重定向到
+replacement Runner，也不会在 uncertain outcome 后自动 replay。Raw SSH target 不会出现在
+工具结果或 normal/full trace body 中。返回 `restart_required=true` 时，应先重启 Runner，
+再重新 `list`，之后才能在 Workflow Session 中选择该资源。
+
+该 surface 需要可选 `ssh:local` permission，不属于普通 hosted OAuth baseline；通过
+`webcodex connect ... --oauth-local-ssh` 显式 opt in。Static/managed 语义与 PersistentShell
+边界见 [Runner](RUNNER.zh-CN.md#ssh-会话资源高级)。
+
 ### OAuth2
 
 启用 OAuth 后，MCP client 可以使用 authorization-code flow，而不是静态 token。注册 client 实际要求的精确 callback URL；host 要求 refresh-token support 时保留 `offline_access`；连接参数以 `share --auth oauth` 或 `connect --auth oauth` 的输出为准。Server 配置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
-普通 hosted `connect --auth oauth` 中，Runner 保持原 hosted credential，MCP client 获得独立 OAuth credential。只有真正需要额外能力时才增加 `--oauth-computer-permissions` 或 `--oauth-local-mcp`。已有 client 不会被静默扩权；真实权限变化要求重新授权。
+普通 hosted `connect --auth oauth` 中，Runner 保持原 hosted credential，MCP client 获得独立 OAuth credential。只有真正需要额外能力时才增加 `--oauth-computer-permissions`、`--oauth-local-mcp` 或 `--oauth-local-ssh`。已有 client 不会被静默扩权；真实权限变化要求重新授权。
 
 Project-first `share --auth oauth` 仍绑定本次临时 share 环境。Managed-user OAuth 是另一条高级流程（`connect --auth managed-oauth`）。OAuth credential 永远不能用于 Runner transport。
 

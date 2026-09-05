@@ -159,11 +159,16 @@ pub fn cargo_test_input_schema() -> Value {
                 false,
             ),
             ("package", "string", "Package passed to -p.", false),
-            ("no_run", "boolean", "Include --no-run.", false),
+            (
+                "no_run",
+                "boolean",
+                "When true, compile tests with --no-run. A successful compile-only validation does not require executed-test-count proof.",
+                false,
+            ),
             (
                 "require_tests",
                 "boolean",
-                "Require proof that at least one test executed. Compatible default is false.",
+                "Controls executed-test proof explicitly. Omission keeps the normal requirement for non-zero executed-test evidence; false is an explicit opt-out that allows zero tests to count as proof when no min_tests minimum is requested; true requires proof that at least one test executed.",
                 false,
             ),
             (

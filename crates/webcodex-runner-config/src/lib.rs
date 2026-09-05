@@ -246,6 +246,10 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Durable assertion metadata is advertised by the running binary,
             // not inferred from generic validation argv support.
             structured_cargo_test_count_assertion: false,
+            // Explicit Cargo execution policy is a separate running-binary
+            // rolling-upgrade capability and is never inferred from the older
+            // count-assertion bit or protocol generation.
+            structured_cargo_test_execution_policy: false,
             // The running binary advertises this process-lifetime protocol
             // capability after installing its exact Go argv boundary.
             structured_go_test_json: false,

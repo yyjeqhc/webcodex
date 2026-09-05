@@ -197,6 +197,13 @@ pub const RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_valid
 /// whose assertion could disappear after a Server restart.
 pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION: &str =
     "structured_cargo_test_count_assertion";
+/// The Runner durably preserves explicit Cargo validation execution-policy
+/// metadata (`require_tests` / `no_run`) through the Job lifecycle and
+/// reconciliation. Older Runners already advertised the count-assertion
+/// capability, so this is a separate additive rolling-upgrade fence and is
+/// never inferred from protocol generation or other structured validation bits.
+pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY: &str =
+    "structured_cargo_test_execution_policy";
 /// The Runner accepts the canonical machine-readable `go test -json` validation
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
@@ -381,6 +388,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
+    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -525,6 +533,11 @@ pub struct RunnerCapabilities {
     /// Durable round-trip support for Cargo test-count postconditions.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_cargo_test_count_assertion: bool,
+    /// Durable round-trip support for explicit Cargo execution-policy metadata.
+    /// Missing on older Runners is false and is never inferred from the count
+    /// assertion capability, structured validation argv, or protocol generation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_cargo_test_execution_policy: bool,
     /// Machine-readable canonical `go test -json` validation. Older Runners may
     /// support only the historical fixed `./...` scope; focused package argv is
     /// an independent additive capability.
@@ -720,6 +733,7 @@ impl Default for RunnerCapabilities {
             ssh_persistent_shell: false,
             structured_validation_argv: false,
             structured_cargo_test_count_assertion: false,
+            structured_cargo_test_execution_policy: false,
             structured_go_test_json: false,
             structured_go_test_tool: false,
             structured_go_test_packages: false,
@@ -3415,6 +3429,7 @@ mod envelope_tests {
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
                 structured_cargo_test_count_assertion: true,
+                structured_cargo_test_execution_policy: true,
                 structured_go_test_json: true,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
@@ -4589,6 +4604,7 @@ mod envelope_tests {
                 "ssh_persistent_shell",
                 "structured_validation_argv",
                 "structured_cargo_test_count_assertion",
+                "structured_cargo_test_execution_policy",
                 "structured_go_test_json",
                 "structured_go_test_tool",
                 "structured_go_test_packages",

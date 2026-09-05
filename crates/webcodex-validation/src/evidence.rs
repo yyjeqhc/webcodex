@@ -31,6 +31,8 @@ const VALIDATION_PARSER_SOURCE: &str = "bounded_validation_metadata";
 pub struct ValidationEvent {
     pub tool_name: String,
     pub execution_source: String,
+    #[serde(skip)]
+    adapter_tool_identity: Option<&'static str>,
     pub identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assertion_name: Option<String>,
@@ -499,8 +501,8 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
         .count();
     let status = validation_status(successes, failures, expected_results, inconclusive_results);
     let parser = parser_summary_for_events(&validation_events);
-    let cargo_test_zero_tests_run = validation_events.iter().any(cargo_test_zero_tests_success);
     let latest = validation_events.last().cloned();
+    let cargo_test_zero_tests_run = latest.as_ref().is_some_and(cargo_test_zero_tests_success);
     let latest_status = validation_latest_status(latest.as_ref());
     let reason = (status == "inconclusive")
         .then(|| latest.as_ref().map(validation_inconclusive_reason))
@@ -674,8 +676,22 @@ fn structured_test_requires_execution_proof(event: &ValidationEvent) -> bool {
     })
 }
 
+fn generic_cargo_test_has_reliable_zero_test_evidence(event: &ValidationEvent) -> bool {
+    event.tool_name != "cargo_test"
+        && event.adapter_tool_identity == Some("cargo_test")
+        && event.tests_run_count == Some(0)
+        && event.zero_tests_run == Some(true)
+}
+
 fn validation_event_is_proven_success(event: &ValidationEvent) -> bool {
     if !event.success || event.execution_success == Some(false) {
+        return false;
+    }
+    // Generic validation preserves its historical proof behavior when count
+    // metadata is unavailable. Once the existing execution adapter positively
+    // identifies Cargo test and bounded metadata proves that zero tests ran,
+    // however, process success is not validation proof.
+    if generic_cargo_test_has_reliable_zero_test_evidence(event) {
         return false;
     }
     if !structured_test_requires_execution_proof(event) {
@@ -985,6 +1001,7 @@ fn validation_event_from_finished(
     Some(ValidationEvent {
         tool_name: finished.tool_name.clone(),
         execution_source: finished.tool_name.clone(),
+        adapter_tool_identity: adapter.map(|adapter| adapter.tool_identity()),
         identity,
         assertion_name,
         purpose,
@@ -1506,7 +1523,10 @@ fn validation_test_run_metadata(
 }
 
 fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
-    event.tool_name == "cargo_test" && event.success && event.zero_tests_run == Some(true)
+    event.adapter_tool_identity == Some("cargo_test")
+        && event.success
+        && event.tests_run_count == Some(0)
+        && event.zero_tests_run == Some(true)
 }
 
 fn to_value(summary: ValidationSummary) -> Value {

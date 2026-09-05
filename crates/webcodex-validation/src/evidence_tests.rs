@@ -1302,6 +1302,121 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
 }
 
 #[test]
+fn generic_cargo_test_zero_tests_is_inconclusive_without_failing_execution() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let input = session_log_arguments_for_tool_request(
+        "run_process",
+        &json!({
+            "project": "agent:eval:demo",
+            "executable": "cargo",
+            "args": ["test", "focused", "-p", "webcodex"],
+            "cwd": ".",
+            "purpose": "test"
+        }),
+    );
+    assert_eq!(input["validation_tool"], "cargo_test");
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        input,
+        true,
+        json!({
+            "exit_code": 0,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(validation["status"], "inconclusive");
+    assert_eq!(validation["reason"], "zero_tests_not_validation_proof");
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation.get("latest_success").is_none());
+    assert_eq!(validation["cargo_test_zero_tests_run"], true);
+    assert_eq!(validation["latest"]["tool_name"], "run_process");
+    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["latest"]["exit_code"], 0);
+    assert_eq!(validation["latest"]["tests_run_count"], 0);
+    assert_eq!(validation["latest"]["zero_tests_run"], true);
+}
+
+#[test]
+fn generic_cargo_test_zero_tests_does_not_resolve_same_identity_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let input = session_log_arguments_for_tool_request(
+        "run_process",
+        &json!({
+            "project": "agent:eval:demo",
+            "executable": "cargo",
+            "args": ["test", "focused", "-p", "webcodex"],
+            "cwd": ".",
+            "purpose": "test"
+        }),
+    );
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        input.clone(),
+        false,
+        json!({
+            "exit_code": 101,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "generic cargo test failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_process",
+        input,
+        true,
+        json!({
+            "exit_code": 0,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(validation["successes"], 0);
+    assert_eq!(validation["latest_status"], "inconclusive");
+    assert!(validation.get("latest_success").is_none());
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], true);
+    assert_eq!(validation["resolved_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(validation["cargo_test_zero_tests_run"], true);
+}
+
+#[test]
 fn generic_test_success_without_structured_counts_resolves_same_identity_failure() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

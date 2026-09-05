@@ -1350,6 +1350,60 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
 }
 
 #[tokio::test]
+async fn generic_cargo_test_zero_tests_emit_inconclusive_handoff_warning() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("generic cargo zero tests handoff".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "run_process",
+        crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+            "run_process",
+            &json!({
+                "project": "agent:eval:demo",
+                "executable": "cargo",
+                "args": ["test", "missing_filter"],
+                "cwd": ".",
+                "purpose": "test"
+            }),
+        ),
+        true,
+        json!({
+            "exit_code": 0,
+            "purpose": "test",
+            "execution_state": "completed",
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["validation"]["status"], "inconclusive");
+    assert_eq!(handoff.output["validation"]["successes"], 0);
+    assert_eq!(
+        handoff.output["validation"]["latest_status"],
+        "inconclusive"
+    );
+    assert_eq!(
+        handoff.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    let verdict = &handoff.output["verdict"];
+    assert_reason_list_contains(verdict, "warning_reasons", "validation_inconclusive");
+    assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
+}
+
+#[tokio::test]
 async fn cargo_test_success_with_tests_does_not_emit_zero_tests_warning() {
     let runtime = test_runtime();
     let session = runtime

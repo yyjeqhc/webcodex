@@ -707,13 +707,7 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
 pub(crate) fn validation_has_cargo_test_zero_tests(validation: &Value) -> bool {
     validation.get("latest_status").and_then(Value::as_str) == Some("inconclusive")
         && validation
-            .get("latest")
-            .and_then(|latest| latest.get("tool_name"))
-            .and_then(Value::as_str)
-            == Some("cargo_test")
-        && validation
-            .get("latest")
-            .and_then(|latest| latest.get("zero_tests_run"))
+            .get("cargo_test_zero_tests_run")
             .and_then(Value::as_bool)
             == Some(true)
 }

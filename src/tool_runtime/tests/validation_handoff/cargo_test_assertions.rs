@@ -16,6 +16,7 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
             ..Default::default()
         },
     )
@@ -123,6 +124,7 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
             ..Default::default()
         },
     )
@@ -254,6 +256,7 @@ async fn durable_cargo_test_explicit_zero_opt_out_survives_job_reconciliation() 
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
             ..Default::default()
         },
     )

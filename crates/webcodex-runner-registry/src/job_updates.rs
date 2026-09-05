@@ -988,6 +988,18 @@ impl RunnerRegistry {
                 client_id
             ));
         }
+        if validation
+            .as_ref()
+            .is_some_and(|metadata| metadata.require_tests.is_some() || metadata.no_run.is_some())
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredCargoTestExecutionPolicy)
+        {
+            return Err(format!(
+                "structured_cargo_test_execution_policy_unavailable: runner {} does not support durable Cargo validation execution-policy metadata",
+                client_id
+            ));
+        }
         if validation_steps
             .iter()
             .any(webcodex_core::runner_protocol::ShellJobValidationStep::is_structured_go_test_json)

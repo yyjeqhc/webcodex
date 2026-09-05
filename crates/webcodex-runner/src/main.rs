@@ -1922,6 +1922,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // This binary durably round-trips Cargo test-count assertions with
     // validation Job context and reconciliation snapshots.
     capabilities.structured_cargo_test_count_assertion = true;
+    // Explicit require_tests/no_run policy changes validation proof semantics,
+    // so advertise durable preservation independently from the older count
+    // assertion capability for rolling upgrades.
+    capabilities.structured_cargo_test_execution_policy = true;
     // This binary accepts both legacy Go validation argv from old Servers and
     // the current machine-readable JSON argv. Do not trust static config or
     // infer this from generic structured validation support.

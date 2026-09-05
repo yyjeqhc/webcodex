@@ -35,6 +35,7 @@ fn reconciliation_capabilities() -> RunnerCapabilities {
         structured_execution_jobs: true,
         structured_validation_argv: true,
         structured_cargo_test_count_assertion: true,
+        structured_cargo_test_execution_policy: true,
         job_state_reconciliation: true,
         coding_agent_runs: false,
         ..Default::default()
@@ -108,6 +109,41 @@ fn start_request(command: &str) -> ShellJobOpRequest {
         tail_lines: None,
         limit: None,
         codex: None,
+    }
+}
+
+fn cargo_validation_start_metadata(
+    require_tests: Option<bool>,
+    no_run: Option<bool>,
+    minimum_tests: Option<u64>,
+) -> ShellJobStartMetadata {
+    let step = ShellJobValidationStep {
+        name: "test".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["test".to_string(), "focused".to_string()],
+        env: Vec::new(),
+    };
+    ShellJobStartMetadata {
+        project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+        session_id: Some(SESSION_ID.to_string()),
+        project_cwd: Some("/srv/demo".to_string()),
+        purpose: Some("test".to_string()),
+        shell: Some("direct_argv".to_string()),
+        validation_steps: vec![step.clone()],
+        validation: Some(ShellJobValidationMetadata {
+            tool: "cargo_test".to_string(),
+            kind: "test".to_string(),
+            steps: vec![step],
+            effective_timeout_secs: 1800,
+            sync_wait_secs: 30,
+            adapter: "cargo_test".to_string(),
+            validation_target_id: Some("target:0123456789abcdef01234567".to_string()),
+            minimum_tests,
+            require_tests,
+            no_run,
+        }),
+        visibility: ShellJobVisibility::Public,
+        ..Default::default()
     }
 }
 
@@ -359,6 +395,121 @@ async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_st
             failed_step: None,
         })
     );
+}
+
+#[tokio::test]
+async fn old_count_capable_runner_accepts_cargo_validation_without_explicit_execution_policy() {
+    let registry = RunnerRegistry::default();
+    let mut registration = register_request(INSTANCE_A, empty_inventory());
+    registration
+        .capabilities
+        .structured_cargo_test_execution_policy = false;
+    assert!(registration
+        .capabilities
+        .structured_cargo_test_count_assertion);
+    registry.register(registration).await.unwrap();
+
+    registry
+        .start_job_with_metadata(
+            start_request("validation"),
+            "tester".to_string(),
+            cargo_validation_start_metadata(None, None, None),
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("compatible Cargo validation request");
+    assert_eq!(request.kind, "start_validation_job");
+}
+
+#[tokio::test]
+async fn old_count_capable_runner_fails_closed_on_explicit_cargo_execution_policy() {
+    for (label, require_tests, no_run, minimum_tests) in [
+        ("require-false", Some(false), None, None),
+        ("require-true", Some(true), None, Some(1)),
+        ("no-run", None, Some(true), None),
+    ] {
+        let registry = RunnerRegistry::default();
+        let mut registration = register_request(INSTANCE_A, empty_inventory());
+        registration
+            .capabilities
+            .structured_cargo_test_execution_policy = false;
+        assert!(registration
+            .capabilities
+            .structured_cargo_test_count_assertion);
+        registry.register(registration).await.unwrap();
+
+        let error = registry
+            .start_job_with_metadata(
+                start_request("validation"),
+                "tester".to_string(),
+                cargo_validation_start_metadata(require_tests, no_run, minimum_tests),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("structured_cargo_test_execution_policy_unavailable"),
+            "case={label} error={error}"
+        );
+        assert!(registry.list_jobs(Some(100)).await.is_empty(), "case={label}");
+    }
+}
+
+#[tokio::test]
+async fn cargo_execution_policy_survives_inventory_roundtrip_and_server_restart() {
+    let registry_a = RunnerRegistry::default();
+    register(&registry_a, INSTANCE_A, empty_inventory()).await;
+    let job = registry_a
+        .start_job_with_metadata(
+            start_request("validation"),
+            "tester".to_string(),
+            cargo_validation_start_metadata(Some(false), None, None),
+        )
+        .await
+        .unwrap();
+    let request = registry_a
+        .poll(RunnerPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("validation Job request");
+    let durable = request
+        .job_context
+        .as_ref()
+        .and_then(|context| context.validation.as_ref())
+        .expect("durable validation metadata");
+    assert_eq!(durable.require_tests, Some(false));
+    assert_eq!(durable.no_run, None);
+
+    let mut snapshot = snapshot_from_request(&job, &request, "running", 2, stream("", 1, false));
+    snapshot.validation_progress = Some(ShellJobValidationProgress {
+        completed: 0,
+        current_step: Some("test".to_string()),
+        failed_step: None,
+    });
+    let inventory: ShellJobInventory = serde_json::from_value(
+        serde_json::to_value(ShellJobInventory {
+            active_complete: true,
+            jobs: vec![snapshot],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let registry_b = RunnerRegistry::default();
+    register(&registry_b, INSTANCE_A, inventory).await;
+    let restored = registry_b.get_job(&job.job_id).await.unwrap();
+    let restored_validation = restored.validation.expect("restored validation metadata");
+    assert_eq!(restored_validation.require_tests, Some(false));
+    assert_eq!(restored_validation.no_run, None);
+    assert!(restored.recovered_after_server_restart);
 }
 
 #[tokio::test]

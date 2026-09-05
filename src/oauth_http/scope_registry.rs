@@ -8,6 +8,7 @@ use super::OAuthAuthorizeError;
 /// scope not intended for OAuth2 delegation.
 const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_RUNTIME_READ,
+    scopes::SCOPE_RUNNER_MANAGE,
     scopes::SCOPE_SESSION_COLLABORATE,
     scopes::SCOPE_COMMUNICATION_READ,
     scopes::SCOPE_COMMUNICATION_MANAGE,

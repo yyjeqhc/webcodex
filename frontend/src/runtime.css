@@ -56,9 +56,9 @@
   --layout-minor: 38.2%;
   --layout-tertiary: 23.6%;
   --sidebar-width: clamp(300px, 21vw, 356px);
-  --context-rail-width: clamp(320px, 18vw, 360px);
+  --context-rail-width: clamp(360px, 30vw, 560px);
   --header-height: 68px;
-  --content-width: 1120px;
+  --content-width: 760px;
   --content-gutter: clamp(20px, 3vw, 56px);
   --ease-out: cubic-bezier(.23, 1, .32, 1);
   --ease-drawer: cubic-bezier(.32, .72, 0, 1);
@@ -694,9 +694,9 @@ body:not(.runtime-has-session) .topbar-controls { padding-right: 0; }
 .section-head { justify-content: space-between; }
 
 /* Wide displays spend the right-side remainder on live context instead of dead canvas. */
-@media (min-width: 1600px) {
+@media (min-width: 1280px) {
   .runtime-shell.context-docked {
-    --content-width: 1160px;
+    --content-width: 760px;
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--context-rail-width);
   }
   .runtime-shell.context-docked .runtime-inspector {
@@ -949,3 +949,17 @@ body:not(.runtime-has-session) .topbar-controls { padding-right: 0; }
     transition-duration: .01ms !important;
   }
 }
+
+.workspace-group > summary { list-style: none; grid-template-columns: 28px minmax(0, 1fr) 14px; }
+.workspace-group > summary::-webkit-details-marker { display: none; }
+.workspace-group > summary::after { content: "›"; align-self: center; }
+.workspace-group[open] > summary::after { transform: rotate(90deg); }
+.runtime-search-field { display: grid; gap: 5px; margin: 8px 0; font-size: .75rem; color: var(--muted-strong); }
+.runtime-search-field input { width: 100%; min-width: 0; }
+.collaboration-explanation { line-height: 1.6; }
+.message-resolution-body { margin-top: 8px; padding: 10px; border-left: 3px solid var(--accent); background: var(--surface-inset); overflow-wrap: anywhere; }
+.overview-card p { font-size: .84rem; line-height: 1.6; white-space: pre-wrap; }
+.reported-card { opacity: 1; }
+
+.chat-scroll > .runtime-search-field, .chat-scroll > .collaboration-explanation, .chat-scroll > #runtime-message-search-status { display: block; margin: 12px var(--content-gutter); }
+.chat-scroll > .runtime-search-field input { margin-top: 6px; }

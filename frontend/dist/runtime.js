@@ -808,7 +808,7 @@ const DRAFT_STORAGE_PREFIX = "webcodex.runtime.draft.v1.";
 const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webcodex.runtime.runner-open.v1.";
 const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
 const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
-const WIDE_CONTEXT_MEDIA = "(min-width: 1600px)";
+const WIDE_CONTEXT_MEDIA = "(min-width: 1280px)";
 let contextUserIntent = null;
 const RUNTIME_ZH_TEXT = {
     "WebCodex — Runtime Console": "WebCodex — 运行控制台",
@@ -861,6 +861,12 @@ const RUNTIME_ZH_TEXT = {
     "connected": "已连接",
     "Projects": "项目",
     "Runner": "运行器",
+    "Latest Agent message": "最近的 Agent 留言",
+    "Search loaded Sessions": "搜索已加载会话",
+    "Title, id, or lifecycle": "标题、ID 或生命周期",
+    "Search retained messages": "搜索已保留消息",
+    "Message, resolution, or id": "消息内容、处理说明或 ID",
+    "This board shows retained Session messages. ACK is not a reply or completion. Host chat replies appear here only when explicitly posted to this Session.": "这里展示会话中保留的协作消息。ACK 不代表回复或完成；宿主聊天中的回复只有明确发布到此会话后才会显示。",
     "All Runners": "全部运行器",
     "Filter by Project name, id, Runner, or workspace path": "按项目名称、ID、运行器或工作空间路径筛选",
     "No project selected": "尚未选择项目",
@@ -1203,6 +1209,7 @@ let projectRowsTruncated = false;
 let knownProjectDevices = [];
 let selectedProjectSnapshot = null;
 let sessionRows = [];
+let sessionListMetaSnapshot = { total: 0, truncated: false };
 const state = initialRuntimeConsoleState();
 let renderedProjectSelectorsSignature = "";
 let renderedRunnerFleetSignature = "";
@@ -1294,7 +1301,7 @@ function renderLanguageSensitiveUi() {
     renderRunnerFleet(runnerRows);
     renderRecentSessions(recentSessionRows, recentSessionMetaSnapshot);
     if (state.selectedProject)
-        renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
+        renderSessionList(sessionRows, sessionListMetaSnapshot);
     const snapshot = state.workflow?.snapshot;
     if (snapshot)
         renderDetail(snapshot, false);
@@ -1996,6 +2003,10 @@ async function api(path, payload, signal) {
     }
 }
 function hideDetail() {
+    const messageSearch = el("runtime-message-search");
+    if (messageSearch)
+        messageSearch.value = "";
+    setText("runtime-message-search-status", "");
     document.body.classList.remove("runtime-has-session");
     renderWorkspaceHeading();
     show("runtime-session-detail", false);
@@ -2014,6 +2025,10 @@ function hideDetail() {
 function clearSessionSurface() {
     saveCurrentDraft();
     sessionRows = [];
+    sessionListMetaSnapshot = { total: 0, truncated: false };
+    const sessionSearch = el("runtime-session-search");
+    if (sessionSearch)
+        sessionSearch.value = "";
     renderedSessionListSignature = "";
     renderedCollaborationSignature = "";
     clearNode(el("runtime-session-list"));
@@ -2067,6 +2082,10 @@ function lock(message = "", clearRemembered = true) {
     clearNode(el("runtime-recent-session-list"));
     clearNode(el("runtime-runner-list"));
     document.body.classList.remove("runtime-connected");
+    const messageSearch = el("runtime-message-search");
+    if (messageSearch)
+        messageSearch.value = "";
+    setText("runtime-message-search-status", "");
     document.body.classList.remove("runtime-has-session");
     show("runtime-token-gate", true);
     show("runtime-console", false);
@@ -2355,7 +2374,11 @@ function renderSessionWorkspaceIdentity() {
     }
 }
 function revealWorkflowSessionDetail() {
-    el("runtime-workflow-sessions-panel")?.scrollIntoView({ block: "start", inline: "nearest" });
+    const panel = el("runtime-workflow-sessions-panel");
+    const workspace = panel?.closest("details.workspace-group");
+    if (workspace)
+        workspace.open = true;
+    panel?.scrollIntoView({ block: "start", inline: "nearest" });
 }
 function renderProjectSelectors(projects, truncated) {
     const deviceSelect = el("runtime-device-select");
@@ -2449,8 +2472,23 @@ function renderProjectSelectors(projects, truncated) {
             deviceProjectList.appendChild(empty);
         }
         for (const project of deviceProjects) {
-            const row = document.createElement("button");
-            row.type = "button";
+            const workspace = document.createElement("details");
+            workspace.className = "workspace-group";
+            const disclosureKey = "webcodex.runtime.workspace-disclosure.v1." + encodeURIComponent(JSON.stringify([clientId, project.id]));
+            workspace.open = project.id === state.selectedProject;
+            try {
+                workspace.open = workspace.open && window.localStorage.getItem(disclosureKey) !== "closed";
+            }
+            catch { }
+            workspace.addEventListener("toggle", () => {
+                if (!workspace.isConnected || project.id !== state.selectedProject)
+                    return;
+                try {
+                    window.localStorage.setItem(disclosureKey, workspace.open ? "open" : "closed");
+                }
+                catch { }
+            });
+            const row = document.createElement("summary");
             row.className = "project-row" + (project.id === state.selectedProject ? " selected" : "");
             if (project.id === state.selectedProject)
                 row.setAttribute("aria-current", "true");
@@ -2515,11 +2553,21 @@ function renderProjectSelectors(projects, truncated) {
             row.appendChild(projectIcon);
             row.appendChild(main);
             const select = () => switchProject(String(project.client_id || ""), String(project.id || ""));
-            row.addEventListener("click", select);
-            deviceProjectList.appendChild(row);
+            row.addEventListener("click", (event) => {
+                if (project.id === state.selectedProject)
+                    return;
+                event.preventDefault();
+                try {
+                    window.localStorage.setItem(disclosureKey, "open");
+                }
+                catch { }
+                select();
+            });
+            workspace.appendChild(row);
+            deviceProjectList.appendChild(workspace);
             if (project.id === state.selectedProject && sessionsPanel) {
                 sessionsPanel.hidden = false;
-                deviceProjectList.appendChild(sessionsPanel);
+                workspace.appendChild(sessionsPanel);
                 sessionsAttached = true;
             }
         }
@@ -2803,7 +2851,11 @@ async function fetchSessions(request) {
         ? sessionRows.find((row) => String(row?.session_id || "") === selected)
         : null;
     sessionRows = Array.isArray(response.data.sessions) ? response.data.sessions : [];
-    renderSessionList(sessionRows, response.data);
+    sessionListMetaSnapshot = {
+        total: typeof response.data.total === "number" ? Math.max(sessionRows.length, response.data.total) : sessionRows.length,
+        truncated: !!response.data.truncated,
+    };
+    renderSessionList(sessionRows, sessionListMetaSnapshot);
     showError("");
     const nextSelected = selected
         ? sessionRows.find((row) => String(row?.session_id || "") === selected)
@@ -2953,14 +3005,17 @@ function renderSessionList(sessions, payload) {
         return;
     const total = typeof payload.total === "number" ? payload.total : sessions.length;
     const selected = String(state.workflow.selectedSessionId || "");
-    const signature = renderFingerprint([runtimeLanguage, selected, total, !!payload.truncated, sessions]);
+    const query = el("runtime-session-search")?.value || "";
+    const visible = sessions.filter((session) => runtimeSearchMatches(query, [session.title, session.session_id, session.lifecycle]));
+    const signature = renderFingerprint([runtimeLanguage, selected, total, !!payload.truncated, sessions, query]);
     if (signature === renderedSessionListSignature)
         return;
     renderedSessionListSignature = signature;
     clearNode(node);
-    show("runtime-sessions-empty", sessions.length === 0);
+    show("runtime-sessions-empty", visible.length === 0);
+    setText("runtime-session-search-status", query ? visible.length + " / " + sessions.length : "");
     setText("runtime-sessions-count", total ? sessions.length + (payload.truncated ? " of " + total : "") : "0");
-    for (const session of sessions) {
+    for (const session of visible) {
         const id = String(session && session.session_id || "");
         if (!id)
             continue;
@@ -3009,7 +3064,7 @@ function selectSession(sessionId) {
     locallyAuthoredCollaborationMessageIds = new Set();
     resetCollaborationComposerUi();
     restoreCurrentDraft();
-    renderSessionList(sessionRows, { total: sessionRows.length, truncated: false });
+    renderSessionList(sessionRows, sessionListMetaSnapshot);
     revealWorkflowSessionDetail();
     if (request)
         void fetchSessionDetail(request);
@@ -3262,6 +3317,24 @@ function resetCollaborationComposerUi() {
     closeComposerOptions(false);
     syncCollaborationComposer();
 }
+function runtimeSearchMatches(query, values) {
+    const text = values.filter((value) => typeof value === "string").join(" ").toLocaleLowerCase();
+    return query.trim().toLocaleLowerCase().split(/\s+/).every((term) => text.includes(term));
+}
+function filterCollaborationMessages() {
+    const query = el("runtime-message-search")?.value || "";
+    let matches = 0;
+    const cards = document.querySelectorAll("#runtime-collaboration-board .message-card");
+    for (const card of Array.from(cards)) {
+        const message = state.collaboration.messages.find((entry) => entry.message_id === card.dataset.messageId);
+        const visible = runtimeSearchMatches(query, [message?.message, message?.resolution, message?.message_id, message?.author_session_id]);
+        card.hidden = !visible;
+        if (visible)
+            matches++;
+    }
+    document.querySelectorAll("#runtime-collaboration-board .message-date-separator").forEach((node) => { node.hidden = !!query.trim(); });
+    setText("runtime-message-search-status", query.trim() ? matches + " / " + cards.length : "");
+}
 function renderCollaboration(statusText, consumeMutationNotice = true) {
     const mutationNotice = consumeMutationNotice ? takeRuntimeCollaborationMutationNotice(state) : "";
     if (mutationNotice) {
@@ -3328,6 +3401,23 @@ function renderCollaboration(statusText, consumeMutationNotice = true) {
         renderedCollaborationMessageIds = nextRenderedMessageIds;
         return;
     }
+    const latestAgent = el("runtime-latest-agent-message");
+    if (latestAgent) {
+        const sides = runtimeCollaborationMessageSides(messages, locallyAuthoredCollaborationMessageIds);
+        const latest = [...messages].reverse().find((message) => sides.get(String(message.message_id)) === "incoming" && !message.superseded_by_message_id && message.closure_kind !== "withdrawn");
+        clearNode(latestAgent);
+        if (latest) {
+            appendRichMessage(latestAgent, latest.message);
+            const time = document.createElement("p");
+            time.className = "muted small";
+            time.textContent = updatedLabel(latest.created_at);
+            latestAgent.appendChild(time);
+        }
+        else
+            latestAgent.textContent = runtimeLanguage === "zh-CN"
+                ? "当前保留范围内暂无 Agent 留言。ACK 不包含回复正文；下方可查看模型报告的进度。"
+                : "No Agent message in the retained window. ACK contains no reply text; model-reported progress appears below.";
+    }
     renderedCollaborationSignature = signature;
     clearNode(node);
     if (!available) {
@@ -3359,6 +3449,7 @@ function renderCollaboration(statusText, consumeMutationNotice = true) {
             return;
         visited.add(id);
         const card = document.createElement("article");
+        card.dataset.messageId = id;
         card.className = "message-card " + String(message?.kind || "note") + (String(message?.status || "") === "resolved" ? " resolved" : "") + (parentUnavailable ? " retained-reply" : "");
         const messageSide = messageSides.get(id) || "neutral";
         card.classList.add(messageSide === "incoming" ? "agent-authored" : messageSide === "outgoing" ? "human-authored" : "provenance-unknown");
@@ -3466,7 +3557,7 @@ function renderCollaboration(statusText, consumeMutationNotice = true) {
             const acknowledged = typeof message?.first_ack_observed_at === "number";
             ack.classList.toggle("observed", acknowledged);
             ack.textContent = acknowledged
-                ? tr("Acknowledged") + " · " + updatedLabel(message.first_ack_observed_at)
+                ? (runtimeLanguage === "zh-CN" ? "已观察到 ACK（不代表回复或完成）" : "ACK observed (not a reply or completion)") + " · " + updatedLabel(message.first_ack_observed_at)
                 : tr("Acknowledgement required");
             ack.title = acknowledged
                 ? "ACK required · First ACK observed " + updatedLabel(message.first_ack_observed_at)
@@ -3495,6 +3586,15 @@ function renderCollaboration(statusText, consumeMutationNotice = true) {
             resolution.textContent = resolutionLabel + (message.resolved_at ? " · " + updatedLabel(message.resolved_at) : "");
             resolution.title = parts.join(" · ");
             footer.appendChild(resolution);
+            if (message.resolution) {
+                const explanation = document.createElement("section");
+                explanation.className = "message-resolution-body";
+                const label = document.createElement("strong");
+                label.textContent = runtimeLanguage === "zh-CN" ? "处理说明" : "Resolution";
+                explanation.appendChild(label);
+                appendRichMessage(explanation, message.resolution);
+                content.appendChild(explanation);
+            }
         }
         const actions = document.createElement("div");
         actions.className = "message-actions";
@@ -3520,6 +3620,7 @@ function renderCollaboration(statusText, consumeMutationNotice = true) {
     for (const message of messages)
         appendMessage(message, 0, false);
     renderedCollaborationMessageIds = nextRenderedMessageIds;
+    filterCollaborationMessages();
     if (hasNewMessages && !firstRetainedRender)
         announceNewCollaborationMessages(newMessageIds.length);
     if (firstRetainedRender || (hasNewMessages && shouldFollowNewMessages)) {
@@ -4981,6 +5082,8 @@ el("runtime-device-select")?.addEventListener("change", () => {
         return;
     applyRunnerFilter(select.value);
 });
+el("runtime-session-search")?.addEventListener("input", () => renderSessionList(sessionRows, sessionListMetaSnapshot));
+el("runtime-message-search")?.addEventListener("input", filterCollaborationMessages);
 el("runtime-project-search")?.addEventListener("input", () => {
     const input = el("runtime-project-search");
     projectSearch = input?.value || "";

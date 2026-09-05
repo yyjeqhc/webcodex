@@ -1,9 +1,8 @@
 # OpenAPI / GPT Action Guidelines
 
 Product and integration detail for GPT Actions and OpenAPI exposure.
-**Hard invariants agents must obey are in [`AGENTS.md`](../../AGENTS.md)**
-(architecture section). This document holds the longer product rules so
-`AGENTS.md` stays an execution contract.
+Repository-wide rules are in [`AGENTS.md`](../../AGENTS.md). This document
+owns the API-specific invariants and product guidance linked from that guide.
 
 Related: [`GPT_ACTIONS.md`](../GPT_ACTIONS.md), [`MCP.md`](../MCP.md).
 

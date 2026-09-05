@@ -562,10 +562,6 @@ For deliberate coordinator/worker delegation across separate windows, keep the
 Sessions independent and use the existing handoff plus message-board primitives;
 see [Manual Multi-Window Collaboration](manual-window-collaboration.md).
 
-### Invariants (must)
-
-These are also summarized in `AGENTS.md` §7, **Sessions**:
-
 ---
 
 ## 2. Action Audit Session

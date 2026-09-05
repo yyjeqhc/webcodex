@@ -889,11 +889,8 @@ pub(crate) fn validate_project_path_policy(
     policy: &RunnerPolicy,
     canonical_path: &Path,
 ) -> Result<(), String> {
-    let canonical_roots = policy
-        .allowed_roots
-        .iter()
-        .filter_map(|root| canonicalize_existing(root).ok())
-        .collect::<Vec<_>>();
+    let canonical_roots =
+        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
     webcodex_runner_config::paths::validate_project_path_policy(
         canonical_path,
         &canonical_roots,

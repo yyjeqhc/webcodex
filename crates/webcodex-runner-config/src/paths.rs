@@ -386,6 +386,23 @@ fn is_windows_drive_root(_canonical_path: &Path) -> bool {
     false
 }
 
+/// Canonicalize the `allowed_roots` entries that can currently provide path
+/// authority.
+///
+/// `allowed_roots` is an OR-set of independent authority candidates. A stale,
+/// unmounted, unreadable, non-directory, or otherwise unresolvable candidate
+/// cannot authorize anything, but it must not poison another usable root.
+/// Callers still apply the authoritative path policy after this projection;
+/// an empty result therefore remains fail-closed unless that policy explicitly
+/// permits the target through `allow_cwd_anywhere`.
+pub fn canonicalize_usable_allowed_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .filter(|root| root.is_dir())
+        .collect()
+}
+
 /// Authoritative pure path-policy check for Runner project registration.
 ///
 /// `canonical_path` and `canonical_allowed_roots` must already be canonicalized

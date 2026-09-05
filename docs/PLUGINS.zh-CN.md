@@ -115,7 +115,7 @@ schema 仍只由 `describe` 返回；list 只返回 bounded name/title 与安全
 shell/profile environment preparation 和 native executable resolution，**真实启动**配置的
 executable，完成 `initialize`、`tools/list` 与普通 Plugin protocol/bounds validation，随后
 终止整个 disposable candidate process tree。WebCodex 在 check 中绝不会调用 provider
-`tools/call`，也不会把 candidate 提交到 dynamic overlay。由于 Native Plugin 本身就是任意
+`tools/call`，也不会把 candidate 提交到当前 provider set。由于 Native Plugin 本身就是任意
 本地 executable，其 startup/initialize/list 自身仍可能产生外部副作用，因此 `check` 不是
 纯静态配置 lint。
 

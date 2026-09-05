@@ -126,7 +126,7 @@ shell/profile environment used by the normal Plugin runtime, resolves and
 **really starts** the configured executable, performs `initialize` and
 `tools/list`, validates the normal Plugin protocol/bounds, then terminates that
 candidate process tree. It never calls provider `tools/call` and never commits
-the candidate into the dynamic overlay. Because a Native Plugin is an arbitrary
+the candidate into the current provider set. Because a Native Plugin is an arbitrary
 local executable, its own startup/initialize/list behavior can still have
 external side effects; `check` is not a purely static config linter.
 

@@ -101,9 +101,9 @@ pub(crate) struct RunnerConfig {
     /// built-in MCP gateway. The public config section is `[mcp]`.
     #[serde(default, rename = "mcp")]
     pub(crate) mcp_gateway: McpGatewayConfig,
-    /// Runner-local native stdio Tool Plugins. Startup admission is frozen for
-    /// this Runner process; explicit plugin reloads use the same section only
-    /// for the dynamic overlay.
+    /// Runner-local native stdio Tool Plugins. Startup initializes the first
+    /// committed provider set; specialized and generic reloads atomically replace
+    /// that committed state through the shared Plugin candidate gate.
     #[serde(default)]
     pub(crate) plugins: PluginConfig,
     /// Startup/restart-owned ACP coding-agent providers. This is independent

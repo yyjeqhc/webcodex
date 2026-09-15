@@ -566,11 +566,11 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "Adaptive compact discovery must cost less than full schema discovery"
     );
     // Measured on this surface with Stateless 2026 wrappers, fileParams, and
-    // MCP App metadata: compact=138,639 bytes; full=663,081 bytes. Keep ~18%
+    // MCP App metadata: compact=167,625 bytes; full=782,759 bytes. Keep ~17%
     // headroom over the compact baseline while retaining a guard far below the
     // full-schema context cost. This is a model schema-cost budget, not an MCP
     // transport limit and not the tools/call stable-readable result ceiling.
-    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 160 * 1024;
+    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 192 * 1024;
     assert!(
         compact_serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES,
         "adaptive compact tools/list schema cost {compact_serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES} bytes"
@@ -609,6 +609,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "run_shell",
         "import_conversation_files_to_project",
         "export_project_artifact",
+        "read_project_artifact",
         "present_work_result",
     ] {
         assert!(
@@ -616,11 +617,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
             "{promoted} must be adaptive-direct"
         );
     }
-    for low_level_artifact in [
-        "save_project_artifact",
-        "read_project_artifact",
-        "artifact_upload_begin",
-    ] {
+    for low_level_artifact in ["save_project_artifact", "artifact_upload_begin"] {
         assert!(
             !names.contains(&low_level_artifact),
             "{low_level_artifact} must remain behind the adaptive gateway"

@@ -405,9 +405,12 @@ payloads through model text:
   size, MIME, path, and authorization bounds remain in force.
 
 `read_project_artifact` remains the bounded chunk-inspection API; it is not the
-large-file download path. Office artifacts such as DOCX/PPTX/XLSX and PDFs use
-the same artifact transport and can therefore move between a project and a
-supporting ChatGPT host without a model manually carrying their Base64.
+large-file download path. On the local coding and Adaptive Runtime surfaces it
+is exposed directly so MCP clients can request `as_image=true` and receive a
+bounded PNG, JPEG, or WebP as native image content. Office artifacts such as
+DOCX/PPTX/XLSX and PDFs use the same artifact transport and can therefore move
+between a project and a supporting ChatGPT host without a model manually
+carrying their Base64.
 
 When a broader model coding surface exposes `work_on_project`, use the
 [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap, behavioral-role

@@ -1369,9 +1369,9 @@ fn ordinary_artifact_result_keeps_existing_text_and_structured_base64_shape() {
 
 #[tokio::test]
 async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
-    // read_project_artifact is an artifact tool outside the local_coding
-    // surface; select the full operator surface for this call.
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    // Local coding must expose the native image path directly so ordinary
+    // project work can inspect screenshots and other bounded images.
+    let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
     let client_id = "mcp-vision-agent";
     let runner_instance_id = "inst-mcp-vision";
     let project_name = "remote-images";

@@ -368,10 +368,16 @@ describe("Project / Session / Window relationships", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
     expect(screen.queryAllByText("tool-0")).toHaveLength(0);
+    let steps = screen.getAllByTestId("window-workflow-step");
+    expect(steps[0].textContent).toContain("tool-5");
+    expect(steps.at(-1)?.textContent).toContain("tool-204");
     const more = screen.getByRole("button", { name: /Show more activity/ });
     expect(more.textContent).toContain("5 remaining");
     fireEvent.click(more);
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
+    steps = screen.getAllByTestId("window-workflow-step");
+    expect(steps[0].textContent).toContain("tool-0");
+    expect(steps.at(-1)?.textContent).toContain("tool-204");
     expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
   });
 

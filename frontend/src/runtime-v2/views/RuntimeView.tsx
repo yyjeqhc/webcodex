@@ -52,9 +52,9 @@ export function RuntimeView({
   });
   const agents = useAgentInventory(client, mode === "overview");
   const observedBy = useLinkedSessionWindowCounts(client, mode === "windows", windows.detail?.linked_sessions || []);
-  const newestActivity = windows.detail ? windows.detail.activity.slice().reverse() : [];
-  const visibleActivity = newestActivity.slice(0, visibleActivityLimit);
-  const remainingActivity = Math.max(0, newestActivity.length - visibleActivity.length);
+  const chronologicalActivity = windows.detail?.activity || [];
+  const visibleActivity = chronologicalActivity.slice(-visibleActivityLimit);
+  const remainingActivity = Math.max(0, chronologicalActivity.length - visibleActivity.length);
   const overviewStatus = overviewAvailability === "available"
     ? { className: "good", label: "connected" }
     : overviewAvailability === "stale"
@@ -300,7 +300,7 @@ export function RuntimeView({
                       const projectId = activity.project || activity.workflow_sessions.find((session) => session.project)?.project;
                       const project = projectFor(projectId);
                       return (
-                        <details className="window-workflow-step" key={String(activity.started_at_ms) + "-" + index}>
+                        <details className="window-workflow-step" data-testid="window-workflow-step" key={String(activity.started_at_ms) + "-" + index}>
                           <summary>
                             <span className="activity-glyph"><Activity size={15} /></span>
                             <span className="window-workflow-title">
@@ -309,7 +309,7 @@ export function RuntimeView({
                             </span>
                             {projectId && <span className="window-project-tag" data-testid="window-project-tag" title={projectId}>{projectDisplayName(project?.name, projectId)}</span>}
                             <span className={"status-pill " + (activity.status === "ok" || activity.status === "success" ? "good" : "")}>{activity.status}</span>
-                            <time title={absoluteTime(activity.ended_at_ms)}>{relativeTime(activity.ended_at_ms)}</time>
+                            <time>{absoluteTime(activity.ended_at_ms)}</time>
                             <ChevronDown size={15} />
                           </summary>
                           <div className="window-workflow-detail">

@@ -160,7 +160,9 @@ export function groupRecentProgress(detail: SessionDetail | null, limit = 80): P
       state: activity.state,
     });
   }
-  return groups.reverse().slice(0, 12);
+  // Keep the newest bounded groups, but render them chronologically so the
+  // workflow reads top-to-bottom from older evidence toward the latest action.
+  return groups.slice(-12);
 }
 
 export function selectedWorkFromDetail(item: WorkItem, detail: SessionDetail | null): WorkItem {

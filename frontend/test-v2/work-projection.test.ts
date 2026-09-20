@@ -145,7 +145,8 @@ describe("Work projection", () => {
       activity_returned: 3,
     });
     const groups = groupRecentProgress(detail);
-    expect(groups.map((group) => group.intent)).toEqual(["tested", "edited", "explored"]);
-    expect(groups[0].tools).toContain("cargo_test");
+    expect(groups.map((group) => group.intent)).toEqual(["explored", "edited", "tested"]);
+    expect(groups.at(-1)?.tools).toContain("cargo_test");
+    expect(groups.map((group) => group.latestAt)).toEqual([...groups.map((group) => group.latestAt)].sort((a, b) => a - b));
   });
 });

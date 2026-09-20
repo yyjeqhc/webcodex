@@ -1,5 +1,26 @@
 use super::*;
 
+/// Dropping the last singleflight waiter must also remove its queued request.
+/// Other waiters retain the shared future, so one caller timing out cannot
+/// cancel their physical read. This guard also covers ordinary read cancellation.
+struct PendingReadGuard {
+    registry: std::sync::Arc<crate::runner_http::RunnerRegistry>,
+    request_id: Option<String>,
+}
+
+impl Drop for PendingReadGuard {
+    fn drop(&mut self) {
+        if let Some(request_id) = self.request_id.take() {
+            let registry = self.registry.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    registry.cancel_request(&request_id).await;
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn read_file_content_result(
     content: String,
@@ -71,6 +92,28 @@ pub(crate) fn slice_read_file_success_output(
     with_line_numbers: bool,
     path: &str,
 ) -> Option<Value> {
+    let result = slice_read_file_result(parent, start_line, limit, with_line_numbers, path);
+    result.success.then_some(result.output)
+}
+
+pub(crate) fn slice_read_file_result(
+    parent: &Value,
+    start_line: Option<usize>,
+    limit: Option<usize>,
+    with_line_numbers: bool,
+    path: &str,
+) -> ToolResult {
+    match slice_read_file_range(parent, start_line, limit) {
+        Some(range) => build_read_file_success(&range, with_line_numbers, Some(path)),
+        None => read_file_failure(ReadFileReason::MalformedRunnerResponse, Some(path)),
+    }
+}
+
+fn slice_read_file_range(
+    parent: &Value,
+    start_line: Option<usize>,
+    limit: Option<usize>,
+) -> Option<FileReadRange> {
     if parent.get("format").and_then(Value::as_str) != Some("plain") {
         return None;
     }
@@ -139,7 +182,7 @@ pub(crate) fn slice_read_file_success_output(
     } else {
         None
     };
-    let sliced = FileReadRange {
+    Some(FileReadRange {
         content,
         sha256: parent_sha256,
         total_lines,
@@ -149,9 +192,7 @@ pub(crate) fn slice_read_file_success_output(
         end_line,
         has_more,
         next_start_line,
-    };
-    let result = build_read_file_success(&sliced, with_line_numbers, Some(path));
-    result.success.then_some(result.output)
+    })
 }
 
 /// Build the unified `read_file` success [`ToolResult`] from a shared range
@@ -736,10 +777,15 @@ impl ToolRuntime {
             Ok(r) => r,
             Err(_) => return read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path)),
         };
+        let mut pending = PendingReadGuard {
+            registry: self.runner_registry.clone(),
+            request_id: Some(request_id.clone()),
+        };
         let response = match deadline {
             Some(deadline) => tokio::time::timeout_at(deadline, rx).await,
             None => tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await,
         };
+        pending.request_id = None;
         match response {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
                 let mut result = read_file_runner_stdout_result_with_options(

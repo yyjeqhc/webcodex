@@ -44,6 +44,26 @@ successive continuation Attempts. Rust projection and capability tests use
 `cargo test --locked -p webcodex --lib goal`, and
 `cargo test --locked -p webcodex --lib agent_continuation`.
 
+## Read snapshots and range planning
+
+`cargo test --locked -p webcodex --lib read_cache` covers bounded Session
+snapshot retention and read-only singleflight ownership. Run
+`cargo test --locked -p webcodex --lib read_files` for the canonical read path,
+range planning, byte-limit fallback, revision fences, and Runner replacement.
+These use deterministic in-memory Runner fixtures, not deployed Runners.
+
+The Session cache is a transfer optimization: every hit validates the current
+full-file SHA through a one-line read on the owning Runner. It does not skip
+the Runner's full-file scan, use TTL/mtime as freshness evidence, or make a
+revision an immutable filesystem snapshot. A changed SHA discards the cached
+ranges: fenced reads reject a stale revision immediately, while unfenced reads
+read the requested range again. Concurrent identical physical reads
+share only pending work within the same authority, Session, exact Project and
+Runner incarnation; each canonical call still authorizes, records and projects
+its own result. Without an explicit authorized Session, only in-flight sharing
+is enabled. Snapshot retention is bounded to 64 entries / 8 MiB per runtime,
+and the in-flight index to 128 entries (excess reads bypass sharing).
+
 ## Full Local Server Suite
 
 Plain `cargo test` must work without a special environment variable or wrapper,

@@ -1812,20 +1812,27 @@ impl ToolRuntime {
                 project.clone_from(&resolved.resolved_id);
             }
         }
-        let mut result = self
-            .dispatch_authorized_inner(
-                call,
-                auth,
-                transport,
-                window,
-                ssh_resource.as_deref(),
-                validation_assertion_name,
-                project_resolution,
-                trusted_recording_session_id,
-                trusted_recording_session_project,
-                logical_invocation_id,
-                protocol_capabilities,
-                correlation,
+        let read_scope = super::read_cache::ReadScope::new(
+            auth,
+            session_id.as_deref().or(trusted_recording_session_id),
+        );
+        let mut result = super::read_cache::READ_SCOPE
+            .scope(
+                read_scope,
+                self.dispatch_authorized_inner(
+                    call,
+                    auth,
+                    transport,
+                    window,
+                    ssh_resource.as_deref(),
+                    validation_assertion_name,
+                    project_resolution,
+                    trusted_recording_session_id,
+                    trusted_recording_session_project,
+                    logical_invocation_id,
+                    protocol_capabilities,
+                    correlation,
+                ),
             )
             .await;
         if let Some(requested_project) = requested_project_output {

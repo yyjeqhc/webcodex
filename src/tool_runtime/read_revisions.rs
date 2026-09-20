@@ -16,7 +16,7 @@ const READ_REVISION_COUNTER_MASK: u64 = (1_u64 << READ_REVISION_COUNTER_BITS) - 
 const READ_REVISION_EPOCH_MASK: u64 = (1_u64 << (53 - READ_REVISION_COUNTER_BITS)) - 1;
 pub(crate) const READ_REVISION_HARD_BOUND: usize = 2048;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ReadRevisionTarget {
     pub project_id: String,
     pub path: String,

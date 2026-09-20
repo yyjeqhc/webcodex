@@ -119,6 +119,7 @@ pub struct ToolRuntime {
     /// Process-local model-facing handles for exact full-file read snapshots.
     /// Clones share the registry; a Server runtime restart creates a new epoch.
     pub(crate) read_revisions: Arc<super::read_revisions::ReadRevisionRegistry>,
+    pub(crate) read_cache: Arc<super::read_cache::ReadCache>,
     pub(crate) validation_sources: Arc<super::validation_source::ValidationSourceRegistry>,
     /// Process-local Project mutation serialization used only by orchestration
     /// frontends. Direct first-class mutations deliberately bypass this registry.
@@ -217,6 +218,7 @@ impl ToolRuntime {
             repository_overview_probe_timeout:
                 super::coding_task::DEFAULT_REPOSITORY_OVERVIEW_PROBE_TIMEOUT,
             read_revisions: Arc::new(super::read_revisions::ReadRevisionRegistry::new()),
+            read_cache: Arc::new(super::read_cache::ReadCache::default()),
             validation_sources: Arc::new(
                 super::validation_source::ValidationSourceRegistry::default(),
             ),

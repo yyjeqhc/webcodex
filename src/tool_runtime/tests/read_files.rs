@@ -9,6 +9,397 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
+async fn scoped_read(
+    runtime: &ToolRuntime,
+    scope: super::super::read_cache::ReadScope,
+    items: Vec<ReadFilesItem>,
+) -> ToolResult {
+    super::super::read_cache::READ_SCOPE
+        .scope(scope, runtime.read_files("demo".into(), items, None))
+        .await
+}
+
+#[tokio::test]
+async fn read_files_canonical_session_cache_keeps_each_invocation_recorded() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-cache-canonical";
+    let project = register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let auth = auth_context(None, true);
+    for expected_end in [2, 1] {
+        let read = runtime.dispatch_with_auth(
+            ToolCall::ReadFiles {
+                project: project.clone(),
+                items: vec![item("a.rs", Some(1), Some(2))],
+                session_id: Some(session.session_id.clone()),
+                with_line_numbers: None,
+                max_result_bytes: None,
+            },
+            Some(&auth),
+        );
+        tokio::pin!(read);
+        assert!(futures_util::poll!(&mut read).is_pending());
+        let request = next_read_request(&runtime, client).await;
+        assert_eq!(request.end_line, Some(expected_end));
+        complete_read(&runtime, client, &request, "one\ntwo\nthree\n").await;
+        let result = read.await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["items"][0]["output"]["text"], "one\ntwo");
+    }
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.tool_calls, 2);
+    assert_eq!(summary.counts.read_like, 2);
+}
+
+#[tokio::test]
+async fn read_files_session_cache_validates_sha_and_slices_partial_ranges() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-cache-hit";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let content = "one\ntwo\nthree\nfour\nfive\n";
+    let first = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(4))],
+    );
+    tokio::pin!(first);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    assert_eq!(request.end_line, Some(4));
+    complete_read(&runtime, client, &request, content).await;
+    let first = first.await;
+    let revision = first.output["items"][0]["output"]["read_revision"]
+        .as_u64()
+        .unwrap();
+
+    for expected in [None, Some(revision)] {
+        let mut requested = item("a.rs", Some(2), Some(2));
+        requested.expected_read_revision = expected;
+        let hit = scoped_read(&runtime, scope.clone(), vec![requested]);
+        tokio::pin!(hit);
+        assert!(futures_util::poll!(&mut hit).is_pending());
+        let probe = next_read_request(&runtime, client).await;
+        assert_eq!((probe.start_line, probe.end_line), (Some(2), Some(2)));
+        complete_read(&runtime, client, &probe, content).await;
+        let result = hit.await;
+        assert_eq!(result.output["items"][0]["output"]["text"], "two\nthree");
+        assert_eq!(
+            result.output["items"][0]["output"]["read_revision"],
+            revision
+        );
+    }
+    // A partially overlapping range must read the requested range, never
+    // pretend that the cached prefix covers the missing suffix.
+    let miss = scoped_read(&runtime, scope, vec![item("a.rs", Some(4), Some(2))]);
+    tokio::pin!(miss);
+    assert!(futures_util::poll!(&mut miss).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    assert_eq!((request.start_line, request.end_line), (Some(4), Some(5)));
+    complete_read(&runtime, client, &request, content).await;
+    assert_eq!(
+        miss.await.output["items"][0]["output"]["text"],
+        "four\nfive"
+    );
+}
+
+#[tokio::test]
+async fn read_files_session_cache_external_change_stales_revision_and_refreshes_unfenced_read() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-cache-change";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let old = "one\ntwo\nthree\n";
+    let first = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(2))],
+    );
+    tokio::pin!(first);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    complete_read(&runtime, client, &request, old).await;
+    let revision = first.await.output["items"][0]["output"]["read_revision"]
+        .as_u64()
+        .unwrap();
+    // Only the unreturned third line changes: validating range bytes alone
+    // would incorrectly accept this old full-file revision.
+    let changed = "one\ntwo\nCHANGED\n";
+    let stale = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![fenced_item("a.rs", Some(1), Some(2), revision)],
+    );
+    tokio::pin!(stale);
+    assert!(futures_util::poll!(&mut stale).is_pending());
+    let probe = next_read_request(&runtime, client).await;
+    assert_eq!(probe.end_line, Some(1));
+    complete_read(&runtime, client, &probe, changed).await;
+    assert_stale_read_item(&stale.await, 0, "a.rs");
+
+    let unfenced = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(2))],
+    );
+    tokio::pin!(unfenced);
+    assert!(futures_util::poll!(&mut unfenced).is_pending());
+    let probe = next_read_request(&runtime, client).await;
+    assert_eq!(probe.end_line, Some(2));
+    complete_read(&runtime, client, &probe, changed).await;
+    let result = unfenced.await;
+    assert_eq!(result.output["items"][0]["success"], true);
+    assert_ne!(
+        result.output["items"][0]["output"]["read_revision"],
+        revision
+    );
+
+    let external = scoped_read(&runtime, scope, vec![item("a.rs", Some(1), Some(2))]);
+    tokio::pin!(external);
+    assert!(futures_util::poll!(&mut external).is_pending());
+    let probe = next_read_request(&runtime, client).await;
+    assert_eq!(probe.end_line, Some(1));
+    complete_read(&runtime, client, &probe, "new\ncontent\n").await;
+    assert!(futures_util::poll!(&mut external).is_pending());
+    let fresh = next_read_request(&runtime, client).await;
+    assert_eq!(fresh.end_line, Some(2));
+    complete_read(&runtime, client, &fresh, "new\ncontent\n").await;
+    assert_eq!(
+        external.await.output["items"][0]["output"]["text"],
+        "new\ncontent"
+    );
+}
+
+#[tokio::test]
+async fn read_files_singleflight_merges_pending_reads_but_not_completed_reads() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-flight";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let call = |start| ToolCall::ReadFiles {
+        project: "demo".into(),
+        items: vec![item("a.rs", start, Some(2))],
+        session_id: None,
+        with_line_numbers: None,
+        max_result_bytes: None,
+    };
+    let first = runtime.dispatch_with_auth(call(None), Some(&auth));
+    let second = runtime.dispatch_with_auth(call(Some(1)), Some(&auth));
+    tokio::pin!(first, second);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    assert!(futures_util::poll!(&mut second).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    let instance = runtime
+        .runner_registry
+        .get_runner_view(client)
+        .await
+        .unwrap()
+        .runner_instance_id;
+    assert_no_pending_read(&runtime, client, &instance).await;
+    complete_read(&runtime, client, &request, "one\ntwo\n").await;
+    let a = first.await;
+    let b = second.await;
+    assert_eq!(a.output, b.output);
+    let third = runtime.dispatch_with_auth(call(None), Some(&auth));
+    tokio::pin!(third);
+    assert!(futures_util::poll!(&mut third).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    assert_eq!(request.end_line, Some(2));
+    complete_read(&runtime, client, &request, "changed\ntwo\n").await;
+    assert_eq!(
+        third.await.output["items"][0]["output"]["text"],
+        "changed\ntwo"
+    );
+}
+
+#[tokio::test]
+async fn read_files_singleflight_isolates_authority_and_survives_one_cancelled_waiter() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-flight-authority";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let mut first = Box::pin(scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", None, Some(2))],
+    ));
+    let mut second = Box::pin(scoped_read(
+        &runtime,
+        scope,
+        vec![item("a.rs", None, Some(2))],
+    ));
+    let other = scoped_read(
+        &runtime,
+        super::super::read_cache::ReadScope::new(
+            Some(&crate::auth::AuthContext::new(
+                crate::auth::AuthKind::Bootstrap,
+            )),
+            Some("session-a"),
+        ),
+        vec![item("a.rs", None, Some(2))],
+    );
+    tokio::pin!(other);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    assert!(futures_util::poll!(&mut second).is_pending());
+    assert!(futures_util::poll!(&mut other).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    let other_request = next_read_request(&runtime, client).await;
+    assert_ne!(request.request_id, other_request.request_id);
+    drop(first);
+    complete_read(&runtime, client, &request, "one\ntwo\n").await;
+    complete_read(&runtime, client, &other_request, "one\ntwo\n").await;
+    assert_eq!(second.await.output["succeeded_count"], 1);
+    assert_eq!(other.await.output["succeeded_count"], 1);
+}
+
+#[tokio::test]
+async fn read_files_singleflight_late_waiter_keeps_its_own_deadline_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-flight-deadline";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let resolved = runtime.resolve_project_input("demo").await.unwrap();
+    let runner_instance_id = runtime
+        .runner_registry
+        .get_runner_view(client)
+        .await
+        .unwrap()
+        .runner_instance_id;
+    let runner_project_id = crate::tool_runtime::runner_local_project_id(&resolved.resolved_id)
+        .unwrap()
+        .to_string();
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let base = tokio::time::Instant::now();
+    let first_deadline = base + Duration::from_secs(5);
+    let first = super::super::read_cache::READ_SCOPE.scope(
+        scope.clone(),
+        runtime.read_project_snapshot(
+            &resolved,
+            &runner_project_id,
+            &runner_instance_id,
+            "a.rs".into(),
+            Some(1),
+            Some(2),
+            None,
+            first_deadline,
+        ),
+    );
+    tokio::pin!(first);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    let first_request = next_read_request(&runtime, client).await;
+
+    // This caller's deadline extends beyond the first flight's bounded physical
+    // lifetime, so joining that flight would shorten its original read budget.
+    let second_deadline = base + Duration::from_secs(20);
+    let second = super::super::read_cache::READ_SCOPE.scope(
+        scope,
+        runtime.read_project_snapshot(
+            &resolved,
+            &runner_project_id,
+            &runner_instance_id,
+            "a.rs".into(),
+            Some(1),
+            Some(2),
+            None,
+            second_deadline,
+        ),
+    );
+    tokio::pin!(second);
+    assert!(futures_util::poll!(&mut second).is_pending());
+    let second_request = runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: client.into(),
+            runner_instance_id: runner_instance_id.clone(),
+        })
+        .await
+        .unwrap()
+        .expect("late waiter must bypass a flight that expires before its caller deadline");
+    assert_ne!(first_request.request_id, second_request.request_id);
+    assert_no_pending_read(&runtime, client, &runner_instance_id).await;
+
+    complete_read(&runtime, client, &first_request, "one\ntwo\n").await;
+    complete_read(&runtime, client, &second_request, "one\ntwo\n").await;
+    assert!(first.await.success);
+    assert!(second.await.success);
+}
+
+#[tokio::test]
+async fn read_files_singleflight_last_waiter_drop_cancels_runner_registry_request() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-flight-cancel";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let mut first = Box::pin(scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", None, Some(2))],
+    ));
+    let mut second = Box::pin(scoped_read(
+        &runtime,
+        scope,
+        vec![item("a.rs", None, Some(2))],
+    ));
+    assert!(futures_util::poll!(&mut first).is_pending());
+    assert!(futures_util::poll!(&mut second).is_pending());
+    let request = next_read_request(&runtime, client).await;
+
+    drop(first);
+    tokio::task::yield_now().await;
+    drop(second);
+    // PendingReadGuard performs async registry cleanup from Drop. Yielding lets
+    // that already-spawned cancellation run without relying on wall-clock sleeps.
+    for _ in 0..3 {
+        tokio::task::yield_now().await;
+    }
+
+    let late = runtime
+        .runner_registry
+        .complete(RunnerResultRequest {
+            client_id: client.into(),
+            runner_instance_id: "inst".into(),
+            request_id: request.request_id,
+            exit_code: Some(0),
+            stdout: Some(canonical_agent_file_read_output("one\ntwo\n", 1)),
+            stderr: Some(String::new()),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await;
+    assert!(
+        late.is_err(),
+        "dropping the last singleflight waiter left an orphan RunnerRegistry request"
+    );
+}
+
+#[test]
+fn read_files_planner_deduplicates_default_ranges_without_extending_union_cap() {
+    use super::super::read_files::coalesce_read_files_items;
+    let planned = coalesce_read_files_items(vec![
+        item("a.rs", None, None),
+        item("a.rs", Some(1), Some(2000)),
+        item("a.rs", Some(30), Some(10)),
+    ]);
+    assert_eq!(planned.len(), 1);
+    assert_eq!(planned[0].limit, Some(2000));
+    let planned = coalesce_read_files_items(vec![
+        item("a.rs", Some(1), Some(400)),
+        item("a.rs", Some(401), Some(1)),
+    ]);
+    assert_eq!(planned.len(), 2);
+}
+
 fn item(path: &str, start_line: Option<usize>, limit: Option<usize>) -> ReadFilesItem {
     ReadFilesItem {
         path: path.to_string(),
@@ -408,6 +799,29 @@ async fn read_files_coalescing_falls_back_when_merged_range_crosses_byte_ceiling
         read_range_from(content.as_bytes(), EffectiveRange::new(Some(1), Some(360))).unwrap_err();
     assert_eq!(merged_error.reason, ReadFileReason::RangeTooLarge);
 
+    assert_merged_byte_fallback(content).await;
+}
+
+#[tokio::test]
+async fn read_files_coalescing_falls_back_when_json_escaping_crosses_byte_ceiling() {
+    use webcodex_workspace::file_read_normalize::{serialized_fits, success_output};
+    use webcodex_workspace::file_read_range::{read_range_from, EffectiveRange};
+    let content = format!("{}\n", "\"".repeat(400)).repeat(360);
+    let merged =
+        read_range_from(content.as_bytes(), EffectiveRange::new(Some(1), Some(360))).unwrap();
+    assert!(!serialized_fits(&success_output(&merged, false)));
+    for start in [1, 181] {
+        let member = read_range_from(
+            content.as_bytes(),
+            EffectiveRange::new(Some(start), Some(180)),
+        )
+        .unwrap();
+        assert!(serialized_fits(&success_output(&member, true)));
+    }
+    assert_merged_byte_fallback(content).await;
+}
+
+async fn assert_merged_byte_fallback(content: String) {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "coalesced-range-byte-fallback";
@@ -461,6 +875,138 @@ async fn read_files_coalescing_falls_back_when_merged_range_crosses_byte_ceiling
     assert_eq!(
         result.output["items"][0]["output"]["sha256"],
         result.output["items"][1]["output"]["sha256"]
+    );
+}
+
+#[tokio::test]
+async fn read_files_coalesced_numbering_overflow_keeps_members_without_rereading() {
+    use webcodex_workspace::file_read_normalize::success_output;
+    use webcodex_workspace::file_read_range::{read_range_from, EffectiveRange};
+    let content = format!("{}\n", "\"".repeat(356)).repeat(360);
+    let range =
+        read_range_from(content.as_bytes(), EffectiveRange::new(Some(1), Some(360))).unwrap();
+    let parent = success_output(&range, false);
+    let plain =
+        super::super::files::slice_read_file_result(&parent, Some(1), Some(360), false, "a.rs");
+    assert!(plain.success);
+    let numbered =
+        super::super::files::slice_read_file_result(&parent, Some(1), Some(360), true, "a.rs");
+    assert!(!numbered.success);
+    assert_eq!(numbered.output["reason_code"], "range_too_large");
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-plan-numbered";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let resolved = runtime.resolve_project_input("demo").await.unwrap();
+    let read = runtime.read_files_coalesced_resolved(
+        &resolved,
+        vec![
+            item("a.rs", Some(1), Some(180)),
+            item("a.rs", Some(181), Some(180)),
+        ],
+        Some(true),
+    );
+    tokio::pin!(read);
+    assert!(futures_util::poll!(&mut read).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    assert_eq!(request.end_line, Some(360));
+    complete_read(&runtime, client, &request, &content).await;
+    let (result, items) = read.await;
+    assert_eq!(result.output["succeeded_count"], 2);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].limit, Some(180));
+    assert_eq!(items[1].start_line, Some(181));
+}
+
+#[tokio::test]
+async fn read_files_session_cache_fails_closed_on_delete_and_runner_replacement() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-cache-replacement";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let scope = super::super::read_cache::ReadScope::new(None, Some("session-a"));
+    let first = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(2))],
+    );
+    tokio::pin!(first);
+    assert!(futures_util::poll!(&mut first).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    complete_read(&runtime, client, &request, "a\nb\n").await;
+    let revision = first.await.output["items"][0]["output"]["read_revision"]
+        .as_u64()
+        .unwrap();
+    let deleted = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(2))],
+    );
+    tokio::pin!(deleted);
+    assert!(futures_util::poll!(&mut deleted).is_pending());
+    let probe = next_read_request(&runtime, client).await;
+    assert_eq!(probe.end_line, Some(1));
+    complete_patch_agent_request(
+        &runtime,
+        client,
+        &probe.request_id,
+        1,
+        "",
+        "read_file failed: not_found",
+    )
+    .await;
+    assert_eq!(
+        deleted.await.output["items"][0]["output"]["reason_code"],
+        "not_found"
+    );
+    // Restore the old content to repopulate the cache before replacement.
+    let restored = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![item("a.rs", Some(1), Some(2))],
+    );
+    tokio::pin!(restored);
+    assert!(futures_util::poll!(&mut restored).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    assert_eq!(request.end_line, Some(2));
+    complete_read(&runtime, client, &request, "a\nb\n").await;
+    assert_eq!(restored.await.output["succeeded_count"], 1);
+    replace_runner_project_at_path(&runtime, client, "replacement", "demo", root.path()).await;
+    let stale = scoped_read(
+        &runtime,
+        scope.clone(),
+        vec![fenced_item("a.rs", Some(1), Some(2), revision)],
+    )
+    .await;
+    assert_stale_read_item(&stale, 0, "a.rs");
+    assert_no_pending_read(&runtime, client, "replacement").await;
+    let replacement = scoped_read(&runtime, scope, vec![item("a.rs", Some(1), Some(2))]);
+    tokio::pin!(replacement);
+    assert!(futures_util::poll!(&mut replacement).is_pending());
+    let request = runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: client.into(),
+            runner_instance_id: "replacement".into(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.end_line, Some(2));
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client,
+        "replacement",
+        &request.request_id,
+        0,
+        &canonical_agent_file_read_range("new\nrunner\n", 1, 2),
+        "",
+    )
+    .await;
+    assert_eq!(
+        replacement.await.output["items"][0]["output"]["text"],
+        "new\nrunner"
     );
 }
 

@@ -480,9 +480,14 @@ mod tests {
         use std::os::fd::RawFd;
         let mut fds: [RawFd; 2] = [-1, -1];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let witness = FdWitness::duplicate(fds[0]);
         let error = take_inherited_listener(fds[0], "127.0.0.1:1").unwrap_err();
         assert!(error.contains("not a valid socket"), "{error}");
-        assert_ne!(unsafe { libc::fcntl(fds[0], libc::F_GETFD) }, -1);
+        assert_eq!(
+            witness.slot_state(fds[0]),
+            FdSlotState::SameObject,
+            "pre-validation failure replaced or closed the caller-owned pipe fd"
+        );
         unsafe {
             libc::close(fds[0]);
             libc::close(fds[1]);
@@ -502,9 +507,14 @@ mod tests {
         })
         .unwrap();
         let raw_fd = stream.into_raw_fd();
+        let witness = FdWitness::duplicate(raw_fd);
         let error = take_inherited_listener(raw_fd, "127.0.0.1:1").unwrap_err();
         assert!(error.contains("not in listening state"), "{error}");
-        assert_ne!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
+        assert_eq!(
+            witness.slot_state(raw_fd),
+            FdSlotState::SameObject,
+            "pre-validation failure replaced or closed the caller-owned stream fd"
+        );
         unsafe { libc::close(raw_fd) };
     }
 
@@ -517,12 +527,17 @@ mod tests {
         let listener =
             std::os::unix::net::UnixListener::bind(tmp.path().join("listener.sock")).unwrap();
         let raw_fd = listener.into_raw_fd();
+        let witness = FdWitness::duplicate(raw_fd);
         let error = take_inherited_listener(raw_fd, "127.0.0.1:1").unwrap_err();
         assert!(
             error.contains("not an IPv4/IPv6 TCP listening socket"),
             "{error}"
         );
-        assert_ne!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);
+        assert_eq!(
+            witness.slot_state(raw_fd),
+            FdSlotState::SameObject,
+            "pre-validation failure replaced or closed the caller-owned Unix listener fd"
+        );
         unsafe { libc::close(raw_fd) };
     }
 

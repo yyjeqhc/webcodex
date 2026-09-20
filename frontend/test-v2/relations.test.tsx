@@ -321,7 +321,7 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.queryByText(/^connected$/)).toBeNull();
   });
 
-  it("progressively reveals retained Window activity instead of silently dropping rows", async () => {
+  it("renders all server-returned Window activity without a second client-side cap", async () => {
     const overview = runtimeOverview();
     const key = "d".repeat(64);
     const activity = Array.from({ length: 205 }, (_, index) => ({
@@ -367,17 +367,12 @@ describe("Project / Session / Window relationships", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
-    expect(screen.queryAllByText("tool-0")).toHaveLength(0);
-    let steps = screen.getAllByTestId("window-workflow-step");
-    expect(steps[0].textContent).toContain("tool-5");
-    expect(steps.at(-1)?.textContent).toContain("tool-204");
-    const more = screen.getByRole("button", { name: /Show more activity/ });
-    expect(more.textContent).toContain("5 remaining");
-    fireEvent.click(more);
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
-    steps = screen.getAllByTestId("window-workflow-step");
+    const steps = screen.getAllByTestId("window-workflow-step");
+    expect(steps).toHaveLength(205);
     expect(steps[0].textContent).toContain("tool-0");
     expect(steps.at(-1)?.textContent).toContain("tool-204");
+    expect(screen.queryByRole("button", { name: /Show more activity/ })).toBeNull();
     expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
   });
 

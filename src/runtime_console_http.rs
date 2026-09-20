@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 mod communication;
 mod workspace;
@@ -498,6 +499,34 @@ fn project_code_mode_composition(value: &Value) -> Option<RuntimeConsoleCodeMode
     Some(projection)
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeConsoleWorkspaceActivity {
+    created_at: i64,
+    tool: String,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeConsoleSessionJob {
+    job_id: String,
+    kind: String,
+    status: String,
+    terminal: bool,
+    created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ended_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activity_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activity_phase: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleWorkflowSessionDetail {
     #[serde(flatten)]
@@ -505,6 +534,13 @@ struct RuntimeConsoleWorkflowSessionDetail {
     window_activity_available: bool,
     linked_windows: Vec<RuntimeConsoleSessionWindow>,
     window_activity_after_last_session_record: Vec<RuntimeConsoleWindowActivity>,
+    window_activity_after_last_session_record_truncated: bool,
+    workspace_activity_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_last_activity: Option<RuntimeConsoleWorkspaceActivity>,
+    job_activity_available: bool,
+    jobs: Vec<RuntimeConsoleSessionJob>,
+    jobs_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -516,6 +552,7 @@ struct RuntimeConsoleSessionWindow {
     last_seen_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_meaningful_activity_at_ms: Option<i64>,
+    active_count: usize,
     relations: Vec<String>,
     relation_count: usize,
     recorder_gap_count: usize,
@@ -1467,6 +1504,101 @@ async fn running_jobs_for_auth(
     Ok(snapshot)
 }
 
+async fn session_jobs_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    project: &str,
+    session_id: &str,
+) -> Result<(Vec<RuntimeConsoleSessionJob>, bool), RuntimeConsoleError> {
+    let result = runtime
+        .list_jobs_for_auth_with_filters(
+            Some(100),
+            None,
+            Some(project.to_string()),
+            Some(session_id.to_string()),
+            Some(auth),
+        )
+        .await;
+    if !result.success {
+        return Err(RuntimeConsoleError::Internal);
+    }
+    let truncated = safe_bool(result.output.get("truncated"));
+    let mut jobs = Vec::new();
+    for job in result
+        .output
+        .get("jobs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(job_id) = safe_string(job.get("job_id"), 160) else {
+            continue;
+        };
+        let Some(kind) = safe_string(job.get("kind"), 80) else {
+            continue;
+        };
+        let Some(status) = safe_string(job.get("status"), 80) else {
+            continue;
+        };
+        let activity = job.get("activity");
+        jobs.push(RuntimeConsoleSessionJob {
+            job_id,
+            kind,
+            terminal: RunnerJobLifecycle::from_wire(&status)
+                .is_ok_and(RunnerJobLifecycle::is_terminal),
+            status,
+            created_at: job.get("created_at").and_then(Value::as_i64).unwrap_or(0),
+            started_at: job.get("started_at").and_then(Value::as_i64),
+            ended_at: job.get("ended_at").and_then(Value::as_i64),
+            activity_state: activity
+                .and_then(|value| value.get("state"))
+                .and_then(|value| safe_string(Some(value), 80)),
+            activity_phase: activity
+                .and_then(|value| value.get("phase"))
+                .and_then(|value| safe_string(Some(value), 120)),
+        });
+    }
+    Ok((jobs, truncated))
+}
+
+fn workspace_activity_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    project: &RuntimeConsoleProject,
+) -> Result<(bool, Option<RuntimeConsoleWorkspaceActivity>), RuntimeConsoleError> {
+    let Some(db) = runtime.window_activity_db.as_ref() else {
+        return Ok((false, None));
+    };
+    let visibility = if auth.is_project_scoped_model_subject() {
+        let grant = auth
+            .project_grant_id
+            .as_deref()
+            .ok_or(RuntimeConsoleError::Internal)?;
+        webcodex_core::activity_contract::ActivityVisibility::ProjectGrant(grant)
+    } else {
+        webcodex_core::activity_contract::ActivityVisibility::Global
+    };
+    let allowed_clients = vec![project.client_id.clone()];
+    let row = db
+        .latest_workspace_activity_for_project(
+            &project.id,
+            Some(&project.client_id),
+            visibility,
+            &allowed_clients,
+        )
+        .map_err(|_| RuntimeConsoleError::Internal)?;
+    Ok((
+        true,
+        row.map(|row| RuntimeConsoleWorkspaceActivity {
+            created_at: row.created_at,
+            tool: row.tool,
+            success: row.success,
+            client_id: row.client,
+            session_id: row.session_id,
+        }),
+    ))
+}
+
 fn apply_running_jobs_to_list(
     list: &mut WorkflowSessionConsoleList,
     project: &str,
@@ -2380,6 +2512,12 @@ async fn workflow_session_detail_with_windows(
             window_activity_available: false,
             linked_windows: Vec::new(),
             window_activity_after_last_session_record: Vec::new(),
+            window_activity_after_last_session_record_truncated: false,
+            workspace_activity_available: false,
+            workspace_last_activity: None,
+            job_activity_available: false,
+            jobs: Vec::new(),
+            jobs_truncated: false,
         });
     }
     let db = runtime
@@ -2388,6 +2526,10 @@ async fn workflow_session_detail_with_windows(
         .ok_or(RuntimeConsoleError::Internal)?;
     let principal = window_principal_filter(auth)?;
     let principal_ref = window_principal_ref(&principal);
+    let project_row = exact_console_project_for_auth(runtime, auth, project).await?;
+    let (workspace_activity_available, workspace_last_activity) =
+        workspace_activity_for_auth(runtime, auth, &project_row)?;
+    let (jobs, jobs_truncated) = session_jobs_for_auth(runtime, auth, project, session_id).await?;
     let links = db
         .list_session_linked_windows(session_id, principal_ref, 32)
         .map_err(|_| RuntimeConsoleError::Internal)?;
@@ -2422,29 +2564,36 @@ async fn workflow_session_detail_with_windows(
             last_meaningful_activity_at_ms: visible_summary
                 .as_ref()
                 .and_then(|summary| summary.last_meaningful_activity_at_ms),
+            active_count: visible_summary
+                .as_ref()
+                .map(|summary| summary.active_count)
+                .unwrap_or(0),
             relations: link.relations.clone(),
             relation_count: link.relation_count,
             recorder_gap_count: link.recorder_gap_count,
         });
     }
-    let session_updated_at_ms = session.updated_at.saturating_mul(1000);
     let mut gap_activity = Vec::new();
     for link in &links {
-        if link.recorder_gap_count == 0 {
-            continue;
-        }
         #[cfg(feature = "experimental-code-mode")]
         let events = db.list_window_activity_events_with_code_mode_composition(
             &link.client_window_key,
             principal_ref,
-            32,
+            MAX_WINDOW_ACTIVITY_LIMIT,
         );
         #[cfg(not(feature = "experimental-code-mode"))]
-        let events = db.list_window_activity_events(&link.client_window_key, principal_ref, 32);
+        let events = db.list_window_activity_events(
+            &link.client_window_key,
+            principal_ref,
+            MAX_WINDOW_ACTIVITY_LIMIT,
+        );
         let events = events.map_err(|_| RuntimeConsoleError::Internal)?;
         for event in events {
-            if event.recorder_gap_session_id.as_deref() != Some(session_id)
-                || event.started_at_ms <= session_updated_at_ms
+            // Window liveness is intentionally wider than Session provenance.
+            // Once a Window has an authorized relation to this Session, later
+            // WebCodex actions in the same Project prove Window/model activity
+            // even when no newer action_event_workflow_link was recorded.
+            if event.started_at_ms <= link.last_linked_at_ms
                 || event.project.as_deref() != Some(project)
             {
                 continue;
@@ -2455,17 +2604,26 @@ async fn workflow_session_detail_with_windows(
         }
     }
     gap_activity.sort_by(|left, right| {
-        right
-            .started_at_ms
-            .cmp(&left.started_at_ms)
+        left.started_at_ms
+            .cmp(&right.started_at_ms)
             .then_with(|| left.method.cmp(&right.method))
     });
-    gap_activity.truncate(50);
+    let window_activity_after_last_session_record_truncated =
+        gap_activity.len() > MAX_WINDOW_ACTIVITY_LIMIT;
+    if window_activity_after_last_session_record_truncated {
+        gap_activity.drain(0..gap_activity.len() - MAX_WINDOW_ACTIVITY_LIMIT);
+    }
     Ok(RuntimeConsoleWorkflowSessionDetail {
         session,
         window_activity_available: true,
         linked_windows,
         window_activity_after_last_session_record: gap_activity,
+        window_activity_after_last_session_record_truncated,
+        workspace_activity_available,
+        workspace_last_activity,
+        job_activity_available: true,
+        jobs,
+        jobs_truncated,
     })
 }
 
@@ -5283,6 +5441,107 @@ mod tests {
             .all(|event| event.next_call_gap_ms.is_none() && event.cycle_ms.is_none()));
         let serialized = serde_json::to_string(&detail).unwrap();
         assert!(!serialized.contains(project_b));
+    }
+
+    #[tokio::test]
+    async fn session_window_liveness_survives_sparse_workflow_relations() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("sparse-session-window");
+        let project = "agent:sparse-runner:webcodex";
+        register_project(
+            &runtime,
+            "sparse-runner",
+            "webcodex",
+            "/private/sparse",
+            Some(&auth),
+        )
+        .await;
+        let session = runtime.sessions.start_session(
+            Some(project.to_string()),
+            Some("sparse relation".to_string()),
+        );
+        let window_key = "0cae4d71e62fe073f130a0e5da2c83425866e4aba9ac5746c043e2ea66000471";
+
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            window_key,
+            Some(project),
+            Some((&session.session_id, project)),
+            1_000,
+            "work_on_project",
+            true,
+        );
+        for (at_ms, tool) in [
+            (2_000, "observe_jobs"),
+            (3_000, "run_shell"),
+            (4_000, "observe_jobs"),
+        ] {
+            record_window_event_with_activity(
+                &db,
+                &auth,
+                window_key,
+                Some(project),
+                None,
+                at_ms,
+                tool,
+                true,
+            );
+        }
+        db.insert_workspace_activity(
+            3,
+            &webcodex_core::activity_contract::ActivityRecord {
+                tool: "run_shell",
+                project: Some(project),
+                surface: "mcp",
+                client: Some("sparse-runner"),
+                success: true,
+                session_id: Some(&session.session_id),
+                command: None,
+                paths: Vec::new(),
+                error_summary: None,
+                scope: webcodex_core::activity_contract::ActivityScope::Unscoped,
+            },
+            None,
+            2_000,
+        )
+        .unwrap();
+
+        let detail = workflow_session_detail_with_windows(
+            &runtime,
+            &auth,
+            project,
+            &session.session_id,
+            Some(20),
+        )
+        .await
+        .unwrap();
+        assert!(detail.window_activity_available);
+        assert_eq!(detail.linked_windows.len(), 1);
+        assert_eq!(detail.linked_windows[0].last_linked_at_ms, 1_001);
+        assert_eq!(
+            detail.linked_windows[0].last_meaningful_activity_at_ms,
+            Some(4_001)
+        );
+        assert_eq!(detail.linked_windows[0].active_count, 0);
+        assert_eq!(detail.window_activity_after_last_session_record.len(), 3);
+        assert_eq!(
+            detail
+                .window_activity_after_last_session_record
+                .iter()
+                .filter_map(|activity| activity.tool_name.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["observe_jobs", "run_shell", "observe_jobs"]
+        );
+        assert!(!detail.window_activity_after_last_session_record_truncated);
+        assert!(detail.workspace_activity_available);
+        let workspace = detail.workspace_last_activity.expect("workspace action");
+        assert_eq!(workspace.created_at, 3);
+        assert_eq!(workspace.tool, "run_shell");
+        assert!(workspace.success);
+        assert!(detail.job_activity_available);
+        assert!(detail.jobs.is_empty());
+        assert!(!detail.jobs_truncated);
     }
 
     #[tokio::test]

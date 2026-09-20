@@ -5,7 +5,7 @@ import { SessionExecution } from "../src/runtime-v2/components/SessionExecution.
 import { workItemFromRecent } from "../src/runtime-v2/model/work.js";
 import type { SessionWorkspaceState } from "../src/runtime-v2/state/useSessionWorkspace.js";
 import { useSessionWorkspace } from "../src/runtime-v2/state/useSessionWorkspace.js";
-import { recentSession, sessionDetail } from "./fixtures.js";
+import { recentSession, sessionDetail, sparseActivitySessionDetail } from "./fixtures.js";
 
 function workspace(overrides: Partial<SessionWorkspaceState> = {}): SessionWorkspaceState {
   return {
@@ -139,6 +139,36 @@ describe("Session communication parity", () => {
     expect(screen.getByText("Agent / Session")).toBeTruthy();
     expect(screen.getByText("I also kept the activity timestamps visible.")).toBeTruthy();
     expect(screen.getByText("Reply to")).toBeTruthy();
+  });
+
+  it("keeps Window liveness distinct from sparse Session, Workspace, and Job evidence", () => {
+    const detail = sparseActivitySessionDetail();
+    const recent = recentSession({
+      session_id: detail.session_id,
+      title: detail.title,
+      updated_at: detail.updated_at,
+      running_jobs: 1,
+    });
+    const session = workspace({ detail });
+    const rendered = render(
+      <SessionExecution
+        item={workItemFromRecent(recent)}
+        location={{ projectId: recent.project_id, projectName: recent.project_name || recent.project_id, runner: recent.client_id, sessionId: recent.session_id }}
+        session={session}
+        language="en"
+      />,
+    );
+
+    expect(screen.getByTestId("activity-signal-window").textContent).toContain("Last WebCodex call");
+    expect(screen.getByTestId("activity-signal-session").textContent).toContain("Sparse activity");
+    expect(screen.getByTestId("activity-signal-workspace").textContent).toContain("Last action");
+    expect(screen.getByTestId("activity-signal-job").textContent).toContain("Running");
+    expect(rendered.container.textContent).not.toMatch(/\bIdle\b/);
+    expect(rendered.container.textContent).not.toMatch(/\bStopped\b/);
+    expect(rendered.container.querySelectorAll(".activity-source-badge.window").length).toBeGreaterThan(0);
+    expect(rendered.container.querySelectorAll(".activity-source-badge.session").length).toBeGreaterThan(0);
+    expect(rendered.container.querySelectorAll(".activity-source-badge.workspace").length).toBeGreaterThan(0);
+    expect(rendered.container.querySelectorAll(".activity-source-badge.job").length).toBeGreaterThan(0);
   });
 
   it("keeps retained unfinished calls from masquerading as live execution", () => {

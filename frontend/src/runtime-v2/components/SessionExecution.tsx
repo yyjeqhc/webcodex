@@ -2,17 +2,18 @@ import {
   Bot,
   CircleDot,
   Clock3,
+  HardDrive,
   LoaderCircle,
   MessageSquare,
+  Monitor,
   TerminalSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import { absoluteTime, relativeTime, shortId } from "../model/format.js";
-import { groupRecentProgress, type WorkItem } from "../model/work.js";
+import { activitySignals, groupRecentProgress, type WorkItem } from "../model/work.js";
 import type { SessionLocation, SessionWorkspaceState } from "../state/useSessionWorkspace.js";
-import { BUCKET_LABEL } from "./WorkList.js";
 import { ProgressCluster } from "./ProgressCluster.js";
 import { SessionComposer } from "./SessionComposer.js";
 
@@ -28,6 +29,7 @@ type Props = {
 export function SessionExecution({ item, location, session, language }: Props) {
   const t = (value: string) => translate(value, language);
   const progress = groupRecentProgress(session.detail);
+  const signals = activitySignals(session.detail, item);
   const messagesById = new Map((session.messages?.messages || []).map((message) => [message.message_id, message]));
   const [centerTab, setCenterTab] = useState<"workflow" | "collaboration">("workflow");
 
@@ -49,8 +51,8 @@ export function SessionExecution({ item, location, session, language }: Props) {
           <h2>{item.title}</h2>
         </div>
         <div className="session-actions">
-          <span className={"quiet-pill " + (item.bucket === "running" ? "running" : "")}>
-            <CircleDot size={12} /> {t(BUCKET_LABEL[item.bucket])} · {relativeTime(item.updatedAt)}
+          <span className="quiet-pill">
+            <CircleDot size={12} /> {t("Workflow Session")} · {t(item.lifecycle)} · {relativeTime(item.updatedAt)}
           </span>
           <button className="icon-button" type="button" onClick={session.refresh} aria-label={t("Refresh")}><Clock3 size={16} /></button>
         </div>
@@ -96,20 +98,30 @@ export function SessionExecution({ item, location, session, language }: Props) {
               <p>{item.title}</p>
             </section>
 
-            <section className="run-status-card">
-              <div className="run-status-head">
-                <span className="run-spinner">{item.bucket === "running" ? <LoaderCircle size={17} /> : <CircleDot size={17} />}</span>
-                <div>
-                  <strong>{item.bucket === "running" ? t("Working") : t(BUCKET_LABEL[item.bucket])}</strong>
-                  <span>{item.phase}</span>
-                </div>
-                {session.detailAvailability === "stale" ? (
-                  <span className="live-badge stale">{t("stale")}</span>
-                ) : item.bucket === "running" ? (
-                  <span className="live-badge"><span /> {t("live")}</span>
-                ) : null}
+            <section className="activity-signals-card" aria-label={t("Activity signals")}>
+              <div className="activity-signals-heading">
+                <div><strong>{t("Activity signals")}</strong><small>{t("Independent evidence layers; sparse Session links never imply Window idleness.")}</small></div>
+                {session.detailAvailability === "stale" && <span className="live-badge stale">{t("stale")}</span>}
               </div>
-
+              <div className="activity-signal-list">
+                {signals.map((signal) => {
+                  const icon = signal.source === "window" ? <Monitor size={15} />
+                    : signal.source === "workspace" ? <HardDrive size={15} />
+                    : signal.source === "job" ? <TerminalSquare size={15} />
+                    : <CircleDot size={15} />;
+                  return (
+                    <div className="activity-signal-row" data-testid={"activity-signal-" + signal.source} key={signal.source}>
+                      <span className={"activity-signal-icon " + signal.source}>{icon}</span>
+                      <span className="activity-signal-copy">
+                        <strong>{t(signal.label)}</strong>
+                        <small>{t(signal.detail)}</small>
+                      </span>
+                      <span className={"activity-signal-status " + signal.tone}>{t(signal.status)}</span>
+                      <time>{signal.observedAt !== undefined ? absoluteTime(signal.observedAt) : "—"}</time>
+                    </div>
+                  );
+                })}
+              </div>
               {session.detail && (
                 <div className="evidence-progress-grid" aria-label={t("Progress from retained evidence")}>
                   <div><strong>{session.detail.overview.work.exploration}</strong><span>{t("Explored")}</span></div>
@@ -140,13 +152,13 @@ export function SessionExecution({ item, location, session, language }: Props) {
 
             <section className="progress-section">
               <div className="progress-heading">
-                <span>{t("Recent progress")}</span>
-                <small>{t("Low-level calls grouped by intent")}</small>
+                <span>{t("Activity timeline")}</span>
+                <small>{t("Unified Session, Window, Workspace, and Job evidence")}</small>
               </div>
               <div className="timeline-clusters">
                 {progress.length ? (
                   progress.map((group, index) => (
-                    <ProgressCluster key={group.intent + "-" + group.latestAt + "-" + index} group={group} />
+                    <ProgressCluster key={group.source + "-" + group.intent + "-" + group.latestAt + "-" + index} group={group} language={language} />
                   ))
                 ) : (
                   <div className="empty-inline">
@@ -157,6 +169,13 @@ export function SessionExecution({ item, location, session, language }: Props) {
                 )}
               </div>
             </section>
+
+            {session.detail?.activity_truncated && (
+              <div className="inventory-note wide">{t("Session activity history is bounded by the retained ledger.")}</div>
+            )}
+            {session.detail?.window_activity_after_last_session_record_truncated && (
+              <div className="inventory-note wide">{t("Window activity reached the server history bound; older Window evidence may be omitted.")}</div>
+            )}
 
             {item.reportedProgress?.text && (
               <article className="agent-working-note">

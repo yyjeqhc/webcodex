@@ -110,8 +110,88 @@ export function sessionDetail(overrides: Partial<SessionDetail> = {}): SessionDe
     window_activity_available: true,
     linked_windows: [],
     window_activity_after_last_session_record: [],
+    window_activity_after_last_session_record_truncated: false,
+    workspace_activity_available: true,
+    job_activity_available: true,
+    jobs: [],
+    jobs_truncated: false,
     ...overrides,
   };
+}
+
+export function sparseActivitySessionDetail(overrides: Partial<SessionDetail> = {}): SessionDetail {
+  const seconds = (clock: string) => Math.floor(Date.parse(`2026-09-20T${clock}+08:00`) / 1000);
+  const millis = (clock: string) => Date.parse(`2026-09-20T${clock}+08:00`);
+  const windowKey = "0cae4d71e62fe073f130a0e5da2c83425866e4aba9ac5746c043e2ea66000471";
+  const sessionId = "wc_sess_yTPs8TwDjZWbOCQS";
+  const windowActivity = ["22:35:02", "22:35:24", "22:37:40", "22:38:23", "22:39:33", "22:41:13"].map((clock, index) => ({
+    started_at_ms: millis(clock),
+    ended_at_ms: millis(clock) + 100,
+    duration_ms: 100,
+    method: "tools/call",
+    tool_name: index === 3 ? "run_shell" : "observe_jobs",
+    activity_presentation: index === 3 ? "Run workspace command" : "Observe Job progress",
+    activity_kind: index === 3 ? "run" : "wait",
+    project: "agent:special:webcodex",
+    status: "success",
+    meaningful: true,
+    recorder_gap_session_id: sessionId,
+    workflow_sessions: [],
+  }));
+  return sessionDetail({
+    session_id: sessionId,
+    title: "G5 Goal Continuity dogfood",
+    updated_at: seconds("21:50:18"),
+    activity: [{
+      kind: "activity",
+      tool: "work_on_project",
+      state: "success",
+      execution_state: "completed",
+      job_handoff: false,
+      started_at: seconds("21:50:18"),
+      finished_at: seconds("21:50:18"),
+      duration_ms: 100,
+      summary: "Started exact Workflow Session",
+      paths: [],
+      group_kinds: [],
+      group_tools: [],
+    }],
+    activity_total: 1,
+    activity_returned: 1,
+    linked_windows: [{
+      client_window_key: windowKey,
+      source: "openai-session",
+      first_linked_at_ms: millis("21:50:18"),
+      last_linked_at_ms: millis("21:50:18"),
+      last_seen_at_ms: millis("22:41:13"),
+      last_meaningful_activity_at_ms: millis("22:41:13"),
+      active_count: 0,
+      relations: ["recording"],
+      relation_count: 1,
+      recorder_gap_count: windowActivity.length,
+    }],
+    window_activity_after_last_session_record: windowActivity,
+    workspace_activity_available: true,
+    workspace_last_activity: {
+      created_at: seconds("22:38:23"),
+      tool: "run_shell",
+      success: true,
+      client_id: "special",
+      session_id: sessionId,
+    },
+    job_activity_available: true,
+    jobs: [{
+      job_id: "wc_job_activity_fixture",
+      kind: "cargo test",
+      status: "running",
+      terminal: false,
+      created_at: seconds("22:38:20"),
+      started_at: seconds("22:38:21"),
+      activity_state: "working",
+      activity_phase: "running tests",
+    }],
+    ...overrides,
+  });
 }
 
 export function runtimeOverview(overrides: Partial<RuntimeOverview> = {}): RuntimeOverview {

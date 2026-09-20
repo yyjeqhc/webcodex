@@ -179,6 +179,71 @@ impl Database {
         let rows = statement.query_map(params.as_slice(), row_to_activity)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    /// Latest visible workspace activity for one exact already-authorized Project.
+    ///
+    /// Project equality is an additional narrowing filter only. Durable activity
+    /// scope remains the authority boundary so a reused client/project name cannot
+    /// expose rows written by a different ProjectGrant.
+    pub fn latest_workspace_activity_for_project(
+        &self,
+        project: &str,
+        requested_client: Option<&str>,
+        visibility: ActivityVisibility<'_>,
+        allowed_clients: &[String],
+    ) -> anyhow::Result<Option<WorkspaceActivityRow>> {
+        let clients: Option<Vec<String>> = match (visibility, requested_client) {
+            (ActivityVisibility::Global, Some(requested)) => Some(vec![requested.to_string()]),
+            (ActivityVisibility::Global, None) => None,
+            (ActivityVisibility::ProjectGrant(_), Some(requested)) => {
+                if allowed_clients.iter().any(|client| client == requested) {
+                    Some(vec![requested.to_string()])
+                } else {
+                    Some(Vec::new())
+                }
+            }
+            (ActivityVisibility::ProjectGrant(_), None) => Some(allowed_clients.to_vec()),
+        };
+        if clients.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(None);
+        }
+
+        let conn = self.lock_connection(crate::StoreDomain::Activity);
+        let select = "SELECT id, created_at, project, tool, surface, client, success, session_id,
+                    command_preview, paths_json, error_summary
+             FROM workspace_activity";
+        let mut bound: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project.to_string())];
+        let mut wheres = vec!["project = ?1".to_string()];
+        if let ActivityVisibility::ProjectGrant(grant) = visibility {
+            bound.push(Box::new(grant.to_string()));
+            wheres.push(format!(
+                "scope_kind = 'project_grant' AND scope_id = ?{}",
+                bound.len()
+            ));
+        }
+        if let Some(clients) = clients.as_ref() {
+            let placeholders = clients
+                .iter()
+                .map(|client| {
+                    bound.push(Box::new(client.clone()));
+                    format!("?{}", bound.len())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            wheres.push(format!("client IN ({placeholders})"));
+        }
+        let sql = format!(
+            "{select} WHERE {} ORDER BY id DESC LIMIT 1",
+            wheres.join(" AND ")
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> = bound.iter().map(|value| value.as_ref()).collect();
+        let mut rows = statement.query_map(params.as_slice(), row_to_activity)?;
+        match rows.next() {
+            Some(row) => row.map(Some).map_err(Into::into),
+            None => Ok(None),
+        }
+    }
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -384,6 +449,60 @@ mod tests {
         assert_eq!(b.len(), 1);
         assert_eq!(b[0].command_preview.as_deref(), Some("b"));
         assert_eq!(as_global(&db).len(), 2);
+    }
+
+    #[test]
+    fn latest_project_activity_keeps_scope_and_client_fences() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("activity.db")).unwrap();
+        db.insert_workspace_activity(10, &scoped(Some("laptop"), GRANT_A), Some("a"), 50)
+            .unwrap();
+        db.insert_workspace_activity(20, &scoped(Some("laptop"), GRANT_B), Some("b"), 50)
+            .unwrap();
+
+        let allowed = vec!["laptop".to_string()];
+        let a = db
+            .latest_workspace_activity_for_project(
+                "demo",
+                Some("laptop"),
+                ActivityVisibility::ProjectGrant(GRANT_A),
+                &allowed,
+            )
+            .unwrap()
+            .expect("grant A row");
+        assert_eq!(a.created_at, 10);
+        assert_eq!(a.command_preview.as_deref(), Some("a"));
+
+        let global = db
+            .latest_workspace_activity_for_project(
+                "demo",
+                Some("laptop"),
+                ActivityVisibility::Global,
+                &[],
+            )
+            .unwrap()
+            .expect("global latest row");
+        assert_eq!(global.created_at, 20);
+        assert_eq!(global.command_preview.as_deref(), Some("b"));
+
+        assert!(db
+            .latest_workspace_activity_for_project(
+                "other-project",
+                Some("laptop"),
+                ActivityVisibility::ProjectGrant(GRANT_A),
+                &allowed,
+            )
+            .unwrap()
+            .is_none());
+        assert!(db
+            .latest_workspace_activity_for_project(
+                "demo",
+                Some("desktop"),
+                ActivityVisibility::ProjectGrant(GRANT_A),
+                &allowed,
+            )
+            .unwrap()
+            .is_none());
     }
 
     #[test]

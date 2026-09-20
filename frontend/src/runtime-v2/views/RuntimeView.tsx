@@ -10,7 +10,7 @@ import {
   Server,
   TerminalSquare,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
@@ -45,7 +45,6 @@ export function RuntimeView({
 }: Props) {
   const t = (value: string) => translate(value, language);
   const [mode, setMode] = useState<RuntimeMode>("overview");
-  const [visibleActivityLimit, setVisibleActivityLimit] = useState(200);
   const windows = useWindowWorkspace(client, true, onUnauthorized, {
     refreshMs: mode === "windows" ? 3_000 : 30_000,
     loadDetail: mode === "windows",
@@ -55,8 +54,12 @@ export function RuntimeView({
   const chronologicalActivity = windows.detail
     ? windows.detail.activity.slice().sort((a, b) => a.ended_at_ms - b.ended_at_ms || a.started_at_ms - b.started_at_ms)
     : [];
-  const visibleActivity = chronologicalActivity.slice(-visibleActivityLimit);
-  const remainingActivity = Math.max(0, chronologicalActivity.length - visibleActivity.length);
+  const latestWindowActivityAt = windows.detail
+    ? (windows.detail.last_meaningful_activity_at_ms || windows.detail.last_tool_call_at_ms || windows.detail.last_seen_at_ms)
+    : undefined;
+  const latestSessionLinkAt = windows.detail?.linked_sessions.length
+    ? Math.max(...windows.detail.linked_sessions.map((session) => session.last_linked_at_ms))
+    : undefined;
   const overviewStatus = overviewAvailability === "available"
     ? { className: "good", label: "connected" }
     : overviewAvailability === "stale"
@@ -64,8 +67,6 @@ export function RuntimeView({
       : overviewAvailability === "loading" || overviewAvailability === "idle"
         ? { className: "", label: "Loading…" }
         : { className: "warn", label: "Runtime overview unavailable" };
-
-  useEffect(() => setVisibleActivityLimit(200), [windows.selectedKey]);
 
   const projectFor = (projectId: string | undefined) =>
     projectId ? projects.find((project) => project.id === projectId) : undefined;
@@ -243,6 +244,29 @@ export function RuntimeView({
                   <p>{t("This Window is observation evidence. Linked Sessions remain Project-scoped resources and may be observed by other Windows too.")}</p>
                 </section>
 
+                <section className="window-activity-semantics" aria-label={t("Activity signals")}>
+                  <div data-testid="window-signal-window">
+                    <span className="activity-source-badge window">{t("Window")}</span>
+                    <strong>{windows.detail.active_count > 0 ? t("Active") : latestWindowActivityAt ? t("Last WebCodex call") : t("Not observed")}</strong>
+                    <small>{latestWindowActivityAt ? absoluteTime(latestWindowActivityAt) : t("No Window-scoped WebCodex activity is loaded.")}</small>
+                  </div>
+                  <div data-testid="window-signal-session">
+                    <span className="activity-source-badge session">{t("Session")}</span>
+                    <strong>{latestSessionLinkAt === undefined ? t("Not observed") : latestWindowActivityAt && latestWindowActivityAt > latestSessionLinkAt ? t("Sparse activity") : t("Last linked activity")}</strong>
+                    <small>{latestSessionLinkAt !== undefined ? absoluteTime(latestSessionLinkAt) : t("No explicit Session-linked activity is loaded.")}</small>
+                  </div>
+                  <div>
+                    <span className="activity-source-badge workspace">{t("Workspace")}</span>
+                    <strong>{t("Unavailable")}</strong>
+                    <small>{t("Workspace activity is shown on the exact Work / Project context, not inferred from Window calls.")}</small>
+                  </div>
+                  <div>
+                    <span className="activity-source-badge job">{t("Job")}</span>
+                    <strong>{t("Unavailable")}</strong>
+                    <small>{t("Job lifecycle is independent; observe_jobs calls do not imply Job state.")}</small>
+                  </div>
+                </section>
+
                 <details className="window-relations-disclosure">
                   <summary>
                     <span><Monitor size={15} /><strong>{t("Linked Sessions")}</strong></span>
@@ -271,7 +295,7 @@ export function RuntimeView({
                             });
                           }}
                         >
-                          <span className="session-live-dot running" />
+                          <span className="session-relation-dot" />
                           <span className="project-session-main">
                             <strong>{session.title || session.workflow_session_id}</strong>
                             <small>{project?.name || session.project || t("Project not exposed in relation")}</small>
@@ -295,10 +319,10 @@ export function RuntimeView({
                 <section className="window-detail-section window-workflow-section">
                   <div className="section-heading">
                     <div><h2>{t("Observed workflow")}</h2><p>{t("Each observed action is collapsed by default. Project and status stay visible; expand for bounded low-level evidence.")}</p></div>
-                    <span className="quiet-pill">{visibleActivity.length} / {windows.detail.activity_returned}</span>
+                    <span className="quiet-pill">{chronologicalActivity.length}</span>
                   </div>
                   <div className="window-workflow-list">
-                    {visibleActivity.map((activity, index) => {
+                    {chronologicalActivity.map((activity, index) => {
                       const projectId = activity.project || activity.workflow_sessions.find((session) => session.project)?.project;
                       const project = projectFor(projectId);
                       return (
@@ -309,6 +333,7 @@ export function RuntimeView({
                               <strong>{activity.activity_presentation || activity.tool_name || activity.method}</strong>
                               <small>{activity.tool_name || activity.activity_kind || activity.method}</small>
                             </span>
+                            <span className="activity-source-badge window">{t("Window")}</span>
                             {projectId && <span className="window-project-tag" data-testid="window-project-tag" title={projectId}>{projectDisplayName(project?.name, projectId)}</span>}
                             <span className={"status-pill " + (activity.status === "ok" || activity.status === "success" ? "good" : "")}>{activity.status}</span>
                             <time>{absoluteTime(activity.ended_at_ms)}</time>
@@ -331,7 +356,7 @@ export function RuntimeView({
                               <div className="window-workflow-relations">
                                 {activity.workflow_sessions.map((relation) => (
                                   <span key={relation.workflow_session_id + ":" + relation.relation}>
-                                    {relation.relation} · {shortId(relation.workflow_session_id)}
+                                    {t("Session")} · {relation.relation} · {shortId(relation.workflow_session_id)}
                                   </span>
                                 ))}
                               </div>
@@ -342,11 +367,6 @@ export function RuntimeView({
                       );
                     })}
                     {!windows.detail.activity.length && <div className="empty-inline">{t("No activity observed yet")}</div>}
-                    {remainingActivity > 0 && (
-                      <button className="activity-load-more" type="button" onClick={() => setVisibleActivityLimit((current) => current + 200)}>
-                        {t("Show more activity")} · {remainingActivity} {t("remaining")}
-                      </button>
-                    )}
                     {windows.detail.activity_truncated && (
                       <div className="inventory-note">{t("Server activity history is bounded; older Window activity is not loaded.")}</div>
                     )}

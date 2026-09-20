@@ -10,6 +10,8 @@ import type {
 
 export type WorkBucket = "running" | "attention" | "active" | "recent";
 export type ProgressIntent = "explored" | "edited" | "ran" | "tested" | "reviewed" | "delegated" | "waiting" | "activity";
+export type ActivitySource = "session" | "window" | "workspace" | "job";
+export type ActivitySignalTone = "live" | "observed" | "sparse" | "quiet" | "unavailable";
 
 export type WorkItem = {
   key: string;
@@ -32,7 +34,17 @@ export type WorkItem = {
   reportedProgress?: { reported_at: number; text: string };
 };
 
+export type ActivitySignal = {
+  source: ActivitySource;
+  label: string;
+  status: string;
+  detail: string;
+  observedAt?: number;
+  tone: ActivitySignalTone;
+};
+
 export type ProgressGroup = {
+  source: ActivitySource;
   intent: ProgressIntent;
   label: string;
   count: number;
@@ -42,7 +54,120 @@ export type ProgressGroup = {
   latestSummary?: string;
   state: string;
   actor?: { kind: string; name: string; id?: string };
+  provenance?: string[];
 };
+
+function maxFinite(values: Array<number | undefined>): number | undefined {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  return finite.length ? Math.max(...finite) : undefined;
+}
+
+function jobStatus(job: NonNullable<SessionDetail["jobs"]>[number]): { status: string; tone: ActivitySignalTone } {
+  const status = job.status.toLowerCase();
+  const activity = `${job.activity_state || ""} ${job.activity_phase || ""}`.toLowerCase();
+  if (/block/.test(activity)) return { status: "Blocked", tone: "live" };
+  if (/wait/.test(activity)) return { status: "Waiting", tone: "live" };
+  if (/queued/.test(status)) return { status: "Queued", tone: "live" };
+  if (/running|started/.test(status)) return { status: "Running", tone: "live" };
+  if (job.terminal) return { status: "Terminal", tone: "quiet" };
+  return { status: job.status || "Observed", tone: "observed" };
+}
+
+export function activitySignals(detail: SessionDetail | null, item?: WorkItem): ActivitySignal[] {
+  const sessionUpdatedAt = detail?.updated_at || item?.updatedAt;
+  const gapActivity = detail?.window_activity_after_last_session_record || [];
+  const linkedWindows = detail?.linked_windows || [];
+  const latestWindowAtMs = maxFinite([
+    ...linkedWindows.map((window) => window.last_meaningful_activity_at_ms || window.last_seen_at_ms),
+    ...gapActivity.map((activity) => activity.ended_at_ms || activity.started_at_ms),
+  ]);
+  const activeWindowRequests = linkedWindows.reduce((total, window) => total + (window.active_count || 0), 0);
+  const sparseSessionRelation = gapActivity.length > 0 || linkedWindows.some((window) =>
+    window.last_meaningful_activity_at_ms !== undefined && window.last_meaningful_activity_at_ms > window.last_linked_at_ms
+  );
+
+  let windowSignal: ActivitySignal;
+  if (detail?.window_activity_available === false) {
+    windowSignal = { source: "window", label: "Window / Model", status: "Unavailable", detail: "Window activity is not available to this credential.", tone: "unavailable" };
+  } else if (activeWindowRequests > 0) {
+    windowSignal = { source: "window", label: "Window / Model", status: "Active", detail: "WebCodex request currently in flight.", observedAt: latestWindowAtMs ? Math.floor(latestWindowAtMs / 1000) : undefined, tone: "live" };
+  } else if (latestWindowAtMs !== undefined) {
+    windowSignal = { source: "window", label: "Window / Model", status: "Last WebCodex call", detail: sparseSessionRelation ? "Window activity continues beyond the latest Session-linked record." : "Observed from Window-scoped WebCodex activity.", observedAt: Math.floor(latestWindowAtMs / 1000), tone: "observed" };
+  } else {
+    windowSignal = { source: "window", label: "Window / Model", status: "Not observed", detail: "No Window-scoped WebCodex activity is loaded.", tone: "quiet" };
+  }
+
+  const latestSessionActivityAt = detail
+    ? maxFinite(detail.activity.map((activity) => activity.finished_at ?? activity.started_at))
+    : undefined;
+  const sessionSignal: ActivitySignal = sparseSessionRelation
+    ? {
+        source: "session",
+        label: "Workflow Session",
+        status: "Sparse activity",
+        detail: "Window activity is newer than explicit Session-linked work; this is provenance sparsity, not model idleness.",
+        observedAt: latestSessionActivityAt ?? sessionUpdatedAt,
+        tone: "sparse",
+      }
+    : latestSessionActivityAt !== undefined || sessionUpdatedAt !== undefined
+      ? {
+          source: "session",
+          label: "Workflow Session",
+          status: "Last linked activity",
+          detail: "Exact retained Session progress / collaboration evidence.",
+          observedAt: latestSessionActivityAt ?? sessionUpdatedAt,
+          tone: "observed",
+        }
+      : {
+          source: "session",
+          label: "Workflow Session",
+          status: "Not observed",
+          detail: "No explicit Session-linked activity is loaded.",
+          tone: "quiet",
+        };
+
+  let workspaceSignal: ActivitySignal;
+  if (detail?.workspace_activity_available === false || detail?.workspace_activity_available === undefined) {
+    workspaceSignal = { source: "workspace", label: "Workspace", status: "Unavailable", detail: "Workspace activity projection is not available.", tone: "unavailable" };
+  } else if (detail.workspace_last_activity) {
+    workspaceSignal = {
+      source: "workspace",
+      label: "Workspace",
+      status: "Last action",
+      detail: `${detail.workspace_last_activity.tool}${detail.workspace_last_activity.success ? "" : " · failed"}`,
+      observedAt: detail.workspace_last_activity.created_at,
+      tone: "observed",
+    };
+  } else {
+    workspaceSignal = { source: "workspace", label: "Workspace", status: "Not observed", detail: "No workspace ledger action is loaded for this Project.", tone: "quiet" };
+  }
+
+  let jobSignal: ActivitySignal;
+  if (detail?.job_activity_available === false || detail?.job_activity_available === undefined) {
+    jobSignal = { source: "job", label: "Job", status: "Unavailable", detail: "Job lifecycle projection is not available.", tone: "unavailable" };
+  } else if (detail.jobs?.length) {
+    const ordered = [...detail.jobs].sort((a, b) => {
+      const aActive = Number(!a.terminal);
+      const bActive = Number(!b.terminal);
+      if (aActive !== bActive) return bActive - aActive;
+      return (b.ended_at || b.started_at || b.created_at) - (a.ended_at || a.started_at || a.created_at);
+    });
+    const job = ordered[0];
+    const projected = jobStatus(job);
+    jobSignal = {
+      source: "job",
+      label: "Job",
+      status: projected.status,
+      detail: [job.kind, job.activity_phase].filter(Boolean).join(" · ") || job.status,
+      observedAt: job.ended_at || job.started_at || job.created_at,
+      tone: projected.tone,
+    };
+  } else {
+    jobSignal = { source: "job", label: "Job", status: "Not observed", detail: "No Job lifecycle exists for this Session.", tone: "quiet" };
+  }
+
+  return [windowSignal, sessionSignal, workspaceSignal, jobSignal];
+}
 
 export function attentionCount(attention: AttentionOverview): number {
   return attention.open_guidance + attention.open_questions + attention.open_risks + attention.open_todos;
@@ -131,38 +256,97 @@ const INTENT_LABELS: Record<ProgressIntent, string> = {
   activity: "Activity",
 };
 
-export function groupRecentProgress(detail: SessionDetail | null, limit = 80): ProgressGroup[] {
+export function groupRecentProgress(detail: SessionDetail | null): ProgressGroup[] {
   if (!detail) return [];
-  const bounded = detail.activity.slice(-Math.max(1, limit));
   const groups: ProgressGroup[] = [];
-  for (const activity of bounded) {
-    const intent = intentForActivity(activity);
-    const latestAt = activity.finished_at ?? activity.started_at;
-    const tools = [activity.tool, ...(activity.group_tools || [])].filter((value): value is string => Boolean(value));
-    const paths = activity.paths || [];
+  const append = (group: ProgressGroup) => {
     const previous = groups.at(-1);
-    if (previous && previous.intent === intent && previous.state === activity.state) {
-      previous.count += Math.max(1, activity.group_count || 1);
-      previous.latestAt = Math.max(previous.latestAt, latestAt);
-      previous.latestSummary = boundedText(activity.summary) || previous.latestSummary;
-      previous.tools = Array.from(new Set([...previous.tools, ...tools])).slice(0, 8);
-      previous.paths = Array.from(new Set([...previous.paths, ...paths])).slice(0, 12);
-      continue;
+    if (
+      previous &&
+      previous.source === group.source &&
+      previous.intent === group.intent &&
+      previous.state === group.state &&
+      previous.tools.join("\u0000") === group.tools.join("\u0000")
+    ) {
+      previous.count += group.count;
+      previous.latestAt = Math.max(previous.latestAt, group.latestAt);
+      previous.latestSummary = group.latestSummary || previous.latestSummary;
+      previous.paths = Array.from(new Set([...previous.paths, ...group.paths]));
+      previous.provenance = Array.from(new Set([...(previous.provenance || []), ...(group.provenance || [])]));
+      return;
     }
-    groups.push({
+    groups.push(group);
+  };
+
+  const sourceGroups: ProgressGroup[] = [];
+  for (const activity of detail.activity) {
+    const intent = intentForActivity(activity);
+    const tools = [activity.tool, ...(activity.group_tools || [])].filter((value): value is string => Boolean(value));
+    sourceGroups.push({
+      source: "session",
       intent,
       label: INTENT_LABELS[intent],
       count: Math.max(1, activity.group_count || 1),
-      tools: Array.from(new Set(tools)).slice(0, 8),
-      paths: Array.from(new Set(paths)).slice(0, 12),
-      latestAt,
+      tools: Array.from(new Set(tools)),
+      paths: Array.from(new Set(activity.paths || [])),
+      latestAt: activity.finished_at ?? activity.started_at,
       latestSummary: boundedText(activity.summary) || undefined,
       state: activity.state,
+      provenance: ["exact Session ledger"],
     });
   }
-  // Keep the newest bounded groups, but render them chronologically so the
-  // workflow reads top-to-bottom from older evidence toward the latest action.
-  return groups.slice(-12);
+  for (const activity of detail.window_activity_after_last_session_record || []) {
+    const intent = intentForActivity({ kind: activity.activity_kind || "activity", tool: activity.tool_name });
+    sourceGroups.push({
+      source: "window",
+      intent,
+      label: INTENT_LABELS[intent],
+      count: 1,
+      tools: activity.tool_name ? [activity.tool_name] : [],
+      paths: [],
+      latestAt: Math.floor((activity.ended_at_ms || activity.started_at_ms) / 1000),
+      latestSummary: boundedText(activity.activity_presentation || activity.tool_name || activity.method) || undefined,
+      state: activity.status,
+      provenance: [
+        "Window observation",
+        ...(activity.project ? [activity.project] : []),
+        ...activity.workflow_sessions.map((relation) => `${relation.relation} · ${relation.workflow_session_id}`),
+      ],
+    });
+  }
+  if (detail.workspace_activity_available && detail.workspace_last_activity) {
+    sourceGroups.push({
+      source: "workspace",
+      intent: intentForActivity({ kind: "workspace", tool: detail.workspace_last_activity.tool }),
+      label: "Workspace action",
+      count: 1,
+      tools: [detail.workspace_last_activity.tool],
+      paths: [],
+      latestAt: detail.workspace_last_activity.created_at,
+      latestSummary: detail.workspace_last_activity.success ? "Workspace action completed" : "Workspace action failed",
+      state: detail.workspace_last_activity.success ? "success" : "failed",
+      provenance: ["Project workspace ledger"],
+    });
+  }
+  for (const job of detail.jobs || []) {
+    const projected = jobStatus(job);
+    sourceGroups.push({
+      source: "job",
+      intent: /wait|block|queue/i.test(`${projected.status} ${job.activity_phase || ""}`) ? "waiting" : "ran",
+      label: "Job",
+      count: 1,
+      tools: [],
+      paths: [],
+      latestAt: job.ended_at || job.started_at || job.created_at,
+      latestSummary: [projected.status, job.kind, job.activity_phase].filter(Boolean).join(" · "),
+      state: job.status,
+      provenance: [`Job ${job.job_id}`],
+    });
+  }
+
+  sourceGroups.sort((a, b) => a.latestAt - b.latestAt || a.source.localeCompare(b.source));
+  for (const group of sourceGroups) append(group);
+  return groups;
 }
 
 export function selectedWorkFromDetail(item: WorkItem, detail: SessionDetail | null): WorkItem {

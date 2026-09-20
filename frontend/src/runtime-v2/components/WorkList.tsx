@@ -7,10 +7,10 @@ import { translate } from "../../runtime_i18n.js";
 
 const BUCKET_ORDER: WorkBucket[] = ["running", "attention", "active", "recent"];
 export const BUCKET_LABEL: Record<WorkBucket, string> = {
-  running: "Running",
+  running: "Jobs running",
   attention: "Needs attention",
-  active: "Active",
-  recent: "Recent",
+  active: "Active Sessions",
+  recent: "Recent Sessions",
 };
 
 type Props = {

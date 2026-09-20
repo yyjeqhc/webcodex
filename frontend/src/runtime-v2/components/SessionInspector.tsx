@@ -3,6 +3,7 @@ import { useState } from "react";
 import { absoluteTime, projectDisplayName, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, SessionDetail } from "../model/types.js";
 import type { WorkItem } from "../model/work.js";
+import { activitySignals } from "../model/work.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
 import type { Availability } from "../model/types.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
@@ -35,6 +36,7 @@ export function SessionInspector({
     ? attention.open_guidance + attention.open_questions + attention.open_risks + attention.open_todos
     : item.attentionCount;
   const running = (detail?.running_jobs ?? item.runningJobs) > 0;
+  const signals = activitySignals(detail, item);
   const composeMessage = (kind: "note" | "guidance" | "question" | "todo") => {
     window.dispatchEvent(new CustomEvent("webcodex-runtime-compose-message", { detail: { kind } }));
   };
@@ -71,8 +73,13 @@ export function SessionInspector({
               <div><span>{t("Runner")}</span><strong>{location.runner}</strong></div>
               <div><span>{t("Branch")}</span><strong><GitBranch size={13} /> {branch || t("Not checked")}</strong></div>
               <div className="fact-path"><span>{t("Path")}</span><strong><code title={project?.path}>{project?.path || "—"}</code></strong></div>
-              <div><span>{t("Last activity")}</span><strong>{relativeTime(detail?.updated_at || item.updatedAt)}</strong></div>
-              <div><span>{t("Jobs")}</span><strong>{detail?.running_jobs ?? item.runningJobs}</strong></div>
+              {signals.map((signal) => (
+                <div className={"fact-activity " + signal.tone} data-testid={"inspector-activity-" + signal.source} key={signal.source}>
+                  <span>{t(signal.label)}</span>
+                  <strong>{t(signal.status)}{signal.observedAt !== undefined ? " · " + absoluteTime(signal.observedAt) : ""}</strong>
+                  <small>{t(signal.detail)}</small>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -145,6 +152,8 @@ export function SessionInspector({
                 <span>
                   <strong>Window {shortId(window.client_window_key)}</strong>
                   <small>{window.source} · {window.relations.join(", ")}</small>
+                  <small>{t("Window last WebCodex activity")} · {absoluteTime(Math.floor((window.last_meaningful_activity_at_ms || window.last_seen_at_ms) / 1000))}</small>
+                  <small>{t("Session relation last linked")} · {absoluteTime(Math.floor(window.last_linked_at_ms / 1000))}{window.active_count ? ` · ${window.active_count} ${t("active requests")}` : ""}</small>
                 </span>
               </div>
             )) : (

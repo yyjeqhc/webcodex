@@ -1,8 +1,18 @@
 import { ChevronDown, Code2, Search, ShieldCheck, TerminalSquare } from "lucide-react";
+import type { RuntimeLanguage } from "../../runtime_i18n.js";
+import { translate } from "../../runtime_i18n.js";
 import { absoluteTime } from "../model/format.js";
 import type { ProgressGroup } from "../model/work.js";
 
-export function ProgressCluster({ group }: { group: ProgressGroup }) {
+const SOURCE_LABEL = {
+  session: "Session",
+  window: "Window",
+  workspace: "Workspace",
+  job: "Job",
+} as const;
+
+export function ProgressCluster({ group, language }: { group: ProgressGroup; language: RuntimeLanguage }) {
+  const t = (value: string) => translate(value, language);
   const icon =
     group.intent === "explored" ? <Search size={16} /> :
     group.intent === "edited" ? <Code2 size={16} /> :
@@ -17,6 +27,7 @@ export function ProgressCluster({ group }: { group: ProgressGroup }) {
           <strong>{group.label}{group.count > 1 ? " · " + group.count : ""}</strong>
           <small>{group.latestSummary || group.tools.join(" · ") || group.state}</small>
         </span>
+        <span className={"activity-source-badge " + group.source}>{t(SOURCE_LABEL[group.source])}</span>
         <time className="tool-cluster-time">{absoluteTime(group.latestAt)}</time>
         <ChevronDown size={15} />
       </summary>
@@ -27,6 +38,9 @@ export function ProgressCluster({ group }: { group: ProgressGroup }) {
         )}
         {!!group.paths.length && (
           <div className="file-grid">{group.paths.map((path) => <code key={path}>{path}</code>)}</div>
+        )}
+        {!!group.provenance?.length && (
+          <div className="activity-provenance">{group.provenance.map((value) => <span key={value}>{value}</span>)}</div>
         )}
       </div>
     </details>

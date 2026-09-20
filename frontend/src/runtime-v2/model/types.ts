@@ -89,9 +89,30 @@ export type SessionWindow = {
   last_linked_at_ms: number;
   last_seen_at_ms: number;
   last_meaningful_activity_at_ms?: number;
+  active_count?: number;
   relations: string[];
   relation_count: number;
   recorder_gap_count: number;
+};
+
+export type WorkspaceActivityPreview = {
+  created_at: number;
+  tool: string;
+  success: boolean;
+  client_id?: string;
+  session_id?: string;
+};
+
+export type SessionJobActivity = {
+  job_id: string;
+  kind: string;
+  status: string;
+  terminal: boolean;
+  created_at: number;
+  started_at?: number;
+  ended_at?: number;
+  activity_state?: string;
+  activity_phase?: string;
 };
 
 export type SessionDetail = SessionListItem & {
@@ -103,6 +124,12 @@ export type SessionDetail = SessionListItem & {
   window_activity_available: boolean;
   linked_windows: SessionWindow[];
   window_activity_after_last_session_record: WindowActivity[];
+  window_activity_after_last_session_record_truncated?: boolean;
+  workspace_activity_available?: boolean;
+  workspace_last_activity?: WorkspaceActivityPreview;
+  job_activity_available?: boolean;
+  jobs?: SessionJobActivity[];
+  jobs_truncated?: boolean;
 };
 
 export type RecentSession = SessionListItem & {

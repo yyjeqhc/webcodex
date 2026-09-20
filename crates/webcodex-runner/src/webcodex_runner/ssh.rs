@@ -3828,7 +3828,10 @@ fn main() {
         let pool = SshConnectionPool::default();
         let authored = "'".repeat(crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES);
         let wrapped = explicit_bash_wire_command(&authored);
-        assert_eq!(wrapped.len(), 64_015);
+        assert_eq!(
+            wrapped.len(),
+            explicit_bash_wire_command("").len() + 4 * authored.len()
+        );
         assert!(wrapped.len() <= crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES);
 
         let max_host = "h".repeat(512);
@@ -3841,7 +3844,7 @@ fn main() {
                 None,
                 &wrapped,
             )
-            .expect("prepare 16K quote-dense explicit bash command");
+            .expect("prepare maximum-size quote-dense explicit bash command");
         let args = command_args(&prepared.command);
         assert_direct_args(&args, &max_host);
         assert_eq!(

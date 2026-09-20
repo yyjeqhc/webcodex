@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchProjectGit, fetchProjects } from "../api/projects.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, ProjectGit, ProjectRow } from "../model/types.js";
@@ -109,7 +109,7 @@ export function useProjects(
       disposed = true;
       controller.abort();
     };
-  }, [availability, client, enabled, gitByProject, projects]);
+  }, [availability, client, enabled, projects]);
 
   useEffect(() => {
     if (!enabled) return;

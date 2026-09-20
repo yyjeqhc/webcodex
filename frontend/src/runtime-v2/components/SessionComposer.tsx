@@ -18,10 +18,14 @@ export function SessionComposer({ location, session, language }: Props) {
   const [priority, setPriority] = useState("normal");
   const [requiresAck, setRequiresAck] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState("");
+  const [replyTo, setReplyTo] = useState("");
+  const [replyPreview, setReplyPreview] = useState("");
 
   useEffect(() => {
     setComposer(loadDraft(location.projectId, location.sessionId));
     setEditingMessageId("");
+    setReplyTo("");
+    setReplyPreview("");
   }, [location.projectId, location.sessionId]);
 
   useEffect(() => {
@@ -33,26 +37,47 @@ export function SessionComposer({ location, session, language }: Props) {
       const custom = event as CustomEvent<{ messageId?: string; message?: string }>;
       if (!custom.detail?.messageId) return;
       setEditingMessageId(custom.detail.messageId);
+      setReplyTo("");
+      setReplyPreview("");
       setComposer(custom.detail.message || "");
     };
     window.addEventListener("webcodex-runtime-edit-message", handler);
     return () => window.removeEventListener("webcodex-runtime-edit-message", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ messageId?: string; message?: string }>;
+      if (!custom.detail?.messageId) return;
+      setEditingMessageId("");
+      setReplyTo(custom.detail.messageId);
+      setReplyPreview(custom.detail.message || "");
+    };
+    window.addEventListener("webcodex-runtime-reply-message", handler);
+    return () => window.removeEventListener("webcodex-runtime-reply-message", handler);
+  }, []);
+
   const submit = async () => {
     if (!composer.trim()) return;
     const ok = editingMessageId
       ? await session.replace(editingMessageId, composer)
-      : await session.send({ message: composer, kind, priority, requiresAck });
+      : await session.send({ message: composer, kind, priority, requiresAck, replyTo: replyTo || undefined });
     if (!ok) return;
     if (!editingMessageId) clearDraft(location.projectId, location.sessionId);
     setComposer("");
     setEditingMessageId("");
+    setReplyTo("");
+    setReplyPreview("");
   };
 
   const cancelEdit = () => {
     setEditingMessageId("");
     setComposer(loadDraft(location.projectId, location.sessionId));
+  };
+
+  const cancelReply = () => {
+    setReplyTo("");
+    setReplyPreview("");
   };
 
   return (
@@ -64,6 +89,13 @@ export function SessionComposer({ location, session, language }: Props) {
             <button type="button" onClick={cancelEdit} aria-label={t("Cancel edit")}><X size={14} /></button>
           </div>
         )}
+        {replyTo && !editingMessageId && (
+          <div className="composer-context">
+            <span>{t("Replying to")}: {replyPreview.slice(0, 120)}</span>
+            <button type="button" onClick={cancelReply} aria-label={t("Cancel reply")}><X size={14} /></button>
+          </div>
+        )}
+        {session.mutationNotice && <div className="composer-notice" role="status">{t(session.mutationNotice)}</div>}
         <textarea
           aria-label={t("Send a message to this work session…")}
           placeholder={t("Send a message to this work session…")}

@@ -26,7 +26,7 @@ import {
 import { locateSession } from "./api/sessions.js";
 import { RuntimeV2Client } from "./api/client.js";
 import { AuthGate } from "./components/AuthGate.js";
-import { workItemFromRecent, type WorkBucket, type WorkItem } from "./model/work.js";
+import { workItemFromRecent, type WorkBucket } from "./model/work.js";
 import { useRuntimeOverview } from "./state/useRuntimeOverview.js";
 import type { SessionLocation } from "./state/useSessionWorkspace.js";
 import { ProjectsView } from "./views/ProjectsView.js";

@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   Bot,
   Check,
-  Clock3,
   HardDrive,
   Monitor,
   Play,

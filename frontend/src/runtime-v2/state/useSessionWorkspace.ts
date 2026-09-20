@@ -22,6 +22,8 @@ export type SessionWorkspaceState = {
   detail: SessionDetail | null;
   messages: MessagesResponse | null;
   sending: boolean;
+  mutationNotice: string;
+  mutationAllowed: boolean | null;
   send: (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => Promise<boolean>;
   replace: (messageId: string, message: string) => Promise<boolean>;
   withdraw: (messageId: string) => Promise<boolean>;
@@ -39,6 +41,8 @@ export function useSessionWorkspace(
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [messages, setMessages] = useState<MessagesResponse | null>(null);
   const [sending, setSending] = useState(false);
+  const [mutationNotice, setMutationNotice] = useState("");
+  const [mutationAllowed, setMutationAllowed] = useState<boolean | null>(null);
   const [revision, setRevision] = useState(0);
   const detailRequest = useRef<AbortController | null>(null);
   const messageRequest = useRef<AbortController | null>(null);
@@ -52,6 +56,8 @@ export function useSessionWorkspace(
       setMessages(null);
       setDetailAvailability("idle");
       setMessagesAvailability("idle");
+      setMutationNotice("");
+      setMutationAllowed(null);
       return;
     }
 
@@ -100,6 +106,7 @@ export function useSessionWorkspace(
       }
       setMessages(response.data);
       setMessagesAvailability("available");
+      setMutationNotice("");
     });
 
     return () => {
@@ -133,7 +140,21 @@ export function useSessionWorkspace(
         onUnauthorized();
         return false;
       }
-      if (!response?.ok) return false;
+      if (response?.status === 0) {
+        setMutationNotice("Send outcome unknown. Refresh and review retained messages before retrying.");
+        return false;
+      }
+      if (response?.status === 403) {
+        setMutationAllowed(false);
+        setMutationNotice("Session collaboration access required.");
+        return false;
+      }
+      if (!response?.ok) {
+        setMutationNotice("Send failed.");
+        return false;
+      }
+      setMutationAllowed(true);
+      setMutationNotice("");
       refresh();
       return true;
     } finally {
@@ -148,7 +169,21 @@ export function useSessionWorkspace(
       onUnauthorized();
       return false;
     }
-    if (!response?.ok) return false;
+    if (response?.status === 0) {
+      setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
+      return false;
+    }
+    if (response?.status === 403) {
+      setMutationAllowed(false);
+      setMutationNotice("Session collaboration access required.");
+      return false;
+    }
+    if (!response?.ok) {
+      setMutationNotice("Message replacement failed.");
+      return false;
+    }
+    setMutationAllowed(true);
+    setMutationNotice("");
     refresh();
     return true;
   }, [client, location, onUnauthorized, refresh]);
@@ -160,7 +195,21 @@ export function useSessionWorkspace(
       onUnauthorized();
       return false;
     }
-    if (!response?.ok) return false;
+    if (response?.status === 0) {
+      setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
+      return false;
+    }
+    if (response?.status === 403) {
+      setMutationAllowed(false);
+      setMutationNotice("Session collaboration access required.");
+      return false;
+    }
+    if (!response?.ok) {
+      setMutationNotice("Message withdrawal failed.");
+      return false;
+    }
+    setMutationAllowed(true);
+    setMutationNotice("");
     refresh();
     return true;
   }, [client, location, onUnauthorized, refresh]);
@@ -171,6 +220,8 @@ export function useSessionWorkspace(
     detail,
     messages,
     sending,
+    mutationNotice,
+    mutationAllowed,
     send,
     replace,
     withdraw,

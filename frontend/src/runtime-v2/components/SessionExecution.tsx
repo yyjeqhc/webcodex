@@ -16,6 +16,8 @@ import { BUCKET_LABEL } from "./WorkList.js";
 import { ProgressCluster } from "./ProgressCluster.js";
 import { SessionComposer } from "./SessionComposer.js";
 
+const MUTABLE_MESSAGE_KINDS = new Set(["note", "guidance", "question", "todo"]);
+
 type Props = {
   item: WorkItem;
   location: SessionLocation;
@@ -149,19 +151,29 @@ export function SessionExecution({ item, location, session, language }: Props) {
                       <time>{relativeTime(message.created_at)}</time>
                     </div>
                     <p>{message.message}</p>
-                    {(message.status === "open" || !message.resolved_at) && (
-                      <div className="message-actions">
-                        <button
-                          type="button"
-                          onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-edit-message", {
-                            detail: { messageId: message.message_id, message: message.message },
-                          }))}
-                        >
-                          {t("Edit")}
-                        </button>
-                        <button type="button" onClick={() => void session.withdraw(message.message_id)}>{t("Withdraw")}</button>
-                      </div>
-                    )}
+                    <div className="message-actions">
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-reply-message", {
+                          detail: { messageId: message.message_id, message: message.message },
+                        }))}
+                      >
+                        {t("Reply")}
+                      </button>
+                      {message.status === "open" && MUTABLE_MESSAGE_KINDS.has(message.kind) && session.mutationAllowed !== false && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-edit-message", {
+                              detail: { messageId: message.message_id, message: message.message },
+                            }))}
+                          >
+                            {t("Edit")}
+                          </button>
+                          <button type="button" onClick={() => void session.withdraw(message.message_id)}>{t("Withdraw")}</button>
+                        </>
+                      )}
+                    </div>
                   </article>
                 ))}
                 {session.messagesAvailability === "denied" && (

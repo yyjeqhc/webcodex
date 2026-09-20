@@ -29,11 +29,13 @@ export function useProjectSessions(
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const listRequest = useRef<AbortController | null>(null);
   const enrichmentRequest = useRef<AbortController | null>(null);
+  const activeProject = useRef("");
 
   useEffect(() => {
     listRequest.current?.abort();
     enrichmentRequest.current?.abort();
     if (!enabled || !projectId) {
+      activeProject.current = "";
       setSessions([]);
       setTotal(0);
       setTruncated(false);
@@ -41,9 +43,19 @@ export function useProjectSessions(
       setAvailability("idle");
       return;
     }
+    const projectChanged = activeProject.current !== projectId;
+    activeProject.current = projectId;
+    if (projectChanged) {
+      setSessions([]);
+      setTotal(0);
+      setTruncated(false);
+      setWindowCountBySession(new Map());
+      setAvailability("loading");
+    } else {
+      setAvailability((current) => current === "idle" ? "loading" : current);
+    }
     const controller = new AbortController();
     listRequest.current = controller;
-    setAvailability("loading");
     void fetchProjectSessions(client, projectId, controller.signal).then((response) => {
       if (listRequest.current !== controller || !response) return;
       listRequest.current = null;
@@ -53,11 +65,14 @@ export function useProjectSessions(
       }
       if (response.status === 403 || response.status === 404) {
         setSessions([]);
+        setTotal(0);
+        setTruncated(false);
+        setWindowCountBySession(new Map());
         setAvailability("denied");
         return;
       }
       if (!response.ok || !response.data) {
-        setAvailability("error");
+        setAvailability((current) => current === "available" || current === "stale" ? "stale" : "error");
         return;
       }
       setSessions(response.data.sessions || []);

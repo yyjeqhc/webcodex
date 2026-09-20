@@ -17,6 +17,7 @@ type Props = {
   selected: SessionLocation | null;
   projects: ProjectRow[];
   language: RuntimeLanguage;
+  inventoryIncomplete: boolean;
   onOpenSession: (location: SessionLocation) => void;
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
@@ -28,6 +29,7 @@ export function WorkView({
   selected,
   projects,
   language,
+  inventoryIncomplete,
   onOpenSession,
   onLocateSession,
   onUnauthorized,
@@ -75,6 +77,7 @@ export function WorkView({
     : null;
 
   const selectedItem = fallbackItem ? selectedWorkFromDetail(fallbackItem, session.detail) : null;
+  const sessionDenied = Boolean(selected && session.detailAvailability === "denied");
 
   const open = (item: WorkItem) => onOpenSession({
     projectId: item.projectId,
@@ -102,12 +105,21 @@ export function WorkView({
         search={search}
         locating={locating}
         language={language}
+        inventoryIncomplete={inventoryIncomplete}
         onSearch={setSearch}
         onLocateExact={() => void locateExact()}
         onSelect={open}
       />
 
-      {selectedItem && selected ? (
+      {sessionDenied ? (
+        <main className="session-main">
+          <div className="empty-work">
+            <CircleDot size={22} />
+            <h2>{t("Session unavailable")}</h2>
+            <p>{t("This Session is no longer visible to the current credential.")}</p>
+          </div>
+        </main>
+      ) : selectedItem && selected ? (
         <SessionExecution item={selectedItem} location={selected} session={session} language={language} />
       ) : (
         <main className="session-main">
@@ -119,7 +131,7 @@ export function WorkView({
         </main>
       )}
 
-      {selectedItem && selected && (
+      {!sessionDenied && selectedItem && selected && (
         <SessionInspector
           item={selectedItem}
           location={selected}

@@ -7,7 +7,7 @@ import {
   Server,
   Sun,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LANGUAGE_STORAGE_KEY,
   loadLanguagePreference,
@@ -26,6 +26,7 @@ import {
 import { locateSession } from "./api/sessions.js";
 import { RuntimeV2Client } from "./api/client.js";
 import { AuthGate } from "./components/AuthGate.js";
+import type { Availability } from "./model/types.js";
 import { workItemFromRecent, type WorkBucket } from "./model/work.js";
 import { useRuntimeOverview } from "./state/useRuntimeOverview.js";
 import type { SessionLocation } from "./state/useSessionWorkspace.js";
@@ -36,6 +37,12 @@ import { WorkView } from "./views/WorkView.js";
 type PrimaryView = "work" | "projects" | "runtime";
 const VIEW_KEY = "webcodex.runtime.v2.view.v1";
 const BUCKET_PRIORITY: Record<WorkBucket, number> = { running: 0, attention: 1, active: 2, recent: 3 };
+
+function availabilityDotClass(availability: Availability): string {
+  if (availability === "available") return "good";
+  if (availability === "stale" || availability === "denied" || availability === "error") return "warn";
+  return "";
+}
 
 function initialView(): PrimaryView {
   try {
@@ -59,11 +66,16 @@ export function App() {
   const [language, setLanguage] = useState<RuntimeLanguage>(loadLanguagePreference);
   const [appearance, setAppearance] = useState<AppearancePreference>(loadAppearancePreference);
   const [notice, setNotice] = useState("");
+  const sessionLocator = useRef<AbortController | null>(null);
 
   if (token) client.setToken(token);
   else client.clearToken();
 
+  useEffect(() => () => sessionLocator.current?.abort(), []);
+
   const lock = useCallback((message = "") => {
+    sessionLocator.current?.abort();
+    sessionLocator.current = null;
     clearRememberedRuntimeCredential();
     client.clearToken();
     setToken("");
@@ -133,6 +145,8 @@ export function App() {
   }, [appearance]);
 
   const connect = (nextToken: string, remember: boolean) => {
+    sessionLocator.current?.abort();
+    sessionLocator.current = null;
     setNotice("");
     client.setToken(nextToken);
     persistRuntimeCredentialForTab(nextToken, remember);
@@ -140,12 +154,17 @@ export function App() {
   };
 
   const locateExactSession = useCallback(async (sessionId: string): Promise<boolean> => {
-    const response = await locateSession(client, sessionId);
-    if (response?.status === 401) {
+    sessionLocator.current?.abort();
+    const controller = new AbortController();
+    sessionLocator.current = controller;
+    const response = await locateSession(client, sessionId, controller.signal);
+    if (sessionLocator.current !== controller || controller.signal.aborted || !response) return false;
+    sessionLocator.current = null;
+    if (response.status === 401) {
       lock(translate("Your access key is no longer valid. Connect again.", language));
       return false;
     }
-    if (!response?.ok || !response.data) {
+    if (!response.ok || !response.data) {
       setNotice(translate("Exact Session lookup failed", language));
       return false;
     }
@@ -190,7 +209,7 @@ export function App() {
           <span className="brand-mark">W</span>
           <span>
             <strong>WebCodex</strong>
-            <small><span className={"status-dot " + (overviewState.availability === "stale" ? "" : "good")} /> {translate("Runtime workspace", language)}</small>
+            <small><span className={"status-dot " + availabilityDotClass(overviewState.availability)} /> {translate("Runtime workspace", language)}</small>
           </span>
         </div>
 
@@ -242,6 +261,7 @@ export function App() {
             selected={selected}
             projects={overview?.projects || []}
             language={language}
+            inventoryIncomplete={Boolean(overview?.recent_sessions.truncated || overview?.recent_sessions.scan_truncated)}
             onOpenSession={openSession}
             onLocateSession={locateExactSession}
             onUnauthorized={handleUnauthorized}
@@ -261,7 +281,7 @@ export function App() {
             client={client}
             language={language}
             overview={overview}
-            overviewStale={overviewState.availability === "stale"}
+            overviewAvailability={overviewState.availability}
             projects={overview?.projects || []}
             onOpenSession={openSession}
             onUnauthorized={handleUnauthorized}

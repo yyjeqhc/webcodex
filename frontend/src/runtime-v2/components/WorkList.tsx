@@ -19,6 +19,7 @@ type Props = {
   search: string;
   locating: boolean;
   language: RuntimeLanguage;
+  inventoryIncomplete: boolean;
   onSearch: (value: string) => void;
   onLocateExact: () => void;
   onSelect: (item: WorkItem) => void;
@@ -30,6 +31,7 @@ export function WorkList({
   search,
   locating,
   language,
+  inventoryIncomplete,
   onSearch,
   onLocateExact,
   onSelect,
@@ -74,6 +76,9 @@ export function WorkList({
         )}
       </div>
       <div className="work-list-scroll">
+        {inventoryIncomplete && (
+          <div className="inventory-note">{t("Recent Session inventory is bounded. Paste an exact Session ID to locate omitted work.")}</div>
+        )}
         {groups.map(({ bucket, items: bucketItems }) => bucketItems.length ? (
           <section className="work-group" key={bucket}>
             <div className="work-group-heading"><span>{t(BUCKET_LABEL[bucket])}</span><small>{bucketItems.length}</small></div>

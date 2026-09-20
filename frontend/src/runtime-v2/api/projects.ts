@@ -6,7 +6,8 @@ export function fetchProjects(
   options: { runner?: string; query?: string; limit?: number },
   signal?: AbortSignal,
 ) {
-  const payload: Record<string, unknown> = { limit: options.limit ?? 100 };
+  const payload: Record<string, unknown> = {};
+  if (options.limit !== undefined) payload.limit = options.limit;
   if (options.runner) payload.client_id = options.runner;
   if (options.query) payload.query = options.query;
   return client.post<ProjectsResponse>("projects", payload, signal);

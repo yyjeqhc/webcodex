@@ -11,12 +11,13 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function installFetch() {
+function installFetch(locateResponse?: () => Promise<Response>) {
   const overview = runtimeOverview();
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     if (url.endsWith("/api/runtime-console/overview")) return json(overview);
+    if (url.endsWith("/api/runtime-console/workflow-session-locate") && locateResponse) return await locateResponse();
     if (url.endsWith("/api/runtime-console/project-git")) return json({ branch: "prototype/runtime-webui-v2", clean: false, git_available: true });
     if (url.endsWith("/api/runtime-console/workflow-session-messages")) return json({ session_id: body.session_id, messages: [] });
     if (url.endsWith("/api/runtime-console/workflow-session")) return json(sessionDetail({ session_id: body.session_id }));
@@ -71,5 +72,32 @@ describe("Runtime v2 navigation", () => {
     expect(mobile.textContent).toContain("Work");
     expect(mobile.textContent).toContain("Projects");
     expect(mobile.textContent).toContain("Runtime");
+  });
+
+  it("cannot apply a delayed exact Session lookup after the workspace is locked", async () => {
+    let resolveLocate!: (response: Response) => void;
+    const pendingLocate = new Promise<Response>((resolve) => { resolveLocate = resolve; });
+    installFetch(() => pendingLocate);
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: /Runtime E2E private-path hardening/ })).toBeTruthy();
+
+    const exact = "wc_sess_abcdef0123456789";
+    const search = screen.getByRole("textbox", { name: "Search Sessions" });
+    fireEvent.change(search, { target: { value: exact } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).endsWith("/api/runtime-console/workflow-session-locate"))).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+    expect(await screen.findByRole("heading", { name: "Connect to your workspace" })).toBeTruthy();
+
+    resolveLocate(json({
+      ...sessionDetail({ session_id: exact, title: "stale credential Session" }),
+      client_id: "special",
+      project_id: "agent:special:stale",
+      project_name: "Stale project",
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("stale credential Session")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Connect to your workspace" })).toBeTruthy();
   });
 });

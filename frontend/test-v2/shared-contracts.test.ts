@@ -7,6 +7,11 @@ import {
 } from "../src/runtime_storage.js";
 import { translate } from "../src/runtime_i18n.js";
 import { RuntimeApiClient } from "../src/runtime_api.js";
+import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
+import { fetchProjects } from "../src/runtime-v2/api/projects.js";
+import { fetchProjectSessions, fetchSessionDetail } from "../src/runtime-v2/api/sessions.js";
+import { fetchWindowDetail } from "../src/runtime-v2/api/windows.js";
+import { fetchRunner } from "../src/runtime-v2/api/runtime.js";
 
 describe("shared Runtime browser contracts", () => {
   it("keeps remembered credentials tab-scoped and clears them on lock", () => {
@@ -22,6 +27,23 @@ describe("shared Runtime browser contracts", () => {
     expect(translate("Work", "en")).toBe("Work");
     expect(translate("Work", "zh-CN")).toBe("工作");
     expect(translate("Window Activity", "zh-CN")).toBe("窗口活动");
+  });
+
+  it("lets Runtime Console inventory endpoints own their retained-data bounds", async () => {
+    const post = vi.fn(async () => ({ ok: true, status: 200, data: {} }));
+    const client = { post } as unknown as RuntimeV2Client;
+
+    await fetchProjects(client, {});
+    await fetchProjectSessions(client, "agent:special:webcodex");
+    await fetchSessionDetail(client, "agent:special:webcodex", "wc_sess_1234567890abcdef");
+    await fetchWindowDetail(client, "a".repeat(64));
+    await fetchRunner(client, "special");
+
+    expect(post.mock.calls[0][1]).toEqual({});
+    expect(post.mock.calls[1][1]).toEqual({ project: "agent:special:webcodex" });
+    expect(post.mock.calls[2][1]).toEqual({ project: "agent:special:webcodex", session_id: "wc_sess_1234567890abcdef" });
+    expect(post.mock.calls[3][1]).toEqual({ client_window_key: "a".repeat(64), activity_limit: 2_000 });
+    expect(post.mock.calls[4][1]).toEqual({ client_id: "special" });
   });
 
   it("sends bearer auth only to the configured API base and treats transport failure as status 0", async () => {

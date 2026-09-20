@@ -9,12 +9,12 @@ import {
   Server,
   TerminalSquare,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import { relativeTime, shortId } from "../model/format.js";
-import type { ProjectRow, RuntimeOverview } from "../model/types.js";
+import type { Availability, ProjectRow, RuntimeOverview } from "../model/types.js";
 import { useAgentInventory } from "../state/useAgentInventory.js";
 import { AgentsPanel } from "../components/AgentsPanel.js";
 import { useLinkedSessionWindowCounts } from "../state/useLinkedSessionWindowCounts.js";
@@ -27,7 +27,7 @@ type Props = {
   client: RuntimeV2Client;
   language: RuntimeLanguage;
   overview: RuntimeOverview | null;
-  overviewStale: boolean;
+  overviewAvailability: Availability;
   projects: ProjectRow[];
   onOpenSession: (location: SessionLocation) => void;
   onUnauthorized: () => void;
@@ -37,19 +37,32 @@ export function RuntimeView({
   client,
   language,
   overview,
-  overviewStale,
+  overviewAvailability,
   projects,
   onOpenSession,
   onUnauthorized,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const [mode, setMode] = useState<RuntimeMode>("overview");
+  const [visibleActivityLimit, setVisibleActivityLimit] = useState(200);
   const windows = useWindowWorkspace(client, true, onUnauthorized, {
     refreshMs: mode === "windows" ? 3_000 : 30_000,
     loadDetail: mode === "windows",
   });
   const agents = useAgentInventory(client, mode === "overview");
   const observedBy = useLinkedSessionWindowCounts(client, mode === "windows", windows.detail?.linked_sessions || []);
+  const newestActivity = windows.detail ? windows.detail.activity.slice().reverse() : [];
+  const visibleActivity = newestActivity.slice(0, visibleActivityLimit);
+  const remainingActivity = Math.max(0, newestActivity.length - visibleActivity.length);
+  const overviewStatus = overviewAvailability === "available"
+    ? { className: "good", label: "connected" }
+    : overviewAvailability === "stale"
+      ? { className: "warn", label: "stale" }
+      : overviewAvailability === "loading" || overviewAvailability === "idle"
+        ? { className: "", label: "Loading…" }
+        : { className: "warn", label: "Runtime overview unavailable" };
+
+  useEffect(() => setVisibleActivityLimit(200), [windows.selectedKey]);
 
   const projectFor = (projectId: string | undefined) =>
     projectId ? projects.find((project) => project.id === projectId) : undefined;
@@ -63,8 +76,8 @@ export function RuntimeView({
           <p>{t("Infrastructure, Window observation and low-level evidence stay below task-oriented Work.")}</p>
         </div>
         <span className="quiet-pill">
-          <span className={"status-dot " + (overviewStale ? "warn" : "good")} />
-          {overviewStale ? t("stale") : t("connected")}
+          <span className={"status-dot " + overviewStatus.className} />
+          {t(overviewStatus.label)}
         </span>
       </header>
 
@@ -175,6 +188,16 @@ export function RuntimeView({
               </div>
               <span className="count-badge">{windows.windows.length}</span>
             </div>
+            {(windows.availability === "available" || windows.availability === "stale") && (
+              <div className={"window-scope-note " + windows.scope} data-testid="window-scope-note">
+                {windows.scope === "global"
+                  ? t("Global Runtime scope. Only observed WebCodex requests appear here; no Project selection is required.")
+                  : t("This credential sees only its observation principal's Windows within currently authorized Projects. Global Window observation requires an administrator Runtime credential.")}
+              </div>
+            )}
+            {(windows.availability === "available" || windows.availability === "stale") && windows.truncated && (
+              <div className="inventory-note">{t("Window inventory is bounded; not all observed Windows are loaded.")}</div>
+            )}
             {windows.windows.map((window) => {
               const project = projectFor(window.last_project);
               return (
@@ -220,7 +243,7 @@ export function RuntimeView({
                 <section className="window-detail-section">
                   <div className="section-heading">
                     <div><h2>{t("Linked Sessions")}</h2><p>{t("Relations describe how this Window observed each Session; they are not ownership.")}</p></div>
-                    <span className="quiet-pill">{windows.detail.linked_sessions.length}</span>
+                    <span className="quiet-pill">{windows.detail.sessions_returned}</span>
                   </div>
                   <div className="linked-session-list">
                     {windows.detail.linked_sessions.map((session) => {
@@ -258,15 +281,19 @@ export function RuntimeView({
                       );
                     })}
                     {!windows.detail.linked_sessions.length && <div className="empty-inline">{t("Window with no current Session")}</div>}
+                    {windows.detail.sessions_truncated && (
+                      <div className="inventory-note">{t("Linked Session inventory is bounded; additional relations are not loaded.")}</div>
+                    )}
                   </div>
                 </section>
 
                 <section className="window-detail-section">
                   <div className="section-heading">
                     <div><h2>{t("Recent Window Activity")}</h2><p>{t("Raw tool evidence is disclosed here, below the Session relationships.")}</p></div>
+                    <span className="quiet-pill">{visibleActivity.length} / {windows.detail.activity_returned}</span>
                   </div>
                   <div className="window-activity-list">
-                    {windows.detail.activity.slice().reverse().slice(0, 80).map((activity, index) => (
+                    {visibleActivity.map((activity, index) => (
                       <div className="window-activity-row" key={String(activity.started_at_ms) + "-" + index}>
                         <span className="activity-glyph"><Activity size={14} /></span>
                         <span>
@@ -281,6 +308,14 @@ export function RuntimeView({
                       </div>
                     ))}
                     {!windows.detail.activity.length && <div className="empty-inline">{t("No activity observed yet")}</div>}
+                    {remainingActivity > 0 && (
+                      <button className="activity-load-more" type="button" onClick={() => setVisibleActivityLimit((current) => current + 200)}>
+                        {t("Show more activity")} · {remainingActivity} {t("remaining")}
+                      </button>
+                    )}
+                    {windows.detail.activity_truncated && (
+                      <div className="inventory-note">{t("Server activity history is bounded; older Window activity is not loaded.")}</div>
+                    )}
                   </div>
                 </section>
               </>

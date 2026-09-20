@@ -48,7 +48,7 @@ export function useProjects(
     listRequest.current?.abort();
     listRequest.current = controller;
     setAvailability((value) => (value === "idle" ? "loading" : value));
-    void fetchProjects(client, { runner, query: stableQuery, limit: 100 }, controller.signal).then((response) => {
+    void fetchProjects(client, { runner, query: stableQuery }, controller.signal).then((response) => {
       if (listRequest.current !== controller || !response) return;
       listRequest.current = null;
       if (response.status === 401) {

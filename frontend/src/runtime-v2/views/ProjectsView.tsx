@@ -168,6 +168,9 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
       {projectsState.availability === "available" && !projectsState.projects.length && (
         <div className="empty-panel wide"><Folder size={19} /><strong>{t("No matching projects")}</strong></div>
       )}
+      {projectsState.truncated && (
+        <div className="inventory-note wide">{t("Project inventory is bounded. Narrow the search to find omitted Projects.")}</div>
+      )}
 
       {selectedProject && (
         <section className="project-sessions" data-testid="project-active-sessions">
@@ -219,6 +222,9 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
             )}
             {sessionsState.availability === "denied" && (
               <div className="empty-inline">{t("Session list unavailable. Check access to this Project.")}</div>
+            )}
+            {sessionsState.truncated && (
+              <div className="inventory-note">{t("Project Session inventory is bounded; older retained Sessions are not loaded here.")}</div>
             )}
           </div>
         </section>

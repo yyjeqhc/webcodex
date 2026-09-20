@@ -20,7 +20,7 @@ export function fetchWindowDetail(
 ) {
   return client.post<WindowDetail>(
     "window",
-    { client_window_key: key, activity_limit: 2_000, session_limit: 100 },
+    { client_window_key: key, activity_limit: 2_000 },
     signal,
   );
 }

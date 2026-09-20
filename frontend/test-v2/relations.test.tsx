@@ -154,7 +154,7 @@ describe("Project / Session / Window relationships", () => {
         client={client}
         language="en"
         overview={overview}
-        overviewStale={false}
+        overviewAvailability="available"
         projects={overview.projects}
         onOpenSession={vi.fn()}
         onUnauthorized={vi.fn()}
@@ -167,6 +167,7 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.getByText("recording")).toBeTruthy();
     expect(screen.getByText("work_on_project")).toBeTruthy();
     expect(screen.getAllByText(/observation evidence/i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("window-scope-note").textContent).toContain("observation principal");
 
     fireEvent.click(screen.getByRole("button", { name: /Window bbbbbbbbbb/ }));
     expect(await screen.findByText("Window with no current Session")).toBeTruthy();
@@ -222,6 +223,7 @@ describe("Project / Session / Window relationships", () => {
       },
       projects: overview.projects,
       language: "en" as const,
+      inventoryIncomplete: false,
       onOpenSession: vi.fn(),
       onLocateSession: vi.fn(async () => false),
       onUnauthorized: vi.fn(),
@@ -237,5 +239,111 @@ describe("Project / Session / Window relationships", () => {
     render(<WorkView {...props} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Evidence" }));
     expect(await screen.findByText("No linked Windows in retained evidence.")).toBeTruthy();
+  });
+
+  it("surfaces Runtime availability truth instead of presenting denied state as connected", () => {
+    const overview = runtimeOverview();
+    const client = fakeClient((path) => {
+      if (path === "windows") return { ok: false, status: 403, data: null };
+      if (path === "communication/agents") return { ok: false, status: 403, data: null };
+      throw new Error("unexpected path " + path);
+    });
+
+    render(
+      <RuntimeView
+        client={client}
+        language="en"
+        overview={null}
+        overviewAvailability="denied"
+        projects={overview.projects}
+        onOpenSession={vi.fn()}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("Runtime overview unavailable").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^connected$/)).toBeNull();
+  });
+
+  it("progressively reveals retained Window activity instead of silently dropping rows", async () => {
+    const overview = runtimeOverview();
+    const key = "d".repeat(64);
+    const activity = Array.from({ length: 205 }, (_, index) => ({
+      started_at_ms: 1_790_000_000_000 + index,
+      ended_at_ms: 1_790_000_000_001 + index,
+      duration_ms: 1,
+      method: "tools/call",
+      tool_name: "tool-" + index,
+      activity_presentation: "tool-" + index,
+      status: "ok",
+      meaningful: true,
+      workflow_sessions: [],
+    }));
+    const client = fakeClient((path) => {
+      if (path === "windows") return ok({
+        windows: [{ client_window_key: key, source: "openai-session", last_seen_at_ms: 1_790_000_000_000, active_count: 0, linked_session_count: 0, recorder_gap_count: 0 }],
+        returned: 1,
+        total: 1,
+        truncated: false,
+        visibility: { scope: "global" },
+      });
+      if (path === "window") return ok(windowDetail({
+        client_window_key: key,
+        activity,
+        activity_returned: activity.length,
+        activity_truncated: true,
+        visibility: { scope: "global" },
+      }));
+      if (path === "communication/agents") return { ok: false, status: 403, data: null };
+      throw new Error("unexpected path " + path);
+    });
+
+    render(
+      <RuntimeView
+        client={client}
+        language="en"
+        overview={overview}
+        overviewAvailability="available"
+        projects={overview.projects}
+        onOpenSession={vi.fn()}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
+    expect(await screen.findByText("tool-204")).toBeTruthy();
+    expect(screen.queryByText("tool-0")).toBeNull();
+    const more = screen.getByRole("button", { name: /Show more activity/ });
+    expect(more.textContent).toContain("5 remaining");
+    fireEvent.click(more);
+    expect(screen.getByText("tool-0")).toBeTruthy();
+    expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
+  });
+
+  it("stops presenting stale Session detail as current after authority is denied", async () => {
+    const overview = runtimeOverview();
+    const recent = recentSession();
+    const client = fakeClient((path) => {
+      if (path === "workflow-session" || path === "workflow-session-messages") return { ok: false, status: 403, data: null };
+      if (path === "project-git") return ok({ branch: "main", git_available: true });
+      throw new Error("unexpected path " + path);
+    });
+
+    render(
+      <WorkView
+        client={client}
+        items={[workItemFromRecent(recent)]}
+        selected={{ projectId: recent.project_id, projectName: recent.project_name || recent.project_id, runner: recent.client_id, sessionId: recent.session_id }}
+        projects={overview.projects}
+        language="en"
+        inventoryIncomplete={false}
+        onOpenSession={vi.fn()}
+        onLocateSession={vi.fn(async () => false)}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Session unavailable" })).toBeTruthy();
+    expect(screen.getByText("This Session is no longer visible to the current credential.")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Send a message to this work session…" })).toBeNull();
   });
 });

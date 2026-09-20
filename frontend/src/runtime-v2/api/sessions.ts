@@ -13,7 +13,7 @@ export function fetchProjectSessions(
 ) {
   return client.post<{ sessions: SessionListItem[]; total: number; returned: number; truncated: boolean }>(
     "workflow-sessions",
-    { project, limit: 100 },
+    { project },
     signal,
   );
 }
@@ -30,7 +30,7 @@ export function fetchSessionDetail(
 ) {
   return client.post<SessionDetail>(
     "workflow-session",
-    { project, session_id: sessionId, limit: 300 },
+    { project, session_id: sessionId },
     signal,
   );
 }

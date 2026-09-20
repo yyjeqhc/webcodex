@@ -46,6 +46,7 @@ export function useSessionWorkspace(
   const [revision, setRevision] = useState(0);
   const detailRequest = useRef<AbortController | null>(null);
   const messageRequest = useRef<AbortController | null>(null);
+  const loadedLocation = useRef("");
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
 
   useEffect(() => {
@@ -58,15 +59,31 @@ export function useSessionWorkspace(
       setMessagesAvailability("idle");
       setMutationNotice("");
       setMutationAllowed(null);
+      loadedLocation.current = "";
       return;
+    }
+
+    const locationIdentity = `${location.projectId}\u0000${location.sessionId}`;
+    const locationChanged = loadedLocation.current !== locationIdentity;
+    loadedLocation.current = locationIdentity;
+    if (locationChanged) {
+      // Never render the previous Session's evidence under a newly selected
+      // Session identity while the replacement request is still in flight.
+      setDetail(null);
+      setMessages(null);
+      setDetailAvailability("loading");
+      setMessagesAvailability("loading");
+      setMutationNotice("");
+      setMutationAllowed(null);
+    } else {
+      setDetailAvailability((value) => (value === "idle" ? "loading" : value));
+      setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
     }
 
     const detailController = new AbortController();
     const messageController = new AbortController();
     detailRequest.current = detailController;
     messageRequest.current = messageController;
-    setDetailAvailability((value) => (value === "idle" ? "loading" : value));
-    setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
 
     void fetchSessionDetail(client, location.projectId, location.sessionId, detailController.signal).then((response) => {
       if (detailRequest.current !== detailController || !response) return;

@@ -269,6 +269,37 @@ describe("Session communication parity", () => {
     expect(screen.getByRole("tab", { name: "Workflow" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("clears prior Session evidence immediately when selection changes", async () => {
+    const first = {
+      projectId: "agent:special:webcodex",
+      projectName: "WebCodex",
+      runner: "special",
+      sessionId: "wc_sess_1234567890abcdef",
+    };
+    const second = { ...first, sessionId: "wc_sess_abcdef0123456789" };
+    const pending = new Promise<never>(() => {});
+    const client = {
+      post: vi.fn(async (path: string, payload: any) => {
+        if (payload.session_id === second.sessionId) return pending;
+        if (path === "workflow-session") return { ok: true, status: 200, data: sessionDetail({ session_id: first.sessionId }) };
+        if (path === "workflow-session-messages") return { ok: true, status: 200, data: { session_id: first.sessionId, messages: [] } };
+        throw new Error("unexpected path " + path);
+      }),
+    } as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ location }) => useSessionWorkspace(client, true, location, unauthorized),
+      { initialProps: { location: first } },
+    );
+    await waitFor(() => expect(result.current.detail?.session_id).toBe(first.sessionId));
+
+    rerender({ location: second });
+    await waitFor(() => expect(result.current.detail).toBeNull());
+    expect(result.current.messages).toBeNull();
+    expect(result.current.detailAvailability).toBe("loading");
+    expect(result.current.messagesAvailability).toBe("loading");
+  });
+
   it("retains an explicit recovery notice when a send transport outcome is unknown", async () => {
     const client = {
       post: vi.fn(async (path: string) => {

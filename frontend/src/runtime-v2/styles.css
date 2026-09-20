@@ -66,7 +66,7 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 
 .app-content { min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); }
 
-.work-layout { width: 100%; height: 100%; display: grid; grid-template-columns: 286px minmax(520px, 1fr) 324px; background: var(--surface); }
+.work-layout { width: 100%; height: 100%; min-height: 0; display: grid; grid-template-columns: 286px minmax(520px, 1fr) 324px; grid-template-rows: minmax(0, 1fr); overflow: hidden; background: var(--surface); }
 .work-list-panel { min-width: 0; display: grid; grid-template-rows: auto minmax(0,1fr); border-right: 1px solid var(--line); background: #fbfbfc; }
 .work-list-header { display: flex; justify-content: space-between; align-items: center; padding: 22px 16px 15px 18px; }
 .eyebrow { display: block; margin-bottom: 3px; color: var(--quiet); font-size: 9px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }

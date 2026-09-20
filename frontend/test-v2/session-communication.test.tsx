@@ -87,6 +87,60 @@ describe("Session communication parity", () => {
     })));
   });
 
+  it("shows ACK, resolution, direct reply evidence, and Workflow activity time", () => {
+    const recent = recentSession();
+    const session = workspace({
+      messages: {
+        session_id: recent.session_id,
+        messages: [
+          {
+            message_id: "wc_msg_guidance123456",
+            kind: "guidance",
+            status: "resolved",
+            priority: "high",
+            created_at: 1_790_000_000,
+            message: "Please make the workflow easier to read.",
+            requires_ack: true,
+            first_ack_observed_at: 1_790_000_010,
+            resolved_at: 1_790_000_020,
+            resolution: "Workflow labels and details were enlarged.",
+          },
+          {
+            message_id: "wc_msg_answer12345678",
+            kind: "answer",
+            status: "open",
+            priority: "normal",
+            created_at: 1_790_000_021,
+            message: "I also kept the activity timestamps visible.",
+            requires_ack: false,
+            author_session_id: "wc_sess_agent123456789",
+            reply_to: "wc_msg_guidance123456",
+          },
+        ],
+      },
+    });
+    const rendered = render(
+      <SessionExecution
+        item={workItemFromRecent(recent)}
+        location={{ projectId: recent.project_id, projectName: recent.project_name || recent.project_id, runner: recent.client_id, sessionId: recent.session_id }}
+        session={session}
+        language="en"
+      />,
+    );
+
+    const activityTime = rendered.container.querySelector(".tool-cluster-time");
+    expect(activityTime?.textContent).toBeTruthy();
+    expect(activityTime?.textContent).not.toBe("—");
+
+    fireEvent.click(screen.getByRole("tab", { name: /Collaboration/ }));
+    expect(screen.getByText("ACK observed")).toBeTruthy();
+    expect(screen.getByText("Agent resolution")).toBeTruthy();
+    expect(screen.getByText("Workflow labels and details were enlarged.")).toBeTruthy();
+    expect(screen.getByText("Agent / Session")).toBeTruthy();
+    expect(screen.getByText("I also kept the activity timestamps visible.")).toBeTruthy();
+    expect(screen.getByText("Reply to")).toBeTruthy();
+  });
+
   it("keeps retained unfinished calls from masquerading as live execution", () => {
     const staleCall = recentSession({
       running_call: true,

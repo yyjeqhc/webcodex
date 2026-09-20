@@ -9,7 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
-import { relativeTime } from "../model/format.js";
+import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import { groupRecentProgress, type WorkItem } from "../model/work.js";
 import type { SessionLocation, SessionWorkspaceState } from "../state/useSessionWorkspace.js";
 import { BUCKET_LABEL } from "./WorkList.js";
@@ -28,6 +28,7 @@ type Props = {
 export function SessionExecution({ item, location, session, language }: Props) {
   const t = (value: string) => translate(value, language);
   const progress = groupRecentProgress(session.detail);
+  const messagesById = new Map((session.messages?.messages || []).map((message) => [message.message_id, message]));
   const [centerTab, setCenterTab] = useState<"workflow" | "collaboration">("workflow");
 
   useEffect(() => {
@@ -187,9 +188,39 @@ export function SessionExecution({ item, location, session, language }: Props) {
                 <div className="message-meta">
                   <strong>{message.author_session_id ? t("Agent / Session") : t("Retained message")}</strong>
                   <span className="message-kind">{t(message.kind)}</span>
-                  <time>{relativeTime(message.created_at)}</time>
+                  {message.requires_ack && (
+                    <span className={"message-state " + (message.first_ack_observed_at ? "good" : "warn")}>
+                      {t(message.first_ack_observed_at ? "ACK observed" : "Awaiting ACK")}
+                    </span>
+                  )}
+                  {message.status !== "open" && (
+                    <span className="message-state resolved">
+                      {t(message.closure_kind === "withdrawn" ? "Withdrawn" : message.closure_kind === "superseded" ? "Edited" : "Resolved")}
+                    </span>
+                  )}
+                  <time title={absoluteTime(message.created_at)}>{relativeTime(message.created_at)}</time>
                 </div>
+                {message.reply_to && (
+                  <div className="message-reply-context">
+                    <span>{t("Reply to")}</span>
+                    <span>{messagesById.get(message.reply_to)?.message.slice(0, 120) || shortId(message.reply_to)}</span>
+                  </div>
+                )}
                 <p>{message.message}</p>
+                {message.first_ack_observed_at && (
+                  <div className="message-observation-note">
+                    {t("ACK first observed")} · <time title={absoluteTime(message.first_ack_observed_at)}>{relativeTime(message.first_ack_observed_at)}</time>
+                  </div>
+                )}
+                {message.resolution && (
+                  <div className="message-resolution">
+                    <div>
+                      <strong>{t("Agent resolution")}</strong>
+                      {message.resolved_at && <time title={absoluteTime(message.resolved_at)}>{relativeTime(message.resolved_at)}</time>}
+                    </div>
+                    <p>{message.resolution}</p>
+                  </div>
+                )}
                 <div className="message-actions">
                   <button
                     type="button"
@@ -199,6 +230,9 @@ export function SessionExecution({ item, location, session, language }: Props) {
                   >
                     {t("Reply")}
                   </button>
+                  {message.status === "open" && MUTABLE_MESSAGE_KINDS.has(message.kind) && session.mutationAllowed !== false && (
+                    <span className="message-mutable-hint">{t("Open · editable")}</span>
+                  )}
                   {message.status === "open" && MUTABLE_MESSAGE_KINDS.has(message.kind) && session.mutationAllowed !== false && (
                     <>
                       <button

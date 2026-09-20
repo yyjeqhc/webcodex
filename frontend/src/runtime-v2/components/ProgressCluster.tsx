@@ -1,4 +1,5 @@
 import { ChevronDown, Code2, Search, ShieldCheck, TerminalSquare } from "lucide-react";
+import { absoluteTime, relativeTime } from "../model/format.js";
 import type { ProgressGroup } from "../model/work.js";
 
 export function ProgressCluster({ group }: { group: ProgressGroup }) {
@@ -16,6 +17,7 @@ export function ProgressCluster({ group }: { group: ProgressGroup }) {
           <strong>{group.label}{group.count > 1 ? " · " + group.count : ""}</strong>
           <small>{group.latestSummary || group.tools.join(" · ") || group.state}</small>
         </span>
+        <time className="tool-cluster-time" title={absoluteTime(group.latestAt)}>{relativeTime(group.latestAt)}</time>
         <ChevronDown size={15} />
       </summary>
       <div className="tool-cluster-detail">

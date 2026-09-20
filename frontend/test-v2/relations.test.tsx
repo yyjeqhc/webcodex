@@ -122,6 +122,22 @@ describe("Project / Session / Window relationships", () => {
     const secondKey = "b".repeat(64);
     const detail = windowDetail({
       client_window_key: firstKey,
+      activity: [{
+        started_at_ms: 1_790_000_100_000,
+        ended_at_ms: 1_790_000_100_120,
+        duration_ms: 120,
+        service_ms: 90,
+        method: "tools/call",
+        tool_name: "read_files",
+        activity_presentation: "Read Runtime source",
+        activity_kind: "exploration",
+        project: "agent:special:webcodex",
+        status: "success",
+        meaningful: true,
+        server_trace_id: "trace-window-workflow-1",
+        workflow_sessions: [{ workflow_session_id: "wc_sess_1111111111111111", project: "agent:special:webcodex", relation: "recording" }],
+      }],
+      activity_returned: 1,
       linked_sessions: [
         {
           workflow_session_id: "wc_sess_1111111111111111",
@@ -191,7 +207,17 @@ describe("Project / Session / Window relationships", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
 
-    expect(await screen.findByText("Runtime E2E hardening")).toBeTruthy();
+    expect(await screen.findByText("Read Runtime source")).toBeTruthy();
+    expect(screen.getByTestId("window-project-tag").textContent).toBe("WebCodex");
+    const workflowStep = screen.getByText("Read Runtime source").closest("details") as HTMLDetailsElement;
+    expect(workflowStep.open).toBe(false);
+    fireEvent.click(screen.getByText("Read Runtime source").closest("summary")!);
+    expect(workflowStep.open).toBe(true);
+    expect(screen.getByText("tools/call")).toBeTruthy();
+    expect(screen.getByText(/recording · wc_sess_/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Linked Sessions").closest("summary")!);
+    expect(screen.getByText("Runtime E2E hardening")).toBeTruthy();
     expect(screen.getByText("WebUI v2 rewrite")).toBeTruthy();
     expect(screen.getByText("recording")).toBeTruthy();
     expect(screen.getByText("work_on_project")).toBeTruthy();
@@ -340,12 +366,12 @@ describe("Project / Session / Window relationships", () => {
       />,
     );
     fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
-    expect(await screen.findByText("tool-204")).toBeTruthy();
-    expect(screen.queryByText("tool-0")).toBeNull();
+    expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("tool-0")).toHaveLength(0);
     const more = screen.getByRole("button", { name: /Show more activity/ });
     expect(more.textContent).toContain("5 remaining");
     fireEvent.click(more);
-    expect(screen.getByText("tool-0")).toBeTruthy();
+    expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
     expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
   });
 

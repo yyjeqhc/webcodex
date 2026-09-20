@@ -698,7 +698,7 @@ async fn http_runtime_status_optional_body_accepts_empty_and_rejects_malformed_j
 }
 
 // =========================================================================
-// Legacy /api/tools/call generic entry point
+// Generic /api/tools/call entry point
 // =========================================================================
 
 fn phase2_service() -> (tempfile::TempDir, salvo::Service) {
@@ -851,11 +851,10 @@ async fn http_tools_call_full_trace_captures_pre_dispatch_error_response() {
 }
 
 #[tokio::test]
-async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
+async fn tool_manifest_audit_intent_uses_explicit_params() {
     let (tool, params) = extract_tool_call(&json!({
         "tool": "tool_manifest",
-        "params": null,
-        "intent": "audit",
+        "params": {"intent": "audit"},
     }))
     .unwrap();
     let call = ToolCall::from_tool_name(&tool, params).unwrap();
@@ -876,13 +875,14 @@ async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
 }
 
 #[tokio::test]
-async fn flattened_tool_manifest_exact_name_survives_null_params_wrapper() {
+async fn tool_manifest_exact_name_uses_explicit_params() {
     let (tool, params) = extract_tool_call(&json!({
         "tool": "tool_manifest",
-        "params": null,
-        "tool_name": "cargo_test",
-        "include_recommended_flows": false,
-        "include_risk_summary": false,
+        "params": {
+            "tool_name": "cargo_test",
+            "include_recommended_flows": false,
+            "include_risk_summary": false
+        },
     }))
     .unwrap();
     let call = ToolCall::from_tool_name(&tool, params).unwrap();
@@ -899,25 +899,13 @@ async fn flattened_tool_manifest_exact_name_survives_null_params_wrapper() {
 }
 
 #[tokio::test]
-async fn http_start_coding_task_flattened_legacy_params_do_not_revive_unknown_tool() {
-    let config = test_config(Some("secret"));
-    let (_tmp, db) = test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
-    let service = Service::new(build_projects_router(config, db, runtime));
-
+async fn http_tools_call_rejects_flattened_arguments_with_migration_guidance() {
+    let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .json(&json!({
-            "tool": "start_coding_task",
-            "params": null,
-            "project": "agent:importer:demo",
-            "include_runtime_status": false,
-            "include_git": false,
-            "include_recent_commits": false,
-            "include_rules": false,
-            "include_tool_manifest": true,
-            "tool_manifest_intent": "audit",
+            "tool": "git_status",
+            "project": "agent:importer:demo"
         }))
         .send(&service)
         .await;
@@ -926,7 +914,9 @@ async fn http_start_coding_task_flattened_legacy_params_do_not_revive_unknown_to
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["status"], 400);
     let error = body["error"].as_str().unwrap_or_default();
-    assert!(error.contains("unknown tool 'start_coding_task'"), "{body}");
+    assert!(error.contains("unexpected top-level field"), "{body}");
+    assert!(error.contains("'project'"), "{body}");
+    assert!(error.contains("'params'"), "{body}");
 }
 
 // =========================================================================
@@ -954,16 +944,21 @@ async fn http_start_coding_task_uses_ordinary_unknown_tool_path() {
 }
 
 #[test]
-fn extract_tool_call_params_precede_flattened_fields() {
-    let (tool, params) = extract_tool_call(&json!({
-        "tool": "git_status",
-        "project": "wrong",
-        "params": {"project": "right"},
-    }))
-    .unwrap();
+fn extract_tool_call_rejects_unexpected_top_level_fields_even_with_params() {
+    for params in [Value::Null, json!({"project": "right"})] {
+        let error = extract_tool_call(&json!({
+            "tool": "git_status",
+            "project": "wrong",
+            "params": params,
+        }))
+        .unwrap_err();
 
-    assert_eq!(tool, "git_status");
-    assert_eq!(params, json!({"project": "right"}));
+        assert!(error.contains("unexpected top-level field"));
+        assert!(error.contains("'project'"));
+        assert!(error.contains("'params'"));
+        assert!(!error.contains("wrong"));
+        assert!(!error.contains("right"));
+    }
 }
 
 #[test]
@@ -1040,7 +1035,6 @@ fn extract_tool_call_rejects_retired_arguments_envelope() {
     for arguments in [json!(null), json!({"project": "right"})] {
         let error = extract_tool_call(&json!({
             "tool": "git_status",
-            "project": "flattened",
             "arguments": arguments,
         }))
         .unwrap_err();
@@ -1051,14 +1045,16 @@ fn extract_tool_call_rejects_retired_arguments_envelope() {
 }
 
 #[test]
-fn extract_tool_call_collects_flattened_top_level_fields() {
-    let (tool, params) = extract_tool_call(&json!({
+fn extract_tool_call_keeps_recording_session_id_out_of_explicit_params() {
+    let body = json!({
         "tool": "git_status",
-        "project": "agent:oe:webcodex",
-        "session_id": "wc_sess_tool_arg",
+        "params": {
+            "project": "agent:oe:webcodex",
+            "session_id": "wc_sess_tool_arg"
+        },
         TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder",
-    }))
-    .unwrap();
+    });
+    let (tool, params) = extract_tool_call(&body).unwrap();
 
     assert_eq!(tool, "git_status");
     assert_eq!(
@@ -1066,23 +1062,23 @@ fn extract_tool_call_collects_flattened_top_level_fields() {
         json!({"project": "agent:oe:webcodex", "session_id": "wc_sess_tool_arg"})
     );
     assert_eq!(
-        extract_recording_session_id(
-            &json!({TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder"})
-        ),
+        extract_recording_session_id(&body),
         Some("wc_sess_recorder".to_string())
     );
 }
 
 #[test]
-fn extract_tool_call_collects_flattened_session_handoff_flags() {
+fn extract_tool_call_accepts_explicit_session_handoff_params() {
     let body = json!({
         "tool": "session_handoff_summary",
-        "project": "agent:special:test-mcp",
-        "session_id": "wc_sess_test",
-        "include_validation": true,
-        "include_workspace": true,
-        "include_checkpoints": true,
-        "limit": 20,
+        "params": {
+            "project": "agent:special:test-mcp",
+            "session_id": "wc_sess_test",
+            "include_validation": true,
+            "include_workspace": true,
+            "include_checkpoints": true,
+            "limit": 20
+        },
         TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder"
     });
     let (tool, params) = extract_tool_call(&body).unwrap();
@@ -1112,13 +1108,15 @@ fn extract_tool_call_collects_flattened_session_handoff_flags() {
 }
 
 #[test]
-fn extract_tool_call_collects_flattened_write_project_file_fields() {
+fn extract_tool_call_accepts_explicit_write_project_file_params() {
     let (tool, params) = extract_tool_call(&json!({
         "tool": "write_project_file",
-        "project": "agent:oe:webcodex",
-        "path": "x.tmp",
-        "content": "BETA\n",
-        "overwrite": true,
+        "params": {
+            "project": "agent:oe:webcodex",
+            "path": "x.tmp",
+            "content": "BETA\n",
+            "overwrite": true
+        },
     }))
     .unwrap();
 
@@ -1131,16 +1129,14 @@ fn extract_tool_call_collects_flattened_write_project_file_fields() {
 
 #[test]
 #[cfg(feature = "workspace-checkpoints")]
-fn extract_tool_call_collects_flattened_checkpoint_restore_fields() {
-    // GPT Action flattened call for workspace_checkpoint_restore: the
-    // recorder metadata (recording_session_id) must be stripped from
-    // params while the business fields (project/checkpoint_id/confirm)
-    // are collected into params for concrete dispatch.
+fn extract_tool_call_accepts_explicit_checkpoint_restore_params() {
     let body = json!({
         "tool": "workspace_checkpoint_restore",
-        "project": "agent:special:test",
-        "checkpoint_id": "wc_ckpt_abc",
-        "confirm": true,
+        "params": {
+            "project": "agent:special:test",
+            "checkpoint_id": "wc_ckpt_abc",
+            "confirm": true
+        },
         TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
     });
     let (tool, params) = extract_tool_call(&body).unwrap();
@@ -1163,19 +1159,19 @@ fn extract_tool_call_collects_flattened_checkpoint_restore_fields() {
 }
 
 #[test]
-fn extract_tool_call_collects_flattened_apply_text_edits_fields() {
-    // GPT Action flattened call for apply_text_edits: nested `changes`
-    // array and scalar flattened fields must be collected into params.
+fn extract_tool_call_accepts_explicit_apply_text_edits_params() {
     let (tool, params) = extract_tool_call(&json!({
         "tool": "apply_text_edits",
-        "project": "agent:special:test",
-        "dry_run": true,
-        "changes": [{
-            "kind": "edit",
-            "path": "a.txt",
-            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "edits": [{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]
-        }]
+        "params": {
+            "project": "agent:special:test",
+            "dry_run": true,
+            "changes": [{
+                "kind": "edit",
+                "path": "a.txt",
+                "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "edits": [{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]
+            }]
+        }
     }))
     .unwrap();
 
@@ -1321,6 +1317,18 @@ async fn http_tools_call_rejects_malformed_and_unknown_request_matrix() {
             false,
         ),
         (
+            "missing params for argumented tool",
+            json!({"tool": "git_status"}),
+            vec!["git_status", "project"],
+            false,
+        ),
+        (
+            "null params for argumented tool",
+            json!({"tool": "git_status", "params": null}),
+            vec!["git_status", "project"],
+            false,
+        ),
+        (
             "missing outer tool",
             json!({"params": {}}),
             vec!["tool"],
@@ -1380,8 +1388,10 @@ async fn start_session_returns_session_id() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "start_session",
-            "project": "demo",
-            "title": "implement show_changes follow-up"
+            "params": {
+                "project": "demo",
+                "title": "implement show_changes follow-up"
+            }
         }))
         .send(&service)
         .await;
@@ -1414,8 +1424,10 @@ async fn session_summary_empty_session() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "session_summary",
-            "session_id": session_id,
-            "limit": 50
+            "params": {
+                "session_id": session_id,
+                "limit": 50
+            }
         }))
         .send(&service)
         .await;
@@ -1517,11 +1529,13 @@ async fn api_tools_call_accepts_hidden_testing_metadata_and_records_expectation(
         .bearer_auth("secret")
         .json(&json!({
             "tool": "job_status",
-            TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
-            "job_id": "missing-job",
-            "expected_failure": true,
-            "expected_failure_kind": "invalid_arguments",
-            "assertion_name": "api hidden metadata compatibility"
+            "params": {
+                "job_id": "missing-job",
+                "expected_failure": true,
+                "expected_failure_kind": "invalid_arguments",
+                "assertion_name": "api hidden metadata compatibility"
+            },
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id
         }))
         .send(&service)
         .await;
@@ -1554,7 +1568,7 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "start_session", "title": "tracking"}))
+        .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
         .send(&service)
         .await;
     let tracking_body: Value = resp.take_json().await.unwrap();
@@ -1562,7 +1576,7 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "start_session", "title": "business"}))
+        .json(&json!({"tool": "start_session", "params": {"title": "business"}}))
         .send(&service)
         .await;
     let business_body: Value = resp.take_json().await.unwrap();
@@ -1572,7 +1586,7 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "session_summary",
-            "session_id": business_session_id,
+            "params": {"session_id": business_session_id},
             TOOL_CALL_RECORDING_SESSION_ID_FIELD: tracking_session_id
         }))
         .send(&service)
@@ -1591,7 +1605,7 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "session_summary",
-            "session_id": tracking_session_id
+            "params": {"session_id": tracking_session_id}
         }))
         .send(&service)
         .await;
@@ -1619,7 +1633,7 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "start_session", "title": "tracking"}))
+        .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
         .send(&service)
         .await;
     let tracking_body: Value = resp.take_json().await.unwrap();
@@ -1627,7 +1641,7 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "start_session", "title": "business"}))
+        .json(&json!({"tool": "start_session", "params": {"title": "business"}}))
         .send(&service)
         .await;
     let business_body: Value = resp.take_json().await.unwrap();
@@ -1637,12 +1651,14 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
         .bearer_auth("secret")
         .json(&json!({
             "tool": "post_session_message",
-            "session_id": business_session_id,
-            TOOL_CALL_RECORDING_SESSION_ID_FIELD: tracking_session_id,
-            "kind": "guidance",
-            "message": "Keep this behind call_runtime_tool.",
-            "tags": ["openapi", "constraint"],
-            "priority": "normal"
+            "params": {
+                "session_id": business_session_id,
+                "kind": "guidance",
+                "message": "Keep this behind call_runtime_tool.",
+                "tags": ["openapi", "constraint"],
+                "priority": "normal"
+            },
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD: tracking_session_id
         }))
         .send(&service)
         .await;
@@ -1659,8 +1675,10 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
         .bearer_auth("secret")
         .json(&json!({
             "tool": "list_session_messages",
-            "session_id": business_session_id,
-            "kind": "guidance"
+            "params": {
+                "session_id": business_session_id,
+                "kind": "guidance"
+            }
         }))
         .send(&service)
         .await;
@@ -1682,7 +1700,7 @@ async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_se
         .bearer_auth("secret")
         .json(&json!({
             "tool": "session_summary",
-            "session_id": tracking_session_id
+            "params": {"session_id": tracking_session_id}
         }))
         .send(&service)
         .await;
@@ -1705,8 +1723,10 @@ async fn read_only_session_allows_post_session_message_metadata() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "start_session",
-            "title": "readonly message board",
-            "mode": "read_only"
+            "params": {
+                "title": "readonly message board",
+                "mode": "read_only"
+            }
         }))
         .send(&service)
         .await;
@@ -1718,9 +1738,11 @@ async fn read_only_session_allows_post_session_message_metadata() {
         .bearer_auth("secret")
         .json(&json!({
             "tool": "post_session_message",
-            "session_id": session_id,
-            "kind": "progress",
-            "message": "Read-only sessions may still record collaboration metadata."
+            "params": {
+                "session_id": session_id,
+                "kind": "progress",
+                "message": "Read-only sessions may still record collaboration metadata."
+            }
         }))
         .send(&service)
         .await;
@@ -1731,7 +1753,7 @@ async fn read_only_session_allows_post_session_message_metadata() {
 
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "session_summary", "session_id": session_id}))
+        .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
         .send(&service)
         .await;
     assert_eq!(effective_status(&resp), StatusCode::OK);

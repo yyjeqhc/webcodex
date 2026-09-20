@@ -53,7 +53,7 @@ The one generic escape hatch is `call_runtime_tool`:
 
 The gateway schema is closed and contains only `tool` and `arguments`. No `params` alias and no flattened top-level business-argument union are part of the GPT Action contract. Direct targets should use their direct Action operation; ModelHidden, unknown, recursive, and GPT-Action-unsupported targets fail closed.
 
-Legacy `/api/tools/call` REST compatibility may retain historical decoding behavior, but that compatibility is not model-facing OpenAPI authority and must not leak into `/openapi.json` or `tool_manifest`.
+The generic REST `/api/tools/call` endpoint uses one explicit envelope: `tool`, optional `params`, and optional `recording_session_id` request metadata. Tool arguments belong under `params`; this HTTP envelope remains separate from model-facing OpenAPI authority and must not leak into `/openapi.json` or `tool_manifest`.
 
 ## 4. Description limits
 

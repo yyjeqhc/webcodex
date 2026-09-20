@@ -37,7 +37,7 @@ async fn api_model_ergonomics_success_is_exact_and_queryable() {
     let mut response = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .add_header("x-action-session-id", "ergonomics-success", true)
-        .json(&json!({"tool": "tool_manifest", "intent": "audit"}))
+        .json(&json!({"tool": "tool_manifest", "params": {"intent": "audit"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&response), StatusCode::OK);
@@ -76,7 +76,7 @@ async fn api_model_ergonomics_failure_uses_structured_kinds_without_private_text
     let mut response = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .add_header("x-action-session-id", "ergonomics-failure", true)
-        .json(&json!({"tool": "project_overview", "project": private_project}))
+        .json(&json!({"tool": "project_overview", "params": {"project": private_project}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&response), StatusCode::BAD_REQUEST);
@@ -154,11 +154,13 @@ async fn api_batch_call_records_one_generic_outer_invocation() {
         .add_header("x-action-session-id", "ergonomics-batch", true)
         .json(&json!({
             "tool": "read_files",
-            "project": "agent:importer:demo",
-            "items": [
-                {"path": "missing-a.rs"},
-                {"path": "missing-b.rs"}
-            ]
+            "params": {
+                "project": "agent:importer:demo",
+                "items": [
+                    {"path": "missing-a.rs"},
+                    {"path": "missing-b.rs"}
+                ]
+            }
         }))
         .send(&service)
         .await;
@@ -195,9 +197,11 @@ async fn api_work_on_project_preferences_persist_as_privacy_bounded_action_audit
         .add_header("x-action-session-id", "ergonomics-work-on-project", true)
         .json(&json!({
             "tool": "work_on_project",
-            "project": project,
-            "instruction": private_instruction,
-            "include_extension_catalog": false
+            "params": {
+                "project": project,
+                "instruction": private_instruction,
+                "include_extension_catalog": false
+            }
         }))
         .send(&service)
         .await;
@@ -244,7 +248,7 @@ async fn action_audit_sink_failure_never_changes_success_or_failure_tool_result(
 
     let mut success = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "tool_manifest", "intent": "audit"}))
+        .json(&json!({"tool": "tool_manifest", "params": {"intent": "audit"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&success), StatusCode::OK);
@@ -254,7 +258,7 @@ async fn action_audit_sink_failure_never_changes_success_or_failure_tool_result(
 
     let mut failure = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "project_overview", "project": "missing-project"}))
+        .json(&json!({"tool": "project_overview", "params": {"project": "missing-project"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&failure), StatusCode::BAD_REQUEST);

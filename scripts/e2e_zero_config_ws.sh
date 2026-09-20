@@ -1114,7 +1114,7 @@ else
     fail "callRuntimeTool(list_tools) params null failed (body: ${body:0:300})"
 fi
 
-# callRuntimeTool: retired arguments envelope is rejected; use params or flattened fields.
+# callRuntimeTool: retired arguments envelope is rejected; tool arguments belong under params.
 body="$(api_post /api/tools/call '{"tool":"list_tools","arguments":null}')"
 if printf '%s' "$body" | python3 -c 'import json,sys; body=json.load(sys.stdin); err=str(body.get("error", "")); sys.exit(0 if body.get("status") == 400 and "arguments" in err and "no longer supported" in err else 1)'; then
     pass "callRuntimeTool(list_tools) rejects retired arguments envelope"
@@ -1123,6 +1123,15 @@ else
 fi
 
 # callRuntimeTool: show_changes against the agent project succeeds.
+
+# callRuntimeTool: flattened top-level business arguments are rejected with migration guidance.
+body="$(api_post /api/tools/call "{\"tool\":\"show_changes\",\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+if printf '%s' "$body" | python3 -c 'import json,sys; body=json.load(sys.stdin); err=str(body.get("error", "")); sys.exit(0 if body.get("status") == 400 and "unexpected top-level field" in err and "project" in err and "params" in err else 1)'; then
+    pass "callRuntimeTool(show_changes) rejects flattened top-level arguments"
+else
+    fail "callRuntimeTool(show_changes) accepted flattened top-level arguments (body: ${body:0:300})"
+fi
+
 body="$(show_changes_call)"
 if [ "$(json_get "$body" success)" = "True" ]; then
     pass "callRuntimeTool(show_changes) routes to agent and succeeds"
@@ -1141,12 +1150,11 @@ else
     fail "callRuntimeTool(unknown tool) error not useful (got: ${unk_err:0:200})"
 fi
 
-# Deterministic workflow tools via generic callRuntimeTool, using flattened
-# GPT Action-style fields.
+# Deterministic workflow tools via the canonical callRuntimeTool envelope.
 log "---- Deterministic workflow tool smoke ----"
 
 workflow_session_id=""
-body="$(api_post /api/tools/call "{\"tool\":\"work_on_project\",\"project\":\"$RUNTIME_PROJECT_ID\",\"instruction\":\"e2e deterministic coding task smoke\"}")"
+body="$(runtime_tool_call "work_on_project" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"instruction\":\"e2e deterministic coding task smoke\"}")"
 if workflow_session_id="$(python3 - "$body" "$RUNTIME_PROJECT_ID" <<'PY'
 import json, sys
 
@@ -1206,7 +1214,7 @@ else
 fi
 
 if [ -n "$workflow_session_id" ]; then
-    body="$(api_post /api/tools/call "{\"tool\":\"show_changes\",\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false}")"
+    body="$(runtime_tool_call "show_changes" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false}")"
     if python3 - "$body" "$workflow_session_id" <<'PY'
 import json, sys
 
@@ -1243,7 +1251,7 @@ else
 fi
 
 if [ -n "$workflow_session_id" ]; then
-    body="$(api_post /api/tools/call "{\"tool\":\"finish_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false,\"include_hygiene\":true,\"include_handoff\":true,\"include_validation_summary\":true}")"
+    body="$(runtime_tool_call "finish_coding_task" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false,\"include_hygiene\":true,\"include_handoff\":true,\"include_validation_summary\":true}")"
     if python3 - "$body" "$workflow_session_id" <<'PY'
 import json, sys
 
@@ -1294,7 +1302,7 @@ else
     fail "callRuntimeTool(finish_coding_task) skipped: work_on_project did not return a session_id"
 fi
 
-body="$(api_post /api/tools/call "{\"tool\":\"finish_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+body="$(runtime_tool_call "finish_coding_task" "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 missing_session_status="$(json_get "$body" status)"
 missing_session_error="$(json_get "$body" error)"
 if [ "$missing_session_status" = "400" ] && echo "$missing_session_error" | grep -q "session_id"; then

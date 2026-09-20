@@ -55,6 +55,8 @@ export function useWindowWorkspace(
       }
       if (response.status === 403) {
         setWindows([]);
+        setTotal(0);
+        setTruncated(false);
         setDetail(null);
         setSelectedKey("");
         setAvailability("denied");

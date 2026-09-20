@@ -28,7 +28,7 @@ export function useLinkedSessionWindowCounts(
       while (!disposed && !controller.signal.aborted && running < CONCURRENCY && cursor < targets.length) {
         const session = targets[cursor++];
         running += 1;
-        void fetchSessionDetail(client, session.project!, session.workflow_session_id, controller.signal)
+        void fetchSessionDetail(client, session.project!, session.workflow_session_id, controller.signal, 1)
           .then((response) => {
             if (disposed || controller.signal.aborted) return;
             setCounts((existing) => {

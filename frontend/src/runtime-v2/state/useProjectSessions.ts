@@ -99,7 +99,7 @@ export function useProjectSessions(
       while (!disposed && !controller.signal.aborted && running < DETAIL_CONCURRENCY && cursor < targets.length) {
         const session = targets[cursor++];
         running += 1;
-        void fetchSessionDetail(client, projectId, session.session_id, controller.signal)
+        void fetchSessionDetail(client, projectId, session.session_id, controller.signal, 1)
           .then((response) => {
             if (disposed || controller.signal.aborted) return;
             setWindowCountBySession((existing) => {

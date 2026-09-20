@@ -27,10 +27,11 @@ export function fetchSessionDetail(
   project: string,
   sessionId: string,
   signal?: AbortSignal,
+  activityLimit?: number,
 ) {
   return client.post<SessionDetail>(
     "workflow-session",
-    { project, session_id: sessionId },
+    { project, session_id: sessionId, ...(activityLimit !== undefined ? { limit: activityLimit } : {}) },
     signal,
   );
 }

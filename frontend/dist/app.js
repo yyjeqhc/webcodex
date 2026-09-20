@@ -10916,10 +10916,11 @@ function Vg(c, f, d) {
 function Zg(c, f, d) {
   return c.post("workflow-session-locate", { session_id: f }, d);
 }
-function Qo(c, f, d, v) {
+function Qo(c, f, d, v, r) {
   return c.post("workflow-session", {
     project: f,
-    session_id: d
+    session_id: d,
+    ...r !== void 0 ? { limit: r } : {}
   }, v);
 }
 function Kg(c, f, d, v) {
@@ -11335,7 +11336,7 @@ function m1(c, f, d, v) {
     const Y = () => {
       for (; !E && !G.signal.aborted && C < h1 && K < q.length; ) {
         const V = q[K++];
-        C += 1, Qo(c, d, V.session_id, G.signal).then((ue) => {
+        C += 1, Qo(c, d, V.session_id, G.signal, 1).then((ue) => {
           E || G.signal.aborted || O((F) => {
             const Ne = new Map(F);
             return Ne.set(V.session_id, ue?.ok && ue.data ? ue.data.linked_windows.length : null), Ne;
@@ -12677,7 +12678,7 @@ function B1(c, f, d) {
     const I = () => {
       for (; !T && !R.signal.aborted && B < k1 && p < z.length; ) {
         const N = z[p++];
-        B += 1, Qo(c, N.project, N.workflow_session_id, R.signal).then((m) => {
+        B += 1, Qo(c, N.project, N.workflow_session_id, R.signal, 1).then((m) => {
           T || R.signal.aborted || r((O) => {
             const k = new Map(O);
             return k.set(N.workflow_session_id, m?.ok && m.data ? m.data.linked_windows.length : null), k;
@@ -12723,7 +12724,7 @@ function L1(c, f, d, v = {}) {
         return;
       }
       if (F.status === 403) {
-        N([]), G(null), te(""), p("denied"), T("denied");
+        N([]), O(0), $(!1), G(null), te(""), p("denied"), T("denied");
         return;
       }
       if (!F.ok || !F.data) {

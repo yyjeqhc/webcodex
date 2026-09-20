@@ -36,14 +36,16 @@ describe("shared Runtime browser contracts", () => {
     await fetchProjects(client, {});
     await fetchProjectSessions(client, "agent:special:webcodex");
     await fetchSessionDetail(client, "agent:special:webcodex", "wc_sess_1234567890abcdef");
+    await fetchSessionDetail(client, "agent:special:webcodex", "wc_sess_1234567890abcdef", undefined, 1);
     await fetchWindowDetail(client, "a".repeat(64));
     await fetchRunner(client, "special");
 
     expect(post.mock.calls[0][1]).toEqual({});
     expect(post.mock.calls[1][1]).toEqual({ project: "agent:special:webcodex" });
     expect(post.mock.calls[2][1]).toEqual({ project: "agent:special:webcodex", session_id: "wc_sess_1234567890abcdef" });
-    expect(post.mock.calls[3][1]).toEqual({ client_window_key: "a".repeat(64), activity_limit: 2_000 });
-    expect(post.mock.calls[4][1]).toEqual({ client_id: "special" });
+    expect(post.mock.calls[3][1]).toEqual({ project: "agent:special:webcodex", session_id: "wc_sess_1234567890abcdef", limit: 1 });
+    expect(post.mock.calls[4][1]).toEqual({ client_window_key: "a".repeat(64), activity_limit: 2_000 });
+    expect(post.mock.calls[5][1]).toEqual({ client_id: "special" });
   });
 
   it("sends bearer auth only to the configured API base and treats transport failure as status 0", async () => {

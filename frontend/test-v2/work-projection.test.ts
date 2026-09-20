@@ -93,6 +93,30 @@ describe("Work projection", () => {
     expect(workItemFromRecent(failure).validation.unresolved_failure_count).toBe(2);
   });
 
+  it("accepts server activity rows with serde-omitted empty arrays", () => {
+    const detail = sessionDetail({
+      activity: [{
+        kind: "run",
+        tool: "run_process",
+        state: "success",
+        job_handoff: false,
+        started_at: 1_789_999_250,
+        finished_at: 1_789_999_251,
+        summary: "Executed command",
+      }],
+      activity_total: 1,
+      activity_returned: 1,
+    });
+
+    expect(groupRecentProgress(detail)).toEqual([
+      expect.objectContaining({
+        intent: "ran",
+        tools: ["run_process"],
+        paths: [],
+      }),
+    ]);
+  });
+
   it("groups low-level activity by user-facing intent and remains bounded", () => {
     const detail = sessionDetail({
       activity: [

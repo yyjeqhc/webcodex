@@ -11173,7 +11173,7 @@ function u1(c, f = 80) {
   if (!c) return [];
   const d = c.activity.slice(-Math.max(1, f)), v = [];
   for (const r of d) {
-    const z = l1(r), R = r.finished_at ?? r.started_at, p = [r.tool, ...r.group_tools].filter((I) => !!I), B = r.paths || [], T = v.at(-1);
+    const z = l1(r), R = r.finished_at ?? r.started_at, p = [r.tool, ...r.group_tools || []].filter((I) => !!I), B = r.paths || [], T = v.at(-1);
     if (T && T.intent === z && T.state === r.state) {
       T.count += Math.max(1, r.group_count || 1), T.latestAt = Math.max(T.latestAt, R), T.latestSummary = ri(r.summary) || T.latestSummary, T.tools = Array.from(/* @__PURE__ */ new Set([...T.tools, ...p])).slice(0, 8), T.paths = Array.from(/* @__PURE__ */ new Set([...T.paths, ...B])).slice(0, 12);
       continue;

@@ -47,7 +47,7 @@ export type ActivityPreview = {
   job_handoff: boolean;
   job_id?: string;
   summary?: string;
-  paths: string[];
+  paths?: string[];
 };
 
 export type SessionListItem = {
@@ -76,10 +76,10 @@ export type SessionActivity = {
   exit_code?: number;
   job_id?: string;
   summary?: string;
-  paths: string[];
+  paths?: string[];
   group_count?: number;
-  group_kinds: string[];
-  group_tools: string[];
+  group_kinds?: string[];
+  group_tools?: string[];
 };
 
 export type SessionWindow = {

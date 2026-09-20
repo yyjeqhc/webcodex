@@ -140,7 +140,7 @@ export function groupRecentProgress(detail: SessionDetail | null, limit = 80): P
   for (const activity of bounded) {
     const intent = intentForActivity(activity);
     const latestAt = activity.finished_at ?? activity.started_at;
-    const tools = [activity.tool, ...activity.group_tools].filter((value): value is string => Boolean(value));
+    const tools = [activity.tool, ...(activity.group_tools || [])].filter((value): value is string => Boolean(value));
     const paths = activity.paths || [];
     const previous = groups.at(-1);
     if (previous && previous.intent === intent && previous.state === activity.state) {

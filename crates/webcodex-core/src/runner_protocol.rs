@@ -2393,6 +2393,7 @@ mod envelope_tests {
             end_line: None,
             create_dirs: false,
             command: String::new(),
+            shell: None,
             process: Some(ShellProcessArgv {
                 executable: "argv-helper".to_string(),
                 args: vec![
@@ -2461,6 +2462,7 @@ mod envelope_tests {
             end_line: None,
             create_dirs: false,
             command: String::new(),
+            shell: None,
             process: None,
             script: Some(ShellScriptPayload {
                 language: ShellScriptLanguage::Bash,
@@ -3042,6 +3044,7 @@ mod envelope_tests {
             end_line: None,
             create_dirs: false,
             command: "echo hi".to_string(),
+            shell: Some(crate::workflow_session_contract::ExecutionShell::Bash),
             process: None,
             script: None,
             stdin: Some("input".to_string()),
@@ -3062,12 +3065,17 @@ mod envelope_tests {
         assert!(json.contains(r#""request_id":"req-1""#));
         assert!(json.contains(r#""kind":"run_shell""#));
         assert!(json.contains(r#""command":"echo hi""#));
+        assert!(json.contains(r#""shell":"bash""#));
         assert!(json.contains(r#""stdin":"input""#));
         let back = RunnerEnvelope::from_slice(json.as_bytes()).unwrap();
         match back {
             RunnerEnvelope::Request { request } => {
                 assert_eq!(request.request_id, "req-1");
                 assert_eq!(request.command, "echo hi");
+                assert_eq!(
+                    request.shell,
+                    Some(crate::workflow_session_contract::ExecutionShell::Bash)
+                );
             }
             other => panic!("expected request, got {:?}", other.kind()),
         }

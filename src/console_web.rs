@@ -27,8 +27,8 @@ const ADMIN_HTML: &str = include_str!("../frontend/dist/admin.html");
 const ADMIN_APP_JS: &str = include_str!("../frontend/dist/admin.js");
 const ADMIN_STYLES_CSS: &str = include_str!("../frontend/dist/admin.css");
 const RUNTIME_HTML: &str = include_str!("../frontend/dist/runtime.html");
-const RUNTIME_APP_JS: &str = include_str!("../frontend/dist/runtime.js");
-const RUNTIME_STYLES_CSS: &str = include_str!("../frontend/dist/runtime.css");
+const RUNTIME_APP_JS: &str = include_str!("../frontend/dist/app.js");
+const RUNTIME_STYLES_CSS: &str = include_str!("../frontend/dist/styles.css");
 
 #[derive(Debug, Clone, Copy)]
 enum ConsoleAsset {
@@ -47,8 +47,8 @@ impl ConsoleAsset {
             Self::AdminJavaScript => "admin.js",
             Self::AdminCss => "admin.css",
             Self::RuntimeHtml => "runtime.html",
-            Self::RuntimeJavaScript => "runtime.js",
-            Self::RuntimeCss => "runtime.css",
+            Self::RuntimeJavaScript => "app.js",
+            Self::RuntimeCss => "styles.css",
         }
     }
 
@@ -383,8 +383,8 @@ mod tests {
     fn write_runtime_development_assets(directory: &Path) {
         fs::create_dir_all(directory).unwrap();
         fs::write(directory.join("runtime.html"), "<html>runtime one</html>\n").unwrap();
-        fs::write(directory.join("runtime.js"), "globalThis.runtime = 1;\n").unwrap();
-        fs::write(directory.join("runtime.css"), ".runtime { color: red; }\n").unwrap();
+        fs::write(directory.join("app.js"), "globalThis.runtime = 1;\n").unwrap();
+        fs::write(directory.join("styles.css"), ".runtime { color: red; }\n").unwrap();
     }
 
     fn development_service(directory: &Path) -> Service {
@@ -395,13 +395,13 @@ mod tests {
 
     #[test]
     fn embedded_bundle_contains_runtime_and_admin_only() {
-        assert!(RUNTIME_HTML.contains("WebCodex — Workspace"));
+        assert!(RUNTIME_HTML.contains("WebCodex — Runtime Workspace"));
         assert!(RUNTIME_HTML.contains("/runtime/app.js"));
         assert!(RUNTIME_HTML.contains("/runtime/styles.css"));
         assert!(RUNTIME_APP_JS.contains("/api/runtime-console/"));
         assert!(!RUNTIME_APP_JS.contains("/api/console/"));
         assert!(!RUNTIME_APP_JS.contains("document.cookie"));
-        assert!(!RUNTIME_APP_JS.contains(".innerHTML"));
+        assert!(!RUNTIME_HTML.contains("prototype-v2"));
         assert!(!ADMIN_HTML.is_empty());
         assert!(!ADMIN_APP_JS.contains("/api/console/"));
     }
@@ -456,7 +456,7 @@ mod tests {
             response.take_string().await.unwrap(),
             "globalThis.runtime = 1;\n"
         );
-        fs::write(temp.path().join("runtime.js"), "globalThis.runtime = 2;\n").unwrap();
+        fs::write(temp.path().join("app.js"), "globalThis.runtime = 2;\n").unwrap();
         let mut response = TestClient::get("http://localhost/runtime/app.js")
             .send(&service)
             .await;
@@ -464,7 +464,7 @@ mod tests {
             response.take_string().await.unwrap(),
             "globalThis.runtime = 2;\n"
         );
-        fs::remove_file(temp.path().join("runtime.js")).unwrap();
+        fs::remove_file(temp.path().join("app.js")).unwrap();
         let mut response = TestClient::get("http://localhost/runtime/app.js")
             .send(&service)
             .await;

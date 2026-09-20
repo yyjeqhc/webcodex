@@ -86,6 +86,61 @@ describe("Session communication parity", () => {
     })));
   });
 
+  it("keeps retained unfinished calls from masquerading as live execution", () => {
+    const staleCall = recentSession({
+      running_call: true,
+      running_jobs: 0,
+      current_activity: {
+        kind: "search",
+        tool: "search_project_texts",
+        state: "running",
+        execution_state: "running",
+        job_handoff: false,
+        summary: "Old unmatched call",
+        paths: [],
+      },
+    });
+    const session = workspace({
+      detail: sessionDetail({
+        running_call: true,
+        running_jobs: 0,
+        current_activity: staleCall.current_activity,
+      }),
+    });
+    render(
+      <SessionExecution
+        item={workItemFromRecent(staleCall)}
+        location={{ projectId: staleCall.project_id, projectName: staleCall.project_name || staleCall.project_id, runner: staleCall.client_id, sessionId: staleCall.session_id }}
+        session={session}
+        language="en"
+      />,
+    );
+
+    expect(screen.queryByText("Current execution")).toBeNull();
+  });
+
+  it("makes guidance a first-class visible collaboration action", async () => {
+    const session = workspace();
+    const recent = recentSession();
+    render(
+      <SessionExecution
+        item={workItemFromRecent(recent)}
+        location={{ projectId: recent.project_id, projectName: recent.project_name || recent.project_id, runner: recent.client_id, sessionId: recent.session_id }}
+        session={session}
+        language="en"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Guidance" }));
+    const composer = screen.getByRole("textbox", { name: "Send a message to this work session…" });
+    fireEvent.change(composer, { target: { value: "Please prioritize the current blocker." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(session.send).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Please prioritize the current blocker.",
+      kind: "guidance",
+    })));
+  });
+
   it("hides mutable actions after collaborate authority is denied", () => {
     const session = workspace({ mutationAllowed: false });
     const recent = recentSession();

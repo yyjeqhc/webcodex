@@ -34,7 +34,10 @@ export function SessionInspector({
   const attentionTotal = detail && attention
     ? attention.open_guidance + attention.open_questions + attention.open_risks + attention.open_todos
     : item.attentionCount;
-  const running = Boolean(detail?.running_call || detail?.running_jobs || item.runningCall || item.runningJobs);
+  const running = (detail?.running_jobs ?? item.runningJobs) > 0;
+  const composeMessage = (kind: "note" | "guidance" | "question" | "todo") => {
+    window.dispatchEvent(new CustomEvent("webcodex-runtime-compose-message", { detail: { kind } }));
+  };
 
   return (
     <aside className="inspector" aria-label={t("Session context")}>
@@ -81,6 +84,17 @@ export function SessionInspector({
             </p>
           </section>
 
+
+          <section className="inspector-section collaboration-panel">
+            <h3>{t("Collaborate")}</h3>
+            <p className="muted-copy">{t("Leave retained guidance, questions, todos, or notes for the next turn.")}</p>
+            <div className="collaboration-quick-actions">
+              <button type="button" onClick={() => composeMessage("guidance")}>{t("Guidance")}</button>
+              <button type="button" onClick={() => composeMessage("question")}>{t("Question")}</button>
+              <button type="button" onClick={() => composeMessage("todo")}>{t("Todo")}</button>
+              <button type="button" onClick={() => composeMessage("note")}>{t("Note")}</button>
+            </div>
+          </section>
           <section className="inspector-section">
             <h3>{t("Validation")}</h3>
             <div className="validation-mini">

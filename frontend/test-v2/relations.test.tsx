@@ -62,6 +62,35 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.getByText("WebUI v2 rewrite")).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/2 Windows/)).toBeTruthy());
     expect(screen.getByText(/1 Windows/)).toBeTruthy();
+    expect(screen.getByText("View Sessions")).toBeTruthy();
+  });
+
+  it("loads the selected Project's retained Sessions when its card is opened", async () => {
+    const overview = runtimeOverview();
+    const first = { ...overview.projects[0], id: "agent:special:first", name: "First Project", project_ref: "~p1" };
+    const second = { ...overview.projects[0], id: "agent:special:second", name: "Second Project", project_ref: "~p2" };
+    const firstSession = sessionItem({ session_id: "wc_sess_aaaaaaaaaaaaaaaa", title: "First project Session" });
+    const secondSession = sessionItem({ session_id: "wc_sess_bbbbbbbbbbbbbbbb", title: "Second project Session" });
+    const handler = vi.fn((path: string, payload: any) => {
+      if (path === "projects") return ok({ projects: [first, second], total: 2, truncated: false });
+      if (path === "project-git") return ok({ branch: "main", clean: true, git_available: true });
+      if (path === "workflow-sessions") {
+        const sessions = payload.project === second.id ? [secondSession] : [firstSession];
+        return ok({ sessions, total: 1, returned: 1, truncated: false });
+      }
+      if (path === "workflow-session") return ok(sessionDetail({ session_id: payload.session_id, linked_windows: [] }));
+      throw new Error("unexpected path " + path);
+    });
+    const client = fakeClient(handler);
+
+    render(
+      <ProjectsView client={client} language="en" runners={overview.runners} onOpenSession={vi.fn()} onUnauthorized={vi.fn()} />,
+    );
+    expect(await screen.findByText("First project Session")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("project-card-" + second.id));
+    expect(await screen.findByText("Second project Session")).toBeTruthy();
+    expect(handler.mock.calls.some(([path, payload]) => path === "workflow-sessions" && payload.project === second.id)).toBe(true);
   });
 
   it("keeps Add Project a single non-replayed write after an uncertain result", async () => {

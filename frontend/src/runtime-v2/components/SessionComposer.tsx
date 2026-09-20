@@ -1,5 +1,5 @@
 import { ArrowUpRight, Check, LoaderCircle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearDraft, loadDraft, saveDraft } from "../../runtime_storage.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
@@ -11,6 +11,13 @@ type Props = {
   language: RuntimeLanguage;
 };
 
+const QUICK_MESSAGE_KINDS = [
+  { value: "guidance", label: "Guidance" },
+  { value: "question", label: "Question" },
+  { value: "todo", label: "Todo" },
+  { value: "note", label: "Note" },
+] as const;
+
 export function SessionComposer({ location, session, language }: Props) {
   const t = (value: string) => translate(value, language);
   const [composer, setComposer] = useState("");
@@ -20,6 +27,7 @@ export function SessionComposer({ location, session, language }: Props) {
   const [editingMessageId, setEditingMessageId] = useState("");
   const [replyTo, setReplyTo] = useState("");
   const [replyPreview, setReplyPreview] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setComposer(loadDraft(location.projectId, location.sessionId));
@@ -57,6 +65,20 @@ export function SessionComposer({ location, session, language }: Props) {
     return () => window.removeEventListener("webcodex-runtime-reply-message", handler);
   }, []);
 
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ kind?: string }>;
+      const nextKind = custom.detail?.kind;
+      if (nextKind && QUICK_MESSAGE_KINDS.some((item) => item.value === nextKind)) setKind(nextKind);
+      setEditingMessageId("");
+      setReplyTo("");
+      setReplyPreview("");
+      window.setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+    window.addEventListener("webcodex-runtime-compose-message", handler);
+    return () => window.removeEventListener("webcodex-runtime-compose-message", handler);
+  }, []);
   const submit = async () => {
     if (!composer.trim()) return;
     const ok = editingMessageId
@@ -83,6 +105,12 @@ export function SessionComposer({ location, session, language }: Props) {
   return (
     <div className="composer-row">
       <div className="composer">
+        <div className="composer-heading">
+          <div>
+            <strong>{t("Collaborate with this Session")}</strong>
+            <small>{t("Leave retained guidance, questions, todos, or notes for the next turn.")}</small>
+          </div>
+        </div>
         {editingMessageId && (
           <div className="composer-context">
             <span>{t("Editing retained message")}</span>
@@ -97,6 +125,7 @@ export function SessionComposer({ location, session, language }: Props) {
         )}
         {session.mutationNotice && <div className="composer-notice" role="status">{t(session.mutationNotice)}</div>}
         <textarea
+          ref={textareaRef}
           aria-label={t("Send a message to this work session…")}
           placeholder={t("Send a message to this work session…")}
           rows={1}
@@ -110,33 +139,47 @@ export function SessionComposer({ location, session, language }: Props) {
           }}
         />
         <div className="composer-footer">
-          <details className="composer-options">
-            <summary>{t("Options")}</summary>
-            <div className="composer-options-popover">
-              <label>
-                {t("Kind")}
-                <select value={kind} onChange={(event) => setKind(event.target.value)}>
-                  <option value="note">note</option>
-                  <option value="progress">progress</option>
-                  <option value="guidance">guidance</option>
-                  <option value="question">question</option>
-                  <option value="risk">risk</option>
-                  <option value="todo">todo</option>
-                </select>
-              </label>
-              <label>
-                {t("Priority")}
-                <select value={priority} onChange={(event) => setPriority(event.target.value)}>
-                  <option value="normal">normal</option>
-                  <option value="high">high</option>
-                </select>
-              </label>
-              <label className="checkbox-line">
-                <input type="checkbox" checked={requiresAck} onChange={(event) => setRequiresAck(event.target.checked)} />
-                {t("Requires acknowledgement")}
-              </label>
+          <div className="composer-controls">
+            <div className="composer-kind-tabs" aria-label={t("Message kind")}>
+              {QUICK_MESSAGE_KINDS.map((item) => (
+                <button
+                  key={item.value}
+                  className={kind === item.value ? "active" : ""}
+                  type="button"
+                  onClick={() => setKind(item.value)}
+                >
+                  {t(item.label)}
+                </button>
+              ))}
             </div>
-          </details>
+            <details className="composer-options">
+              <summary>{t("Options")}</summary>
+              <div className="composer-options-popover">
+                <label>
+                  {t("Kind")}
+                  <select value={kind} onChange={(event) => setKind(event.target.value)}>
+                    <option value="note">{t("Note")}</option>
+                    <option value="progress">{t("Progress")}</option>
+                    <option value="guidance">{t("Guidance")}</option>
+                    <option value="question">{t("Question")}</option>
+                    <option value="risk">{t("Risk")}</option>
+                    <option value="todo">{t("Todo")}</option>
+                  </select>
+                </label>
+                <label>
+                  {t("Priority")}
+                  <select value={priority} onChange={(event) => setPriority(event.target.value)}>
+                    <option value="normal">normal</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+                <label className="checkbox-line">
+                  <input type="checkbox" checked={requiresAck} onChange={(event) => setRequiresAck(event.target.checked)} />
+                  {t("Requires acknowledgement")}
+                </label>
+              </div>
+            </details>
+          </div>
           <button
             className="send-button"
             type="button"

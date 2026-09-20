@@ -8,7 +8,7 @@ import {
 import { recentSession, sessionDetail, sessionItem } from "./fixtures.js";
 
 describe("Work projection", () => {
-  it("prioritizes current calls and active Jobs without inventing a phase", () => {
+  it("treats only Runner Jobs as authoritative live execution", () => {
     const job = sessionItem({
       running_jobs: 1,
       running_jobs_complete: true,
@@ -32,9 +32,14 @@ describe("Work projection", () => {
         summary: "Run focused Runtime tests",
         paths: [],
       },
+      last_activity: undefined,
+      overview: {
+        ...sessionItem().overview,
+        reported_progress: undefined,
+      },
     });
-    expect(workBucket(call)).toBe("running");
-    expect(phaseFromSession(call)).toBe("Run focused Runtime tests");
+    expect(workBucket(call)).toBe("active");
+    expect(phaseFromSession(call)).toBe("active");
   });
 
   it("keeps inactive/no-Job Sessions out of Running", () => {

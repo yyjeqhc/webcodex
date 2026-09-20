@@ -49,7 +49,9 @@ export function attentionCount(attention: AttentionOverview): number {
 }
 
 export function workBucket(session: SessionListItem): WorkBucket {
-  if (session.running_call || session.running_jobs > 0) return "running";
+  // Only Runner-owned Jobs are authoritative live execution here. An unfinished
+  // Session call is retained ledger evidence and can outlive the originating Window.
+  if (session.running_jobs > 0) return "running";
   if (attentionCount(session.overview.attention) > 0) return "attention";
   return session.lifecycle === "active" ? "active" : "recent";
 }
@@ -60,10 +62,6 @@ function boundedText(value: string | undefined, max = 140): string {
 }
 
 export function phaseFromSession(session: SessionListItem): string {
-  const current = session.current_activity;
-  if (session.running_call && current) {
-    return boundedText(current.summary) || current.tool || current.kind || "Working";
-  }
   if (session.running_jobs > 0) {
     return session.running_jobs === 1 ? "1 running Job" : `${session.running_jobs} running Jobs`;
   }
@@ -167,10 +165,7 @@ export function groupRecentProgress(detail: SessionDetail | null, limit = 80): P
 
 export function selectedWorkFromDetail(item: WorkItem, detail: SessionDetail | null): WorkItem {
   if (!detail) return item;
-  const detailPhase = phaseFromSession(detail);
-  const phase = detail.running_call && !detail.current_activity && item.currentActivity
-    ? item.phase
-    : detailPhase;
+  const phase = phaseFromSession(detail);
   return {
     ...item,
     title: detail.title,

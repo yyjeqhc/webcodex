@@ -27,8 +27,8 @@ type Props = {
   onUnauthorized: () => void;
 };
 
-function projectSessionCount(project: ProjectRow): number {
-  return project.sessions?.active_sessions ?? 0;
+function projectRetainedSessionCount(project: ProjectRow): number {
+  return project.sessions?.retained_sessions ?? project.sessions?.returned_sessions ?? 0;
 }
 
 export function ProjectsView({ client, language, runners, onOpenSession, onUnauthorized }: Props) {
@@ -41,6 +41,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
   const [addStatus, setAddStatus] = useState("");
   const [addPending, setAddPending] = useState(false);
   const addRequest = useRef<AbortController | null>(null);
+  const sessionsSection = useRef<HTMLElement | null>(null);
   const selectedProject = useMemo(
     () => projectsState.projects.find((project) => project.id === selectedProjectId) || projectsState.projects[0],
     [projectsState.projects, selectedProjectId],
@@ -57,6 +58,11 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
   }, [addRunner, projectsState.runner, runners]);
 
   useEffect(() => () => addRequest.current?.abort(), []);
+
+  const openProject = (projectId: string) => {
+    setSelectedProjectId(projectId);
+    window.setTimeout(() => sessionsSection.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 0);
+  };
 
   const submitAddProject = async (event: FormEvent) => {
     event.preventDefault();
@@ -133,14 +139,15 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
       <div className="project-grid" data-testid="project-grid">
         {projectsState.projects.map((project) => {
           const git = projectsState.gitByProject.get(project.id);
-          const active = projectSessionCount(project);
+          const retained = projectRetainedSessionCount(project);
+          const active = project.sessions?.active_sessions ?? 0;
           const selected = selectedProject?.id === project.id;
           return (
             <button
               className={"project-card" + (selected ? " selected" : "")}
               key={project.id}
               type="button"
-              onClick={() => setSelectedProjectId(project.id)}
+              onClick={() => openProject(project.id)}
               data-testid={"project-card-" + project.id}
             >
               <div className="project-card-head">
@@ -155,11 +162,11 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
               </div>
               <div className="project-card-body">
                 <div><GitBranch size={14} /><span title={String(git?.branch || "")}>{git?.branch || t("Not checked")}</span></div>
-                <div><Monitor size={14} /><span>{active} {t("active sessions")}</span></div>
+                <div><Monitor size={14} /><span>{retained} {t("Sessions")} · {active} {t("active")}</span></div>
                 <div><Clock3 size={14} /><span>{project.sessions?.latest_updated_at ? relativeTime(project.sessions.latest_updated_at) : "—"}</span></div>
               </div>
               {project.path && <code className="project-path" title={project.path}>{project.path}</code>}
-              <span className="project-open">{active ? t("Inspect active Sessions") : t("Open project")} <ArrowUpRight size={14} /></span>
+              <span className="project-open">{t("View Sessions")} <ArrowUpRight size={14} /></span>
             </button>
           );
         })}
@@ -173,13 +180,13 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
       )}
 
       {selectedProject && (
-        <section className="project-sessions" data-testid="project-active-sessions">
+        <section className="project-sessions" data-testid="project-active-sessions" ref={sessionsSection}>
           <div className="section-heading">
             <div>
-              <h2>{projectDisplayName(selectedProject.name, selectedProject.id)} · {t("Active Sessions")}</h2>
+              <h2>{projectDisplayName(selectedProject.name, selectedProject.id)} · {t("Sessions")}</h2>
               <p>{t("A Project may host multiple Sessions. Window counts are bounded, independently authorized evidence.")}</p>
             </div>
-            <span className="quiet-pill">{sessionsState.sessions.filter((session) => workBucket(session) !== "recent").length} {t("active")}</span>
+            <span className="quiet-pill">{sessionsState.total} {t("Sessions")}</span>
           </div>
           <div className="session-table">
             {sessionsState.sessions.map((session) => {
@@ -218,7 +225,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
               <div className="empty-inline">{t("Loading Sessions…")}</div>
             )}
             {sessionsState.availability === "available" && !sessionsState.sessions.length && (
-              <div className="empty-inline">{t("No active or recent Workflow Sessions.")}</div>
+              <div className="empty-inline">{t("No Workflow Sessions retained for this Project.")}</div>
             )}
             {sessionsState.availability === "denied" && (
               <div className="empty-inline">{t("Session list unavailable. Check access to this Project.")}</div>

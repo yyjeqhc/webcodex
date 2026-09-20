@@ -6,7 +6,7 @@ import type { RuntimeV2Client } from "../api/client.js";
 import { SessionExecution } from "../components/SessionExecution.js";
 import { SessionInspector } from "../components/SessionInspector.js";
 import { WorkList } from "../components/WorkList.js";
-import { selectedWorkFromDetail, type WorkItem } from "../model/work.js";
+import { selectedWorkFromDetail, workBucket, type WorkItem } from "../model/work.js";
 import type { ProjectRow } from "../model/types.js";
 import { useProjectGit } from "../state/useProjectGit.js";
 import { useSessionWorkspace, type SessionLocation } from "../state/useSessionWorkspace.js";
@@ -56,7 +56,7 @@ export function WorkView({
         lifecycle: session.detail?.lifecycle || "retained",
         mode: session.detail?.mode || "normal",
         updatedAt: session.detail?.updated_at || 0,
-        bucket: session.detail?.running_call || session.detail?.running_jobs ? "running" : "recent",
+        bucket: session.detail ? workBucket(session.detail) : "recent",
         phase: session.detail?.overview.reported_progress?.text || session.detail?.lifecycle || "Retained",
         runningCall: Boolean(session.detail?.running_call),
         runningJobs: session.detail?.running_jobs || 0,

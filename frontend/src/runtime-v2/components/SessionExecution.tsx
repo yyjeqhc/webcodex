@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
-import { relativeTime, shortId } from "../model/format.js";
+import { relativeTime } from "../model/format.js";
 import { groupRecentProgress, type WorkItem } from "../model/work.js";
 import type { SessionLocation, SessionWorkspaceState } from "../state/useSessionWorkspace.js";
 import { BUCKET_LABEL } from "./WorkList.js";
@@ -77,28 +77,19 @@ export function SessionExecution({ item, location, session, language }: Props) {
               )}
             </section>
 
-            {(item.currentActivity || item.runningJobs > 0) && (
+            {item.runningJobs > 0 && (
               <section className="active-command">
                 <div className="active-command-head">
                   <span><TerminalSquare size={15} /></span>
                   <div>
                     <strong>{t("Current execution")}</strong>
-                    <code>
-                      {item.currentActivity?.summary ||
-                        item.currentActivity?.tool ||
-                        item.currentActivity?.kind ||
-                        String(item.runningJobs) + " running Job" + (item.runningJobs === 1 ? "" : "s")}
-                    </code>
+                    <code>{String(item.runningJobs) + " " + t("Running Jobs")}</code>
                   </div>
                   <span className="command-running"><LoaderCircle size={13} /> {t("running")}</span>
                 </div>
                 <div className="active-command-foot">
-                  <span>{item.currentActivity?.tool || t("Session execution evidence")}</span>
-                  <span>
-                    {item.currentActivity?.job_id
-                      ? "Job " + shortId(item.currentActivity.job_id)
-                      : String(item.runningJobs) + " " + t("Running Jobs")}
-                  </span>
+                  <span>{t("Runner-owned Job execution")}</span>
+                  <span>{String(item.runningJobs) + " " + t("Running Jobs")}</span>
                 </div>
               </section>
             )}

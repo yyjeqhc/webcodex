@@ -54,11 +54,7 @@ fn options(root: PathBuf, state: PathBuf) -> ProjectCommandOptions {
 fn write_console_assets(directory: &Path) {
     fs::create_dir_all(directory).unwrap();
     fs::write(directory.join("runtime.html"), "<html></html>\n").unwrap();
-    fs::write(
-        directory.join("app.js"),
-        "globalThis.runtimeDev = true;\n",
-    )
-    .unwrap();
+    fs::write(directory.join("app.js"), "globalThis.runtimeDev = true;\n").unwrap();
     fs::write(directory.join("styles.css"), "body { color: black; }\n").unwrap();
 }
 

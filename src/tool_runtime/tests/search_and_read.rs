@@ -90,6 +90,84 @@ fn validate_compound_schema(result: &ToolResult) {
 }
 
 #[tokio::test]
+async fn zero_match_include_glob_reports_nonleaking_exclusion_hint() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "compound-glob-exclusion-hint";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let call = ToolCall::from_tool_name(
+        "search_and_read",
+        json!({
+            "project": project,
+            "session_id": session.session_id,
+            "query": {
+                "pattern": "needle",
+                "pattern_mode": "literal",
+                "include_globs": ["docs/**/*.md"]
+            }
+        }),
+    )
+    .unwrap();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let auth = auth_context(None, true);
+            runtime.dispatch_with_auth(call, Some(&auth)).await
+        }
+    });
+
+    let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
+    let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
+    assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &scoped.request_id,
+        1,
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "",
+    )
+    .await;
+
+    let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
+    let diagnostic_payload: Value =
+        serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
+    assert!(diagnostic_payload["include_globs"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &diagnostic.request_id,
+        0,
+        concat!(
+            "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+            "src/private.rs\0",
+            "1:needle\n"
+        ),
+        "",
+    )
+    .await;
+
+    // The diagnostic proves only that the caller's include filter excluded a
+    // match. It must not expose the diagnostic match path or schedule a read.
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["read_request_count"], 0);
+    assert_eq!(result.output["reads"], json!([]));
+    assert_eq!(
+        result.output["search"]["zero_match_hint"],
+        "include_globs_excluded_matches"
+    );
+    assert!(result.output.get("zero_match_hints").is_none());
+    assert!(!serde_json::to_string(&result.output)
+        .unwrap()
+        .contains("src/private.rs"));
+    validate_compound_schema(&result);
+}
+
+#[tokio::test]
 async fn search_and_read_returns_one_source_block_for_overlapping_matches() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

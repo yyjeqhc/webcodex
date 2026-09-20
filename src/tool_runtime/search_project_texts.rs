@@ -53,6 +53,45 @@ fn search_request_and_pattern_mode(
     )
 }
 
+fn include_glob_diagnostic_query(
+    query: &SearchProjectTextsQuery,
+) -> Option<SearchProjectTextsQuery> {
+    if query.include_globs.as_ref().is_none_or(Vec::is_empty) {
+        return None;
+    }
+    let mut diagnostic = query.clone();
+    diagnostic.include_globs = None;
+    diagnostic.result_mode = Some(super::SearchResultMode::Matches);
+    diagnostic.context_before = Some(0);
+    diagnostic.context_after = Some(0);
+    diagnostic.limit = Some(1);
+    Some(diagnostic)
+}
+
+fn successful_search_is_complete_and_empty(result: &ToolResult) -> bool {
+    if !result.success || result.output["truncated"].as_bool() != Some(false) {
+        return false;
+    }
+    match result.output["result_mode"].as_str() {
+        Some("matches") => result.output["matches"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        Some("files_with_matches") => result.output["files"].as_array().is_some_and(Vec::is_empty),
+        Some("count") => {
+            result.output["count_complete"].as_bool() == Some(true)
+                && result.output["total_matches"].as_u64() == Some(0)
+        }
+        _ => false,
+    }
+}
+
+fn successful_diagnostic_has_match(result: &ToolResult) -> bool {
+    result.success
+        && result.output["matches"]
+            .as_array()
+            .is_some_and(|matches| !matches.is_empty())
+}
+
 pub(crate) fn normalized_result_budget(max_result_bytes: Option<usize>) -> usize {
     max_result_bytes
         .unwrap_or(DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES)
@@ -923,8 +962,9 @@ impl ToolRuntime {
                 let project = &resolved.config;
                 let output_project = runtime_project_id.as_str();
                 async move {
+                    let diagnostic_query = include_glob_diagnostic_query(&query);
                     let (request, pattern_mode) = search_request_and_pattern_mode(query);
-                    let result =
+                    let mut result =
                         match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
                             Ok(options) => {
                                 let first = self
@@ -951,6 +991,28 @@ impl ToolRuntime {
                             }
                             Err(error) => error.into_tool_result(),
                         };
+                    if successful_search_is_complete_and_empty(&result) {
+                        if let Some(diagnostic_query) = diagnostic_query {
+                            let (request, pattern_mode) =
+                                search_request_and_pattern_mode(diagnostic_query);
+                            if let Ok(options) =
+                                SearchOptions::normalize_with_pattern_mode(request, pattern_mode)
+                            {
+                                let diagnostic = self
+                                    .search_one_resolved_project_text(
+                                        project,
+                                        output_project,
+                                        options,
+                                        Some(deadline),
+                                    )
+                                    .await;
+                                if successful_diagnostic_has_match(&diagnostic) {
+                                    result.output["zero_match_hint"] =
+                                        json!("include_globs_excluded_matches");
+                                }
+                            }
+                        }
+                    }
                     batch_item(index, result)
                 }
             }))

@@ -3644,6 +3644,79 @@ fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
 }
 
 #[tokio::test]
+async fn search_project_text_zero_match_include_glob_reports_nonleaking_hint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let client_id = "search-glob-hint";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            pattern: "SCOPE_NEEDLE".to_string(),
+                            include_globs: Some(vec!["docs/**/*.md".to_string()]),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+
+    let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
+    let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
+    assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &scoped.request_id,
+        1,
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "",
+    )
+    .await;
+
+    let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
+    let diagnostic_payload: Value =
+        serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
+    assert!(diagnostic_payload["include_globs"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+    assert_eq!(diagnostic_payload["limit"], 1);
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &diagnostic.request_id,
+        0,
+        concat!(
+            "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+            "src/private.rs\0",
+            "1:SCOPE_NEEDLE\n"
+        ),
+        "",
+    )
+    .await;
+
+    let result = extract_single_search_batch_result(task.await.unwrap());
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["matches"], json!([]));
+    assert_eq!(
+        result.output["zero_match_hint"],
+        "include_globs_excluded_matches"
+    );
+    assert!(!serde_json::to_string(&result.output)
+        .unwrap()
+        .contains("src/private.rs"));
+    assert_search_output_keys_are_declared(&result.output);
+}
+
+#[tokio::test]
 async fn search_project_text_include_and_exclude_globs_are_additive() {
     // include/exclude globs are ripgrep-only; without host rg this is a
     // capability error, not a product regression (see

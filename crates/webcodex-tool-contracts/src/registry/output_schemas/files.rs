@@ -155,6 +155,11 @@ fn search_project_texts_output_schema() -> Value {
         "count_complete": {"type": "boolean"},
         "total_matches": nullable_schema("integer", "Complete total in count mode; null when incomplete."),
         "truncated": {"type": "boolean"},
+        "zero_match_hint": {
+            "type": "string",
+            "const": "include_globs_excluded_matches",
+            "description": "Present only after a successful complete zero-result query when a bounded diagnostic proves that removing caller include_globs reveals at least one otherwise eligible match. Diagnostic paths/content are never exposed."
+        },
         "truncation_reason": {
             "anyOf": [
                 {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
@@ -180,7 +185,8 @@ fn search_project_texts_output_schema() -> Value {
             "effective_timeout_secs": search_success_properties["effective_timeout_secs"].clone(),
             "context_before": search_success_properties["context_before"].clone(),
             "context_after": search_success_properties["context_after"].clone(),
-            "matches": search_success_properties["matches"].clone()
+            "matches": search_success_properties["matches"].clone(),
+            "zero_match_hint": search_success_properties["zero_match_hint"].clone()
         },
         "required": ["matches"],
         "description": "Sparse model-facing form for complete rg matches-mode success. Literal mode, custom timeout, non-root path, and requested context counts remain explicit; boring defaults are omitted."
@@ -195,7 +201,8 @@ fn search_project_texts_output_schema() -> Value {
             "effective_timeout_secs": search_success_properties["effective_timeout_secs"].clone(),
             "context_before": search_success_properties["context_before"].clone(),
             "context_after": search_success_properties["context_after"].clone(),
-            "files": search_success_properties["files"].clone()
+            "files": search_success_properties["files"].clone(),
+            "zero_match_hint": search_success_properties["zero_match_hint"].clone()
         },
         "required": ["result_mode", "files"],
         "description": "Sparse model-facing form for complete rg files_with_matches success; files are the primary result and redundant returned-file counts are omitted."
@@ -211,7 +218,8 @@ fn search_project_texts_output_schema() -> Value {
             "context_before": search_success_properties["context_before"].clone(),
             "context_after": search_success_properties["context_after"].clone(),
             "files": search_success_properties["files"].clone(),
-            "total_matches": {"type": "integer", "minimum": 0}
+            "total_matches": {"type": "integer", "minimum": 0},
+            "zero_match_hint": search_success_properties["zero_match_hint"].clone()
         },
         "required": ["result_mode", "total_matches"],
         "description": "Sparse model-facing form for complete rg count success. total_matches is authoritative; optional files retain bounded per-path grouping and redundant count bookkeeping is omitted."

@@ -97,11 +97,11 @@ api_get() {
 
 tool_call() {
     local tool="$1"
-    local arguments="$2"
+    local params="$2"
     local body
-    body="$(python3 - "$tool" "$arguments" <<'PY'
+    body="$(python3 - "$tool" "$params" <<'PY'
 import json, sys
-print(json.dumps({"tool": sys.argv[1], **json.loads(sys.argv[2])}, separators=(",", ":")))
+print(json.dumps({"tool": sys.argv[1], "params": json.loads(sys.argv[2])}, separators=(",", ":")))
 PY
 )"
     api_post /api/tools/call "$body"

@@ -143,9 +143,7 @@ pub use webcodex_tool_contracts::tool_call::{
     ObserveJobsWakeOn, PluginToolCall, ProjectArtifactAction, ReadFilesItem, SearchPatternMode,
     SearchProjectTextsQuery, SearchResultMode, SshResourceToolCall, ToolCall,
 };
-pub(crate) use webcodex_tool_contracts::tool_call::{
-    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,
-};
+pub(crate) use webcodex_tool_contracts::tool_call::{TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD};
 #[cfg(test)]
 pub use webcodex_tool_contracts::tool_inputs::ApplyFileChangeInput;
 #[cfg(all(test, feature = "workspace-checkpoints"))]

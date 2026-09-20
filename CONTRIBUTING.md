@@ -24,18 +24,57 @@ are included.
 - Keep changes focused. Avoid unrelated refactors or generated changes in the
   same pull request.
 
-A useful bug report should include, when relevant:
+## Reporting issues
 
-- the WebCodex version or commit;
-- Server and Runner operating systems;
-- the client in use, such as ChatGPT, Claude, Gemini, Grok, or another MCP
-  client;
-- the authentication mode, such as Bearer or OAuth;
-- clear reproduction steps and expected versus actual behavior;
-- redacted logs or error messages that help identify the failing stage.
+A useful issue should let a maintainer understand the observed problem without
+first asking for basic context. Include what is relevant to the problem; there
+is no need to fill unrelated fields with `N/A`.
+
+For bugs and interoperability problems, include when available:
+
+- **Observed behavior and impact:** what action, tool, UI, or workflow failed,
+  what actually happened, and whether it blocks or degrades normal work.
+- **Environment:** the WebCodex version or commit; Server and Runner operating
+  systems; whether Server and Runner builds are aligned if known; the client or
+  Host in use, such as ChatGPT, Codex, Claude, Gemini, Grok, CLI, Desktop, or
+  WebUI; and the authentication mode. Add browser, proxy, SSH, sandbox, or other
+  environment details only when they are relevant.
+- **Minimal reproduction:** the shortest steps that reproduce the problem and
+  whether it is deterministic, intermittent, or has only been observed once.
+- **Expected versus actual behavior:** state them separately.
+- **Exact evidence:** preserve the exact error text, `error_kind`, exit code,
+  failed stage, or a short redacted log tail when available. Do not replace the
+  only concrete error with a paraphrase.
+- **Diagnostics already tried:** for example, whether the problem also occurs on
+  current `main`, another Runner, a fresh Session, another client, or a known
+  previous version. If this appears to be a regression, include the last known
+  good and first known bad version or commit when known.
+- **Facts versus assessment:** distinguish directly observed facts from a
+  suspected root cause or interpretation.
+
+### Issues written by coding agents
+
+Coding agents are welcome to create issues, but they should make inexpensive
+use of the diagnostics already available to them before filing. An agent that
+can inspect runtime status, build alignment, the exact tool error, relevant
+source, or focused test evidence should normally include that information
+instead of asking a maintainer or reporter to provide it later.
+
+An agent-authored issue should also:
+
+- state whether the problem was **reproduced directly**, **inferred from source
+  or test evidence**, or **reported by a user and not independently reproduced**;
+- never invent missing environment details, reproduction results, or a root
+  cause merely to make the report look complete;
+- identify the inspected WebCodex commit and relevant files when source review
+  materially supports the report;
+- label a root cause as suspected unless the evidence actually establishes it;
+- stop after reasonable, focused diagnostics instead of delaying a useful issue
+  indefinitely for exhaustive investigation.
 
 Never include tokens, authorization headers, private keys, cookies, passwords,
-or other secrets.
+private file contents, or other secrets. For security-sensitive reports, use
+[SECURITY.md](SECURITY.md) instead of a public issue.
 
 ## Development workflow
 

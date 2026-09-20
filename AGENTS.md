@@ -34,6 +34,7 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - For cross-layer features, map the authoritative path before editing and complete it end to end. Update affected enums, registries, schemas, adapters, and projections; do not touch unrelated interfaces merely because they exist.
 - Use compiler, type, schema, and exhaustiveness failures to locate missing integration before broadening validation.
 - Add focused tests where practical and update documentation when public behavior or operations change.
+- Before creating a GitHub issue, read the **Reporting issues** guidance in [`CONTRIBUTING.md`](CONTRIBUTING.md). Include relevant environment and exact evidence you can discover yourself, distinguish reproduced facts from source-based inference or user reports, and never invent missing details or a root cause.
 - Review the completed diff separately from implementation. Check completeness, then relevant authority, bounds, privacy, and replay risks. Match review depth to the change; resolve demonstrated issues without designing around hypothetical reviewer concerns.
 - Ask only when required information cannot be discovered, instructions materially conflict, or proceeding could destroy work. Otherwise continue and report material deviations.
 

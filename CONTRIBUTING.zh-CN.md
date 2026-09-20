@@ -15,16 +15,33 @@
 - 安全相关问题请按照 [SECURITY.md](SECURITY.md) 处理，不要创建公开 issue。
 - 保持改动 focused，不要在同一个 pull request 中混入无关重构或无关的生成内容。
 
-一个有帮助的 bug 报告可以根据实际情况包含：
+## 提交 Issue
 
-- WebCodex version 或 commit；
-- Server 和 Runner 的操作系统；
-- 使用的客户端，例如 ChatGPT、Claude、Gemini、Grok 或其他 MCP client；
-- Bearer、OAuth 等认证方式；
-- 清晰的复现步骤，以及预期行为与实际行为；
-- 能帮助定位失败阶段的脱敏日志或错误信息。
+一个有帮助的 issue 应尽量让维护者无需先追问基础信息，就能理解实际发生了什么。只需要提供与问题相关的信息，不必机械填写无关的 `N/A`。
 
-不要提交 token、Authorization header、private key、cookie、password 或其他 secret。
+对于 bug 和兼容性问题，在能够获取时请提供：
+
+- **实际观察与影响：** 哪个操作、工具、界面或工作流出现问题，实际发生了什么，以及它是完全阻塞还是仅影响正常使用。
+- **运行环境：** WebCodex version 或 commit；Server 和 Runner 的操作系统；如果已知，说明 Server/Runner build 是否一致；使用的 client 或 Host，例如 ChatGPT、Codex、Claude、Gemini、Grok、CLI、Desktop 或 WebUI；以及认证方式。Browser、proxy、SSH、sandbox 等信息只有在与问题相关时才需要提供。
+- **最小复现步骤：** 用最短步骤描述如何触发问题，并说明它是必现、偶发，还是目前只观察到一次。
+- **预期行为与实际行为：** 分开说明。
+- **原始证据：** 如果能获得，请保留准确的错误文本、`error_kind`、exit code、失败阶段或简短的脱敏日志尾部；不要只留下对错误的二次转述。
+- **已经做过的排查：** 例如最新 `main` 是否仍能复现、换 Runner、fresh Session、其他 client 或已知旧版本后结果如何。如果怀疑是 regression，并且已经知道范围，请提供 last known good / first known bad version 或 commit。
+- **事实与判断分开：** 明确区分已经直接观察到的事实与推测的 root cause 或解释。
+
+### 由 Coding Agent 创建的 Issue
+
+欢迎 coding agent 直接创建 issue，但在提交前应优先完成自己已经有能力完成的低成本诊断。例如 agent 能查询 runtime status、build alignment、准确的 tool error、相关源码或 focused test evidence 时，通常应该直接把这些信息写进 issue，而不是留给维护者或报告者下一轮再补。
+
+Agent 创建的 issue 还应：
+
+- 明确说明问题是**已经直接复现**、**根据源码或测试证据推断**，还是**由用户报告但 agent 未独立复现**；
+- 不要为了让报告显得完整而编造缺失的运行环境、复现结果或 root cause；
+- 如果源码检查对报告结论有实质支持，说明检查时对应的 WebCodex commit 和相关文件；
+- 只有证据已经建立因果关系时才把 root cause 写成确定结论，否则明确标注为 suspected；
+- 做到足够的 focused diagnostics 后及时提交，不要为了穷尽所有可能性而长期拖延一个已经有价值的 issue。
+
+不要提交 token、Authorization header、private key、cookie、password、私有文件内容或其他 secret。安全相关问题请按照 [SECURITY.md](SECURITY.md) 处理，不要创建公开 issue。
 
 ## 开发流程
 

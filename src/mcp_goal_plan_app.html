@@ -137,7 +137,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!HOST_DELIVERY_STATES.has(value.host_delivery) || !FRESH_TURN_STATES.has(value.fresh_turn)) return false;
     if (!(value.last_resume_at_unix_ms === null || (Number.isSafeInteger(value.last_resume_at_unix_ms) && value.last_resume_at_unix_ms >= 0))) return false;
     if (!value.available) {
-      return value.state === "unavailable" && !value.production_auto_resume_available
+      return value.state === "unavailable"
         && value.wake_state === null && value.host_delivery === "not_applicable"
         && value.fresh_turn === "not_applicable" && value.last_resume_at_unix_ms === null;
     }

@@ -262,6 +262,31 @@ test("Goal activity refreshes on the same authoritative revision in both directi
   assert.equal(view.timers.size, 1);
 });
 
+test("Goal continuity keeps Host-carrier readiness visible when activity evidence fails closed", async () => {
+  const controller = `wc_dagent_PaPaPaPaPaPaPaPa`;
+  const unavailable = {
+    ...plan,
+    controller_agent_id: controller,
+    activity: {
+      available: false, state: "unobserved", idle_threshold_ms: 300000,
+      last_seen_at_ms: null, last_meaningful_activity_at_ms: null, quiet_for_ms: null,
+      linked_window_count: null, active_meaningful_request_count: null, coverage_partial: true,
+    },
+    continuity: {
+      available: false, state: "unavailable", production_auto_resume_available: true,
+      wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+      last_resume_at_unix_ms: null,
+    },
+  };
+  const view = app("mcp_goal_plan_app.html");
+  await view.initialize();
+  view.toolResult({ goal_plan: unavailable });
+  assert.equal(view.nodes["auto-resume"].textContent, "Ready");
+  assert.equal(view.nodes["continuity-state"].textContent, "Unavailable");
+  assert.equal(view.nodes.activity.textContent, "Window activity observation unavailable.");
+  assert.notEqual(view.nodes.status.textContent, "Invalid Goal Plan state");
+});
+
 test("Goal continuity refreshes on the same authoritative revision without equating Host acceptance to a fresh turn", async () => {
   const controller = `wc_dagent_AgAgAgAgAgAgAgAg`;
   const readyPlan = {

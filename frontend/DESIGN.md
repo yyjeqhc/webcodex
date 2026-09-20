@@ -1,136 +1,89 @@
-# WebCodex Runtime UI
+# WebCodex Runtime WebUI v2
 
-This document is the product and visual contract for the Runtime WebUI: a remote runtime workspace and workflow observability console. One Server coordinates many Runners and their Projects; neither Server nor Runner is assumed to run on the browser's computer. Desktop owns local lifecycle, connections/tunnels, extensions and Computer Use permissions. The WebUI observes and operates Projects, Window Activity, Workflow Sessions and Runtime activity, not Desktop settings.
+Runtime WebUI is the remote WebCodex workbench. It is not the Desktop surface and it is not a browser for backend domain tables. Desktop owns local lifecycle, secure connections, permissions, Skills/Plugins/MCP installation and machine-local settings. Runtime WebUI answers what work is happening, where it is happening, what needs attention, and what evidence supports that state.
 
-## Design synthesis
+## Primary information architecture
 
-The system combines the useful parts of the repositories in the owner's `develop-ui` list without copying any one product:
+The only primary destinations are:
 
-- **Ant Design, Arco Design, Element Plus, and TDesign**: token-driven controls, predictable states, compact enterprise density, and the same component behavior in light/dark and desktop/mobile layouts.
-- **developer-roadmap**: progressive disclosure. Keep workflow navigation direct and disclose diagnostic implementation details one level deeper.
-- **awesome-design-md**: record decisions as a durable design contract. Linear contributes the restrained dark surface ladder and single accent; Cursor contributes the warm light canvas; Apple contributes translucent functional chrome rather than decorative glass.
-- **ui-skills and Emil Kowalski's skills**: spacing before dividers, one accent per view, 44 px coarse-pointer targets, visible focus, responsive press feedback, origin-aware popovers, short compositor-only motion, and reduced-motion/transparency fallbacks.
+1. **Work** — task execution and Session continuation.
+2. **Projects** — repository inventory and Project -> active Sessions.
+3. **Runtime** — infrastructure evidence, Window Activity, Runner health and durable Agent diagnostics.
 
-## Product character
+Workflow Sessions, Window Activity, Jobs, Agents and diagnostics are subordinate dimensions. They are never promoted into additional top-level product concepts.
 
-Calm, precise, technical, and quietly premium. The interface should feel like a well-made developer tool, not a dashboard template and not a glass-effect demo.
+## Work
 
-- Use transparency only for floating functional layers: top bar, composer, menus, inspector.
-- Use tonal contrast and spacing for structural hierarchy. Shadows are reserved for floating layers.
-- Use one cool blue-violet accent for selection, focus, links, and the primary send action.
-- Do not use decorative glow, multicolor gradients, oversized empty cards, or borders around every group.
-- Use platform system fonts. Titles use 600 weight; body uses 400–500. Data and paths use the system monospace stack.
+Work is the default destination. It projects retained Workflow Session facts into an execution workspace rather than rendering a tool-call transcript.
 
-## Tokens
+The left rail is grouped as Running / Needs attention / Active / Recent. A row emphasizes task title, Project, Runner, current evidence-backed phase and update time. Running is derived only from an active call or active Job. Attention is derived only from retained open guidance/questions/risks/todos. A closed Session is not presented as successful unless validation/report evidence says so.
 
-All spacing follows a 4 px base grid. Prefer `4 / 8 / 12 / 16 / 24 / 32` px. Component radii are `8 / 10 / 12 / 16` px; pills alone may use a full radius.
+The center workspace presents task identity, current execution state, retained work counters, current call or Job evidence, grouped recent progress, model-reported progress, retained Session communication and the composer.
 
-Layout proportions use the golden-ratio family as a guide, not as a rigid grid:
+Low-level activity is grouped as Explored / Edited / Ran / Tested / Reviewed / Delegated / Waiting. Grouping is a deterministic presentation transform. It never upgrades Window recency into Session progress, never converts a timestamp into liveness, and never invents a phase or completion state.
 
-- The primary conversation measure is capped at `1120 px` in the normal workspace and `1160 px` when wide-screen context is docked. This keeps technical output readable without leaving an ultrawide display as an empty canvas.
-- The navigation rail follows the smaller golden-ratio derivative in spirit and is bounded to `300–356 px`; device, Project, and Session labels keep enough room while the conversation remains dominant.
-- Empty-state focus begins near the first `23.6%` vertical division rather than being mathematically centered, leaving room for the composer and placing the visual center near the upper golden section.
-- Outgoing bubbles use at most the major `61.8%` of the conversation measure. Incoming content may use the complementary wider measure because technical output often needs longer lines.
-- Below the drawer breakpoint, these proportions yield to full-width content with safe gutters. Golden-ratio geometry must never cause horizontal scrolling or undersized touch targets.
+The right inspector is Context-first. Context shows Project, Runner, branch, Jobs, attention and current validation. Evidence exposes canonical Session ID, Project ref/path, timestamps and linked Windows.
 
-Control sizes:
+## Projects
 
-- Compact: 28 px
-- Default desktop: 34–36 px
-- Primary/touch: 40–44 px
+Projects answers “what work is happening in this repository?”
 
-Surfaces form a stable ladder in both themes:
+Project inventory is server-side searchable and Runner-filterable. Cards show readable Project identity, Runner, branch/path summary, connectivity and active Session count. Opening a Project shows its active/recent Sessions. A Project may contain multiple Sessions, and each Session may be observed by zero, one or multiple Windows.
 
-1. Canvas — conversation workspace.
-2. Structural — sidebar and fixed regions.
-3. Container — selected rows, fields, and grouped content.
-4. Floating — composer, menus, and inspector.
+Project Git and Session Window counts are bounded enrichments. They are independently authorized and cancellable. Add Project preserves the existing resolve-or-register authority contract and never automatically replays an uncertain write.
 
-## Components
+## Runtime
 
-### Daily workspace
+Runtime contains Overview, Window Activity and Agents.
 
-The default destination is **Home**, with Server connectivity, connected Runners, Projects, active/running Workflow Sessions, recent global Window activity and recent work. Primary navigation is **Home / Projects / Window Activity / Workflow Sessions / Activity**. Diagnostics is a secondary sidebar-footer entry. Instructions, Skills, Plugins and MCP Providers remain Desktop responsibilities; removing their WebUI consumer does not remove backend APIs or Desktop extensions.
+Overview shows only authoritative infrastructure facts already available from the Runtime Console APIs: Runner fleet, source/build alignment, active Jobs, visible Workflow Session counts, observed Windows and durable Agent inventory when communication:read is authorized.
 
-Projects is a searchable, Runner-filtered inventory with health, branch, recent activity and Session counts. Opening a Project is never required to discover Windows or Sessions. Workflow Sessions lists actual running work first and recent Sessions second, with Runner/Project/search filters. Project filters load the authorized Project inventory independently of the selected Session; bounded results remain explicitly bounded. Rows show title, Project, Runner, liveness, activity time, Jobs and available attention counts, never fabricated zeros for unavailable data. An exact remembered tab-local Session may be restored; otherwise the most recent visible candidate is selected. A closed Session is not necessarily successful, and no active tool call does not mean disconnected.
+Window Activity is an observation workbench. Window identity is evidence, not ownership. The relationship model is:
 
-`runtime_window_state.ts` owns list/detail refresh, explicit filtering, cancellation and cached-observation availability. `runtime_sessions.ts` owns the workflow inventory and filters. `runtime_workspace.ts` owns Home, bounded work summaries and the command dialog. `Command/Ctrl+Shift+K` opens commands; Escape restores trigger focus. Semantic controls and stable destination identities support keyboards and Browser Use without granting authority.
+    Project <-> Session <-> Window
 
-Window Activity displays opaque keys and observed source, last-seen/tool activity, Project, linked Sessions and active request counts. Raw request `_meta` values never appear. The Server remains authoritative for principal and Project visibility. Loading, empty, stale and denied are different states; a denied scope explains required access without revealing another principal's data. Failed refresh retains last successful evidence with a stale label, but revocation removes cached evidence. Exact request ownership fences late responses even when aborted transports return success. Empty Window data has one concise main-pane message, not duplicate sidebar/detail placeholders.
+Both edges are many-to-many. A Window may observe several Sessions; a Session may be observed by several Windows. Relation kinds such as recording and work_on_project explain correlation, never ownership.
 
-### Information hierarchy
+Agents keeps durable Agent identity, Endpoint readiness, Conversations and endpoint-scoped Inbox diagnostics under Runtime. Browser Endpoint attach/renew/detach remains window-local control state; durable Agent identity remains server-owned. Communication read/manage authority stays independent from Project and Runtime authority.
 
-The interface has three explicit information levels. The same fact must not compete in more than one region.
+## Server state and stale semantics
 
-1. **Primary / always visible** — device, Project and Session names; the current Session liveness; message content; composer; current work and attention.
-2. **Secondary / quiet** — update time, author at the beginning of a message group, reply context, acknowledgement and exceptional status. These use muted type and never compete with content.
-3. **Evidence / disclosed** — raw IDs, workspace paths, validation evidence, reported progress, full activity, Server metrics, Runner diagnostics, and durable Agent tooling. These remain available in collapsed context disclosures.
+React components do not fetch wire endpoints directly. Production layers are:
 
-Navigation answers “where am I?”, conversation answers “what was said?”, and context answers “what evidence explains the state?”. Navigation never repeats diagnostic evidence, and normal messages do not repeat default type, priority, or open status.
+- api/ — existing HTTP contracts and credentials.
+- model/ — bounded deterministic presentation projection.
+- state/ — cancellable server-state hooks, stale/denied/error handling and view-scoped polling.
+- components/ — reusable presentation units.
+- views/ — Work / Projects / Runtime composition.
 
-### Navigation hierarchy
+The last authorized successful snapshot may remain visible after an ordinary refresh failure and is explicitly marked stale. A 401 returns to the credential boundary. A 403/404 authority transition clears revoked detail rather than presenting it as current.
 
-- Global navigation is independent of the selected Runner, Project, Session or Window.
-- The Session sidebar contains the workflow list and its filters, not a permanent Project tree. Its list scrolls as one navigation region.
-- Project names have their own readable line. Long paths and opaque IDs wrap or truncate with accessible full identity instead of widening a pane.
-- Runtime-wide counts are never derived from a selected Project's bounded Window list. Unavailable counts are unknown, not zero.
-- Refresh is available in every primary view. Account, language and appearance actions live in an accessible overflow menu.
+Polling is scoped to visible/meaningful state. Runtime Overview and Project inventory refresh at low frequency. Project Sessions refresh while that Project workspace is active. Window Activity refreshes more frequently only while its workbench is active. A closed Session with no active call or Job is not continuously polled.
 
-### Conversation
+## Browser storage
 
-- Messages submitted by the current browser tab may be presented as outgoing/right using a tab-local presentation hint. Messages with trusted `author_session_id` provenance are incoming/left. Retained messages without either signal remain neutral; reply topology and message kind never invent authorship.
-- The bubble contains message content only.
-- Trusted incoming and provenance-neutral bubbles use a quiet neutral surface; current-tab outgoing bubbles use a restrained true blue rather than the violet selection accent. Both themes preserve this semantic distinction without using status colors as message fills.
-- Bubbles shrink to their content and stop at a bounded conversational measure. A uniform `22 px` radius, earlier wrapping, and no hard outline keep short messages capsule-like and prevent long messages from reading as rectangular cards.
-- Author, exceptional kind/status, time, reply context, acknowledgement, resolution, and actions live outside the bubble. Default note/normal/open metadata and raw message IDs are not rendered as visible labels.
-- Identity is carried by a compact author line at the beginning of each same-side message group. `Agent` is shown only for trusted author provenance and `You` only for a current-tab presentation hint; otherwise the row is labelled as retained without claiming an author. Presentation hints never grant mutation authority.
-- Consecutive messages from the same side use a tighter gap; a side change creates a larger conversational beat.
-- Reply depth is communicated by a small context line, not growing horizontal indentation.
-- Opening or switching a Session positions the transcript at its latest retained message. Newly observed messages follow smoothly; a poll with no new message preserves the reader's current history position.
-- Scrolling upward explicitly pauses automatic follow. Newly retained messages then appear behind a bounded “new messages” control and a dedicated screen-reader announcement; they never pull the reader away from history.
-- Message content may contain paragraphs, headings, lists, quotes, links, and fenced code. Rendering is DOM-based and text-safe; code has a copy action, and unusually long messages collapse behind an explicit disclosure.
+Runtime credentials may be retained only in tab-scoped sessionStorage. They are never written to localStorage or cookies. Lock clears the remembered credential.
 
-### Composer
+Per-Project/Session drafts use sessionStorage. Language, appearance and the primary view are non-secret preferences and may use localStorage.
 
-- The composer is the primary floating material but occupies its own bottom layout row. Main history ends above it, never behind it; opening context reserves the composer area.
-- Text input owns most of the area and grows with content. `Enter` sends on every device, while `Shift+Enter` inserts a newline; IME composition Enter is never treated as submit.
-- The default surface exposes one tools entry and one send action. Kind, priority, and acknowledgement live in an upward disclosure so default note/normal messages do not carry permanent form chrome.
-- The send action becomes visually active only when content exists. Native selects remain native for keyboard and mobile reliability, but share the same disclosed control shell and focus treatment.
-- Focus lifts the composer by one pixel and strengthens its edge/shadow; opening options, reply/edit context, and newly retained messages use short transform-and-opacity transitions.
-- Each Project/Session pair owns a tab-scoped draft. Switching Sessions and refreshing the page restores that draft; editing an existing retained message temporarily replaces the field and restores the draft when editing ends.
+## Accessibility and responsive behavior
 
-### Browser storage and credentials
+Core information never depends on hover. Interactive controls have visible focus treatment and native keyboard semantics. Reduced-motion and reduced-transparency preferences are respected.
 
-- Web Storage is an intentional Runtime Console dependency. Non-secret UI preferences such as language, appearance, workspace view, and disclosure state may use `localStorage` so refreshes preserve the workspace.
-- When **Keep me signed in for this tab** is enabled, the Runtime Bearer credential is stored only in tab-scoped `sessionStorage`; it is never written to `localStorage` or cookies. **Lock** removes it, and closing the tab ends that browser-session storage.
-- Session drafts use `sessionStorage`. Current-tab message presentation hints stay in page memory and may disappear on refresh or Session switching. Neither value becomes authentication, authorization, durable author provenance, or Workflow Session identity.
-- Web Storage is readable by same-origin page script. On a shared or untrusted browser profile, disable credential retention or use **Lock** before handing the browser to another person.
+At desktop widths Work uses three regions when space permits: Session list, execution workspace and Context inspector. At 1280 px the inspector may collapse to protect the execution workspace. Narrow screens retain all three primary destinations through a fixed bottom navigation and stack complex workbenches vertically rather than deleting functionality.
 
-### Runtime and Session context
+## Build and production integration
 
-- Diagnostics preserves Server metrics, Runner health and durable Agent tooling below the primary navigation; these do not compete with the workflow workspace.
-- The Session context inspector contains only evidence about the selected Session: identity, workspace path, validation, reported progress, and activity. Current work and attention stay near the top while raw evidence is disclosed one level deeper.
-- At `1600 px` and above, the otherwise empty right-side remainder docks a Session context rail by default, but remains user-collapsible. Below the wide breakpoint context is a dismissible overlay/drawer. Its bottom edge is measured against the composer, including textarea growth, rather than assuming a fixed browser viewport. Escape and close work in both docked and floating modes.
-- Runtime administration is a scrollable card grid with stable anchors for overview, Runner fleet, and Agent communication. On narrow screens it becomes a single column; it never shares the conversational composer or message canvas.
+Runtime production assets are React + TypeScript + Vite and are committed as deterministic:
 
-## Scroll model
+- frontend/dist/runtime.html
+- frontend/dist/app.js
+- frontend/dist/styles.css
 
-Session summary and conversation share one main history scroller. The composer is its sibling bottom row. Navigation owns one independent scroller. Context Overview/Details use the context scroller; Activity uses its own list instead of nesting two competing scroll regions. Scrolling history pauses follow-latest, and polling preserves the reader's position. Only an explicit jump resumes following. Context cannot shrink the main grid below a usable reading measure; all main grid tracks use `minmax(0, 1fr)` and `min-width: 0`.
+The Server embeds those files and serves them at /runtime, /runtime/app.js and /runtime/styles.css. Production does not depend on a Vite development server.
 
-## Responsive behavior
+The old Runtime classic concatenation bundle has been retired. frontend/scripts/build.mjs remains only for the Admin console. Runtime WebUI continues to reuse the small shared runtime_api.ts, runtime_storage.ts and runtime_i18n.ts modules.
 
-- At 900 px and below, navigation becomes a dismissible drawer and the main conversation remains full width.
-- At 1600 px and above, navigation, conversation, and context form a bounded three-column working surface when context is open; the context rail can be collapsed by the user or disappears before it can crowd the primary task.
-- At 600 px and below, optional labels collapse, controls wrap without horizontal scrolling, bubbles can use up to 92% width, and safe-area insets are respected.
-- Language, appearance and lock live in one labelled overflow menu; refresh remains directly available. The menu closes on outside press and Escape and restores focus to its trigger.
-- Coarse pointers receive at least 44 px targets.
-- `prefers-reduced-motion`, `prefers-reduced-transparency`, `prefers-contrast`, and forced colors receive explicit fallbacks.
+## Multi-Agent extension point
 
-## Motion
-
-- Press feedback: `transform: scale(.97)` for 100–140 ms.
-- Small popovers: opacity plus a scale starting near `.98`, 140–180 ms, with origin at the trigger.
-- Drawers: transform plus opacity, no layout-property animation.
-- Composer growth follows content immediately to avoid lag, while material/focus state transitions over 220–280 ms. A newly available send action uses one short scale settle, never a repeating pulse.
-- Only newly observed collaboration messages enter with motion; polling must not replay animation on the retained transcript.
-- Routine list selection does not animate spatially.
+Work presentation items allow optional actor identity and do not assume one Agent per Session. Future Coordinator / Worker / Reviewer events can therefore be projected into the same grouped timeline without changing the primary information architecture. AgentTask, Goal, Conversation and handoff events remain evidence inside Work or Runtime rather than new primary destinations.

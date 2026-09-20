@@ -5,6 +5,7 @@ use crate::models::{
 };
 use crate::process::ProcessPhase;
 use serde_json::json;
+use std::io::{Read, Write};
 use std::process::Command;
 
 fn config(id: TunnelProfileId) -> TunnelProfileConfigSnapshot {
@@ -40,29 +41,40 @@ fn metadata(port: u16) -> Value {
     let directory = root().join(format!("openai-{}", uuid::Uuid::new_v4().simple()));
     json!({"directory":directory, "health_url":format!("http://127.0.0.1:{port}"), "log_file":directory.join("openai-tunnel.log"), "tunnel_client_pid":42, "local_mcp_url":"http://127.0.0.1:62645/mcp"})
 }
+const FIXTURE_CHILD_ENV: &str = "WEBCODEX_CONNECTION_FIXTURE_CHILD";
+const FIXTURE_EVENTS_ENV: &str = "WEBCODEX_FIXTURE_EVENTS";
+const FIXTURE_CHILD_TEST: &str =
+    "connections::tests::fixture_child_emits_machine_events_and_holds_parent_lease";
+
 fn fixture(events: &[Value]) -> Command {
     let stream = events
         .iter()
         .map(|v| v.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    #[cfg(unix)]
-    let mut command = {
-        let mut c = Command::new("/bin/sh");
-        c.args([
-            "-c",
-            "printf '%s\\n' \"$WEBCODEX_FIXTURE_EVENTS\"; cat >/dev/null",
-        ]);
-        c
-    };
-    #[cfg(windows)]
-    let mut command = {
-        let mut c = Command::new("powershell.exe");
-        c.args(["-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.WriteLine($env:WEBCODEX_FIXTURE_EVENTS); [Console]::In.ReadToEnd() | Out-Null"]);
-        c
-    };
-    command.env("WEBCODEX_FIXTURE_EVENTS", stream);
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", FIXTURE_CHILD_TEST, "--nocapture"]);
+    command.env(FIXTURE_CHILD_ENV, "1");
+    command.env(FIXTURE_EVENTS_ENV, stream);
     command
+}
+
+#[test]
+fn fixture_child_emits_machine_events_and_holds_parent_lease() {
+    if std::env::var_os(FIXTURE_CHILD_ENV).is_none() {
+        return;
+    }
+
+    let events = std::env::var(FIXTURE_EVENTS_ENV).unwrap();
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(events.as_bytes()).unwrap();
+    stdout.write_all(b"\n").unwrap();
+    stdout.flush().unwrap();
+    drop(stdout);
+
+    let mut stdin = std::io::stdin().lock();
+    let mut sink = Vec::new();
+    stdin.read_to_end(&mut sink).unwrap();
 }
 async fn start(
     registry: &ConnectionRuntimes,

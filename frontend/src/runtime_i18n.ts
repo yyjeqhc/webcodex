@@ -652,6 +652,8 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "No retained activity in this Session.": "此会话中没有保留的活动记录。",
   "Agent progress report": "Agent 进展报告",
   "Session communication": "会话通信",
+  "retained messages": "条保留消息",
+  "Loading Session messages…": "正在加载会话消息…",
   "Collaborate": "协作",
   "Collaborate with this Session": "与此会话协作",
   "Leave retained guidance, questions, todos, or notes for the next turn.": "为下一轮留下可保留的指导、问题、待办或备注。",

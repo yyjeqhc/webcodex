@@ -1,6 +1,5 @@
 import {
   Bot,
-  ChevronDown,
   CircleDot,
   Clock3,
   LoaderCircle,
@@ -126,60 +125,63 @@ export function SessionExecution({ item, location, session, language }: Props) {
                 </div>
               </article>
             )}
-
-            <details className="session-communication">
-              <summary>
-                <MessageSquare size={15} />
-                <strong>{t("Session communication")}</strong>
-                <span>{session.messages?.messages.length || 0}</span>
-                <ChevronDown size={15} />
-              </summary>
-              <div className="message-list">
-                {session.messages?.messages.map((message) => (
-                  <article className="retained-message" key={message.message_id}>
-                    <div className="message-meta">
-                      <strong>{message.author_session_id ? t("Agent / Session") : t("Retained message")}</strong>
-                      <time>{relativeTime(message.created_at)}</time>
-                    </div>
-                    <p>{message.message}</p>
-                    <div className="message-actions">
-                      <button
-                        type="button"
-                        onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-reply-message", {
-                          detail: { messageId: message.message_id, message: message.message },
-                        }))}
-                      >
-                        {t("Reply")}
-                      </button>
-                      {message.status === "open" && MUTABLE_MESSAGE_KINDS.has(message.kind) && session.mutationAllowed !== false && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-edit-message", {
-                              detail: { messageId: message.message_id, message: message.message },
-                            }))}
-                          >
-                            {t("Edit")}
-                          </button>
-                          <button type="button" onClick={() => void session.withdraw(message.message_id)}>{t("Withdraw")}</button>
-                        </>
-                      )}
-                    </div>
-                  </article>
-                ))}
-                {session.messagesAvailability === "denied" && (
-                  <p className="muted-copy">{t("Session messages are not available with this access key.")}</p>
-                )}
-                {session.messages?.messages.length === 0 && (
-                  <p className="muted-copy">{t("No retained Session messages.")}</p>
-                )}
-              </div>
-            </details>
           </div>
         </div>
       </div>
 
-      <SessionComposer location={location} session={session} language={language} />
+      <section className="session-collaboration-dock" aria-label={t("Session communication")}>
+        <header className="collaboration-dock-header">
+          <span><MessageSquare size={15} /><strong>{t("Session communication")}</strong></span>
+          <small>{session.messages?.messages.length || 0} {t("retained messages")}</small>
+        </header>
+        <div className="collaboration-message-scroll">
+          <div className="message-list">
+            {session.messages?.messages.map((message) => (
+              <article className="retained-message" key={message.message_id}>
+                <div className="message-meta">
+                  <strong>{message.author_session_id ? t("Agent / Session") : t("Retained message")}</strong>
+                  <span className="message-kind">{t(message.kind)}</span>
+                  <time>{relativeTime(message.created_at)}</time>
+                </div>
+                <p>{message.message}</p>
+                <div className="message-actions">
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-reply-message", {
+                      detail: { messageId: message.message_id, message: message.message },
+                    }))}
+                  >
+                    {t("Reply")}
+                  </button>
+                  {message.status === "open" && MUTABLE_MESSAGE_KINDS.has(message.kind) && session.mutationAllowed !== false && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent("webcodex-runtime-edit-message", {
+                          detail: { messageId: message.message_id, message: message.message },
+                        }))}
+                      >
+                        {t("Edit")}
+                      </button>
+                      <button type="button" onClick={() => void session.withdraw(message.message_id)}>{t("Withdraw")}</button>
+                    </>
+                  )}
+                </div>
+              </article>
+            ))}
+            {session.messagesAvailability === "loading" && !session.messages && (
+              <p className="muted-copy">{t("Loading Session messages…")}</p>
+            )}
+            {session.messagesAvailability === "denied" && (
+              <p className="muted-copy">{t("Session messages are not available with this access key.")}</p>
+            )}
+            {session.messages?.messages.length === 0 && (
+              <p className="muted-copy">{t("No retained Session messages.")}</p>
+            )}
+          </div>
+        </div>
+        <SessionComposer location={location} session={session} language={language} />
+      </section>
     </main>
   );
 }

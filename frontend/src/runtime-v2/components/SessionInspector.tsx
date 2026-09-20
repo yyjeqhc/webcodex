@@ -70,6 +70,7 @@ export function SessionInspector({
               <div><span>{t("Project")}</span><strong>{projectDisplayName(project?.name, location.projectId)}</strong></div>
               <div><span>{t("Runner")}</span><strong>{location.runner}</strong></div>
               <div><span>{t("Branch")}</span><strong><GitBranch size={13} /> {branch || t("Not checked")}</strong></div>
+              <div className="fact-path"><span>{t("Path")}</span><strong><code title={project?.path}>{project?.path || "—"}</code></strong></div>
               <div><span>{t("Last activity")}</span><strong>{relativeTime(detail?.updated_at || item.updatedAt)}</strong></div>
               <div><span>{t("Jobs")}</span><strong>{detail?.running_jobs ?? item.runningJobs}</strong></div>
             </div>

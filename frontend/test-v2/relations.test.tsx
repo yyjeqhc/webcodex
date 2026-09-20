@@ -258,6 +258,7 @@ describe("Project / Session / Window relationships", () => {
       onUnauthorized: vi.fn(),
     };
     const rendered = render(<WorkView {...props} />);
+    expect(await screen.findByText("/root/git/webcodex")).toBeTruthy();
     fireEvent.click(await screen.findByRole("tab", { name: "Evidence" }));
     expect(await screen.findByText(/Window 1111111111/)).toBeTruthy();
     expect(screen.getByText(/Window 2222222222/)).toBeTruthy();

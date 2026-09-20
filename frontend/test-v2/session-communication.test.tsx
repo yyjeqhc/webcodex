@@ -64,7 +64,8 @@ describe("Session communication parity", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Session communication"));
+    expect(screen.getByRole("tab", { name: "Workflow" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: /Collaboration/ }));
     const note = screen.getByText("Mutable note").closest("article")!;
     expect(within(note).getByRole("button", { name: "Reply" })).toBeTruthy();
     expect(within(note).getByRole("button", { name: "Edit" })).toBeTruthy();
@@ -131,7 +132,10 @@ describe("Session communication parity", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Guidance" }));
+    act(() => {
+      window.dispatchEvent(new CustomEvent("webcodex-runtime-compose-message", { detail: { kind: "guidance" } }));
+    });
+    expect(screen.getByRole("tab", { name: /Collaboration/ }).getAttribute("aria-selected")).toBe("true");
     const composer = screen.getByRole("textbox", { name: "Send a message to this work session…" });
     fireEvent.change(composer, { target: { value: "Please prioritize the current blocker." } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -157,11 +161,28 @@ describe("Session communication parity", () => {
         language="en"
       />,
     );
-    fireEvent.click(screen.getByText("Session communication"));
+    fireEvent.click(screen.getByRole("tab", { name: /Collaboration/ }));
     const note = screen.getByText("Mutable note").closest("article")!;
     expect(within(note).getByRole("button", { name: "Reply" })).toBeTruthy();
     expect(within(note).queryByRole("button", { name: "Edit" })).toBeNull();
     expect(within(note).queryByRole("button", { name: "Withdraw" })).toBeNull();
+  });
+
+  it("returns to Workflow when the selected Session changes", () => {
+    const session = workspace();
+    const recent = recentSession();
+    const props = {
+      item: workItemFromRecent(recent),
+      location: { projectId: recent.project_id, projectName: recent.project_name || recent.project_id, runner: recent.client_id, sessionId: recent.session_id },
+      session,
+      language: "en" as const,
+    };
+    const rendered = render(<SessionExecution {...props} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Collaboration/ }));
+    expect(screen.getByRole("tab", { name: /Collaboration/ }).getAttribute("aria-selected")).toBe("true");
+
+    rendered.rerender(<SessionExecution {...props} location={{ ...props.location, sessionId: "wc_sess_abcdef0123456789" }} />);
+    expect(screen.getByRole("tab", { name: "Workflow" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("retains an explicit recovery notice when a send transport outcome is unknown", async () => {

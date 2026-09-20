@@ -6,6 +6,7 @@ import {
   MessageSquare,
   TerminalSquare,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import { relativeTime } from "../model/format.js";
@@ -27,6 +28,17 @@ type Props = {
 export function SessionExecution({ item, location, session, language }: Props) {
   const t = (value: string) => translate(value, language);
   const progress = groupRecentProgress(session.detail);
+  const [centerTab, setCenterTab] = useState<"workflow" | "collaboration">("workflow");
+
+  useEffect(() => {
+    setCenterTab("workflow");
+  }, [location.projectId, location.sessionId]);
+
+  useEffect(() => {
+    const openCollaboration = () => setCenterTab("collaboration");
+    window.addEventListener("webcodex-runtime-compose-message", openCollaboration);
+    return () => window.removeEventListener("webcodex-runtime-compose-message", openCollaboration);
+  }, []);
 
   return (
     <main className="session-main">
@@ -43,7 +55,39 @@ export function SessionExecution({ item, location, session, language }: Props) {
         </div>
       </header>
 
-      <div className="timeline-scroll">
+      <div className="session-view-tabs" role="tablist" aria-label={t("Work view")}>
+        <button
+          id="workflow-tab"
+          role="tab"
+          aria-selected={centerTab === "workflow"}
+          aria-controls="workflow-panel"
+          className={centerTab === "workflow" ? "active" : ""}
+          type="button"
+          onClick={() => setCenterTab("workflow")}
+        >
+          {t("Workflow")}
+        </button>
+        <button
+          id="collaboration-tab"
+          role="tab"
+          aria-selected={centerTab === "collaboration"}
+          aria-controls="collaboration-panel"
+          className={centerTab === "collaboration" ? "active" : ""}
+          type="button"
+          onClick={() => setCenterTab("collaboration")}
+        >
+          {t("Collaboration")}
+          <span>{session.messages?.messages.length || 0}</span>
+        </button>
+      </div>
+
+      <div
+        id="workflow-panel"
+        className="timeline-scroll session-center-pane workflow-pane"
+        role="tabpanel"
+        aria-labelledby="workflow-tab"
+        hidden={centerTab !== "workflow"}
+      >
         <div className="timeline-measure">
           <div className="task-run">
             <section className="task-prompt">
@@ -129,12 +173,14 @@ export function SessionExecution({ item, location, session, language }: Props) {
         </div>
       </div>
 
-      <section className="session-collaboration-dock" aria-label={t("Session communication")}>
-        <header className="collaboration-dock-header">
-          <span><MessageSquare size={15} /><strong>{t("Session communication")}</strong></span>
-          <small>{session.messages?.messages.length || 0} {t("retained messages")}</small>
-        </header>
-        <div className="collaboration-message-scroll">
+      <section
+        id="collaboration-panel"
+        className="collaboration-workspace session-center-pane"
+        role="tabpanel"
+        aria-labelledby="collaboration-tab"
+        hidden={centerTab !== "collaboration"}
+      >
+        <div className="collaboration-message-scroll" aria-label={t("Session communication")}>
           <div className="message-list">
             {session.messages?.messages.map((message) => (
               <article className="retained-message" key={message.message_id}>

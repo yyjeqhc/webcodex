@@ -3,13 +3,28 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs --out-dir dist",
-    "dev": "node scripts/build.mjs --out-dir .dev-dist --watch",
-    "check:dist": "node scripts/build.mjs --out-dir dist --check",
+    "build": "node scripts/build.mjs --out-dir dist --admin-only && node scripts/build-runtime-v2.mjs --out-dir dist",
+    "dev": "vite --config vite.runtime.config.ts",
+    "dev:admin": "node scripts/build.mjs --out-dir .dev-dist --watch",
+    "check:dist": "node scripts/build.mjs --out-dir dist --check && node scripts/build-runtime-v2.mjs --out-dir dist --check",
     "typecheck": "tsc --noEmit",
-    "test": "node --test"
+    "test:admin": "node --test test/admin_controller.test.mjs test/admin_mutation_controller.test.mjs test/admin_mutation_view.test.mjs test/admin_view.test.mjs test/build.test.mjs",
+    "test:runtime": "vitest run --config vitest.config.ts",
+    "test": "npm run test:admin && npm run test:runtime"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.4.0",
+    "vite": "^8.3.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "lucide-react": "^1.47.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

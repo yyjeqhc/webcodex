@@ -6,7 +6,7 @@ const goal_id = "wc_goal_G4G4G4G4G4G4G4G4";
 const agent_id = "wc_dagent_AgAgAgAgAgAgAgAg";
 const step = (id, status) => ({ id, title: id, status, updated_at_unix_ms: 1000 });
 const plan = {
-  version: 2, goal_id, title: "Single-window workflow", controller_agent_id: agent_id,
+  version: 3, goal_id, title: "Single-window workflow", controller_agent_id: agent_id,
   total_step_count: 5, completed_step_count: 2, current_step_id: "validate",
   steps: [step("inspect", "completed"), step("implement", "completed"), step("validate", "in_progress"), step("review", "pending"), step("closeout", "pending")],
   progress_summary: "Implementation complete; run focused validation", checkpoint_at_unix_ms: 1000,
@@ -16,6 +16,11 @@ const plan = {
     available: true, state: "attention_needed", idle_threshold_ms: 300000,
     last_seen_at_ms: 301000, last_meaningful_activity_at_ms: 1000, quiet_for_ms: 300000,
     linked_window_count: 1, active_meaningful_request_count: 0, coverage_partial: false,
+  },
+  continuity: {
+    available: true, state: "stalled", production_auto_resume_available: false,
+    wake_state: null, host_delivery: "not_started", fresh_turn: "not_confirmed",
+    last_resume_at_unix_ms: null,
   },
 };
 const attention = {
@@ -85,11 +90,19 @@ test("ineligible or uncertain detector results may recheck authoritative state, 
 });
 
 for (const [name, change] of [
-  ["no controller", { controller_agent_id: null }],
-  ["active work", { activity: { ...plan.activity, state: "active" } }],
-  ["inflight work", { activity: { ...plan.activity, active_meaningful_request_count: 1 } }],
-  ["partial evidence", { activity: { ...plan.activity, coverage_partial: true } }],
-  ["unobserved", { activity: { ...plan.activity, state: "unobserved" } }],
+  ["no controller", { controller_agent_id: null, continuity: {
+    available: true, state: "not_configured", production_auto_resume_available: false,
+    wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+    last_resume_at_unix_ms: null,
+  } }],
+  ["active work", { activity: { ...plan.activity, state: "active" }, continuity: { ...plan.continuity, state: "ready" } }],
+  ["inflight work", { activity: { ...plan.activity, active_meaningful_request_count: 1 }, continuity: { ...plan.continuity, state: "ready" } }],
+  ["partial evidence", { activity: { ...plan.activity, coverage_partial: true }, continuity: {
+    available: false, state: "unavailable", production_auto_resume_available: false,
+    wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+    last_resume_at_unix_ms: null,
+  } }],
+  ["unobserved", { activity: { ...plan.activity, state: "unobserved" }, continuity: { ...plan.continuity, state: "ready" } }],
 ]) {
   test(`Goal detector does not request continuation with ${name}`, async () => {
     const view = await ready({ ...plan, ...change });
@@ -106,6 +119,9 @@ test("terminal Goal stops both polling and in-flight detector follow-up", async 
     activity: { available: false, state: "not_applicable", idle_threshold_ms: 300000,
       last_seen_at_ms: null, last_meaningful_activity_at_ms: null, quiet_for_ms: null,
       linked_window_count: null, active_meaningful_request_count: null, coverage_partial: false },
+    continuity: { available: true, state: "not_applicable", production_auto_resume_available: false,
+      wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+      last_resume_at_unix_ms: null },
   } });
   await view.reply(view.calls("goal_plan_recheck_attention")[0], toolResult(attention));
   await view.fireTimers(3000);
@@ -117,7 +133,7 @@ test("terminal Goal stops both polling and in-flight detector follow-up", async 
 });
 
 for (const [name, change] of [
-  ["old wire", { version: 1 }],
+  ["old wire", { version: 2 }],
   ["wrong step count", { total_step_count: 6 }],
   ["wrong completed count", { completed_step_count: 3 }],
   ["unknown current", { current_step_id: "missing" }],

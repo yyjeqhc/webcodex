@@ -256,12 +256,16 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 
 ### Goal Plan progress projection and inactivity detector
 
-The sole current Goal Plan resource is `ui://webcodex/goal-plan/v3`; its sole current
-wire version is **2**. Older pre-production Goal resource aliases are not served.
+The sole current Goal Plan resource is `ui://webcodex/goal-plan/v4`; its sole current
+wire version is **3**. Older pre-production Goal resource aliases are not served.
 `present_goal_plan` is the only model-visible App-bound presentation tool.
 `goal_plan_state` is an exact owner-authorized read, polled about every three seconds.
 The card projects title, lifecycle/revision, controller identity, step counts,
-bounded steps/current step, checkpoint summary/time and derived activity. It omits
+bounded steps/current step, checkpoint summary/time, derived activity, and bounded
+continuity observation. Continuity separates current production carrier readiness,
+the exact current Goal-stall Wake lifecycle, Host delivery, and exact-consume
+fresh-turn proof; a historical consume becomes only a last-resume timestamp after
+newer meaningful work. It omits
 objective/conditions, Task bodies/results, private Project paths, correlation
 identities, Session ledger, Endpoint bindings, tokens/fences, stdout/stderr and full
 history. The presentation envelope is bounded to 40 KiB including metadata.

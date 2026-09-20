@@ -6,6 +6,7 @@ use super::agent_attention::{
     AgentAttentionEventRecord, AgentAttentionSource, AGENT_ATTENTION_EVENT_ID_PREFIX,
     AGENT_ATTENTION_EVENT_KIND_GOAL_WORKFLOW_STALLED,
 };
+use super::agent_wake::AgentWakeState;
 use super::communication::{
     allocate_identity, store_error, validate_communication_principal, CommunicationPrincipal,
     CommunicationStoreError,
@@ -43,6 +44,29 @@ pub struct GoalStallAttention {
     pub created: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalStallHostDeliveryObservation {
+    NotObserved,
+    Accepted,
+    Unknown,
+}
+
+/// Bounded semantic result of an exact-Goal continuity join. Correlation
+/// identifiers remain local to the Store query and are deliberately not exposed
+/// to Runtime/UI projection code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalStallWakeObservation {
+    pub state: AgentWakeState,
+    pub host_delivery: GoalStallHostDeliveryObservation,
+    pub consumed_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalStallContinuityObservation {
+    pub current_wake: Option<GoalStallWakeObservation>,
+    pub last_consumed_at_unix_ms: Option<i64>,
+}
+
 fn invariant() -> CommunicationStoreError {
     CommunicationStoreError::new(
         "goal_stall_attention_invariant",
@@ -70,6 +94,191 @@ fn live_quiet_observation(last_work: i64, last_seen: i64, now: i64) -> bool {
 }
 
 impl Database {
+    /// Read bounded durable continuity evidence for one owned Goal.
+    ///
+    /// The current Wake is returned only when the exact current inactivity epoch
+    /// targets the Goal's current controller. Historical consumed Wakes remain
+    /// available only as a timestamp. This prevents another Goal, AgentTask,
+    /// AgentWait, prior controller, or prior inactivity epoch on the same Agent
+    /// from becoming current Goal continuity state.
+    pub fn read_goal_stall_continuity(
+        &self,
+        principal: &CommunicationPrincipal,
+        goal_id: &str,
+        current_last_meaningful_activity_at_ms: Option<i64>,
+        current_controller_agent_id: &str,
+    ) -> Result<GoalStallContinuityObservation, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        let conn = self.lock_connection(crate::StoreDomain::Goal);
+
+        let malformed: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM wc_agent_attention_events e
+                    LEFT JOIN wc_agent_wakes w
+                      ON w.source_event_id = e.event_id
+                     AND w.trigger_kind = 'attention_event'
+                     AND w.source_task_id IS NULL
+                     AND w.source_task_attempt_id IS NULL
+                     AND w.source_wait_id IS NULL
+                     AND w.target_agent_id = e.target_agent_id
+                    WHERE e.kind = 'goal_workflow_stalled'
+                      AND e.goal_id = ?1
+                      AND e.owner_principal_kind = ?2
+                      AND e.owner_principal_digest = ?3
+                    GROUP BY e.event_id
+                    HAVING COUNT(w.wake_id) != 1
+                )",
+                params![goal_id, principal.kind, principal.digest],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if malformed {
+            return Err(invariant());
+        }
+
+        let last_consumed_at_unix_ms = conn
+            .query_row(
+                "SELECT MAX(w.consumed_at_unix_ms)
+                 FROM wc_agent_attention_events e
+                 JOIN wc_agent_wakes w
+                   ON w.source_event_id = e.event_id
+                  AND w.trigger_kind = 'attention_event'
+                  AND w.source_task_id IS NULL
+                  AND w.source_task_attempt_id IS NULL
+                  AND w.source_wait_id IS NULL
+                  AND w.target_agent_id = e.target_agent_id
+                 WHERE e.kind = 'goal_workflow_stalled'
+                   AND e.goal_id = ?1
+                   AND e.owner_principal_kind = ?2
+                   AND e.owner_principal_digest = ?3
+                   AND w.state = 'consumed'",
+                params![goal_id, principal.kind, principal.digest],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(store_error)?;
+
+        let Some(epoch) = current_last_meaningful_activity_at_ms else {
+            return Ok(GoalStallContinuityObservation {
+                current_wake: None,
+                last_consumed_at_unix_ms,
+            });
+        };
+        let row = conn
+            .query_row(
+                "SELECT e.target_agent_id,
+                        w.wake_id, w.target_agent_id, w.state,
+                        w.claimed_attempt_id, w.claimed_endpoint_id,
+                        w.claimed_controller_generation, w.consumed_at_unix_ms,
+                        a.attempt_id, a.delivered_at_unix_ms,
+                        a.delivery_unknown_at_unix_ms
+                 FROM wc_agent_attention_events e
+                 JOIN wc_agent_wakes w
+                   ON w.source_event_id = e.event_id
+                  AND w.trigger_kind = 'attention_event'
+                  AND w.source_task_id IS NULL
+                  AND w.source_task_attempt_id IS NULL
+                  AND w.source_wait_id IS NULL
+                  AND w.target_agent_id = e.target_agent_id
+                 LEFT JOIN wc_agent_wake_attempts a
+                   ON a.attempt_id = w.claimed_attempt_id
+                  AND a.wake_id = w.wake_id
+                 WHERE e.kind = 'goal_workflow_stalled'
+                   AND e.goal_id = ?1
+                   AND e.last_meaningful_activity_at_ms = ?2
+                   AND e.owner_principal_kind = ?3
+                   AND e.owner_principal_digest = ?4",
+                params![goal_id, epoch, principal.kind, principal.digest],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, Option<i64>>(9)?,
+                        row.get::<_, Option<i64>>(10)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(store_error)?;
+        let Some((
+            event_target_agent_id,
+            _wake_id,
+            wake_target_agent_id,
+            wake_state,
+            claimed_attempt_id,
+            claimed_endpoint_id,
+            claimed_controller_generation,
+            consumed_at_unix_ms,
+            attempt_id,
+            delivered_at_unix_ms,
+            delivery_unknown_at_unix_ms,
+        )) = row
+        else {
+            return Ok(GoalStallContinuityObservation {
+                current_wake: None,
+                last_consumed_at_unix_ms,
+            });
+        };
+        if event_target_agent_id != wake_target_agent_id {
+            return Err(invariant());
+        }
+        let state = AgentWakeState::from_db(&wake_state, 3).map_err(store_error)?;
+        let has_claim = claimed_attempt_id.is_some()
+            && claimed_endpoint_id.is_some()
+            && claimed_controller_generation.is_some();
+        let has_partial_claim = claimed_attempt_id.is_some()
+            || claimed_endpoint_id.is_some()
+            || claimed_controller_generation.is_some();
+        if matches!(state, AgentWakeState::Pending | AgentWakeState::Retired) {
+            if has_partial_claim || attempt_id.is_some() || consumed_at_unix_ms.is_some() {
+                return Err(invariant());
+            }
+        } else if !has_claim || attempt_id.as_deref() != claimed_attempt_id.as_deref() {
+            return Err(invariant());
+        }
+        if delivered_at_unix_ms.is_some() && delivery_unknown_at_unix_ms.is_some() {
+            return Err(invariant());
+        }
+        let host_delivery = if delivered_at_unix_ms.is_some() {
+            GoalStallHostDeliveryObservation::Accepted
+        } else if delivery_unknown_at_unix_ms.is_some() {
+            GoalStallHostDeliveryObservation::Unknown
+        } else {
+            GoalStallHostDeliveryObservation::NotObserved
+        };
+        if (state == AgentWakeState::Delivered
+            && host_delivery != GoalStallHostDeliveryObservation::Accepted)
+            || (state == AgentWakeState::DeliveryUnknown
+                && host_delivery != GoalStallHostDeliveryObservation::Unknown)
+            || (state == AgentWakeState::Consumed && consumed_at_unix_ms.is_none())
+            || (state != AgentWakeState::Consumed && consumed_at_unix_ms.is_some())
+        {
+            return Err(invariant());
+        }
+        if event_target_agent_id != current_controller_agent_id {
+            return Ok(GoalStallContinuityObservation {
+                current_wake: None,
+                last_consumed_at_unix_ms,
+            });
+        }
+        Ok(GoalStallContinuityObservation {
+            current_wake: Some(GoalStallWakeObservation {
+                state,
+                host_delivery,
+                consumed_at_unix_ms,
+            }),
+            last_consumed_at_unix_ms,
+        })
+    }
+
     /// Commit at most one Event and logical Wake for this Goal's last meaningful
     /// activity epoch. Caller holds the existing Window activity and active
     /// Session authority fences across this synchronous transaction.

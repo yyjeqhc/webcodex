@@ -773,7 +773,7 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
     let initial = runtime.present_goal_plan(Some(&bob), goal_id.clone()).await;
     assert!(initial.success, "{:?}", initial.output);
     let plan = &initial.output["goal_plan"];
-    assert_eq!(plan["version"], 2);
+    assert_eq!(plan["version"], 3);
     assert_eq!(plan["goal_id"], goal_id);
     assert_eq!(plan["lifecycle"], "active");
     assert_eq!(plan["revision"], 1);
@@ -784,6 +784,13 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
     assert_eq!(plan["activity"]["state"], "unobserved");
     assert!(plan["activity"]["last_seen_at_ms"].is_null());
     assert!(plan["activity"]["linked_window_count"].is_null());
+    assert_eq!(plan["continuity"]["available"], false);
+    assert_eq!(plan["continuity"]["state"], "unavailable");
+    assert_eq!(
+        plan["continuity"]["production_auto_resume_available"],
+        false
+    );
+    assert!(plan["continuity"]["wake_state"].is_null());
     assert!(plan["terminal_at_unix_ms"].is_null());
     assert_eq!(
         plan.as_object()
@@ -803,6 +810,7 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
             "steps",
             "progress_summary",
             "checkpoint_at_unix_ms",
+            "continuity",
             "revision",
             "terminal_at_unix_ms",
             "title",
@@ -880,6 +888,14 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
         "not_applicable"
     );
     assert_eq!(terminal.output["goal_plan"]["activity"]["available"], false);
+    assert_eq!(
+        terminal.output["goal_plan"]["continuity"]["state"],
+        "not_applicable"
+    );
+    assert_eq!(
+        terminal.output["goal_plan"]["continuity"]["fresh_turn"],
+        "not_applicable"
+    );
     assert!(terminal.output["goal_plan"]["terminal_at_unix_ms"].is_i64());
     assert_eq!(
         runtime.get_goal(Some(&bob), goal_id).output["goal"]["summary"]["revision"],

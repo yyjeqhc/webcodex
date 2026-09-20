@@ -5,8 +5,8 @@ use crate::auth::scopes::{
 };
 use crate::auth::{AuthContext, SCOPE_RUNTIME_READ};
 use crate::db::{
-    GoalCheckpoint, GoalCorrelationKind, GoalDetail, GoalLifecycle, GoalPatch, GoalStep,
-    GoalStoreError, NewGoal, MAX_GOAL_LIST_LIMIT,
+    AgentWakeState, GoalCheckpoint, GoalCorrelationKind, GoalDetail, GoalLifecycle, GoalPatch,
+    GoalStallHostDeliveryObservation, GoalStep, GoalStoreError, NewGoal, MAX_GOAL_LIST_LIMIT,
 };
 use serde::Serialize;
 use serde_json::{json, to_value};
@@ -75,6 +75,89 @@ impl GoalActivityObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GoalContinuityState {
+    Ready,
+    Stalled,
+    WakeQueued,
+    Dispatching,
+    HostAccepted,
+    HostUnknown,
+    ResumeConfirmed,
+    NotConfigured,
+    NotApplicable,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GoalHostDeliveryState {
+    NotStarted,
+    Dispatching,
+    Accepted,
+    Unknown,
+    NotConfirmed,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GoalFreshTurnState {
+    NotConfirmed,
+    Confirmed,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct GoalContinuityObservation {
+    pub available: bool,
+    pub state: GoalContinuityState,
+    pub production_auto_resume_available: bool,
+    pub wake_state: Option<AgentWakeState>,
+    pub host_delivery: GoalHostDeliveryState,
+    pub fresh_turn: GoalFreshTurnState,
+    pub last_resume_at_unix_ms: Option<i64>,
+}
+
+impl GoalContinuityObservation {
+    fn unavailable() -> Self {
+        Self {
+            available: false,
+            state: GoalContinuityState::Unavailable,
+            production_auto_resume_available: false,
+            wake_state: None,
+            host_delivery: GoalHostDeliveryState::NotApplicable,
+            fresh_turn: GoalFreshTurnState::NotApplicable,
+            last_resume_at_unix_ms: None,
+        }
+    }
+
+    fn not_configured() -> Self {
+        Self {
+            available: true,
+            state: GoalContinuityState::NotConfigured,
+            production_auto_resume_available: false,
+            wake_state: None,
+            host_delivery: GoalHostDeliveryState::NotApplicable,
+            fresh_turn: GoalFreshTurnState::NotApplicable,
+            last_resume_at_unix_ms: None,
+        }
+    }
+
+    fn not_applicable() -> Self {
+        Self {
+            available: true,
+            state: GoalContinuityState::NotApplicable,
+            production_auto_resume_available: false,
+            wake_state: None,
+            host_delivery: GoalHostDeliveryState::NotApplicable,
+            fresh_turn: GoalFreshTurnState::NotApplicable,
+            last_resume_at_unix_ms: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct GoalPlanProjection {
     pub version: u8,
@@ -94,11 +177,16 @@ pub(crate) struct GoalPlanProjection {
     pub agent_task_count: i64,
     pub workflow_session_count: i64,
     pub activity: GoalActivityObservation,
+    pub continuity: GoalContinuityObservation,
 }
 
-fn goal_plan_projection(goal: GoalDetail, activity: GoalActivityObservation) -> GoalPlanProjection {
+fn goal_plan_projection(
+    goal: GoalDetail,
+    activity: GoalActivityObservation,
+    continuity: GoalContinuityObservation,
+) -> GoalPlanProjection {
     GoalPlanProjection {
-        version: 2,
+        version: 3,
         goal_id: goal.summary.goal_id,
         title: goal.summary.title,
         total_step_count: goal.plan.steps.len(),
@@ -115,6 +203,7 @@ fn goal_plan_projection(goal: GoalDetail, activity: GoalActivityObservation) -> 
         agent_task_count: goal.summary.agent_task_count,
         workflow_session_count: goal.summary.workflow_session_count,
         activity,
+        continuity,
     }
 }
 
@@ -122,6 +211,108 @@ fn goal_principal(
     auth: Option<&AuthContext>,
 ) -> Result<crate::db::CommunicationPrincipal, ToolResult> {
     super::communication::communication_principal(auth)
+}
+
+fn goal_continuity_observation(
+    runtime: &ToolRuntime,
+    principal: &crate::db::CommunicationPrincipal,
+    goal: &GoalDetail,
+    activity: &GoalActivityObservation,
+) -> GoalContinuityObservation {
+    if goal.summary.lifecycle.terminal() {
+        return GoalContinuityObservation::not_applicable();
+    }
+    let Some(controller_agent_id) = goal.controller_agent_id.as_deref() else {
+        return GoalContinuityObservation::not_configured();
+    };
+    let Some(db) = runtime.communication_db.as_ref() else {
+        return GoalContinuityObservation::unavailable();
+    };
+    let agents = match db.list_agent_identities(principal, Some(controller_agent_id), 0, 1) {
+        Ok(page) => page.agents,
+        Err(_) => return GoalContinuityObservation::unavailable(),
+    };
+    let Some(agent) = agents.into_iter().next() else {
+        return GoalContinuityObservation::unavailable();
+    };
+    if agent.agent_id != controller_agent_id {
+        return GoalContinuityObservation::unavailable();
+    }
+    let production_auto_resume_available = agent.active_endpoint_count > 0
+        && runtime
+            .agent_continuations
+            .as_ref()
+            .is_some_and(|continuations| {
+                continuations.production_auto_resume_available(
+                    principal,
+                    controller_agent_id,
+                    agent.current_controller_generation,
+                )
+            });
+    if !activity.available || activity.coverage_partial {
+        return GoalContinuityObservation {
+            production_auto_resume_available,
+            ..GoalContinuityObservation::unavailable()
+        };
+    }
+    let durable = match db.read_goal_stall_continuity(
+        principal,
+        &goal.summary.goal_id,
+        activity.last_meaningful_activity_at_ms,
+        controller_agent_id,
+    ) {
+        Ok(observation) => observation,
+        Err(_) => return GoalContinuityObservation::unavailable(),
+    };
+    let Some(wake) = durable.current_wake else {
+        return GoalContinuityObservation {
+            available: true,
+            state: if activity.state == GoalActivityState::AttentionNeeded {
+                GoalContinuityState::Stalled
+            } else {
+                GoalContinuityState::Ready
+            },
+            production_auto_resume_available,
+            wake_state: None,
+            host_delivery: GoalHostDeliveryState::NotStarted,
+            fresh_turn: GoalFreshTurnState::NotConfirmed,
+            last_resume_at_unix_ms: durable.last_consumed_at_unix_ms,
+        };
+    };
+    let state = match wake.state {
+        AgentWakeState::Pending | AgentWakeState::Claimed => GoalContinuityState::WakeQueued,
+        AgentWakeState::Prepared => GoalContinuityState::Dispatching,
+        AgentWakeState::Delivered => GoalContinuityState::HostAccepted,
+        AgentWakeState::DeliveryUnknown => GoalContinuityState::HostUnknown,
+        AgentWakeState::Consumed => GoalContinuityState::ResumeConfirmed,
+        AgentWakeState::Retired => GoalContinuityState::Stalled,
+    };
+    let host_delivery = match wake.state {
+        AgentWakeState::Pending | AgentWakeState::Claimed | AgentWakeState::Retired => {
+            GoalHostDeliveryState::NotStarted
+        }
+        AgentWakeState::Prepared => GoalHostDeliveryState::Dispatching,
+        AgentWakeState::Delivered => GoalHostDeliveryState::Accepted,
+        AgentWakeState::DeliveryUnknown => GoalHostDeliveryState::Unknown,
+        AgentWakeState::Consumed => match wake.host_delivery {
+            GoalStallHostDeliveryObservation::Accepted => GoalHostDeliveryState::Accepted,
+            GoalStallHostDeliveryObservation::Unknown => GoalHostDeliveryState::Unknown,
+            GoalStallHostDeliveryObservation::NotObserved => GoalHostDeliveryState::NotConfirmed,
+        },
+    };
+    GoalContinuityObservation {
+        available: true,
+        state,
+        production_auto_resume_available,
+        wake_state: Some(wake.state),
+        host_delivery,
+        fresh_turn: if wake.state == AgentWakeState::Consumed {
+            GoalFreshTurnState::Confirmed
+        } else {
+            GoalFreshTurnState::NotConfirmed
+        },
+        last_resume_at_unix_ms: durable.last_consumed_at_unix_ms,
+    }
 }
 
 fn goal_store_unavailable() -> ToolResult {
@@ -754,8 +945,9 @@ impl ToolRuntime {
         match db.read_goal(&principal, &goal_id) {
             Ok(goal) => {
                 let activity = self.goal_activity_observation_at(auth, &goal, now_ms).await;
+                let continuity = goal_continuity_observation(self, &principal, &goal, &activity);
                 serialized_goal_success(json!({
-                    "goal_plan": goal_plan_projection(goal, activity),
+                    "goal_plan": goal_plan_projection(goal, activity, continuity),
                 }))
             }
             Err(error) => goal_error(error, RecoveryKind::Reobserve),

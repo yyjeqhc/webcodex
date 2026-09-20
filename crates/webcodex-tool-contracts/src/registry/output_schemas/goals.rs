@@ -143,12 +143,33 @@ fn goal_activity_schema() -> Value {
     })
 }
 
+fn goal_continuity_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "available": {"type": "boolean", "description": "Whether the bounded continuity join is available. False is fail-closed and never implies absence of durable continuation state."},
+            "state": {"type": "string", "enum": ["ready", "stalled", "wake_queued", "dispatching", "host_accepted", "host_unknown", "resume_confirmed", "not_configured", "not_applicable", "unavailable"], "description": "Current exact-Goal continuity summary. Host acceptance/delivery is distinct from exact Wake-consume resume confirmation."},
+            "production_auto_resume_available": {"type": "boolean", "description": "Current exact controller Agent/generation production Host-carrier readiness only. It grants no execution authority and is not proof that a Wake exists or a fresh turn ran."},
+            "wake_state": {"anyOf": [{"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown", "consumed", "retired"]}, {"type": "null"}], "description": "Bounded durable lifecycle of the exact current Goal-stall Wake, or null when no current-epoch Wake is correlated."},
+            "host_delivery": {"type": "string", "enum": ["not_started", "dispatching", "accepted", "unknown", "not_confirmed", "not_applicable"], "description": "Bounded Host-delivery observation. accepted never means the fresh model turn ran; unknown remains uncertain."},
+            "fresh_turn": {"type": "string", "enum": ["not_confirmed", "confirmed", "not_applicable"], "description": "Fresh-turn proof. confirmed requires exact corresponding durable Wake consume."},
+            "last_resume_at_unix_ms": nullable_integer("Most recent exact Goal-stall Wake consume time for bounded historical context, or null. Historical resume never determines the current continuity state.")
+        },
+        "required": [
+            "available", "state", "production_auto_resume_available", "wake_state",
+            "host_delivery", "fresh_turn", "last_resume_at_unix_ms"
+        ],
+        "description": "Read-only exact-Goal continuity observability. It exposes no Wake/Attempt/Endpoint/Host-binding ids, consume tokens, claim fences, principal identity, Project path, Session ledger, stdout, or stderr."
+    })
+}
+
 fn goal_plan_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "version": {"type": "integer", "const": 2, "description": "Current bounded Goal workflow plan projection."},
+            "version": {"type": "integer", "const": 3, "description": "Current bounded Goal workflow plan projection."},
             "goal_id": {"type": "string", "pattern": "^wc_goal_[A-Za-z0-9_-]{16}$", "description": "Exact durable Goal identity used for refresh/rehydration and app-only polling. Identity is never authority."},
             "title": {"type": "string", "minLength": 1, "maxLength": 200, "description": "Bounded Goal title."},
             "total_step_count": {"type": "integer", "minimum": 0, "maximum": 32},
@@ -164,12 +185,13 @@ fn goal_plan_schema() -> Value {
             "terminal_at_unix_ms": nullable_integer("Terminal transition time, or null while active."),
             "agent_task_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit AgentTask correlations; no target-domain state or authority is projected."},
             "workflow_session_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit Workflow Session correlations; no Session ledger, Project state, or authority is projected."},
-            "activity": goal_activity_schema()
+            "activity": goal_activity_schema(),
+            "continuity": goal_continuity_schema()
         },
         "required": [
             "version", "goal_id", "title", "total_step_count", "completed_step_count", "current_step_id", "steps", "progress_summary", "checkpoint_at_unix_ms", "controller_agent_id", "lifecycle", "revision",
             "updated_at_unix_ms", "terminal_at_unix_ms", "agent_task_count",
-            "workflow_session_count", "activity"
+            "workflow_session_count", "activity", "continuity"
         ],
         "description": "Read-only bounded Goal Plan presentation projection. It contains no execution authority, fences, tokens, credentials, Session ledger, Job logs, stdout, or stderr."
     })

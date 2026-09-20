@@ -65,7 +65,7 @@ pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-res
 // reads working with the safe canonical template, not a second admitted App.
 // Legacy payloads are never promoted into authoritative Work Result state.
 pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &["ui://webcodex/changes/v3"];
-pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v3";
+pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v4";
 pub(super) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v17";
 pub(super) const MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI: &str =

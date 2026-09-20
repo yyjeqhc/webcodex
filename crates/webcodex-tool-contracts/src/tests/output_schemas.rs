@@ -525,10 +525,10 @@ fn generic_agent_task_read_schema_never_exposes_attempt_fence_or_active_turn_tok
 }
 
 #[test]
-fn goal_plan_activity_schema_is_bounded_soft_and_payload_free() {
+fn goal_plan_observability_schema_is_bounded_soft_and_payload_free() {
     let schema = output_schema_for_tool("present_goal_plan");
     let plan = &schema["properties"]["output"]["properties"]["goal_plan"];
-    assert_eq!(plan["properties"]["version"]["const"], 2);
+    assert_eq!(plan["properties"]["version"]["const"], 3);
     assert!(plan["required"]
         .as_array()
         .unwrap()
@@ -558,18 +558,66 @@ fn goal_plan_activity_schema_is_bounded_soft_and_payload_free() {
         .find(|variant| variant["type"] == "integer")
         .unwrap();
     assert_eq!(active["maximum"], 64);
-    let encoded = activity.to_string();
+    assert!(plan["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "continuity"));
+    let continuity = &plan["properties"]["continuity"];
+    assert_eq!(continuity["additionalProperties"], false);
+    assert_eq!(
+        continuity["properties"]["state"]["enum"],
+        json!([
+            "ready",
+            "stalled",
+            "wake_queued",
+            "dispatching",
+            "host_accepted",
+            "host_unknown",
+            "resume_confirmed",
+            "not_configured",
+            "not_applicable",
+            "unavailable"
+        ])
+    );
+    assert_eq!(
+        continuity["properties"]["host_delivery"]["enum"],
+        json!([
+            "not_started",
+            "dispatching",
+            "accepted",
+            "unknown",
+            "not_confirmed",
+            "not_applicable"
+        ])
+    );
+    assert_eq!(
+        continuity["properties"]["fresh_turn"]["enum"],
+        json!(["not_confirmed", "confirmed", "not_applicable"])
+    );
+    let plan_properties = plan["properties"].as_object().unwrap();
+    let continuity_properties = continuity["properties"].as_object().unwrap();
     for forbidden in [
         "client_window_key",
         "openai/session",
         "tool_arguments",
         "tool_outputs",
+        "wake_id",
+        "wake_attempt_id",
+        "endpoint_id",
+        "binding_id",
+        "principal_id",
+        "principal_digest",
+        "project_path",
         "attempt_fence",
         "consume_token",
+        "stdout",
+        "stderr",
     ] {
         assert!(
-            !encoded.contains(forbidden),
-            "activity schema leaked {forbidden}"
+            !plan_properties.contains_key(forbidden)
+                && !continuity_properties.contains_key(forbidden),
+            "Goal Plan observability schema exposed {forbidden} as a field"
         );
     }
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { app, flush, toolResult } from "./app_test_support.mjs";
 
 const plan = {
-  version: 2, goal_id: `wc_goal_ERERERERERERERER`, title: "Ship Goal",
+  version: 3, goal_id: `wc_goal_ERERERERERERERER`, title: "Ship Goal",
   total_step_count: 0, completed_step_count: 0, current_step_id: null, steps: [],
   progress_summary: null, checkpoint_at_unix_ms: null, lifecycle: "active", revision: 1,
   updated_at_unix_ms: 1000, terminal_at_unix_ms: null,
@@ -14,6 +14,11 @@ const plan = {
     last_seen_at_ms: 1000, last_meaningful_activity_at_ms: 1000, quiet_for_ms: 0,
     linked_window_count: 1, active_meaningful_request_count: 0, coverage_partial: false,
   },
+  continuity: {
+    available: true, state: "not_configured", production_auto_resume_available: false,
+    wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+    last_resume_at_unix_ms: null,
+  },
 };
 const terminalPlan = (revision = 2) => ({
   ...plan, lifecycle: "completed", revision, terminal_at_unix_ms: 2000,
@@ -21,6 +26,11 @@ const terminalPlan = (revision = 2) => ({
     available: false, state: "not_applicable", idle_threshold_ms: 300000,
     last_seen_at_ms: null, last_meaningful_activity_at_ms: null, quiet_for_ms: null,
     linked_window_count: null, active_meaningful_request_count: null, coverage_partial: false,
+  },
+  continuity: {
+    available: true, state: "not_applicable", production_auto_resume_available: false,
+    wake_state: null, host_delivery: "not_applicable", fresh_turn: "not_applicable",
+    last_resume_at_unix_ms: null,
   },
 });
 const input = { goal_id: plan.goal_id };
@@ -250,6 +260,50 @@ test("Goal activity refreshes on the same authoritative revision in both directi
   assert.equal(view.nodes.activity.textContent, "Meaningful WebCodex work is currently running.");
   assert.equal(view.nodes.revision.textContent, "1");
   assert.equal(view.timers.size, 1);
+});
+
+test("Goal continuity refreshes on the same authoritative revision without equating Host acceptance to a fresh turn", async () => {
+  const controller = `wc_dagent_AgAgAgAgAgAgAgAg`;
+  const readyPlan = {
+    ...plan, controller_agent_id: controller,
+    continuity: {
+      available: true, state: "ready", production_auto_resume_available: true,
+      wake_state: null, host_delivery: "not_started", fresh_turn: "not_confirmed",
+      last_resume_at_unix_ms: null,
+    },
+  };
+  const view = app("mcp_goal_plan_app.html");
+  await view.initialize();
+  view.toolResult({ goal_plan: readyPlan });
+  assert.equal(view.nodes["auto-resume"].textContent, "Ready");
+  assert.equal(view.nodes["continuity-state"].textContent, "Ready");
+
+  await view.fireTimers(3000);
+  const accepted = {
+    ...readyPlan,
+    continuity: {
+      ...readyPlan.continuity, state: "host_accepted", wake_state: "delivered",
+      host_delivery: "accepted", fresh_turn: "not_confirmed",
+    },
+  };
+  await view.reply(view.calls("goal_plan_state").at(-1), toolResult({ goal_plan: accepted }));
+  assert.equal(view.nodes["host-delivery"].textContent, "Accepted");
+  assert.equal(view.nodes["fresh-turn"].textContent, "Not confirmed");
+  assert.equal(view.nodes.revision.textContent, "1");
+
+  await view.fireTimers(3000);
+  const resumed = {
+    ...accepted,
+    continuity: {
+      ...accepted.continuity, state: "resume_confirmed", wake_state: "consumed",
+      fresh_turn: "confirmed", last_resume_at_unix_ms: 5000,
+    },
+  };
+  await view.reply(view.calls("goal_plan_state").at(-1), toolResult({ goal_plan: resumed }));
+  assert.equal(view.nodes["continuity-state"].textContent, "Resume confirmed");
+  assert.equal(view.nodes["fresh-turn"].textContent, "Confirmed");
+  assert.match(view.nodes["last-resume"].textContent, /^Confirmed/);
+  assert.equal(view.nodes.revision.textContent, "1");
 });
 
 test("terminal Goal stays terminal and stops polling after late active results and visibility changes", async () => {

@@ -20,6 +20,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 .status { min-height: 1.4em; font-size: 11px; color: color-mix(in srgb, CanvasText 60%, transparent); }
 .activity { padding: 7px 9px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 7px; font-size: 12px; color: color-mix(in srgb, CanvasText 76%, transparent); }
 .activity-attention_needed { border-style: dashed; color: CanvasText; }
+.continuity { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 14px; padding: 7px 9px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 7px; font-size: 12px; color: color-mix(in srgb, CanvasText 76%, transparent); }
+.continuity b { color: CanvasText; font-weight: 600; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -37,6 +39,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     <span>Updated <b id="updated">—</b></span>
   </div>
   <div id="activity" class="activity" hidden></div>
+  <div id="continuity" class="continuity" hidden>
+    <span>Auto-resume <b id="auto-resume">—</b></span>
+    <span>Continuity <b id="continuity-state">—</b></span>
+    <span>Wake <b id="wake-state">—</b></span>
+    <span>Host delivery <b id="host-delivery">—</b></span>
+    <span>Fresh turn <b id="fresh-turn">—</b></span>
+    <span>Last resume <b id="last-resume">—</b></span>
+  </div>
   <div id="status" class="status">Initializing…</div>
 </main>
 <script>
@@ -49,6 +59,10 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const APP_PROTOCOL = "2026-01-26";
   const LIFECYCLES = new Set(["active", "completed", "cancelled"]);
   const ACTIVITY_STATES = new Set(["active", "attention_needed", "unobserved", "not_applicable"]);
+  const CONTINUITY_STATES = new Set(["ready", "stalled", "wake_queued", "dispatching", "host_accepted", "host_unknown", "resume_confirmed", "not_configured", "not_applicable", "unavailable"]);
+  const WAKE_STATES = new Set(["pending", "claimed", "prepared", "delivered", "delivery_unknown", "consumed", "retired"]);
+  const HOST_DELIVERY_STATES = new Set(["not_started", "dispatching", "accepted", "unknown", "not_confirmed", "not_applicable"]);
+  const FRESH_TURN_STATES = new Set(["not_confirmed", "confirmed", "not_applicable"]);
   const ACTIVITY_IDLE_THRESHOLD_MS = 300000;
   const POLL_MS = 3000;
   const CALL_TIMEOUT_MS = 10000;
@@ -115,9 +129,54 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return true;
   }
 
+  function validContinuity(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (typeof value.available !== "boolean" || !CONTINUITY_STATES.has(value.state)) return false;
+    if (typeof value.production_auto_resume_available !== "boolean") return false;
+    if (!(value.wake_state === null || WAKE_STATES.has(value.wake_state))) return false;
+    if (!HOST_DELIVERY_STATES.has(value.host_delivery) || !FRESH_TURN_STATES.has(value.fresh_turn)) return false;
+    if (!(value.last_resume_at_unix_ms === null || (Number.isSafeInteger(value.last_resume_at_unix_ms) && value.last_resume_at_unix_ms >= 0))) return false;
+    if (!value.available) {
+      return value.state === "unavailable" && !value.production_auto_resume_available
+        && value.wake_state === null && value.host_delivery === "not_applicable"
+        && value.fresh_turn === "not_applicable" && value.last_resume_at_unix_ms === null;
+    }
+    if (value.state === "not_configured" || value.state === "not_applicable") {
+      return !value.production_auto_resume_available && value.wake_state === null
+        && value.host_delivery === "not_applicable" && value.fresh_turn === "not_applicable";
+    }
+    if (value.wake_state === null) {
+      return (value.state === "ready" || value.state === "stalled")
+        && value.host_delivery === "not_started" && value.fresh_turn === "not_confirmed";
+    }
+    if (value.wake_state === "pending" || value.wake_state === "claimed") {
+      return value.state === "wake_queued" && value.host_delivery === "not_started"
+        && value.fresh_turn === "not_confirmed";
+    }
+    if (value.wake_state === "prepared") {
+      return value.state === "dispatching" && value.host_delivery === "dispatching"
+        && value.fresh_turn === "not_confirmed";
+    }
+    if (value.wake_state === "delivered") {
+      return value.state === "host_accepted" && value.host_delivery === "accepted"
+        && value.fresh_turn === "not_confirmed";
+    }
+    if (value.wake_state === "delivery_unknown") {
+      return value.state === "host_unknown" && value.host_delivery === "unknown"
+        && value.fresh_turn === "not_confirmed";
+    }
+    if (value.wake_state === "retired") {
+      return value.state === "stalled" && value.host_delivery === "not_started"
+        && value.fresh_turn === "not_confirmed";
+    }
+    return value.wake_state === "consumed" && value.state === "resume_confirmed"
+      && ["accepted", "unknown", "not_confirmed"].includes(value.host_delivery)
+      && value.fresh_turn === "confirmed" && value.last_resume_at_unix_ms !== null;
+  }
+
   function validPlan(value) {
     if (!value || typeof value !== "object") return null;
-    if (value.version !== 2 || !validGoalId(value.goal_id)) return null;
+    if (value.version !== 3 || !validGoalId(value.goal_id)) return null;
     if (typeof value.title !== "string" || Array.from(value.title).length < 1 || Array.from(value.title).length > 200) return null;
     if (!Array.isArray(value.steps) || value.steps.length > 32 || value.total_step_count !== value.steps.length) return null;
     const ids = new Set();
@@ -149,8 +208,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 64) return null;
     }
     if (!validActivity(value.activity)) return null;
+    if (!validContinuity(value.continuity)) return null;
     if (value.lifecycle === "active" && value.activity.state === "not_applicable") return null;
     if (value.lifecycle !== "active" && value.activity.state !== "not_applicable") return null;
+    if (value.lifecycle === "active" && value.continuity.state === "not_applicable") return null;
+    if (value.lifecycle !== "active" && value.continuity.state !== "not_applicable") return null;
+    if (value.controller_agent_id === null && value.lifecycle === "active" && value.continuity.state !== "not_configured") return null;
+    if (value.controller_agent_id !== null && value.lifecycle === "active" && value.continuity.state === "not_configured") return null;
     return value;
   }
 
@@ -216,6 +280,50 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     node.textContent = `No meaningful WebCodex activity for ${quiet}. This Goal may need attention; this does not establish that the Window is offline.`;
   }
 
+  function continuityLabel(value) {
+    return {
+      ready: "Ready", stalled: "Stalled", wake_queued: "Wake queued",
+      dispatching: "Dispatching", host_accepted: "Host accepted",
+      host_unknown: "Host outcome unknown", resume_confirmed: "Resume confirmed",
+      not_configured: "Not configured", not_applicable: "Not applicable",
+      unavailable: "Unavailable",
+    }[value] || "Unavailable";
+  }
+
+  function wakeLabel(value) {
+    return value === null ? "—" : {
+      pending: "Pending", claimed: "Claimed", prepared: "Prepared",
+      delivered: "Delivered", delivery_unknown: "Delivery unknown",
+      consumed: "Consumed", retired: "Retired",
+    }[value] || "—";
+  }
+
+  function hostDeliveryLabel(value) {
+    return {
+      not_started: "Not started", dispatching: "Dispatching", accepted: "Accepted",
+      unknown: "Unknown", not_confirmed: "Not confirmed", not_applicable: "Not applicable",
+    }[value] || "Not applicable";
+  }
+
+  function renderContinuity(continuity) {
+    el("continuity").hidden = false;
+    el("auto-resume").textContent = continuity.state === "not_configured" ? "Not configured"
+      : continuity.state === "not_applicable" ? "Not applicable"
+      : continuity.production_auto_resume_available ? "Ready" : "Not ready";
+    el("continuity-state").textContent = continuityLabel(continuity.state);
+    el("wake-state").textContent = wakeLabel(continuity.wake_state);
+    el("host-delivery").textContent = hostDeliveryLabel(continuity.host_delivery);
+    el("fresh-turn").textContent = continuity.fresh_turn === "confirmed" ? "Confirmed"
+      : continuity.fresh_turn === "not_confirmed" ? "Not confirmed" : "Not applicable";
+    const resumedAt = continuity.last_resume_at_unix_ms;
+    if (resumedAt === null) {
+      el("last-resume").textContent = "—";
+    } else {
+      const date = new Date(resumedAt);
+      el("last-resume").textContent = Number.isNaN(date.getTime()) ? "Confirmed" : `Confirmed · ${date.toLocaleString()}`;
+    }
+  }
+
   function render(plan) {
     if (tornDown) return;
     el("title").textContent = plan.title;
@@ -234,6 +342,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("updated").textContent = Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
     el("meta").hidden = false;
     renderActivity(plan.activity);
+    renderContinuity(plan.continuity);
     if (hostInitialized) showTrackingStatus();
   }
 
@@ -367,7 +476,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "3.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "4.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;

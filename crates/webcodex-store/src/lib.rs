@@ -187,6 +187,7 @@ pub use goal_plan::{
 };
 
 pub use goal_stall::{
-    GoalStallAttention, GoalStallCandidate, GOAL_ACTIVITY_ATTENTION_AFTER_MS,
+    GoalStallAttention, GoalStallCandidate, GoalStallContinuityObservation,
+    GoalStallHostDeliveryObservation, GoalStallWakeObservation, GOAL_ACTIVITY_ATTENTION_AFTER_MS,
     GOAL_CARD_ALIVE_GRACE_MS, GOAL_CARD_OBSERVATION_ADVANCE_MS,
 };

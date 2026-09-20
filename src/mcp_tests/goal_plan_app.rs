@@ -73,7 +73,7 @@ async fn handle_with_server_apps_enabled(
 
 #[tokio::test]
 async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptive_direct() {
-    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v3");
+    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v4");
     let (_temp, _db, adaptive) = goal_runtime();
     let auth = goal_auth("goal-plan-descriptor");
 
@@ -209,7 +209,11 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         .unwrap()
         .iter()
         .any(|resource| resource["uri"] == "ui://webcodex/goal-plan/v1"));
-    for old_uri in ["ui://webcodex/goal-plan/v1", "ui://webcodex/goal-plan/v2"] {
+    for old_uri in [
+        "ui://webcodex/goal-plan/v1",
+        "ui://webcodex/goal-plan/v2",
+        "ui://webcodex/goal-plan/v3",
+    ] {
         assert!(super::super::resources::mcp_goal_plan_app_resource_read(old_uri, None).is_none());
     }
     for uri in [MCP_GOAL_PLAN_UI_RESOURCE_URI] {
@@ -239,6 +243,11 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         "completed_step_count",
         "current_step_id",
         "progress_summary",
+        "continuity",
+        "production_auto_resume_available",
+        "host-delivery",
+        "fresh-turn",
+        "last-resume",
         "handledWorkEpoch",
         "controller_agent_id",
         "ui/notifications/tool-input",
@@ -306,7 +315,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
     );
     assert_eq!(
         present["result"]["structuredContent"]["output"]["goal_plan"]["version"],
-        2
+        3
     );
     assert_eq!(
         present["result"]["structuredContent"]["output"]["goal_plan"]["activity"]["available"],

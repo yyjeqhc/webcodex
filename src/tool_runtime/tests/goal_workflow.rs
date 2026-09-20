@@ -1,6 +1,6 @@
 use super::*;
 use crate::db::{GoalCheckpoint, NewAgentEndpoint, NewGoal, NewGoalStep};
-use crate::tool_runtime::ToolResult;
+use crate::tool_runtime::{AgentWaitEventSelectorCall, AgentWaitModeCall, ToolResult};
 
 const T0: i64 = 100_000_000;
 const THRESHOLD: i64 = crate::db::GOAL_ACTIVITY_ATTENTION_AFTER_MS;
@@ -109,6 +109,10 @@ impl Workflow {
     }
 
     fn poll(&self, completed_at: i64) {
+        self.poll_goal(&self.goal_id, completed_at);
+    }
+
+    fn poll_goal(&self, goal_id: &str, completed_at: i64) {
         record_goal_window_event(
             &self.db,
             &self.auth,
@@ -124,7 +128,7 @@ impl Workflow {
             .execute(
                 "UPDATE action_events SET ids_json = ?1 WHERE server_trace_id = ?2",
                 rusqlite::params![
-                    json!({"goal_id": self.goal_id}).to_string(),
+                    json!({"goal_id": goal_id}).to_string(),
                     format!(
                         "goal-activity-{WINDOW}-goal_plan_state-{}",
                         completed_at - 1
@@ -193,6 +197,106 @@ async fn goal_workflow_recent_activity_and_polling_do_not_create_attention() {
         assert_no_attention(&fixture.recheck(T0 + quiet).await);
     }
     assert_eq!(fixture.counts(), (0, 0));
+}
+
+#[tokio::test]
+async fn goal_continuity_carrier_readiness_tracks_exact_endpoint_generation() {
+    let fixture = Workflow::new(true).await;
+    let initial = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(initial.output["goal_plan"]["continuity"]["state"], "ready");
+    assert_eq!(
+        initial.output["goal_plan"]["continuity"]["production_auto_resume_available"],
+        false
+    );
+
+    let first = fixture.runtime.attach_agent_endpoint(
+        Some(&fixture.auth),
+        fixture.agent_id.clone(),
+        "ChatGPT".into(),
+        Some("goal-continuity-view-1".into()),
+        "goal-continuity-endpoint-1".into(),
+    );
+    assert!(first.success, "{:?}", first.output);
+    let first_endpoint = first.output["endpoint"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let first_generation = first.output["endpoint"]["controller_generation"]
+        .as_i64()
+        .unwrap();
+    let first_binding = format!(
+        "wc_host_binding_{}",
+        webcodex_core::compact::encode([0x51; 16])
+    );
+    let bound = fixture.runtime.agent_continuation_bind_for_window(
+        Some(&fixture.auth),
+        Some(&crate::client_window::ClientWindow::for_test(WINDOW)),
+        fixture.agent_id.clone(),
+        first_endpoint,
+        first_generation,
+        first_binding,
+    );
+    assert!(bound.success, "{:?}", bound.output);
+    let ready = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(
+        ready.output["goal_plan"]["continuity"]["production_auto_resume_available"],
+        true
+    );
+    assert_eq!(ready.output["goal_plan"]["continuity"]["state"], "ready");
+
+    let second = fixture.runtime.attach_agent_endpoint(
+        Some(&fixture.auth),
+        fixture.agent_id.clone(),
+        "ChatGPT".into(),
+        Some("goal-continuity-view-2".into()),
+        "goal-continuity-endpoint-2".into(),
+    );
+    assert!(second.success, "{:?}", second.output);
+    let second_endpoint = second.output["endpoint"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let second_generation = second.output["endpoint"]["controller_generation"]
+        .as_i64()
+        .unwrap();
+    assert!(second_generation > first_generation);
+    let replaced = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(
+        replaced.output["goal_plan"]["continuity"]["production_auto_resume_available"],
+        false
+    );
+    assert_eq!(replaced.output["goal_plan"]["continuity"]["state"], "ready");
+
+    let second_binding = format!(
+        "wc_host_binding_{}",
+        webcodex_core::compact::encode([0x52; 16])
+    );
+    let rebound = fixture.runtime.agent_continuation_bind_for_window(
+        Some(&fixture.auth),
+        Some(&crate::client_window::ClientWindow::for_test(WINDOW)),
+        fixture.agent_id.clone(),
+        second_endpoint,
+        second_generation,
+        second_binding,
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+    let ready_again = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(
+        ready_again.output["goal_plan"]["continuity"]["production_auto_resume_available"],
+        true
+    );
 }
 
 #[tokio::test]
@@ -311,6 +415,327 @@ async fn goal_workflow_new_meaningful_work_is_required_for_a_new_inactivity_epoc
         second.output["attention"]["wake_id"]
     );
     assert_eq!(fixture.counts(), (2, 2));
+}
+
+#[tokio::test]
+async fn goal_continuity_does_not_retarget_an_existing_stall_wake_after_controller_replacement() {
+    let fixture = Workflow::new(true).await;
+    let now = T0 + THRESHOLD;
+    fixture.poll(now);
+    let first = fixture.recheck(now).await;
+    assert_eq!(first.output["state_changed"], true);
+    let old_wake = first.output["attention"]["wake_id"].as_str().unwrap();
+    let before = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+        .await;
+    assert_eq!(
+        before.output["goal_plan"]["continuity"]["wake_state"],
+        "pending"
+    );
+
+    let replacement = fixture.runtime.create_agent_identity(
+        Some(&fixture.auth),
+        "replacement-controller".into(),
+        "Replacement Controller".into(),
+        None,
+        Vec::new(),
+        "replacement-controller-agent".into(),
+    );
+    assert!(replacement.success, "{:?}", replacement.output);
+    let replacement_id = replacement.output["agent"]["agent_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let updated = fixture.runtime.update_goal_with_controller(
+        Some(&fixture.auth),
+        fixture.goal_id.clone(),
+        2,
+        None,
+        None,
+        Some(replacement_id),
+        None,
+        None,
+        "replace-goal-controller".into(),
+    );
+    assert!(updated.success, "{:?}", updated.output);
+    let after = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+        .await;
+    assert_eq!(after.output["goal_plan"]["continuity"]["state"], "stalled");
+    assert!(after.output["goal_plan"]["continuity"]["wake_state"].is_null());
+    assert_eq!(
+        fixture
+            .db
+            .agent_wake(old_wake)
+            .unwrap()
+            .unwrap()
+            .target_agent_id,
+        fixture.agent_id
+    );
+}
+
+#[tokio::test]
+async fn goal_continuity_projects_retired_wake_and_fails_closed_on_malformed_event_wake_relation() {
+    let fixture = Workflow::new(true).await;
+    let now = T0 + THRESHOLD;
+    fixture.poll(now);
+    let attention = fixture.recheck(now).await;
+    assert_eq!(attention.output["state_changed"], true);
+    let wake_id = attention.output["attention"]["wake_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    fixture
+        .db
+        .conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_wakes SET state = 'retired', revision = revision + 1 WHERE wake_id = ?1",
+            [&wake_id],
+        )
+        .unwrap();
+    let retired = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+        .await;
+    assert_eq!(
+        retired.output["goal_plan"]["continuity"]["state"],
+        "stalled"
+    );
+    assert_eq!(
+        retired.output["goal_plan"]["continuity"]["wake_state"],
+        "retired"
+    );
+
+    fixture
+        .db
+        .conn_for_tests()
+        .execute("DELETE FROM wc_agent_wakes WHERE wake_id = ?1", [&wake_id])
+        .unwrap();
+    let malformed = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+        .await;
+    assert_eq!(
+        malformed.output["goal_plan"]["continuity"]["available"],
+        false
+    );
+    assert_eq!(
+        malformed.output["goal_plan"]["continuity"]["state"],
+        "unavailable"
+    );
+    assert!(malformed.output["goal_plan"]["continuity"]["wake_state"].is_null());
+}
+
+#[tokio::test]
+async fn goal_continuity_ignores_unrelated_task_wait_and_other_goal_wakes_on_same_controller() {
+    let fixture = Workflow::new(true).await;
+
+    let task = fixture.runtime.create_agent_task(
+        Some(&fixture.auth),
+        "Unrelated controller task".into(),
+        "Task continuation must not become Goal continuity.".into(),
+        Some(fixture.agent_id.clone()),
+        None,
+        None,
+        None,
+        "unrelated-controller-task".into(),
+    );
+    assert!(task.success, "{:?}", task.output);
+    let task_id = task.output["task"]["summary"]["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let attempt = fixture.runtime.start_agent_task_attempt(
+        Some(&fixture.auth),
+        task_id.clone(),
+        fixture.agent_id.clone(),
+        "unrelated-controller-attempt".into(),
+    );
+    assert!(attempt.success, "{:?}", attempt.output);
+    let execution = fixture.runtime.start_agent_task_endpoint_continuation(
+        Some(&fixture.auth),
+        task_id,
+        attempt.output["attempt"]["attempt_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        fixture.agent_id.clone(),
+        attempt.output["attempt_fence"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        attempt.output["attempt"]["attempt_controller_generation"]
+            .as_i64()
+            .unwrap(),
+    );
+    assert!(execution.success, "{:?}", execution.output);
+    let task_wake = execution.output["execution"]["wake_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let after_task_wake = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(
+        after_task_wake.output["goal_plan"]["continuity"]["state"],
+        "ready"
+    );
+    assert!(after_task_wake.output["goal_plan"]["continuity"]["wake_state"].is_null());
+
+    let endpoint = fixture.runtime.attach_agent_endpoint(
+        Some(&fixture.auth),
+        fixture.agent_id.clone(),
+        "ChatGPT".into(),
+        Some("unrelated-wait-view".into()),
+        "unrelated-wait-endpoint".into(),
+    );
+    assert!(endpoint.success, "{:?}", endpoint.output);
+    let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let endpoint_generation = endpoint.output["endpoint"]["controller_generation"]
+        .as_i64()
+        .unwrap();
+    let worker = fixture.runtime.create_agent_identity(
+        Some(&fixture.auth),
+        "unrelated-wait-worker".into(),
+        "Unrelated Wait Worker".into(),
+        None,
+        Vec::new(),
+        "unrelated-wait-worker-agent".into(),
+    );
+    assert!(worker.success, "{:?}", worker.output);
+    let worker_id = worker.output["agent"]["agent_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let source = fixture.runtime.create_agent_task(
+        Some(&fixture.auth),
+        "Unrelated wait source".into(),
+        "Terminal source for an unrelated AgentWait.".into(),
+        Some(worker_id.clone()),
+        None,
+        None,
+        None,
+        "unrelated-wait-source".into(),
+    );
+    assert!(source.success, "{:?}", source.output);
+    let source_task = source.output["task"]["summary"]["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let source_attempt = fixture.runtime.start_agent_task_attempt(
+        Some(&fixture.auth),
+        source_task.clone(),
+        worker_id.clone(),
+        "unrelated-wait-source-attempt".into(),
+    );
+    assert!(source_attempt.success, "{:?}", source_attempt.output);
+    let source_done = fixture.runtime.complete_agent_task_attempt(
+        Some(&fixture.auth),
+        source_task.clone(),
+        source_attempt.output["attempt"]["attempt_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        worker_id,
+        source_attempt.output["attempt_fence"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        source_attempt.output["attempt"]["attempt_controller_generation"]
+            .as_i64()
+            .unwrap(),
+        "succeeded".into(),
+        Some("done".into()),
+        None,
+        "unrelated-wait-source-complete".into(),
+    );
+    assert!(source_done.success, "{:?}", source_done.output);
+    let waited = fixture.runtime.wait_for_agent_events(
+        Some(&fixture.auth),
+        fixture.agent_id.clone(),
+        endpoint_id,
+        endpoint_generation,
+        AgentWaitModeCall::Any,
+        None,
+        vec![AgentWaitEventSelectorCall {
+            kind: "agent_task_terminal".into(),
+            task_id: source_task,
+        }],
+        "unrelated-controller-wait".into(),
+    );
+    assert!(waited.success, "{:?}", waited.output);
+    assert_eq!(waited.output["agent_wait"]["state"], "triggered");
+    let wait_id = waited.output["agent_wait"]["wait_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let wait_wake: String = fixture
+        .db
+        .conn_for_tests()
+        .query_row(
+            "SELECT wake_id FROM wc_agent_wakes WHERE source_wait_id = ?1",
+            [&wait_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(task_wake, wait_wake);
+    let after_wait_wake = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
+        .await;
+    assert_eq!(
+        after_wait_wake.output["goal_plan"]["continuity"]["state"],
+        "ready"
+    );
+    assert!(after_wait_wake.output["goal_plan"]["continuity"]["wake_state"].is_null());
+
+    let other = fixture.runtime.create_goal_with_controller(
+        Some(&fixture.auth),
+        "Other Goal".into(),
+        "Its stall Wake must remain scoped to this exact Goal.".into(),
+        Some(fixture.agent_id.clone()),
+        "other-goal".into(),
+    );
+    assert!(other.success, "{:?}", other.output);
+    let other_goal = other.output["goal"]["summary"]["goal_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    link_goal_activity_session(
+        &fixture.runtime,
+        &fixture.auth,
+        &other_goal,
+        &fixture.session_id,
+        "other-goal-session-link",
+    )
+    .await;
+    let stalled_at = T0 + THRESHOLD + 10;
+    fixture.poll_goal(&other_goal, stalled_at);
+    let other_attention = fixture
+        .runtime
+        .goal_plan_recheck_attention_at(
+            Some(&fixture.auth),
+            Some(&crate::client_window::ClientWindow::for_test(WINDOW)),
+            other_goal,
+            stalled_at,
+        )
+        .await;
+    assert_eq!(other_attention.output["state_changed"], true);
+    let original = fixture
+        .runtime
+        .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), stalled_at)
+        .await;
+    assert_eq!(
+        original.output["goal_plan"]["continuity"]["state"],
+        "stalled"
+    );
+    assert!(original.output["goal_plan"]["continuity"]["wake_state"].is_null());
 }
 
 #[tokio::test]
@@ -534,6 +959,31 @@ async fn goal_workflow_foreign_principal_scopes_project_and_window_fail_closed_w
 #[tokio::test]
 async fn goal_workflow_revoked_correlated_project_is_partial_even_with_older_work() {
     let fixture = Workflow::new(true).await;
+    let endpoint = fixture.runtime.attach_agent_endpoint(
+        Some(&fixture.auth),
+        fixture.agent_id.clone(),
+        "ChatGPT".into(),
+        Some("goal-partial-readiness-view".into()),
+        "goal-partial-readiness-endpoint".into(),
+    );
+    assert!(endpoint.success, "{:?}", endpoint.output);
+    let bound = fixture.runtime.agent_continuation_bind_for_window(
+        Some(&fixture.auth),
+        Some(&crate::client_window::ClientWindow::for_test(WINDOW)),
+        fixture.agent_id.clone(),
+        endpoint.output["endpoint"]["endpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        endpoint.output["endpoint"]["controller_generation"]
+            .as_i64()
+            .unwrap(),
+        format!(
+            "wc_host_binding_{}",
+            webcodex_core::compact::encode([0x53; 16])
+        ),
+    );
+    assert!(bound.success, "{:?}", bound.output);
     let other_project = register_goal_activity_project(
         &fixture.runtime,
         "older-workflow-runner",
@@ -592,6 +1042,14 @@ async fn goal_workflow_revoked_correlated_project_is_partial_even_with_older_wor
         .await;
     assert_eq!(
         state.output["goal_plan"]["activity"]["coverage_partial"],
+        true
+    );
+    assert_eq!(
+        state.output["goal_plan"]["continuity"]["state"],
+        "unavailable"
+    );
+    assert_eq!(
+        state.output["goal_plan"]["continuity"]["production_auto_resume_available"],
         true
     );
     assert!(!state.output.to_string().contains(&other_project));
@@ -751,6 +1209,22 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
         let attention = fixture.recheck(now).await;
         assert_eq!(attention.output["state_changed"], true);
         let wake_id = attention.output["attention"]["wake_id"].as_str().unwrap();
+        let pending_plan = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+            .await;
+        assert_eq!(
+            pending_plan.output["goal_plan"]["continuity"]["state"],
+            "wake_queued"
+        );
+        assert_eq!(
+            pending_plan.output["goal_plan"]["continuity"]["wake_state"],
+            "pending"
+        );
+        assert_eq!(
+            pending_plan.output["goal_plan"]["continuity"]["fresh_turn"],
+            "not_confirmed"
+        );
         let endpoint = fixture
             .db
             .attach_agent_endpoint(
@@ -799,6 +1273,18 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             .unwrap()
             .unwrap();
         assert_eq!(claim.wake.wake_id, wake_id);
+        let claimed_plan = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+            .await;
+        assert_eq!(
+            claimed_plan.output["goal_plan"]["continuity"]["state"],
+            "wake_queued"
+        );
+        assert_eq!(
+            claimed_plan.output["goal_plan"]["continuity"]["wake_state"],
+            "claimed"
+        );
         let prepared = fixture
             .db
             .prepare_agent_wake_dispatch(
@@ -840,6 +1326,22 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             assert!(!message.contains(forbidden), "{forbidden}");
         }
         assert_eq!(prepared.wake.state, crate::db::AgentWakeState::Prepared);
+        let prepared_plan = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+            .await;
+        assert_eq!(
+            prepared_plan.output["goal_plan"]["continuity"]["state"],
+            "dispatching"
+        );
+        assert_eq!(
+            prepared_plan.output["goal_plan"]["continuity"]["host_delivery"],
+            "dispatching"
+        );
+        assert_eq!(
+            prepared_plan.output["goal_plan"]["continuity"]["fresh_turn"],
+            "not_confirmed"
+        );
         let dispatched = if delivery_unknown {
             fixture
                 .db
@@ -876,6 +1378,30 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             }
         );
         assert!(dispatched.consumed_at_unix_ms.is_none());
+        let dispatched_plan = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+            .await;
+        assert_eq!(
+            dispatched_plan.output["goal_plan"]["continuity"]["state"],
+            if delivery_unknown {
+                "host_unknown"
+            } else {
+                "host_accepted"
+            }
+        );
+        assert_eq!(
+            dispatched_plan.output["goal_plan"]["continuity"]["host_delivery"],
+            if delivery_unknown {
+                "unknown"
+            } else {
+                "accepted"
+            }
+        );
+        assert_eq!(
+            dispatched_plan.output["goal_plan"]["continuity"]["fresh_turn"],
+            "not_confirmed"
+        );
         assert_eq!(
             fixture.recheck(now).await.output["attention"]["wake_id"],
             wake_id
@@ -904,6 +1430,22 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             .unwrap();
         assert_eq!(consumed.state, crate::db::AgentWakeState::Consumed);
         assert!(consumed.consumed_at_unix_ms > 0);
+        let consumed_plan = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), now)
+            .await;
+        assert_eq!(
+            consumed_plan.output["goal_plan"]["continuity"]["state"],
+            "resume_confirmed"
+        );
+        assert_eq!(
+            consumed_plan.output["goal_plan"]["continuity"]["fresh_turn"],
+            "confirmed"
+        );
+        assert_eq!(
+            consumed_plan.output["goal_plan"]["continuity"]["last_resume_at_unix_ms"],
+            consumed.consumed_at_unix_ms
+        );
         assert_eq!(
             fixture.recheck(now).await.output["attention"]["wake_id"],
             wake_id
@@ -916,6 +1458,21 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             .summary
             .latest_attempt
             .is_none());
+        let next_work = now + 1_000;
+        fixture.work(next_work, Some(&fixture.session_id));
+        let after_work = fixture
+            .runtime
+            .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), next_work)
+            .await;
+        assert_eq!(
+            after_work.output["goal_plan"]["continuity"]["state"],
+            "ready"
+        );
+        assert!(after_work.output["goal_plan"]["continuity"]["wake_state"].is_null());
+        assert_eq!(
+            after_work.output["goal_plan"]["continuity"]["last_resume_at_unix_ms"],
+            consumed.consumed_at_unix_ms
+        );
     }
 }
 
@@ -939,7 +1496,7 @@ async fn goal_workflow_checkpoint_card_and_closeout_are_sparse_canonical_and_own
         .goal_plan_state_at(Some(&fixture.auth), fixture.goal_id.clone(), T0)
         .await;
     let plan = &state.output["goal_plan"];
-    assert_eq!(plan["version"], 2);
+    assert_eq!(plan["version"], 3);
     assert_eq!(plan["total_step_count"], 5);
     assert_eq!(plan["completed_step_count"], 2);
     assert_eq!(plan["current_step_id"], "validate");

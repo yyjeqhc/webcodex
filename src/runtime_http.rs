@@ -245,10 +245,10 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         guard.handler_returned(500, estimated, Some(false), None, "error_runtime_missing");
         return;
     };
-    // Parse the body as a raw JSON value so we can apply the params/arguments
-    // precedence rule explicitly and emit field-aware errors that include the
-    // tool name. We never echo the raw body back, so tokens/headers/env never
-    // leak through error messages.
+    // Parse the body as a raw JSON value so we can enforce the explicit
+    // tool/params envelope and emit field-aware errors that include the tool
+    // name. We never echo the raw body back, so tokens/headers/env never leak
+    // through error messages.
     let body: Value = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {

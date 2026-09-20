@@ -259,7 +259,10 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 The sole current Goal Plan resource is `ui://webcodex/goal-plan/v4`; its sole current
 wire version is **3**. Older pre-production Goal resource aliases are not served.
 `present_goal_plan` is the only model-visible App-bound presentation tool.
-`goal_plan_state` is an exact owner-authorized read, polled about every three seconds.
+`goal_plan_sync` is the single App-only effectful observation/synchronization primitive.
+It accepts only `goal_id`, re-authorizes on every call, may commit one authoritative
+stall Attention/Wake under the existing fences, and returns the final post-reconciliation
+projection in the same RPC.
 The card projects title, lifecycle/revision, controller identity, step counts,
 bounded steps/current step, checkpoint summary/time, derived activity, and bounded
 continuity observation. Continuity separates current production carrier readiness,
@@ -270,15 +273,16 @@ objective/conditions, Task bodies/results, private Project paths, correlation
 identities, Session ledger, Endpoint bindings, tokens/fences, stdout/stderr and full
 history. The presentation envelope is bounded to 40 KiB including metadata.
 
-Both `goal_plan_state` and the narrow `goal_plan_recheck_attention` are globally
-ModelHidden and App-only on an eligible Stateless MCP 2026 surface. A kernel
-capability gate is the final backstop for non-App transports. Both remain
-**Transport / NonMeaningful**: polling records that the Window was seen, never that
-business work advanced. A successful Goal Plan poll records only its exact Goal
+`goal_plan_sync` is globally ModelHidden and App-only on an eligible Stateless
+MCP 2026 surface. Its public contract is intentionally **effectful**
+(`Mutate / WorkflowManage / DesiredState`), never disguised as a pure read; a
+kernel capability gate remains the final backstop for non-App transports. It is still
+**Transport / NonMeaningful**: synchronization records that the Window was seen,
+never that business work advanced. A successful sync records only its exact Goal
 selector in the existing ActionAudit identity projection; it cannot make another
-Goal's card appear alive. The detector accepts **only `goal_id`**. Window context is
-trusted Host/runtime sideband; client timestamps, Session/controller selections,
-claimed active-request counts and claimed coverage are not accepted.
+Goal's card appear alive. Window context is trusted Host/runtime sideband; client
+timestamps, Session/controller selections, claimed active-request counts and claimed
+coverage are not accepted.
 
 The existing Window activity registry and ActionAudit ledger remain the only
 observation machinery. Meaningful completion rows and the newest observation are
@@ -291,8 +295,8 @@ and terminal `not_applicable`. Running meaningful requests keep activity active.
 Five minutes of known quiet can warrant attention, but **stalled is not offline**:
 Host scheduling, inference, user work or other connectors may explain the interval.
 
-`attention_needed` alone is not auto-resume eligibility. On the App's detector
-request the Server independently rechecks all of the following:
+`attention_needed` alone is not auto-resume eligibility. During the same
+`goal_plan_sync` request the Server independently rechecks all of the following:
 
 - owned active Goal, exact explicit owned controller Agent, and current
   communication read/manage, runtime read, Session collaborate and Project read;
@@ -302,8 +306,10 @@ request the Server independently rechecks all of the following:
 - complete authoritative observation; no active meaningful request under the
   principal, including a request that started while asynchronous checks ran;
 - last meaningful completion at least **300,000 ms** ago; a successful exact-Goal
-  card poll at least **1,000 ms** later than that completion, no future timestamp,
-  and no more than **15,000 ms** old at the transaction's current-time sample;
+  card observation at least **1,000 ms** later than that completion, no future
+  timestamp, and within the Server-owned **75,000 ms observation lease**. The lease
+  covers the App's 60s hidden/background cadence plus 15s scheduling slack; browser
+  timestamps are never accepted;
 - still-active exact Session and creation-authority fingerprint, matching Goal
   revision/controller/correlation and unchanged durable meaningful-work anchor.
 
@@ -320,7 +326,7 @@ unobserved Window never triggers an automatic turn.
 
 ### Narrow Goal workflow stall attention and fresh-turn recovery
 
-A successful recheck atomically creates one `goal_workflow_stalled` Event and one
+An eligible sync atomically creates one `goal_workflow_stalled` Event and one
 ordinary pending `attention_event` Wake for the exact controller. The Event binds
 Goal, selected Agent, exact correlated Workflow Session, canonical hashed Window,
 observation principal, Goal revision and observed timing. It contains no copied
@@ -339,7 +345,7 @@ Event/Wake corruption fails closed. No sliding deadline or consume/dispatch acti
 resets the epoch.
 
 ```text
-Goal Plan poll -> selector-only detector request -> authoritative fenced recheck
+Goal Plan sync -> authoritative observation + fenced reconciliation in one RPC
  -> atomic goal_workflow_stalled Event + controller Wake
  -> existing AgentContinuationController / Agent Continuation MCP App
  -> existing claim + prepare + dispatch fence -> ui/message

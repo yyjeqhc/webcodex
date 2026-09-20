@@ -64,7 +64,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const HOST_DELIVERY_STATES = new Set(["not_started", "dispatching", "accepted", "unknown", "not_confirmed", "not_applicable"]);
   const FRESH_TURN_STATES = new Set(["not_confirmed", "confirmed", "not_applicable"]);
   const ACTIVITY_IDLE_THRESHOLD_MS = 300000;
-  const POLL_MS = 3000;
+  const OBSERVATION_LEASE_MS = 75000;
+  const VISIBLE_NORMAL_POLL_MS = 12000;
+  const HIDDEN_POLL_MS = 60000;
+  const TRANSIENT_POLL_MS = 5000;
+  const NEAR_ATTENTION_WINDOW_MS = 60000;
   const CALL_TIMEOUT_MS = 10000;
   let nextId = 1;
   let goalId = null;
@@ -73,7 +77,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let hostInitialized = false;
   let pollTimer = null;
   let pollInFlight = false;
-  let handledWorkEpoch = null;
+  let lastPlan = null;
   let tornDown = false;
   const pending = new Map();
   const utf8Encoder = new TextEncoder();
@@ -119,7 +123,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   function validActivity(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     if (typeof value.available !== "boolean" || !ACTIVITY_STATES.has(value.state)) return false;
-    if (value.idle_threshold_ms !== ACTIVITY_IDLE_THRESHOLD_MS || typeof value.coverage_partial !== "boolean") return false;
+    if (value.idle_threshold_ms !== ACTIVITY_IDLE_THRESHOLD_MS
+      || value.observation_lease_ms !== OBSERVATION_LEASE_MS
+      || typeof value.coverage_partial !== "boolean") return false;
     for (const key of ["last_seen_at_ms", "last_meaningful_activity_at_ms", "quiet_for_ms"]) {
       if (!nullableSafeInteger(value[key]) || (value[key] !== null && value[key] < 0 && key === "quiet_for_ms")) return false;
     }
@@ -136,10 +142,27 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!(value.wake_state === null || WAKE_STATES.has(value.wake_state))) return false;
     if (!HOST_DELIVERY_STATES.has(value.host_delivery) || !FRESH_TURN_STATES.has(value.fresh_turn)) return false;
     if (!(value.last_resume_at_unix_ms === null || (Number.isSafeInteger(value.last_resume_at_unix_ms) && value.last_resume_at_unix_ms >= 0))) return false;
+    for (const key of [
+      "attention_candidate_at_unix_ms", "attention_created_at_unix_ms",
+      "wake_created_at_unix_ms", "host_dispatch_prepared_at_unix_ms",
+      "host_dispatch_accepted_at_unix_ms", "host_dispatch_unknown_at_unix_ms",
+      "wake_consumed_at_unix_ms", "first_post_resume_meaningful_at_unix_ms",
+      "last_post_resume_meaningful_at_unix_ms",
+    ]) {
+      if (!(value[key] === null || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
+    }
     if (!value.available) {
       return value.state === "unavailable"
         && value.wake_state === null && value.host_delivery === "not_applicable"
-        && value.fresh_turn === "not_applicable" && value.last_resume_at_unix_ms === null;
+        && value.fresh_turn === "not_applicable" && value.last_resume_at_unix_ms === null
+        && value.attention_candidate_at_unix_ms === null
+        && value.attention_created_at_unix_ms === null && value.wake_created_at_unix_ms === null
+        && value.host_dispatch_prepared_at_unix_ms === null
+        && value.host_dispatch_accepted_at_unix_ms === null
+        && value.host_dispatch_unknown_at_unix_ms === null
+        && value.wake_consumed_at_unix_ms === null
+        && value.first_post_resume_meaningful_at_unix_ms === null
+        && value.last_post_resume_meaningful_at_unix_ms === null;
     }
     if (value.state === "not_configured" || value.state === "not_applicable") {
       return !value.production_auto_resume_available && value.wake_state === null
@@ -276,7 +299,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
     const quiet = formatQuiet(activity.quiet_for_ms);
     // A historical observation does not establish that a card is still alive.
-    // Only the Server's detector recheck may decide continuation eligibility.
+    // Only Server-owned reconciliation inside goal_plan_sync may decide continuation eligibility.
     node.textContent = `No meaningful WebCodex activity for ${quiet}. This Goal may need attention; this does not establish that the Window is offline.`;
   }
 
@@ -356,37 +379,41 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   function stopPolling() {
-    if (pollTimer !== null) clearInterval(pollTimer);
+    if (pollTimer !== null) clearTimeout(pollTimer);
     pollTimer = null;
   }
 
-  async function detectAttention(plan) {
-    const activity = plan.activity;
-    const epoch = activity.last_meaningful_activity_at_ms;
-    if (tornDown || isTerminal() || !plan.controller_agent_id || !activity.available
-      || activity.coverage_partial || activity.state !== "attention_needed"
-      || activity.active_meaningful_request_count !== 0 || epoch === null || epoch === handledWorkEpoch) return;
-    // Only the selector is sent. Server-owned observation and Session authority
-    // determine eligibility; the separate Agent Continuation card carries turns.
-    const response = callToolResultOf(await send("tools/call", {
-      name: "goal_plan_recheck_attention", arguments: { goal_id: goalId },
-    }));
-    if (tornDown || isTerminal()) return;
-    const structured = response && (response.structuredContent || response.structured_content || response);
-    const output = structured && (structured.output || structured);
-    if (!response || response.isError || !structured || structured.success === false || !output) throw new Error("Attention recheck unavailable");
-    if (typeof output.state_changed !== "boolean" || !(output.attention === null || (
-      typeof output.attention === "object" && /^wc_attention_event_[A-Za-z0-9_-]{16}$/.test(output.attention.event_id)
-      && /^wc_wake_[A-Za-z0-9_-]{16}$/.test(output.attention.wake_id) && typeof output.attention.created === "boolean"
-    ))) throw new Error("Invalid attention recheck");
-    if (output.attention !== null) handledWorkEpoch = epoch;
+  function nextPollDelay(plan) {
+    if (document.hidden) return HIDDEN_POLL_MS;
+    if (!plan) return VISIBLE_NORMAL_POLL_MS;
+    const continuity = plan.continuity;
+    if (["wake_queued", "dispatching", "host_accepted", "host_unknown"].includes(continuity.state)) {
+      return TRANSIENT_POLL_MS;
+    }
+    const quiet = plan.activity.quiet_for_ms;
+    if (Number.isSafeInteger(quiet)
+      && plan.activity.idle_threshold_ms - quiet <= NEAR_ATTENTION_WINDOW_MS) {
+      return TRANSIENT_POLL_MS;
+    }
+    return VISIBLE_NORMAL_POLL_MS;
+  }
+
+  function schedulePoll(delayMs) {
+    stopPolling();
+    if (!hostInitialized || !goalId || isTerminal() || tornDown) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      void poll();
+    }, delayMs);
   }
 
   async function poll() {
     if (tornDown || !hostInitialized || !goalId || isTerminal() || pollInFlight) return;
     pollInFlight = true;
     try {
-      const response = await send("tools/call", { name: "goal_plan_state", arguments: { goal_id: goalId } });
+      // One effectful App primitive owns observation, authoritative stall
+      // reconciliation, and the final projection. No conditional second RPC.
+      const response = await send("tools/call", { name: "goal_plan_sync", arguments: { goal_id: goalId } });
       const plan = extractPlan(response);
       if (!plan || !acceptIdentity(plan.goal_id)) throw new Error("Invalid Goal Plan state");
       if (plan.revision < lastRevision || (plan.revision === lastRevision && lastLifecycle !== null && plan.lifecycle !== lastLifecycle)) {
@@ -394,23 +421,21 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       }
       lastRevision = plan.revision;
       lastLifecycle = plan.lifecycle;
+      lastPlan = plan;
       render(plan);
-      if (isTerminal()) stopPolling();
-      else await detectAttention(plan);
     } catch (_) {
       if (!tornDown) el("status").textContent = "State refresh pending";
     } finally {
       pollInFlight = false;
+      if (isTerminal()) stopPolling();
+      else if (!tornDown && hostInitialized && goalId) schedulePoll(nextPollDelay(lastPlan));
     }
   }
 
   function ensurePolling() {
     if (!hostInitialized || !goalId || isTerminal() || tornDown) return stopPolling();
-    if (pollTimer === null) {
-      showTrackingStatus();
-      pollTimer = setInterval(poll, POLL_MS);
-      void poll();
-    }
+    showTrackingStatus();
+    if (!pollInFlight && pollTimer === null) void poll();
   }
 
   function acceptToolInput(params) {
@@ -471,7 +496,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   });
 
   addEventListener("visibilitychange", () => {
-    if (!document.hidden) void poll();
+    if (tornDown || isTerminal()) return;
+    if (document.hidden) schedulePoll(HIDDEN_POLL_MS);
+    else {
+      stopPolling();
+      if (!pollInFlight) void poll();
+    }
   });
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });

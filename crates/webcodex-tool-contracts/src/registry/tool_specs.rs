@@ -27,19 +27,14 @@ fn operator_extension_specs(
         .collect()
 }
 
-/// Goal Plan observation and narrow inactivity detector contract. Both tools
-/// remain globally ModelHidden; only the MCP Apps adapter may project them.
+/// Goal Plan observation/synchronization contract. The single App-only tool is
+/// explicitly effectful: Server-owned stall revalidation may atomically create
+/// one durable Attention/Wake before returning the final bounded projection.
 pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
-    vec![
-        tool_spec(
-            "goal_plan_state",
-            "App-only exact read of the current bounded Goal Plan projection. Requires explicit goal_id, re-authorizes the Goal on every call, grants no execution authority, and never mutates Goal state.",
-        ),
-        tool_spec(
-            "goal_plan_recheck_attention",
-            "App-only authoritative Goal stall recheck from the current Window. Accepts only goal_id; recomputes activity and authorization, commits at most one durable attention/Wake per meaningful-work epoch, and never dispatches a Host turn directly.",
-        ),
-    ]
+    vec![tool_spec(
+        "goal_plan_sync",
+        "App-only exact Goal Plan synchronization from the current Host Window. Accepts only goal_id; re-authorizes the Goal, recomputes bounded activity, and when inactivity is authoritatively eligible reuses the Server-owned Session/Window/Project/revision/request/coverage fences to atomically create at most one durable Attention/Wake per meaningful-work epoch before returning the final bounded projection. It never dispatches a Host turn directly.",
+    )]
 }
 
 /// Read-only Work Result App primitives. Canonical definitions stay ModelHidden;

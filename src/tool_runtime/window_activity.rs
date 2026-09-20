@@ -1108,7 +1108,7 @@ mod tests {
             &window,
             "trace-goal-plan-state",
             "tools/call",
-            Some("goal_plan_state"),
+            Some("goal_plan_sync"),
             Some(("username", "alice")),
             1_000,
         );

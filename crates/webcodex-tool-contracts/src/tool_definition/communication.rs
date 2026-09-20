@@ -551,6 +551,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
+            )
+            .with_activity(
+                super::ToolActivityPresentation::Transport,
+                super::ToolActivityInteraction::NonMeaningful,
             ),
             "Verify an exact Agent/Endpoint generation and return bounded turn context without Message bodies. activation_idempotency_key is only for explicit activation of an eligible pending Inbox-style Wake into this already-active turn; omit it for agent_task_attempt, attention_event, and agent_wait_events Wakes already dispatched by an Endpoint carrier. Explicit activation never requests a new model turn.",
         ),
@@ -855,6 +859,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
+            )
+            .with_activity(
+                super::ToolActivityPresentation::Transport,
+                super::ToolActivityInteraction::NonMeaningful,
             ),
             "Consume one exact durable Agent Wake continuation after accepting the resumed model turn. wake_id and consume_token identify the exact continuation, while endpoint_id and expected_controller_generation fence stale attachments. Repeating the same exact consume returns already_consumed without another state change. This operation never consumes Agent Inbox deliveries and grants no Project, filesystem, Runner, Task, or Workflow Session authority.",
             ),

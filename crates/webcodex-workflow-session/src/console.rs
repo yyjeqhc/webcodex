@@ -1235,7 +1235,7 @@ mod tests {
             ToolActivityPresentation::Transport
         );
         assert_eq!(
-            activity_presentation_for_tool("goal_plan_state"),
+            activity_presentation_for_tool("goal_plan_sync"),
             ToolActivityPresentation::Transport
         );
     }

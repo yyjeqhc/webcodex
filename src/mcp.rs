@@ -85,7 +85,7 @@ fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
 // observation correlation, not client liveness evidence or authority. No other
 // arguments, Goal body, or Host binding are copied into the activity ledger.
 fn goal_plan_observation_id(tool_name: Option<&str>, params: &Value) -> Option<String> {
-    if tool_name != Some("goal_plan_state") {
+    if tool_name != Some("goal_plan_sync") {
         return None;
     }
     let id = params.pointer("/arguments/goal_id")?.as_str()?;

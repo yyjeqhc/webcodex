@@ -2445,11 +2445,8 @@ impl ToolRuntime {
 
             ToolCall::PresentGoalPlan { goal_id } => self.present_goal_plan(auth, goal_id).await,
 
-            ToolCall::GoalPlanState { goal_id } => self.goal_plan_state(auth, goal_id).await,
-
-            ToolCall::GoalPlanRecheckAttention { goal_id } => {
-                self.goal_plan_recheck_attention_for_window(auth, window, goal_id)
-                    .await
+            ToolCall::GoalPlanSync { goal_id } => {
+                self.goal_plan_sync_for_window(auth, window, goal_id).await
             }
 
             ToolCall::ListGoals {

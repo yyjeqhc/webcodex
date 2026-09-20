@@ -17,7 +17,11 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 
 pub const GOAL_ACTIVITY_ATTENTION_AFTER_MS: i64 = 5 * 60_000;
-pub const GOAL_CARD_ALIVE_GRACE_MS: i64 = 15_000;
+/// A successful Goal Plan sync proves the card is still observed for this
+/// Server-owned lease. The lease deliberately covers the App's 60s hidden
+/// polling target plus 15s of Host/background scheduling slack; it is not a
+/// browser-supplied timestamp and never grants authority.
+pub const GOAL_CARD_OBSERVATION_LEASE_MS: i64 = 75_000;
 pub const GOAL_CARD_OBSERVATION_ADVANCE_MS: i64 = 1_000;
 pub(crate) const GOAL_ACTIVITY_WINDOW_SCAN_LIMIT: usize = 16;
 pub(crate) const GOAL_ACTIVITY_SESSION_SCAN_LIMIT: usize = 16;
@@ -58,13 +62,33 @@ pub enum GoalStallHostDeliveryObservation {
 pub struct GoalStallWakeObservation {
     pub state: AgentWakeState,
     pub host_delivery: GoalStallHostDeliveryObservation,
+    pub attention_created_at_unix_ms: i64,
+    pub wake_created_at_unix_ms: i64,
+    pub dispatch_prepared_at_unix_ms: Option<i64>,
+    pub host_dispatch_accepted_at_unix_ms: Option<i64>,
+    pub host_dispatch_unknown_at_unix_ms: Option<i64>,
     pub consumed_at_unix_ms: Option<i64>,
+    pub first_post_resume_meaningful_at_unix_ms: Option<i64>,
+    pub last_post_resume_meaningful_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalStallResumeObservation {
+    pub attention_candidate_at_unix_ms: i64,
+    pub attention_created_at_unix_ms: i64,
+    pub wake_created_at_unix_ms: i64,
+    pub dispatch_prepared_at_unix_ms: Option<i64>,
+    pub host_dispatch_accepted_at_unix_ms: Option<i64>,
+    pub host_dispatch_unknown_at_unix_ms: Option<i64>,
+    pub consumed_at_unix_ms: i64,
+    pub first_post_resume_meaningful_at_unix_ms: Option<i64>,
+    pub last_post_resume_meaningful_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoalStallContinuityObservation {
     pub current_wake: Option<GoalStallWakeObservation>,
-    pub last_consumed_at_unix_ms: Option<i64>,
+    pub last_resume: Option<GoalStallResumeObservation>,
 }
 
 fn invariant() -> CommunicationStoreError {
@@ -90,17 +114,49 @@ fn live_quiet_observation(last_work: i64, last_seen: i64, now: i64) -> bool {
         && last_seen <= now
         && now.saturating_sub(last_work) >= GOAL_ACTIVITY_ATTENTION_AFTER_MS
         && last_seen.saturating_sub(last_work) >= GOAL_CARD_OBSERVATION_ADVANCE_MS
-        && now.saturating_sub(last_seen) <= GOAL_CARD_ALIVE_GRACE_MS
+        && now.saturating_sub(last_seen) <= GOAL_CARD_OBSERVATION_LEASE_MS
+}
+
+fn post_resume_meaningful_times(
+    conn: &Connection,
+    observed_window_key: &str,
+    observation_principal_kind: &str,
+    observation_principal_id: &str,
+    workflow_session_id: &str,
+    consumed_at_unix_ms: i64,
+) -> Result<(Option<i64>, Option<i64>), CommunicationStoreError> {
+    conn.query_row(
+        "SELECT MIN(e.window_ended_at_ms), MAX(e.window_ended_at_ms)
+         FROM action_events e
+         JOIN action_event_workflow_links l ON l.event_id = e.event_id
+         WHERE e.client_window_key = ?1
+           AND e.principal_correlation_kind = ?2
+           AND e.principal_correlation_id = ?3
+           AND e.window_meaningful = 1
+           AND e.window_ended_at_ms IS NOT NULL
+           AND e.window_ended_at_ms >= ?4
+           AND l.workflow_session_id = ?5",
+        params![
+            observed_window_key,
+            observation_principal_kind,
+            observation_principal_id,
+            consumed_at_unix_ms,
+            workflow_session_id
+        ],
+        |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?)),
+    )
+    .map_err(store_error)
 }
 
 impl Database {
     /// Read bounded durable continuity evidence for one owned Goal.
     ///
     /// The current Wake is returned only when the exact current inactivity epoch
-    /// targets the Goal's current controller. Historical consumed Wakes remain
-    /// available only as a timestamp. This prevents another Goal, AgentTask,
-    /// AgentWait, prior controller, or prior inactivity epoch on the same Agent
-    /// from becoming current Goal continuity state.
+    /// targets the Goal's current controller. The most recent consumed stall
+    /// continuation may retain only its bounded timing summary, and only when it
+    /// targeted that same current controller. This prevents another Goal,
+    /// AgentTask, AgentWait, prior controller, or prior inactivity epoch on the
+    /// same Agent from becoming current Goal continuity state.
     pub fn read_goal_stall_continuity(
         &self,
         principal: &CommunicationPrincipal,
@@ -138,9 +194,18 @@ impl Database {
             return Err(invariant());
         }
 
-        let last_consumed_at_unix_ms = conn
+        let last_resume_row = conn
             .query_row(
-                "SELECT MAX(w.consumed_at_unix_ms)
+                "SELECT e.last_meaningful_activity_at_ms, e.created_at_unix_ms,
+                        w.created_at_unix_ms, w.consumed_at_unix_ms,
+                        w.claimed_attempt_id, w.claimed_endpoint_id,
+                        w.claimed_controller_generation, w.consumed_by_endpoint_id,
+                        w.consumed_controller_generation,
+                        a.attempt_id, a.endpoint_id, a.controller_generation, a.state,
+                        a.prepared_at_unix_ms, a.delivered_at_unix_ms,
+                        a.delivery_unknown_at_unix_ms, a.consumed_at_unix_ms,
+                        e.workflow_session_id, e.observed_window_key,
+                        e.observation_principal_kind, e.observation_principal_id
                  FROM wc_agent_attention_events e
                  JOIN wc_agent_wakes w
                    ON w.source_event_id = e.event_id
@@ -149,20 +214,133 @@ impl Database {
                   AND w.source_task_attempt_id IS NULL
                   AND w.source_wait_id IS NULL
                   AND w.target_agent_id = e.target_agent_id
+                 LEFT JOIN wc_agent_wake_attempts a
+                   ON a.attempt_id = w.claimed_attempt_id
+                  AND a.wake_id = w.wake_id
                  WHERE e.kind = 'goal_workflow_stalled'
                    AND e.goal_id = ?1
                    AND e.owner_principal_kind = ?2
                    AND e.owner_principal_digest = ?3
-                   AND w.state = 'consumed'",
-                params![goal_id, principal.kind, principal.digest],
-                |row| row.get::<_, Option<i64>>(0),
+                   AND e.target_agent_id = ?4
+                   AND w.state = 'consumed'
+                 ORDER BY w.consumed_at_unix_ms DESC, w.wake_id DESC
+                 LIMIT 1",
+                params![
+                    goal_id,
+                    principal.kind,
+                    principal.digest,
+                    current_controller_agent_id
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<i64>>(11)?,
+                        row.get::<_, Option<String>>(12)?,
+                        row.get::<_, Option<i64>>(13)?,
+                        row.get::<_, Option<i64>>(14)?,
+                        row.get::<_, Option<i64>>(15)?,
+                        row.get::<_, Option<i64>>(16)?,
+                        row.get::<_, String>(17)?,
+                        row.get::<_, String>(18)?,
+                        row.get::<_, String>(19)?,
+                        row.get::<_, String>(20)?,
+                    ))
+                },
             )
+            .optional()
             .map_err(store_error)?;
+        let last_resume = if let Some((
+            last_work,
+            attention_created_at_unix_ms,
+            wake_created_at_unix_ms,
+            consumed_at_unix_ms,
+            claimed_attempt_id,
+            claimed_endpoint_id,
+            claimed_controller_generation,
+            consumed_by_endpoint_id,
+            consumed_controller_generation,
+            attempt_id,
+            attempt_endpoint_id,
+            attempt_controller_generation,
+            attempt_state,
+            dispatch_prepared_at_unix_ms,
+            host_dispatch_accepted_at_unix_ms,
+            host_dispatch_unknown_at_unix_ms,
+            attempt_consumed_at_unix_ms,
+            workflow_session_id,
+            observed_window_key,
+            observation_principal_kind,
+            observation_principal_id,
+        )) = last_resume_row
+        {
+            let attention_candidate_at_unix_ms =
+                last_work.saturating_add(GOAL_ACTIVITY_ATTENTION_AFTER_MS);
+            if claimed_attempt_id.is_none()
+                || claimed_endpoint_id.is_none()
+                || claimed_controller_generation.is_none()
+                || consumed_by_endpoint_id != claimed_endpoint_id
+                || consumed_controller_generation != claimed_controller_generation
+                || attempt_id.as_deref() != claimed_attempt_id.as_deref()
+                || attempt_endpoint_id != claimed_endpoint_id
+                || attempt_controller_generation != claimed_controller_generation
+                || attempt_state.as_deref() != Some("consumed")
+                || attempt_consumed_at_unix_ms != Some(consumed_at_unix_ms)
+                || dispatch_prepared_at_unix_ms.is_none()
+                || (host_dispatch_accepted_at_unix_ms.is_some()
+                    && host_dispatch_unknown_at_unix_ms.is_some())
+                || attention_created_at_unix_ms < attention_candidate_at_unix_ms
+                || wake_created_at_unix_ms < attention_created_at_unix_ms
+                || dispatch_prepared_at_unix_ms.is_some_and(|prepared| {
+                    prepared < wake_created_at_unix_ms || prepared > consumed_at_unix_ms
+                })
+                || host_dispatch_accepted_at_unix_ms.is_some_and(|accepted| {
+                    accepted < dispatch_prepared_at_unix_ms.unwrap()
+                        || accepted > consumed_at_unix_ms
+                })
+                || host_dispatch_unknown_at_unix_ms.is_some_and(|unknown| {
+                    unknown < dispatch_prepared_at_unix_ms.unwrap() || unknown > consumed_at_unix_ms
+                })
+            {
+                return Err(invariant());
+            }
+            let (first_post_resume_meaningful_at_unix_ms, last_post_resume_meaningful_at_unix_ms) =
+                post_resume_meaningful_times(
+                    &conn,
+                    &observed_window_key,
+                    &observation_principal_kind,
+                    &observation_principal_id,
+                    &workflow_session_id,
+                    consumed_at_unix_ms,
+                )?;
+            Some(GoalStallResumeObservation {
+                attention_candidate_at_unix_ms,
+                attention_created_at_unix_ms,
+                wake_created_at_unix_ms,
+                dispatch_prepared_at_unix_ms,
+                host_dispatch_accepted_at_unix_ms,
+                host_dispatch_unknown_at_unix_ms,
+                consumed_at_unix_ms,
+                first_post_resume_meaningful_at_unix_ms,
+                last_post_resume_meaningful_at_unix_ms,
+            })
+        } else {
+            None
+        };
 
         let Some(epoch) = current_last_meaningful_activity_at_ms else {
             return Ok(GoalStallContinuityObservation {
                 current_wake: None,
-                last_consumed_at_unix_ms,
+                last_resume,
             });
         };
         let row = conn
@@ -171,8 +349,11 @@ impl Database {
                         w.wake_id, w.target_agent_id, w.state,
                         w.claimed_attempt_id, w.claimed_endpoint_id,
                         w.claimed_controller_generation, w.consumed_at_unix_ms,
-                        a.attempt_id, a.delivered_at_unix_ms,
-                        a.delivery_unknown_at_unix_ms
+                        a.attempt_id, a.prepared_at_unix_ms, a.delivered_at_unix_ms,
+                        a.delivery_unknown_at_unix_ms,
+                        e.created_at_unix_ms, w.created_at_unix_ms,
+                        e.workflow_session_id, e.observed_window_key,
+                        e.observation_principal_kind, e.observation_principal_id
                  FROM wc_agent_attention_events e
                  JOIN wc_agent_wakes w
                    ON w.source_event_id = e.event_id
@@ -203,6 +384,13 @@ impl Database {
                         row.get::<_, Option<String>>(8)?,
                         row.get::<_, Option<i64>>(9)?,
                         row.get::<_, Option<i64>>(10)?,
+                        row.get::<_, Option<i64>>(11)?,
+                        row.get::<_, i64>(12)?,
+                        row.get::<_, i64>(13)?,
+                        row.get::<_, String>(14)?,
+                        row.get::<_, String>(15)?,
+                        row.get::<_, String>(16)?,
+                        row.get::<_, String>(17)?,
                     ))
                 },
             )
@@ -218,13 +406,20 @@ impl Database {
             claimed_controller_generation,
             consumed_at_unix_ms,
             attempt_id,
+            prepared_at_unix_ms,
             delivered_at_unix_ms,
             delivery_unknown_at_unix_ms,
+            attention_created_at_unix_ms,
+            wake_created_at_unix_ms,
+            workflow_session_id,
+            observed_window_key,
+            observation_principal_kind,
+            observation_principal_id,
         )) = row
         else {
             return Ok(GoalStallContinuityObservation {
                 current_wake: None,
-                last_consumed_at_unix_ms,
+                last_resume,
             });
         };
         if event_target_agent_id != wake_target_agent_id {
@@ -263,19 +458,40 @@ impl Database {
         {
             return Err(invariant());
         }
+        let (first_post_resume_meaningful_at_unix_ms, last_post_resume_meaningful_at_unix_ms) =
+            if let Some(consumed_at) = consumed_at_unix_ms {
+                post_resume_meaningful_times(
+                    &conn,
+                    &observed_window_key,
+                    &observation_principal_kind,
+                    &observation_principal_id,
+                    &workflow_session_id,
+                    consumed_at,
+                )?
+            } else {
+                (None, None)
+            };
+
         if event_target_agent_id != current_controller_agent_id {
             return Ok(GoalStallContinuityObservation {
                 current_wake: None,
-                last_consumed_at_unix_ms,
+                last_resume,
             });
         }
         Ok(GoalStallContinuityObservation {
             current_wake: Some(GoalStallWakeObservation {
                 state,
                 host_delivery,
+                attention_created_at_unix_ms,
+                wake_created_at_unix_ms,
+                dispatch_prepared_at_unix_ms: prepared_at_unix_ms,
+                host_dispatch_accepted_at_unix_ms: delivered_at_unix_ms,
+                host_dispatch_unknown_at_unix_ms: delivery_unknown_at_unix_ms,
                 consumed_at_unix_ms,
+                first_post_resume_meaningful_at_unix_ms,
+                last_post_resume_meaningful_at_unix_ms,
             }),
-            last_consumed_at_unix_ms,
+            last_resume,
         })
     }
 
@@ -449,7 +665,7 @@ impl Database {
             return Ok(None);
         }
         let (last_seen, latest_gap): (Option<i64>, Option<i64>) = transaction.query_row(
-            "SELECT MAX(CASE WHEN action_name = 'toolsCall' AND operation = 'goal_plan_state'
+            "SELECT MAX(CASE WHEN action_name = 'toolsCall' AND operation = 'goal_plan_sync'
                                   AND window_meaningful = 0 AND status = 'success'
                                   AND window_started_at_ms IS NOT NULL
                                   AND window_started_at_ms >= 0

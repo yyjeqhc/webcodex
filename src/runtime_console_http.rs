@@ -4922,7 +4922,7 @@ mod tests {
             Some(project),
             None,
             1_000,
-            "goal_plan_state",
+            "goal_plan_sync",
             true,
         );
 
@@ -4938,7 +4938,7 @@ mod tests {
         .await
         .unwrap();
         let activity = detail.activity.first().expect("projected activity");
-        assert_eq!(activity.tool_name.as_deref(), Some("goal_plan_state"));
+        assert_eq!(activity.tool_name.as_deref(), Some("goal_plan_sync"));
         assert!(activity.meaningful, "persisted event-time bit must win");
         assert_eq!(activity.activity_presentation.as_deref(), Some("transport"));
         assert_eq!(activity.activity_kind, None);
@@ -5076,7 +5076,7 @@ mod tests {
         );
         runtime.window_activity.update(
             "trace-pre-resolution-diagnostic",
-            Some("goal_plan_state"),
+            Some("goal_plan_sync"),
             None,
         );
 

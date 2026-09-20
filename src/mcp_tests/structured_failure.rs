@@ -231,7 +231,7 @@ async fn gateway_and_app_canonical_failures_use_request_presentation() {
             json!({"project": "agent:missing:missing"}),
         ),
         adaptive_runtime_gateway_params("unknown_target", json!({})),
-        json!({"name": "goal_plan_state", "arguments": {"goal_id": "wc_goal_AAAAAAAAAAAAAAAA"}}),
+        json!({"name": "goal_plan_sync", "arguments": {"goal_id": "wc_goal_AAAAAAAAAAAAAAAA"}}),
         json!({"name": "agent_continuation_state", "arguments": {
             "agent_id": "wc_dagent_AAAAAAAAAAAAAAAA", "endpoint_id": "wc_endpoint_AAAAAAAAAAAAAAAA",
             "expected_controller_generation": 1, "binding_id": "wc_host_binding_AAAAAAAAAAAAAAAAAAAAAA"

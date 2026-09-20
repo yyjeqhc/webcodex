@@ -34,6 +34,7 @@ pub(crate) struct GoalActivityObservation {
     pub available: bool,
     pub state: GoalActivityState,
     pub idle_threshold_ms: i64,
+    pub observation_lease_ms: i64,
     pub last_seen_at_ms: Option<i64>,
     pub last_meaningful_activity_at_ms: Option<i64>,
     pub quiet_for_ms: Option<i64>,
@@ -48,6 +49,7 @@ impl GoalActivityObservation {
             available: false,
             state,
             idle_threshold_ms: GOAL_ACTIVITY_ATTENTION_AFTER_MS,
+            observation_lease_ms: crate::db::GOAL_CARD_OBSERVATION_LEASE_MS,
             last_seen_at_ms: None,
             last_meaningful_activity_at_ms: None,
             quiet_for_ms: None,
@@ -65,6 +67,7 @@ impl GoalActivityObservation {
             available: true,
             state: GoalActivityState::NotApplicable,
             idle_threshold_ms: GOAL_ACTIVITY_ATTENTION_AFTER_MS,
+            observation_lease_ms: crate::db::GOAL_CARD_OBSERVATION_LEASE_MS,
             last_seen_at_ms: None,
             last_meaningful_activity_at_ms: None,
             quiet_for_ms: None,
@@ -117,6 +120,15 @@ pub(crate) struct GoalContinuityObservation {
     pub wake_state: Option<AgentWakeState>,
     pub host_delivery: GoalHostDeliveryState,
     pub fresh_turn: GoalFreshTurnState,
+    pub attention_candidate_at_unix_ms: Option<i64>,
+    pub attention_created_at_unix_ms: Option<i64>,
+    pub wake_created_at_unix_ms: Option<i64>,
+    pub host_dispatch_prepared_at_unix_ms: Option<i64>,
+    pub host_dispatch_accepted_at_unix_ms: Option<i64>,
+    pub host_dispatch_unknown_at_unix_ms: Option<i64>,
+    pub wake_consumed_at_unix_ms: Option<i64>,
+    pub first_post_resume_meaningful_at_unix_ms: Option<i64>,
+    pub last_post_resume_meaningful_at_unix_ms: Option<i64>,
     pub last_resume_at_unix_ms: Option<i64>,
 }
 
@@ -129,6 +141,15 @@ impl GoalContinuityObservation {
             wake_state: None,
             host_delivery: GoalHostDeliveryState::NotApplicable,
             fresh_turn: GoalFreshTurnState::NotApplicable,
+            attention_candidate_at_unix_ms: None,
+            attention_created_at_unix_ms: None,
+            wake_created_at_unix_ms: None,
+            host_dispatch_prepared_at_unix_ms: None,
+            host_dispatch_accepted_at_unix_ms: None,
+            host_dispatch_unknown_at_unix_ms: None,
+            wake_consumed_at_unix_ms: None,
+            first_post_resume_meaningful_at_unix_ms: None,
+            last_post_resume_meaningful_at_unix_ms: None,
             last_resume_at_unix_ms: None,
         }
     }
@@ -141,6 +162,15 @@ impl GoalContinuityObservation {
             wake_state: None,
             host_delivery: GoalHostDeliveryState::NotApplicable,
             fresh_turn: GoalFreshTurnState::NotApplicable,
+            attention_candidate_at_unix_ms: None,
+            attention_created_at_unix_ms: None,
+            wake_created_at_unix_ms: None,
+            host_dispatch_prepared_at_unix_ms: None,
+            host_dispatch_accepted_at_unix_ms: None,
+            host_dispatch_unknown_at_unix_ms: None,
+            wake_consumed_at_unix_ms: None,
+            first_post_resume_meaningful_at_unix_ms: None,
+            last_post_resume_meaningful_at_unix_ms: None,
             last_resume_at_unix_ms: None,
         }
     }
@@ -153,6 +183,15 @@ impl GoalContinuityObservation {
             wake_state: None,
             host_delivery: GoalHostDeliveryState::NotApplicable,
             fresh_turn: GoalFreshTurnState::NotApplicable,
+            attention_candidate_at_unix_ms: None,
+            attention_created_at_unix_ms: None,
+            wake_created_at_unix_ms: None,
+            host_dispatch_prepared_at_unix_ms: None,
+            host_dispatch_accepted_at_unix_ms: None,
+            host_dispatch_unknown_at_unix_ms: None,
+            wake_consumed_at_unix_ms: None,
+            first_post_resume_meaningful_at_unix_ms: None,
+            last_post_resume_meaningful_at_unix_ms: None,
             last_resume_at_unix_ms: None,
         }
     }
@@ -255,6 +294,9 @@ fn goal_continuity_observation(
             ..GoalContinuityObservation::unavailable()
         };
     }
+    let attention_candidate_at_unix_ms = activity
+        .last_meaningful_activity_at_ms
+        .map(|last| last.saturating_add(GOAL_ACTIVITY_ATTENTION_AFTER_MS));
     let durable = match db.read_goal_stall_continuity(
         principal,
         &goal.summary.goal_id,
@@ -265,6 +307,7 @@ fn goal_continuity_observation(
         Err(_) => return GoalContinuityObservation::unavailable(),
     };
     let Some(wake) = durable.current_wake else {
+        let resume = durable.last_resume.as_ref();
         return GoalContinuityObservation {
             available: true,
             state: if activity.state == GoalActivityState::AttentionNeeded {
@@ -276,7 +319,23 @@ fn goal_continuity_observation(
             wake_state: None,
             host_delivery: GoalHostDeliveryState::NotStarted,
             fresh_turn: GoalFreshTurnState::NotConfirmed,
-            last_resume_at_unix_ms: durable.last_consumed_at_unix_ms,
+            attention_candidate_at_unix_ms: resume
+                .map(|value| value.attention_candidate_at_unix_ms)
+                .or(attention_candidate_at_unix_ms),
+            attention_created_at_unix_ms: resume.map(|value| value.attention_created_at_unix_ms),
+            wake_created_at_unix_ms: resume.map(|value| value.wake_created_at_unix_ms),
+            host_dispatch_prepared_at_unix_ms: resume
+                .and_then(|value| value.dispatch_prepared_at_unix_ms),
+            host_dispatch_accepted_at_unix_ms: resume
+                .and_then(|value| value.host_dispatch_accepted_at_unix_ms),
+            host_dispatch_unknown_at_unix_ms: resume
+                .and_then(|value| value.host_dispatch_unknown_at_unix_ms),
+            wake_consumed_at_unix_ms: resume.map(|value| value.consumed_at_unix_ms),
+            first_post_resume_meaningful_at_unix_ms: resume
+                .and_then(|value| value.first_post_resume_meaningful_at_unix_ms),
+            last_post_resume_meaningful_at_unix_ms: resume
+                .and_then(|value| value.last_post_resume_meaningful_at_unix_ms),
+            last_resume_at_unix_ms: resume.map(|value| value.consumed_at_unix_ms),
         };
     };
     let state = match wake.state {
@@ -311,7 +370,19 @@ fn goal_continuity_observation(
         } else {
             GoalFreshTurnState::NotConfirmed
         },
-        last_resume_at_unix_ms: durable.last_consumed_at_unix_ms,
+        attention_candidate_at_unix_ms,
+        attention_created_at_unix_ms: Some(wake.attention_created_at_unix_ms),
+        wake_created_at_unix_ms: Some(wake.wake_created_at_unix_ms),
+        host_dispatch_prepared_at_unix_ms: wake.dispatch_prepared_at_unix_ms,
+        host_dispatch_accepted_at_unix_ms: wake.host_dispatch_accepted_at_unix_ms,
+        host_dispatch_unknown_at_unix_ms: wake.host_dispatch_unknown_at_unix_ms,
+        wake_consumed_at_unix_ms: wake.consumed_at_unix_ms,
+        first_post_resume_meaningful_at_unix_ms: wake.first_post_resume_meaningful_at_unix_ms,
+        last_post_resume_meaningful_at_unix_ms: wake.last_post_resume_meaningful_at_unix_ms,
+        last_resume_at_unix_ms: durable
+            .last_resume
+            .as_ref()
+            .map(|value| value.consumed_at_unix_ms),
     }
 }
 
@@ -714,6 +785,7 @@ impl ToolRuntime {
             available: true,
             state,
             idle_threshold_ms: GOAL_ACTIVITY_ATTENTION_AFTER_MS,
+            observation_lease_ms: crate::db::GOAL_CARD_OBSERVATION_LEASE_MS,
             last_seen_at_ms,
             last_meaningful_activity_at_ms,
             quiet_for_ms,
@@ -754,18 +826,6 @@ impl ToolRuntime {
             Ok(_) => None,
             Err(_) => Some(json!({"available": false, "truncated": false, "goals": []})),
         }
-    }
-
-    pub(crate) async fn goal_plan_recheck_attention_for_window(
-        &self,
-        auth: Option<&AuthContext>,
-        window: Option<&crate::client_window::ClientWindow>,
-        goal_id: String,
-    ) -> ToolResult {
-        self.goal_plan_recheck_attention_with_clock(auth, window, goal_id, || {
-            chrono::Utc::now().timestamp_millis()
-        })
-        .await
     }
 
     #[cfg(test)]
@@ -873,7 +933,7 @@ impl ToolRuntime {
             return ineligible();
         };
         let resolved = match self
-            .authorize_session_target(session_id, "goal_plan_recheck_attention", auth)
+            .authorize_session_target(session_id, "goal_plan_sync", auth)
             .await
         {
             Ok(Some(resolved)) => resolved,
@@ -960,7 +1020,7 @@ impl ToolRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) async fn goal_plan_state_at(
+    pub(crate) async fn goal_plan_sync_at(
         &self,
         auth: Option<&AuthContext>,
         goal_id: String,
@@ -977,12 +1037,50 @@ impl ToolRuntime {
         self.exact_goal_plan(auth, goal_id).await
     }
 
-    pub(crate) async fn goal_plan_state(
+    pub(crate) async fn goal_plan_sync_for_window(
         &self,
         auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
         goal_id: String,
     ) -> ToolResult {
-        self.exact_goal_plan(auth, goal_id).await
+        self.goal_plan_sync_for_window_at_inner(
+            auth,
+            window,
+            goal_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn goal_plan_sync_for_window_at(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        goal_id: String,
+        now_ms: i64,
+    ) -> ToolResult {
+        self.goal_plan_sync_for_window_at_inner(auth, window, goal_id, now_ms)
+            .await
+    }
+
+    async fn goal_plan_sync_for_window_at_inner(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        goal_id: String,
+        now_ms: i64,
+    ) -> ToolResult {
+        let attention = self
+            .goal_plan_recheck_attention_with_clock(auth, window, goal_id.clone(), || now_ms)
+            .await;
+        if !attention.success {
+            return attention;
+        }
+        // One App RPC owns both authoritative stall reconciliation and the
+        // post-reconciliation projection. The browser never supplies timing,
+        // Session, Window, controller, Project, or revision authority.
+        self.exact_goal_plan_at(auth, goal_id, now_ms).await
     }
 
     pub(crate) fn list_goals(

@@ -266,7 +266,7 @@ fn goal_tools_are_control_only_and_never_declare_execution_authority() {
         );
     }
 
-    let app_state = lookup_tool_definition("goal_plan_state").unwrap();
+    let app_state = lookup_tool_definition("goal_plan_sync").unwrap();
     assert!(app_state.model_spec.is_none());
     assert_eq!(app_state.category, "goal");
     assert_eq!(app_state.metadata.provider_id, "control");
@@ -276,13 +276,22 @@ fn goal_tools_are_control_only_and_never_declare_execution_authority() {
         None::<RunnerCapabilityRequirement>
     );
     assert!(!app_state.metadata.shell_like);
-    assert_eq!(app_state.metadata.effect, ToolEffect::Observe);
-    assert_eq!(app_state.metadata.risk, ToolRisk::Read);
-    assert_eq!(app_state.metadata.approval, ToolApprovalPolicy::None);
-    assert_eq!(app_state.metadata.idempotency, ToolIdempotency::PureRead);
+    assert_eq!(app_state.metadata.effect, ToolEffect::Mutate);
+    assert_eq!(app_state.metadata.risk, ToolRisk::WorkflowManage);
+    assert_eq!(app_state.metadata.approval, ToolApprovalPolicy::Standard);
+    assert_eq!(
+        app_state.metadata.idempotency,
+        ToolIdempotency::DesiredState
+    );
     assert_eq!(
         app_state.metadata.authority,
-        ToolAuthorityPolicy::RequireAll(COMMUNICATION_READ_SCOPES)
+        ToolAuthorityPolicy::RequireAll(&[
+            SCOPE_COMMUNICATION_READ,
+            SCOPE_COMMUNICATION_MANAGE,
+            SCOPE_RUNTIME_READ,
+            SCOPE_SESSION_COLLABORATE,
+            SCOPE_PROJECT_READ,
+        ])
     );
 
     let session_link = lookup_tool_definition("associate_goal_workflow_session").unwrap();
@@ -339,7 +348,7 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
     let present = spec("present_goal_plan");
     assert_eq!(present.input_schema["required"], json!(["goal_id"]));
     let plan = &present.output_schema["properties"]["output"]["properties"]["goal_plan"];
-    assert_eq!(plan["properties"]["version"]["const"], 2);
+    assert_eq!(plan["properties"]["version"]["const"], 3);
     assert_eq!(
         plan["properties"]["activity"]["additionalProperties"],
         false
@@ -347,6 +356,10 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
     assert_eq!(
         plan["properties"]["activity"]["properties"]["idle_threshold_ms"]["const"],
         300_000
+    );
+    assert_eq!(
+        plan["properties"]["activity"]["properties"]["observation_lease_ms"]["const"],
+        75_000
     );
     assert_eq!(plan["properties"]["title"]["maxLength"], 200);
     assert!(plan["properties"].get("objective").is_none());
@@ -380,9 +393,8 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
         );
     }
     let app_specs = crate::tool_runtime::goal_plan_app_tool_specs();
-    assert_eq!(app_specs.len(), 2);
-    assert_eq!(app_specs[0].name, "goal_plan_state");
-    assert_eq!(app_specs[1].name, "goal_plan_recheck_attention");
+    assert_eq!(app_specs.len(), 1);
+    assert_eq!(app_specs[0].name, "goal_plan_sync");
     for app_spec in &app_specs {
         assert_eq!(app_spec.input_schema["required"], json!(["goal_id"]));
         assert_eq!(
@@ -823,7 +835,7 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
         .collect()
     );
 
-    let polled = runtime.goal_plan_state(Some(&bob), goal_id.clone()).await;
+    let polled = runtime.present_goal_plan(Some(&bob), goal_id.clone()).await;
     assert!(polled.success);
     assert_eq!(polled.output["goal_plan"]["revision"], 1);
     assert_eq!(
@@ -831,9 +843,11 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
         1
     );
 
-    let foreign = runtime.goal_plan_state(Some(&alice), goal_id.clone()).await;
+    let foreign = runtime
+        .present_goal_plan(Some(&alice), goal_id.clone())
+        .await;
     let missing = runtime
-        .goal_plan_state(Some(&alice), "wc_goal_________________".to_string())
+        .present_goal_plan(Some(&alice), "wc_goal_________________".to_string())
         .await;
     assert!(!foreign.success);
     assert!(!missing.success);
@@ -851,7 +865,7 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
         "bob-plan-update".to_string(),
     );
     assert!(updated.success, "{:?}", updated.output);
-    let after_update = runtime.goal_plan_state(Some(&bob), goal_id.clone()).await;
+    let after_update = runtime.present_goal_plan(Some(&bob), goal_id.clone()).await;
     assert!(after_update.success);
     assert_eq!(after_update.output["goal_plan"]["revision"], 2);
     assert_eq!(
@@ -875,7 +889,7 @@ async fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hi
         "bob-plan-complete".to_string(),
     );
     assert!(completed.success, "{:?}", completed.output);
-    let terminal = runtime.goal_plan_state(Some(&bob), goal_id.clone()).await;
+    let terminal = runtime.present_goal_plan(Some(&bob), goal_id.clone()).await;
     assert!(terminal.success);
     assert_eq!(terminal.output["goal_plan"]["lifecycle"], "completed");
     assert_eq!(terminal.output["goal_plan"]["revision"], 3);
@@ -947,7 +961,7 @@ async fn goal_activity_tracks_window_wide_work_and_separates_seen_from_meaningfu
         old,
     );
     let stale = runtime
-        .goal_plan_state_at(Some(&auth), goal_id.clone(), now)
+        .goal_plan_sync_at(Some(&auth), goal_id.clone(), now)
         .await;
     assert!(stale.success, "{:?}", stale.output);
     assert_eq!(goal_activity(&stale)["state"], "attention_needed");
@@ -962,13 +976,13 @@ async fn goal_activity_tracks_window_wide_work_and_separates_seen_from_meaningfu
         &auth,
         "goal-window-wide",
         &project_a,
-        "goal_plan_state",
+        "goal_plan_sync",
         false,
         None,
         poll_at,
     );
     let polled = runtime
-        .goal_plan_state_at(Some(&auth), goal_id.clone(), now)
+        .goal_plan_sync_at(Some(&auth), goal_id.clone(), now)
         .await;
     assert_eq!(goal_activity(&polled)["state"], "attention_needed");
     assert_eq!(goal_activity(&polled)["last_seen_at_ms"], poll_at + 1);
@@ -990,7 +1004,7 @@ async fn goal_activity_tracks_window_wide_work_and_separates_seen_from_meaningfu
         None,
         recent,
     );
-    let refreshed = runtime.goal_plan_state_at(Some(&auth), goal_id, now).await;
+    let refreshed = runtime.goal_plan_sync_at(Some(&auth), goal_id, now).await;
     assert_eq!(goal_activity(&refreshed)["state"], "active");
     assert_eq!(
         goal_activity(&refreshed)["last_meaningful_activity_at_ms"],
@@ -1024,7 +1038,7 @@ async fn goal_activity_is_unobserved_without_windows_and_inflight_work_prevents_
     let now = 20_000_000;
 
     let unobserved = runtime
-        .goal_plan_state_at(Some(&auth), goal_id.clone(), now)
+        .goal_plan_sync_at(Some(&auth), goal_id.clone(), now)
         .await;
     assert_eq!(goal_activity(&unobserved)["state"], "unobserved");
     assert_eq!(goal_activity(&unobserved)["linked_window_count"], 0);
@@ -1045,7 +1059,7 @@ async fn goal_activity_is_unobserved_without_windows_and_inflight_work_prevents_
         );
     }
     let multi = runtime
-        .goal_plan_state_at(Some(&auth), goal_id.clone(), now)
+        .goal_plan_sync_at(Some(&auth), goal_id.clone(), now)
         .await;
     assert_eq!(goal_activity(&multi)["state"], "active");
     assert_eq!(goal_activity(&multi)["linked_window_count"], 2);
@@ -1063,7 +1077,7 @@ async fn goal_activity_is_unobserved_without_windows_and_inflight_work_prevents_
     );
     guard.update(Some("run_process"), Some(&project));
     let running = runtime
-        .goal_plan_state_at(Some(&auth), goal_id.clone(), later)
+        .goal_plan_sync_at(Some(&auth), goal_id.clone(), later)
         .await;
     assert_eq!(goal_activity(&running)["state"], "active");
     assert_eq!(
@@ -1086,9 +1100,7 @@ async fn goal_activity_is_unobserved_without_windows_and_inflight_work_prevents_
         "goal-inflight-terminal".to_string(),
     );
     assert!(completed.success, "{:?}", completed.output);
-    let terminal = runtime
-        .goal_plan_state_at(Some(&auth), goal_id, later)
-        .await;
+    let terminal = runtime.goal_plan_sync_at(Some(&auth), goal_id, later).await;
     assert_eq!(goal_activity(&terminal)["state"], "not_applicable");
     assert!(goal_activity(&terminal)["active_meaningful_request_count"].is_null());
     drop(guard);
@@ -1159,7 +1171,7 @@ async fn goal_activity_respects_principal_project_visibility_and_runtime_read_sc
         now - 5_000,
     );
     let projected = runtime
-        .goal_plan_state_at(Some(&alice), goal_id.clone(), now)
+        .goal_plan_sync_at(Some(&alice), goal_id.clone(), now)
         .await;
     assert_eq!(goal_activity(&projected)["state"], "unobserved");
     assert_eq!(goal_activity(&projected)["coverage_partial"], true);
@@ -1174,7 +1186,7 @@ async fn goal_activity_respects_principal_project_visibility_and_runtime_read_sc
         .scopes
         .retain(|scope| scope != SCOPE_RUNTIME_READ);
     let unavailable = runtime
-        .goal_plan_state_at(Some(&no_runtime_read), goal_id, now)
+        .goal_plan_sync_at(Some(&no_runtime_read), goal_id, now)
         .await;
     assert!(unavailable.success, "{:?}", unavailable.output);
     let activity = goal_activity(&unavailable);
@@ -1226,7 +1238,7 @@ async fn goal_activity_bounded_partial_window_scan_never_manufactures_attention(
             now - (10 + index as i64) * 60_000,
         );
     }
-    let projection = runtime.goal_plan_state_at(Some(&auth), goal_id, now).await;
+    let projection = runtime.goal_plan_sync_at(Some(&auth), goal_id, now).await;
     let activity = goal_activity(&projection);
     assert_eq!(activity["available"], true);
     assert_eq!(activity["coverage_partial"], true);
@@ -1252,7 +1264,7 @@ async fn goal_plan_projection_fails_closed_on_malformed_persisted_goal() {
             .unwrap();
     }
     let presented = runtime.present_goal_plan(Some(&bob), goal_id.clone()).await;
-    let polled = runtime.goal_plan_state(Some(&bob), goal_id).await;
+    let polled = runtime.present_goal_plan(Some(&bob), goal_id).await;
     assert!(!presented.success);
     assert!(!polled.success);
     assert_eq!(presented.output["error_kind"], "goal_store_unavailable");

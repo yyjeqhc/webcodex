@@ -2768,16 +2768,11 @@ pub enum ToolCall {
         goal_id: String,
     },
 
-    /// App-only exact read of the same bounded Goal Plan projection.
-    GoalPlanState {
-        #[schemars(regex(pattern = "^wc_goal_[A-Za-z0-9_-]{16}$"))]
-        goal_id: String,
-    },
-
-    /// App-only detector request. The Server recomputes activity, current Window
-    /// relation, Session/Goal authority and epoch dedup. No caller timestamps,
-    /// controller selection, Session selection or effect replay is accepted.
-    GoalPlanRecheckAttention {
+    /// App-only effectful synchronization. The Server recomputes activity,
+    /// current Window relation, Session/Goal/Project authority and epoch dedup,
+    /// may commit one durable stall Attention/Wake, then returns the final bounded
+    /// Goal Plan projection. No caller timing or authority selectors are accepted.
+    GoalPlanSync {
         #[schemars(regex(pattern = "^wc_goal_[A-Za-z0-9_-]{16}$"))]
         goal_id: String,
     },
@@ -5198,8 +5193,7 @@ impl ToolCall {
             Self::CreateGoal { .. } => "create_goal",
             Self::GetGoal { .. } => "get_goal",
             Self::PresentGoalPlan { .. } => "present_goal_plan",
-            Self::GoalPlanState { .. } => "goal_plan_state",
-            Self::GoalPlanRecheckAttention { .. } => "goal_plan_recheck_attention",
+            Self::GoalPlanSync { .. } => "goal_plan_sync",
             Self::CheckpointGoal { .. } => "checkpoint_goal",
             Self::ListGoals { .. } => "list_goals",
             Self::UpdateGoal { .. } => "update_goal",

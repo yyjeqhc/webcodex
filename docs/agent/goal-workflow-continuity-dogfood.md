@@ -84,9 +84,12 @@ authorized deployment and an actually bound Agent Continuation card.
 
 In that environment, explicitly set up/reuse the controller, correlate the current
 active Session, then keep the exact Goal Plan card observed while meaningful work
-is quiet. After 300,000 ms, a successful exact-Goal poll at most 15,000 ms old and
-at least 1,000 ms later than the last meaningful completion is only a candidate.
-The Server still checks current Goal/controller/Session/Project authority, latest
+is quiet. After 300,000 ms, a successful exact-Goal sync within the Server-owned
+75,000 ms observation lease and at least 1,000 ms later than the last meaningful
+completion is only a candidate. The App targets 12s while visibly stable, 5s near
+the boundary or during a Wake transition, and 60s while hidden/backgrounded; the
+lease covers that hidden cadence plus bounded Host scheduling slack. The Server
+still checks current Goal/controller/Session/Project authority, latest
 Window-to-Session relation, complete evidence and no active meaningful request.
 Closing or losing the card must not generate a new automatic turn. A different
 Goal's polling cannot keep this Goal's card alive.

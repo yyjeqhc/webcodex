@@ -89,8 +89,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
     let expected_hidden: BTreeSet<&str> = [
         "start_session",
         "job_tail",
-        "goal_plan_state",
-        "goal_plan_recheck_attention",
+        "goal_plan_sync",
         "work_result_state",
         "changes_file_diff",
         "agent_continuation_bind",

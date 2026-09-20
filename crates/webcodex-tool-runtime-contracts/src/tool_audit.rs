@@ -4345,12 +4345,12 @@ impl ToolCallAuditProjection for ToolCall {
                 GoalRequestAudit::Get,
                 &serde_json::json!({"goal_id": goal_id}),
             ),
-            Self::PresentGoalPlan { goal_id }
-            | Self::GoalPlanState { goal_id }
-            | Self::GoalPlanRecheckAttention { goal_id } => typed_goal_request_audit(
-                GoalRequestAudit::Get,
-                &serde_json::json!({"goal_id": goal_id}),
-            ),
+            Self::PresentGoalPlan { goal_id } | Self::GoalPlanSync { goal_id } => {
+                typed_goal_request_audit(
+                    GoalRequestAudit::Get,
+                    &serde_json::json!({"goal_id": goal_id}),
+                )
+            }
             Self::ListGoals {
                 lifecycle,
                 offset,

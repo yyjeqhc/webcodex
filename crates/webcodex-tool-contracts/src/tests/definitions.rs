@@ -300,13 +300,14 @@ fn tool_definitions_are_activity_semantics_ssot() {
         ("validation_summary", Support, Meaningful, NoKind),
         ("runtime_status", Support, NonMeaningful, NoKind),
         ("tool_manifest", Support, NonMeaningful, NoKind),
-        ("goal_plan_state", Transport, NonMeaningful, NoKind),
+        ("goal_plan_sync", Transport, NonMeaningful, NoKind),
         (
-            "goal_plan_recheck_attention",
+            "bootstrap_agent_conversation",
             Transport,
             NonMeaningful,
             NoKind,
         ),
+        ("consume_agent_wake", Transport, NonMeaningful, NoKind),
         ("agent_continuation_state", Transport, NonMeaningful, NoKind),
     ] {
         assert_eq!(
@@ -327,7 +328,9 @@ fn tool_definitions_are_activity_semantics_ssot() {
         "list_projects",
         "tool_manifest",
         "read_tool_trace",
-        "goal_plan_state",
+        "goal_plan_sync",
+        "bootstrap_agent_conversation",
+        "consume_agent_wake",
         "work_result_state",
         "agent_wait_state",
         "agent_continuation_bind",

@@ -30,6 +30,10 @@ export type SessionWorkspaceState = {
   refresh: () => void;
 };
 
+function sessionLocationIdentity(location: SessionLocation): string {
+  return `${location.projectId}\u0000${location.sessionId}`;
+}
+
 export function useSessionWorkspace(
   client: RuntimeV2Client,
   enabled: boolean,
@@ -59,11 +63,12 @@ export function useSessionWorkspace(
       setMessagesAvailability("idle");
       setMutationNotice("");
       setMutationAllowed(null);
+      setSending(false);
       loadedLocation.current = "";
       return;
     }
 
-    const locationIdentity = `${location.projectId}\u0000${location.sessionId}`;
+    const locationIdentity = sessionLocationIdentity(location);
     const locationChanged = loadedLocation.current !== locationIdentity;
     loadedLocation.current = locationIdentity;
     if (locationChanged) {
@@ -75,6 +80,7 @@ export function useSessionWorkspace(
       setMessagesAvailability("loading");
       setMutationNotice("");
       setMutationAllowed(null);
+      setSending(false);
     } else {
       setDetailAvailability((value) => (value === "idle" ? "loading" : value));
       setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
@@ -142,6 +148,7 @@ export function useSessionWorkspace(
 
   const send = useCallback(async (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => {
     if (!location || !input.message.trim()) return false;
+    const requestLocation = sessionLocationIdentity(location);
     setSending(true);
     try {
       const response = await postSessionMessage(client, {
@@ -157,6 +164,7 @@ export function useSessionWorkspace(
         onUnauthorized();
         return false;
       }
+      if (loadedLocation.current !== requestLocation) return false;
       if (response?.status === 0) {
         setMutationNotice("Send outcome unknown. Refresh and review retained messages before retrying.");
         return false;
@@ -175,17 +183,19 @@ export function useSessionWorkspace(
       refresh();
       return true;
     } finally {
-      setSending(false);
+      if (loadedLocation.current === requestLocation) setSending(false);
     }
   }, [client, location, onUnauthorized, refresh]);
 
   const replace = useCallback(async (messageId: string, message: string) => {
     if (!location || !message.trim()) return false;
+    const requestLocation = sessionLocationIdentity(location);
     const response = await replaceSessionMessage(client, location.projectId, location.sessionId, messageId, message.trim());
     if (response?.status === 401) {
       onUnauthorized();
       return false;
     }
+    if (loadedLocation.current !== requestLocation) return false;
     if (response?.status === 0) {
       setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
       return false;
@@ -207,11 +217,13 @@ export function useSessionWorkspace(
 
   const withdraw = useCallback(async (messageId: string) => {
     if (!location) return false;
+    const requestLocation = sessionLocationIdentity(location);
     const response = await withdrawSessionMessage(client, location.projectId, location.sessionId, messageId);
     if (response?.status === 401) {
       onUnauthorized();
       return false;
     }
+    if (loadedLocation.current !== requestLocation) return false;
     if (response?.status === 0) {
       setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
       return false;

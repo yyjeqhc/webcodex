@@ -300,6 +300,79 @@ describe("Session communication parity", () => {
     expect(result.current.messagesAvailability).toBe("loading");
   });
 
+  it("ignores stale mutation completion after switching Sessions", async () => {
+    const first = {
+      projectId: "agent:special:webcodex",
+      projectName: "WebCodex",
+      runner: "special",
+      sessionId: "wc_sess_1234567890abcdef",
+    };
+    const second = { ...first, sessionId: "wc_sess_abcdef0123456789" };
+    let resolveFirstSend!: (value: { ok: boolean; status: number; data: any }) => void;
+    let resolveSecondSend!: (value: { ok: boolean; status: number; data: any }) => void;
+    const firstSend = new Promise<{ ok: boolean; status: number; data: any }>((resolve) => {
+      resolveFirstSend = resolve;
+    });
+    const secondSend = new Promise<{ ok: boolean; status: number; data: any }>((resolve) => {
+      resolveSecondSend = resolve;
+    });
+    const client = {
+      post: vi.fn(async (path: string, payload: any) => {
+        if (path === "workflow-session") {
+          return { ok: true, status: 200, data: sessionDetail({ session_id: payload.session_id }) };
+        }
+        if (path === "workflow-session-messages") {
+          return { ok: true, status: 200, data: { session_id: payload.session_id, messages: [] } };
+        }
+        if (path === "workflow-session-post-message") {
+          return payload.session_id === first.sessionId ? firstSend : secondSend;
+        }
+        throw new Error("unexpected path " + path);
+      }),
+    } as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ location }) => useSessionWorkspace(client, true, location, unauthorized),
+      { initialProps: { location: first } },
+    );
+    await waitFor(() => expect(result.current.messagesAvailability).toBe("available"));
+
+    let firstResult!: Promise<boolean>;
+    act(() => {
+      firstResult = result.current.send({ message: "first Session" });
+    });
+    await waitFor(() => expect(result.current.sending).toBe(true));
+
+    rerender({ location: second });
+    await waitFor(() => expect(result.current.messages?.session_id).toBe(second.sessionId));
+    expect(result.current.sending).toBe(false);
+    expect(result.current.mutationNotice).toBe("");
+    expect(result.current.mutationAllowed).toBeNull();
+
+    let secondResult!: Promise<boolean>;
+    act(() => {
+      secondResult = result.current.send({ message: "second Session" });
+    });
+    await waitFor(() => expect(result.current.sending).toBe(true));
+
+    await act(async () => {
+      resolveFirstSend({ ok: false, status: 403, data: null });
+      expect(await firstResult).toBe(false);
+    });
+    expect(result.current.sending).toBe(true);
+    expect(result.current.mutationNotice).toBe("");
+    expect(result.current.mutationAllowed).toBeNull();
+
+    await act(async () => {
+      resolveSecondSend({ ok: true, status: 200, data: {} });
+      expect(await secondResult).toBe(true);
+    });
+    expect(result.current.sending).toBe(false);
+    expect(result.current.mutationNotice).toBe("");
+    expect(result.current.mutationAllowed).toBe(true);
+    expect(unauthorized).not.toHaveBeenCalled();
+  });
+
   it("retains an explicit recovery notice when a send transport outcome is unknown", async () => {
     const client = {
       post: vi.fn(async (path: string) => {

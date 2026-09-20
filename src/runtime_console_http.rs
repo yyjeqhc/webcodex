@@ -1926,10 +1926,10 @@ async fn project_visible_window_activity(
 async fn project_window_activity(
     runtime: &ToolRuntime,
     auth: &AuthContext,
+    visibility_cache: &mut HashMap<String, bool>,
     event: webcodex_store::models::WindowActivityEventRecord,
 ) -> Option<RuntimeConsoleWindowActivity> {
-    let mut visibility_cache = HashMap::new();
-    if !window_event_visible_cached(runtime, auth, &mut visibility_cache, &event).await {
+    if !window_event_visible_cached(runtime, auth, visibility_cache, &event).await {
         return None;
     }
     let service_ms = if event.response_streaming == Some(false) {
@@ -1945,7 +1945,7 @@ async fn project_window_activity(
         project_visible_window_activity(
             runtime,
             auth,
-            &mut visibility_cache,
+            visibility_cache,
             event,
             WindowActivityTimingProjection {
                 service_ms,
@@ -2546,7 +2546,7 @@ async fn workflow_session_detail_with_windows(
             principal_ref,
             &link.client_window_key,
             &mut visibility_cache,
-            None,
+            Some(project),
         )
         .await?;
         linked_windows.push(RuntimeConsoleSessionWindow {
@@ -2574,6 +2574,7 @@ async fn workflow_session_detail_with_windows(
         });
     }
     let mut gap_activity = Vec::new();
+    let mut window_activity_source_truncated = false;
     for link in &links {
         #[cfg(feature = "experimental-code-mode")]
         let events = db.list_window_activity_events_with_code_mode_composition(
@@ -2588,6 +2589,12 @@ async fn workflow_session_detail_with_windows(
             MAX_WINDOW_ACTIVITY_LIMIT,
         );
         let events = events.map_err(|_| RuntimeConsoleError::Internal)?;
+        if events.len() == MAX_WINDOW_ACTIVITY_LIMIT {
+            // The durable Window event scan is itself bounded. Hitting the cap
+            // means older same-Project activity may exist even when the filtered
+            // projection below returns at most the public limit.
+            window_activity_source_truncated = true;
+        }
         for event in events {
             // Window liveness is intentionally wider than Session provenance.
             // Once a Window has an authorized relation to this Session, later
@@ -2598,7 +2605,9 @@ async fn workflow_session_detail_with_windows(
             {
                 continue;
             }
-            if let Some(event) = project_window_activity(runtime, auth, event).await {
+            if let Some(event) =
+                project_window_activity(runtime, auth, &mut visibility_cache, event).await
+            {
                 gap_activity.push(event);
             }
         }
@@ -2608,9 +2617,10 @@ async fn workflow_session_detail_with_windows(
             .cmp(&right.started_at_ms)
             .then_with(|| left.method.cmp(&right.method))
     });
+    let projection_overflow = gap_activity.len() > MAX_WINDOW_ACTIVITY_LIMIT;
     let window_activity_after_last_session_record_truncated =
-        gap_activity.len() > MAX_WINDOW_ACTIVITY_LIMIT;
-    if window_activity_after_last_session_record_truncated {
+        window_activity_source_truncated || projection_overflow;
+    if projection_overflow {
         gap_activity.drain(0..gap_activity.len() - MAX_WINDOW_ACTIVITY_LIMIT);
     }
     Ok(RuntimeConsoleWorkflowSessionDetail {
@@ -5456,6 +5466,15 @@ mod tests {
             Some(&auth),
         )
         .await;
+        let other_project = "agent:other-runner:other";
+        register_project(
+            &runtime,
+            "other-runner",
+            "other",
+            "/private/other",
+            Some(&auth),
+        )
+        .await;
         let session = runtime.sessions.start_session(
             Some(project.to_string()),
             Some("sparse relation".to_string()),
@@ -5488,6 +5507,18 @@ mod tests {
                 true,
             );
         }
+        // Activity in another currently-visible Project must not advance this
+        // Session's Window/Model liveness projection.
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            window_key,
+            Some(other_project),
+            None,
+            5_000,
+            "run_shell",
+            true,
+        );
         db.insert_workspace_activity(
             3,
             &webcodex_core::activity_contract::ActivityRecord {
@@ -5519,6 +5550,7 @@ mod tests {
         assert!(detail.window_activity_available);
         assert_eq!(detail.linked_windows.len(), 1);
         assert_eq!(detail.linked_windows[0].last_linked_at_ms, 1_001);
+        assert_eq!(detail.linked_windows[0].last_seen_at_ms, 4_001);
         assert_eq!(
             detail.linked_windows[0].last_meaningful_activity_at_ms,
             Some(4_001)
@@ -5542,6 +5574,69 @@ mod tests {
         assert!(detail.job_activity_available);
         assert!(detail.jobs.is_empty());
         assert!(!detail.jobs_truncated);
+    }
+
+    #[tokio::test]
+    async fn session_window_activity_reports_bounded_source_truncation() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("session-window-truncation");
+        let project = "agent:truncation-runner:webcodex";
+        register_project(
+            &runtime,
+            "truncation-runner",
+            "webcodex",
+            "/private/truncation",
+            Some(&auth),
+        )
+        .await;
+        let other_project = "agent:truncation-other:other";
+        register_project(
+            &runtime,
+            "truncation-other",
+            "other",
+            "/private/truncation-other",
+            Some(&auth),
+        )
+        .await;
+        let session = runtime.sessions.start_session(
+            Some(project.to_string()),
+            Some("bounded window activity".to_string()),
+        );
+        let window_key = "1cae4d71e62fe073f130a0e5da2c83425866e4aba9ac5746c043e2ea66000471";
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            window_key,
+            Some(project),
+            Some((&session.session_id, project)),
+            1_000,
+            "work_on_project",
+            true,
+        );
+        for index in 0..MAX_WINDOW_ACTIVITY_LIMIT {
+            record_window_event_with_activity(
+                &db,
+                &auth,
+                window_key,
+                Some(other_project),
+                None,
+                2_000 + index as i64,
+                "observe_jobs",
+                true,
+            );
+        }
+
+        let detail = workflow_session_detail_with_windows(
+            &runtime,
+            &auth,
+            project,
+            &session.session_id,
+            Some(20),
+        )
+        .await
+        .unwrap();
+        assert!(detail.window_activity_after_last_session_record.is_empty());
+        assert!(detail.window_activity_after_last_session_record_truncated);
     }
 
     #[tokio::test]

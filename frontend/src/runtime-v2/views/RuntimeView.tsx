@@ -52,7 +52,9 @@ export function RuntimeView({
   });
   const agents = useAgentInventory(client, mode === "overview");
   const observedBy = useLinkedSessionWindowCounts(client, mode === "windows", windows.detail?.linked_sessions || []);
-  const chronologicalActivity = windows.detail?.activity || [];
+  const chronologicalActivity = windows.detail
+    ? windows.detail.activity.slice().sort((a, b) => a.ended_at_ms - b.ended_at_ms || a.started_at_ms - b.started_at_ms)
+    : [];
   const visibleActivity = chronologicalActivity.slice(-visibleActivityLimit);
   const remainingActivity = Math.max(0, chronologicalActivity.length - visibleActivity.length);
   const overviewStatus = overviewAvailability === "available"

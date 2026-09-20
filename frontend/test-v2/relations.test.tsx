@@ -334,7 +334,7 @@ describe("Project / Session / Window relationships", () => {
       status: "ok",
       meaningful: true,
       workflow_sessions: [],
-    }));
+    })).reverse();
     const client = fakeClient((path) => {
       if (path === "windows") return ok({
         windows: [{ client_window_key: key, source: "openai-session", last_seen_at_ms: 1_790_000_000_000, active_count: 0, linked_session_count: 0, recorder_gap_count: 0 }],

@@ -2029,8 +2029,10 @@ fn phase_f_windows_powershell_shell_and_param_script_keep_semantics() {
         Some(cwd.path().to_string_lossy().as_ref()),
         "[Console]::Out.WriteLine('shell 中文 🙂'); [Console]::Error.WriteLine('error 中文 🙂'); exit 19",
         None,
+        None,
         10,
-        None,);
+        None,
+    );
     assert_eq!(
         shell_result.execution_state,
         ShellCommandExecutionState::Completed

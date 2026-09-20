@@ -1569,6 +1569,7 @@ mod windows_tests {
 
     fn request(action: &str, shell_id: &str, command: Option<&str>) -> RunnerRequest {
         RunnerRequest {
+            shell: None,
             request_id: format!("req-{action}"),
             client_id: "msi".to_string(),
             kind: "persistent_shell".to_string(),

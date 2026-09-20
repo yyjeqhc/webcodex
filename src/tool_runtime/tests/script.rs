@@ -127,8 +127,6 @@ async fn update_script_job(
             status: status.to_string(),
             stdout_chunk: stdout.map(str::to_string),
             stderr_chunk: stderr.map(str::to_string),
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code,
             duration_ms: state.map(|_| 25),

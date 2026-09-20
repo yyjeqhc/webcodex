@@ -107,10 +107,6 @@ pub struct RunnerJobUpdateRequest {
     pub stdout_chunk: Option<String>,
     #[serde(default)]
     pub stderr_chunk: Option<String>,
-    #[serde(default)]
-    pub stdout_tail: Option<String>,
-    #[serde(default)]
-    pub stderr_tail: Option<String>,
     /// Full authoritative tails with absolute line metadata. Reconciliation-
     /// capable runners use this for sequenced updates and post-register replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]

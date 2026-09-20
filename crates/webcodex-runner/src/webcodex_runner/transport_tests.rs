@@ -155,8 +155,6 @@ fn test_job_update() -> RunnerJobUpdateRequest {
         status: "running".to_string(),
         stdout_chunk: None,
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: None,
         duration_ms: None,

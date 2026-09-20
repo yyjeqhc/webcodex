@@ -106,8 +106,8 @@ pub(super) fn cargo_test_update(
     request_id: &str,
     job_id: &str,
     status: &str,
-    stdout: &str,
-    stderr: &str,
+    stdout_chunk: &str,
+    stderr_chunk: &str,
     exit_code: Option<i32>,
     progress: ShellJobValidationProgress,
     finished: bool,
@@ -132,10 +132,8 @@ pub(super) fn cargo_test_update(
         job_id: job_id.to_string(),
         request_id: Some(request_id.to_string()),
         status: status.to_string(),
-        stdout_chunk: None,
-        stderr_chunk: None,
-        stdout_tail: Some(stdout.to_string()),
-        stderr_tail: Some(stderr.to_string()),
+        stdout_chunk: (!stdout_chunk.is_empty()).then(|| stdout_chunk.to_string()),
+        stderr_chunk: (!stderr_chunk.is_empty()).then(|| stderr_chunk.to_string()),
         log_snapshot: None,
         exit_code,
         duration_ms: Some(25),
@@ -1365,7 +1363,7 @@ async fn validation_command_starts_exactly_once_across_handoff() {
             &request.request_id,
             &job_id,
             "completed",
-            "running 1 test\n\ntest result: ok. 1 passed; 0 failed\n",
+            "\ntest result: ok. 1 passed; 0 failed\n",
             "",
             Some(0),
             completed_progress(),
@@ -1456,7 +1454,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
             &request.request_id,
             &job_id,
             "completed",
-            "running 3 tests\n\ntest result: ok. 3 passed; 0 failed; 0 ignored\n",
+            "\ntest result: ok. 3 passed; 0 failed; 0 ignored\n",
             "",
             Some(0),
             completed_progress(),
@@ -1611,7 +1609,7 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
             &request.request_id,
             &job_id,
             "completed",
-            "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
+            "\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
             "",
             Some(0),
             completed_progress(),
@@ -2126,7 +2124,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
     assert!(handoff.success, "{:?}", handoff.error);
     let _ = sparse_validation_handoff_token(&handoff.output, &job_id);
 
-    let mut stdout = String::from("running 3 tests\n");
+    let mut stdout = String::new();
     stdout.push_str(
         &(0..600)
             .map(|index| format!("progress line {index}\n"))
@@ -2166,7 +2164,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
             &request.request_id,
             &job_id,
             "completed",
-            &stdout,
+            "",
             "",
             Some(0),
             completed_progress(),
@@ -2780,7 +2778,7 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
             &request.request_id,
             &job_id,
             "stopped",
-            "running 1 test\n",
+            "",
             "",
             None,
             completed_progress(),

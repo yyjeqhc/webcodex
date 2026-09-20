@@ -195,8 +195,6 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
         status: "running".to_string(),
         stdout_chunk: None,
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: None,
         duration_ms: None,

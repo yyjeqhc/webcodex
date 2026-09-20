@@ -38,8 +38,6 @@ fn wait_job_update(
         status: status.to_string(),
         stdout_chunk: stdout_chunk.map(str::to_string),
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: finished.then_some(0),
         duration_ms: finished.then_some(2_000),
@@ -385,7 +383,7 @@ async fn job_log_wait_stale_or_replayed_sequence_does_not_change_token() {
 }
 
 #[tokio::test]
-async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
+async fn job_log_wait_sequenced_update_changes_token_even_when_snapshot_is_same() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
     registry
@@ -398,9 +396,15 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             status: "running".into(),
             stdout_chunk: None,
             stderr_chunk: None,
-            stdout_tail: Some("same\n".into()),
-            stderr_tail: None,
-            log_snapshot: None,
+            log_snapshot: Some(ShellJobLogSnapshot {
+                stdout: ShellJobStreamSnapshot {
+                    tail: "same\n".into(),
+                    first_retained_line: 1,
+                    next_line: 2,
+                    truncated: false,
+                },
+                stderr: ShellJobStreamSnapshot::default(),
+            }),
             exit_code: None,
             duration_ms: None,
             error: None,
@@ -428,9 +432,15 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             status: "running".into(),
             stdout_chunk: None,
             stderr_chunk: None,
-            stdout_tail: Some("same\n".into()),
-            stderr_tail: None,
-            log_snapshot: None,
+            log_snapshot: Some(ShellJobLogSnapshot {
+                stdout: ShellJobStreamSnapshot {
+                    tail: "same\n".into(),
+                    first_retained_line: 1,
+                    next_line: 2,
+                    truncated: false,
+                },
+                stderr: ShellJobStreamSnapshot::default(),
+            }),
             exit_code: None,
             duration_ms: None,
             error: None,
@@ -480,7 +490,7 @@ async fn job_log_wait_recovery_transition_between_calls_is_immediate() {
 }
 
 #[tokio::test]
-async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
+async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
     let registry = RunnerRegistry::default();
     let capabilities = RunnerCapabilities {
         async_jobs: true,
@@ -528,17 +538,15 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         .await
         .unwrap();
     let token0 = job.observation_token.clone().unwrap();
-    let update = || RunnerJobUpdateRequest {
+    let update = |stdout_chunk: Option<&str>| RunnerJobUpdateRequest {
         client_id: "legacy".to_string(),
         runner_instance_id: "legacy-inst".to_string(),
         update_seq: None,
         job_id: job.job_id.clone(),
         request_id: None,
         status: "running".to_string(),
-        stdout_chunk: None,
+        stdout_chunk: stdout_chunk.map(str::to_string),
         stderr_chunk: None,
-        stdout_tail: Some("legacy output\n".to_string()),
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: None,
         duration_ms: None,
@@ -549,7 +557,10 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         activity: None,
         finished: false,
     };
-    registry.update_job(update()).await.unwrap();
+    registry
+        .update_job(update(Some("legacy output\n")))
+        .await
+        .unwrap();
     let (info, stdout, _, _, _, wait) = registry
         .job_log_for_auth(None, &job.job_id, None, None, None, Some(&token0), Some(5))
         .await
@@ -558,7 +569,7 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
     assert!(wait.changed);
     assert_eq!(stdout.as_deref(), Some("legacy output\n"));
     let token1 = info.observation_token.unwrap();
-    registry.update_job(update()).await.unwrap();
+    registry.update_job(update(None)).await.unwrap();
     let current = registry.get_job(&job.job_id).await.unwrap();
     let response_token = crate::job_observation::JobObservationToken::parse(&token1).unwrap();
     let lifecycle_token = crate::job_observation::JobObservationToken::parse(
@@ -633,8 +644,6 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
         status: "running".into(),
         stdout_chunk: None,
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: None,
         duration_ms: None,
@@ -812,8 +821,6 @@ async fn agent_job_log_observation_is_baseline_then_independent_deltas() {
             status: "running".into(),
             stdout_chunk: None,
             stderr_chunk: Some("stderr 1\nstderr 2\n".into()),
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code: None,
             duration_ms: None,
@@ -1011,8 +1018,6 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
             status: "running".into(),
             stdout_chunk: None,
             stderr_chunk: Some("err".into()),
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code: None,
             duration_ms: None,
@@ -1050,8 +1055,6 @@ async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
             status: "completed".into(),
             stdout_chunk: None,
             stderr_chunk: Some("or\n".into()),
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(2_000),

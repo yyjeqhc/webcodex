@@ -4,7 +4,7 @@ use super::access_control::{
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
     job_view, notify_job_update, observe_job_terminal, parse_job_lifecycle, process_preview,
-    refresh_job_status_locked, replace_log_limited, script_preview, select_log_lines,
+    refresh_job_status_locked, script_preview, select_log_lines,
 };
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
@@ -2155,14 +2155,9 @@ impl RunnerRegistry {
         if let Some(snapshot) = body.log_snapshot.as_ref() {
             validate_stream_snapshot(&snapshot.stdout, "job update stdout snapshot")?;
             validate_stream_snapshot(&snapshot.stderr, "job update stderr snapshot")?;
-            if body.stdout_chunk.is_some()
-                || body.stderr_chunk.is_some()
-                || body.stdout_tail.is_some()
-                || body.stderr_tail.is_some()
-            {
+            if body.stdout_chunk.is_some() || body.stderr_chunk.is_some() {
                 return Err(
-                    "job update log_snapshot cannot be combined with chunk or legacy tail fields"
-                        .to_string(),
+                    "job update log_snapshot cannot be combined with chunk fields".to_string(),
                 );
             }
         }
@@ -2326,8 +2321,6 @@ impl RunnerRegistry {
                     super::jobs::replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
                     super::jobs::replace_log_from_snapshot(&mut job.stderr, &snapshot.stderr);
                 } else {
-                    replace_log_limited(&mut job.stdout, body.stdout_tail);
-                    replace_log_limited(&mut job.stderr, body.stderr_tail);
                     append_log_limited(&mut job.stdout, body.stdout_chunk);
                     append_log_limited(&mut job.stderr, body.stderr_chunk);
                 }

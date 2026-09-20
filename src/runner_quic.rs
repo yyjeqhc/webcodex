@@ -1157,8 +1157,6 @@ mod tests {
                     status: "running".to_string(),
                     stdout_chunk: Some("hi".to_string()),
                     stderr_chunk: None,
-                    stdout_tail: None,
-                    stderr_tail: None,
                     log_snapshot: None,
                     exit_code: None,
                     duration_ms: None,

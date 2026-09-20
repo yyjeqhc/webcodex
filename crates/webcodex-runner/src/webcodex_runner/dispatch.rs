@@ -206,8 +206,6 @@ fn submit_invalid_job_start(sink: &RunnerSink, request: &RunnerRequest, error: S
         status: "failed".to_string(),
         stdout_chunk: None,
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: None,
         exit_code: None,
         duration_ms: Some(0),

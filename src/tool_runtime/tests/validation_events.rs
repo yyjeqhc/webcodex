@@ -138,12 +138,10 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
             job_id: job_id.clone(),
             request_id: Some(request.request_id),
             status: "completed".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            stdout_tail: Some(
+            stdout_chunk: Some(
                 "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n".to_string(),
             ),
-            stderr_tail: Some(String::new()),
+            stderr_chunk: None,
             log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(12),
@@ -274,13 +272,11 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
             job_id: job_id.clone(),
             request_id: Some(request.request_id),
             status: "completed".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            stdout_tail: Some(
+            stdout_chunk: Some(
                 "running 1 test\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
                     .to_string(),
             ),
-            stderr_tail: Some(String::new()),
+            stderr_chunk: None,
             log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(12),

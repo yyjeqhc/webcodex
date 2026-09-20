@@ -882,8 +882,6 @@ fn job_update_from_snapshot(
         status: snapshot.status.clone(),
         stdout_chunk: None,
         stderr_chunk: None,
-        stdout_tail: None,
-        stderr_tail: None,
         log_snapshot: Some(ShellJobLogSnapshot {
             stdout: snapshot.stdout.clone(),
             stderr: snapshot.stderr.clone(),
@@ -2078,8 +2076,6 @@ impl JobManager {
                 status: "failed".to_string(),
                 stdout_chunk: None,
                 stderr_chunk: None,
-                stdout_tail: None,
-                stderr_tail: None,
                 log_snapshot: None,
                 exit_code: None,
                 duration_ms: Some(0),

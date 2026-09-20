@@ -3618,8 +3618,6 @@ mod envelope_tests {
                 status: "running".to_string(),
                 stdout_chunk: Some("out".to_string()),
                 stderr_chunk: None,
-                stdout_tail: None,
-                stderr_tail: None,
                 log_snapshot: None,
                 exit_code: None,
                 duration_ms: None,
@@ -3633,6 +3631,8 @@ mod envelope_tests {
         };
         let json = job_env.to_json().unwrap();
         assert!(json.contains(r#""type":"job_update""#));
+        assert!(!json.contains("\"stdout_tail\""));
+        assert!(!json.contains("\"stderr_tail\""));
         match RunnerEnvelope::from_slice(json.as_bytes()).unwrap() {
             RunnerEnvelope::JobUpdate { payload } => assert_eq!(payload.job_id, "job-1"),
             other => panic!("expected job_update, got {:?}", other.kind()),
@@ -3984,8 +3984,6 @@ mod envelope_tests {
             status: "running".to_string(),
             stdout_chunk: None,
             stderr_chunk: None,
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code: None,
             duration_ms: None,

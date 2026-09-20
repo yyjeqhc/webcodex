@@ -116,8 +116,6 @@ async fn complete_job(
             status: "completed".to_string(),
             stdout_chunk: Some("done\n".to_string()),
             stderr_chunk: None,
-            stdout_tail: None,
-            stderr_tail: None,
             log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(25),

@@ -53,10 +53,6 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         !names.contains(&"apply_patch"),
         "long-tail tool leaked direct"
     );
-    assert!(
-        !names.contains(&"run_script"),
-        "long-tail tool leaked direct"
-    );
     for required in [
         "work_on_project",
         "read_files",
@@ -64,6 +60,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "search_and_read",
         "apply_text_edits",
         "run_process",
+        "run_script",
         "run_shell",
         "cargo_check",
         "cargo_test",

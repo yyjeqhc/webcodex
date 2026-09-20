@@ -50,6 +50,7 @@ pub struct RunnerInvocation {
 pub struct RunnerShellOperation {
     pub cwd: Option<String>,
     pub command: String,
+    pub shell: Option<crate::workflow_session_contract::ExecutionShell>,
     pub stdin: Option<String>,
     /// Historical V2 `run_shell.max_bytes`, consumed by the external-search
     /// provider route as a per-request output cap. Native raw shell ignores it.
@@ -87,6 +88,7 @@ pub struct RunnerJobShellOperation {
     pub job_id: String,
     pub cwd: Option<String>,
     pub command: String,
+    pub shell: Option<crate::workflow_session_contract::ExecutionShell>,
     pub timeout_secs: u64,
     pub context: ShellJobContext,
 }
@@ -757,6 +759,7 @@ fn empty_wire(metadata: RunnerInvocationMetadata, kind: &str, timeout_secs: u64)
         end_line: None,
         create_dirs: false,
         command: String::new(),
+        shell: None,
         process: None,
         script: None,
         stdin: None,
@@ -784,6 +787,7 @@ fn encode_operation(
             validate_raw_shell_wire_command(&operation.command)?;
             wire.cwd = operation.cwd;
             wire.command = operation.command;
+            wire.shell = operation.shell;
             wire.stdin = operation.stdin;
             wire.max_bytes = operation.max_bytes;
             wire.timeout_secs = operation.timeout_secs;
@@ -978,6 +982,7 @@ fn encode_job_operation(
             wire.job_id = Some(operation.job_id);
             wire.cwd = operation.cwd;
             wire.command = operation.command;
+            wire.shell = operation.shell;
             wire.timeout_secs = operation.timeout_secs;
             wire.job_context = Some(operation.context);
         }
@@ -1064,6 +1069,12 @@ fn encode_job_operation(
 }
 
 fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
+    if wire.shell.is_some() && !matches!(wire.kind.as_str(), "run_shell" | "start_job") {
+        return Err(format!(
+            "{} does not accept the raw-shell selector",
+            wire.kind
+        ));
+    }
     let no_special = || ensure_special_payloads_absent(wire);
     match wire.kind.as_str() {
         "run_shell" => {
@@ -1073,9 +1084,13 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
                 return Err("run_shell does not accept job_id".to_string());
             }
             validate_raw_shell_wire_command(&wire.command)?;
+            if let Some(context) = wire.job_context.as_ref() {
+                validate_job_context_coherence(wire.cwd.as_deref(), context)?;
+            }
             Ok(RunnerOperation::RunShell(RunnerShellOperation {
                 cwd: wire.cwd.clone(),
                 command: wire.command.clone(),
+                shell: wire.shell,
                 stdin: wire.stdin.clone(),
                 max_bytes: wire.max_bytes,
                 timeout_secs: wire.timeout_secs,
@@ -1435,6 +1450,7 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
                 job_id,
                 cwd: wire.cwd.clone(),
                 command: wire.command.clone(),
+                shell: wire.shell,
                 timeout_secs: wire.timeout_secs,
                 context,
             }))
@@ -1925,6 +1941,7 @@ fn ensure_empty_generic_execution_fields(
         || wire.end_line.is_some()
         || wire.create_dirs
         || !wire.command.is_empty()
+        || wire.shell.is_some()
         || wire.stdin.is_some()
         || wire.job_context.is_some()
     {
@@ -1955,6 +1972,7 @@ mod tests {
             RunnerOperation::RunShell(RunnerShellOperation {
                 cwd: Some("/tmp".to_string()),
                 command: "printf ok".to_string(),
+                shell: None,
                 stdin: None,
                 max_bytes: None,
                 timeout_secs: 30,
@@ -1962,6 +1980,41 @@ mod tests {
             }),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn raw_shell_selector_round_trips_on_dedicated_wire_field() {
+        let wire = RunnerRequest::from_operation(
+            metadata(),
+            RunnerOperation::RunShell(RunnerShellOperation {
+                cwd: None,
+                command: "printf ok".to_string(),
+                shell: Some(crate::workflow_session_contract::ExecutionShell::Bash),
+                stdin: None,
+                max_bytes: None,
+                timeout_secs: 30,
+                job_context: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            wire.shell,
+            Some(crate::workflow_session_contract::ExecutionShell::Bash)
+        );
+        let RunnerOperation::RunShell(decoded) = wire.decode_operation().unwrap() else {
+            panic!("expected run_shell")
+        };
+        assert_eq!(
+            decoded.shell,
+            Some(crate::workflow_session_contract::ExecutionShell::Bash)
+        );
+
+        let mut invalid = wire;
+        invalid.kind = "run_process".to_string();
+        assert!(invalid
+            .decode_operation()
+            .unwrap_err()
+            .contains("does not accept the raw-shell selector"));
     }
 
     fn job_context(cwd: Option<&str>) -> ShellJobContext {
@@ -2345,6 +2398,7 @@ mod tests {
             RunnerOperation::RunShell(RunnerShellOperation {
                 cwd: Some("/repo".to_string()),
                 command: "printf ok".to_string(),
+                shell: None,
                 stdin: None,
                 max_bytes: None,
                 timeout_secs: 30,
@@ -2384,6 +2438,7 @@ mod tests {
                 job_id: "job-shell".to_string(),
                 cwd: Some("/repo".to_string()),
                 command: "printf job".to_string(),
+                shell: None,
                 timeout_secs: 60,
                 context: job_context(Some("/repo")),
             })),
@@ -2684,6 +2739,7 @@ mod tests {
             RunnerShellOperation {
                 cwd: Some("/repo".to_string()),
                 command: "printf ok".to_string(),
+                shell: None,
                 stdin: None,
                 max_bytes: Some(4096),
                 timeout_secs: 30,
@@ -2787,6 +2843,7 @@ mod tests {
                 job_id: "job-shell-json".to_string(),
                 cwd: Some("/repo".to_string()),
                 command: "printf job".to_string(),
+                shell: None,
                 timeout_secs: 60,
                 context: job_context(Some("/repo")),
             })),

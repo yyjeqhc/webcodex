@@ -96,9 +96,10 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         ),
         72,
     ),
-    model_spec(
-        def(
-            "run_script",
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "run_script",
             super::ToolAuditPolicy::TYPED_CANONICAL
                 .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                     "script",
@@ -124,14 +125,17 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Run bounded sh, bash, PowerShell, JavaScript, or TypeScript as typed Runner-owned script data. JavaScript is Node.js-backed fixed .mjs ESM. TypeScript uses Node native erasable type stripping in .mts ESM, requires Node.js 22.6+, does not type-check, and rejects enum and other transform-required syntax. The Runner owns runtime selection/flags; WebCodex does not install npm dependencies, run tsc, or fall back to Bun/Deno/tsx. Relative ESM imports resolve from the Runner-owned temporary module, not project cwd. Prefer run_process for native argv, run_script for program-like scripts, and run_shell when shell grammar is required. Long work continues as the same execution / same Job and is never restarted; timeout_secs defaults to 60 seconds and the total script execution lifetime clamps at 7 days; script bodies never become shell command text. If a native child must outlive the Runner across restart/upgrade/stop/replacement, use run_detached_process from the start.",
-    )
-    .with_execution(super::ToolExecutionContract::new(
-        super::ToolExecutionForm::TypedScript,
-        super::ToolExecutionLifetime::Runner,
-        super::ToolExecutionStart::SyncFirst,
-        super::ToolExecutionContinuation::ObserveJobs,
-    )),
+            "Run bounded sh, bash, PowerShell, JavaScript, or TypeScript as typed Runner-owned script data. JavaScript is Node.js-backed fixed .mjs ESM. TypeScript uses Node native erasable type stripping in .mts ESM, requires Node.js 22.6+, does not type-check, and rejects enum and other transform-required syntax. The Runner owns runtime selection/flags; WebCodex does not install npm dependencies, run tsc, or fall back to Bun/Deno/tsx. Relative ESM imports resolve from the Runner-owned temporary module, not project cwd. Prefer run_process for native argv, run_script for program-like scripts or substantially larger typed programs, and run_shell when shell grammar is required. Long work continues as the same execution / same Job and is never restarted; timeout_secs defaults to 60 seconds and the total script execution lifetime clamps at 7 days; script bodies never become shell command text. If a native child must outlive the Runner across restart/upgrade/stop/replacement, use run_detached_process from the start.",
+        )
+        .with_gpt_action_description("Run typed sh/bash/PowerShell/JavaScript/TypeScript scripts. Prefer run_process for native argv and run_shell for shell grammar/short chains. Long work continues as the same Job; use run_detached_process only when the child must survive Runner restart/upgrade.")
+        .with_execution(super::ToolExecutionContract::new(
+            super::ToolExecutionForm::TypedScript,
+            super::ToolExecutionLifetime::Runner,
+            super::ToolExecutionStart::SyncFirst,
+            super::ToolExecutionContinuation::ObserveJobs,
+        )),
+        74,
+    ),
     adaptive_runtime_direct(
         model_spec(
             def(

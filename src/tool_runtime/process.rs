@@ -315,9 +315,10 @@ fn decorate(
 }
 
 impl ToolRuntime {
-    /// Advisory conversion only, before execution. The explicit-shell wrapper
-    /// requires a known POSIX Runner execution dialect. No target, stdin,
-    /// expectation, login-shell or positional-argv semantics may be guessed.
+    /// Advisory conversion only, before execution. Recovery requires a Runner
+    /// that explicitly supports semantic shell selection and reports the target
+    /// sh/bash interpreter as resolvable. No target, stdin, expectation,
+    /// login-shell or positional-argv semantics may be guessed.
     pub(super) async fn process_shell_recovery_call(
         &self,
         call: &super::ToolCall,
@@ -365,35 +366,29 @@ impl ToolRuntime {
             .err()
             .as_deref()
             != Some(
-                "run_process does not accept shell command modes; use run_shell for shell syntax",
+                "run_process does not accept shell command modes; use run_shell for shell grammar/short chains or run_script for program-like scripts",
             )
         {
             return None;
         }
-        super::helpers::explicit_shell_dispatch_command(&args[1], executable).ok()?;
         let resolved = resolved?;
         let runner = self
             .runner_registry
             .get_runner_view(&resolved.config.client_id)
             .await?;
-        let profiles = runner.policy.as_ref()?.shell_profiles.as_ref()?;
-        let entry = runner.projects.iter().find(|entry| {
-            super::runner_project_runtime_id(&runner.client_id, &entry.id) == resolved.resolved_id
-        })?;
-        let selected_profile = entry
-            .shell_profile
-            .as_deref()
-            .or(profiles.default_profile.as_deref());
-        let dialect = match selected_profile {
-            Some(name) => profiles
-                .profiles
-                .iter()
-                .find(|profile| profile.name == name)?
-                .dialect
-                .as_deref(),
-            None => profiles.default_dialect.as_deref(),
-        };
-        if !matches!(dialect, Some("sh" | "bash")) {
+        if !runner.capabilities.explicit_shell_selection {
+            return None;
+        }
+        let policy = runner.policy.as_ref()?;
+        if !policy.allow_raw_shell {
+            return None;
+        }
+        let available = policy
+            .shell_profiles
+            .as_ref()?
+            .available_dialects
+            .as_ref()?;
+        if !available.iter().any(|dialect| dialect == executable) {
             return None;
         }
         let mut arguments = json!({"project": project, "shell": executable, "command": args[1]});

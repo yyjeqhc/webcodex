@@ -40,7 +40,8 @@ async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_roo
     });
     let request = wait_for_patch_agent_request(&runtime, "validation-shell").await;
     assert_eq!(request.kind, "run_shell");
-    assert!(request.command.starts_with("exec bash -c "));
+    assert_eq!(request.command, "cargo test focused");
+    assert_eq!(request.shell, Some(ExecutionShell::Bash));
     complete_patch_agent_request(
         &runtime,
         "validation-shell",
@@ -83,6 +84,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     let auth = open_auth_context();
     let capabilities = crate::runner_protocol::RunnerCapabilities {
         async_shell_jobs: true,
+        explicit_shell_selection: true,
         ..Default::default()
     };
     register_agent_projects_for_auth(

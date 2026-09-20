@@ -545,7 +545,8 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     let start = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_eq!(start.kind, "start_job");
     assert_eq!(start.timeout_secs, 600);
-    assert!(start.command.starts_with("exec bash -c "));
+    assert_eq!(start.command, "printf durable-shell; sleep 30");
+    assert_eq!(start.shell, Some(ExecutionShell::Bash));
     let job_id = start.job_id.clone().expect("durable Job id");
     update_agent_shell_job(
         &runtime,
@@ -995,7 +996,10 @@ async fn raw_shell_tools_reject_authored_command_above_shared_bound_before_proje
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("raw shell command exceeds the 16000-byte UTF-8 limit"));
+        .contains(&format!(
+            "raw shell command exceeds the {}-byte UTF-8 limit",
+            crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES
+        )));
     assert_eq!(run_shell.output["execution_state"], "not_started");
     assert_eq!(run_shell.output["failure_kind"], "runtime_error");
 
@@ -1015,7 +1019,10 @@ async fn raw_shell_tools_reject_authored_command_above_shared_bound_before_proje
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("raw shell command exceeds the 16000-byte UTF-8 limit"));
+        .contains(&format!(
+            "raw shell command exceeds the {}-byte UTF-8 limit",
+            crate::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES
+        )));
 }
 
 #[tokio::test]
@@ -1707,6 +1714,7 @@ pub(super) async fn register_job_agent_for_auth_with_reconciliation(
 ) {
     let caps = crate::test_support::current_runner_capabilities(RunnerCapabilities {
         async_shell_jobs: true,
+        explicit_shell_selection: true,
         job_state_reconciliation: reconciliation,
         ..Default::default()
     });

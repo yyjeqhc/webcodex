@@ -148,6 +148,7 @@ fn run_native_shell_or_internal_search(
         jobs.prepared_profiles(),
         operation.cwd.as_deref(),
         &operation.command,
+        operation.shell,
         operation.stdin.as_deref(),
         operation.timeout_secs,
         Some(runtime.shutdown_flag()),
@@ -615,6 +616,19 @@ pub(crate) fn dispatch_request_with_outcome(
                         "ssh_session_required: an SSH resource requires a Workflow Session id; command was not started",
                     )),
                 };
+                sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
+                    .map(|_| true)
+            } else if operation.shell.is_some() {
+                // An explicit semantic shell selection is authoritative. Do not
+                // let command-shape routing consume the request under another
+                // interpreter before the native selector is applied.
+                let result = run_native_shell_or_internal_search(
+                    config,
+                    runtime,
+                    jobs,
+                    project_registry_dir,
+                    &operation,
+                );
                 sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
                     .map(|_| true)
             } else {

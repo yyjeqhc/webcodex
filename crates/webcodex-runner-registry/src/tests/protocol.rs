@@ -453,6 +453,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
             host_context: None,
             capabilities: RunnerCapabilities {
                 shell: true,
+                explicit_shell_selection: true,
                 file_read: true,
                 file_write: true,
                 artifact_export_chunk_read: true,

@@ -237,6 +237,7 @@ impl ExternalToolRouter {
         let operation = RunnerShellOperation {
             cwd: request.cwd.clone(),
             command: request.command.clone(),
+            shell: None,
             stdin: request.stdin.clone(),
             max_bytes: request.max_bytes,
             timeout_secs: request.timeout_secs,

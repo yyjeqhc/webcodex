@@ -495,16 +495,16 @@ mod tests {
 
     #[test]
     fn long_tail_and_direct_fallback_routes_are_canonical() {
-        for tool_name in ["run_script", "apply_patch"] {
+        assert_eq!(
+            adaptive_runtime_gateway_target_route("apply_patch"),
+            AdaptiveRuntimeGatewayTargetRoute::Gateway
+        );
+        for tool_name in ["read_files", "run_script"] {
             assert_eq!(
                 adaptive_runtime_gateway_target_route(tool_name),
-                AdaptiveRuntimeGatewayTargetRoute::Gateway
+                AdaptiveRuntimeGatewayTargetRoute::Direct
             );
         }
-        assert_eq!(
-            adaptive_runtime_gateway_target_route("read_files"),
-            AdaptiveRuntimeGatewayTargetRoute::Direct
-        );
     }
 
     #[test]

@@ -1397,6 +1397,9 @@ fn disable_job_state_reconciliation_for_test() -> bool {
 
 fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
+    // This binary accepts a structured local sh/bash selector on raw shell
+    // requests. Older Runners omit the bit so current Servers fail closed.
+    capabilities.explicit_shell_selection = true;
     capabilities.jobs = true;
     capabilities.file_read = true;
     capabilities.file_write = true;
@@ -1725,9 +1728,18 @@ fn build_shell_profiles_summary(
         .and_then(|profile| profile.program.clone())
         .unwrap_or_else(|| shell.program.clone());
     let default_dialect = shell_dialect_for_program(&default_program).to_string();
-    // Explicit shell=sh|bash always resolves on the runner; configured custom
-    // profiles add the custom dialect.
-    let mut available: Vec<String> = vec!["sh".to_string(), "bash".to_string()];
+    // Report only semantic shells this exact Runner can resolve through its
+    // effective execution PATH. This keeps model recovery guidance from
+    // suggesting bash/sh merely because the protocol supports those selectors.
+    let mut available: Vec<String> = Vec::new();
+    for (name, language) in [
+        ("sh", runner_protocol::ShellScriptLanguage::Sh),
+        ("bash", runner_protocol::ShellScriptLanguage::Bash),
+    ] {
+        if webcodex_runner::explicit_shell_available(shell, language) {
+            available.push(name.to_string());
+        }
+    }
     for entry in &profiles {
         if let Some(dialect) = entry.dialect.as_deref() {
             if !available.iter().any(|existing| existing == dialect) {

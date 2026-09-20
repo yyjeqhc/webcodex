@@ -689,6 +689,7 @@ fn pre_spawn_rejection_is_not_started() {
         None,
         "exit 0",
         None,
+        None,
         10,
         None,
     );
@@ -708,6 +709,7 @@ fn terminal_process_result_is_completed() {
         None,
         None,
         "exit 7",
+        None,
         None,
         10,
         None,
@@ -729,6 +731,7 @@ fn known_process_timeout_is_timed_out() {
         None,
         None,
         "sleep 2",
+        None,
         None,
         1,
         None,
@@ -752,6 +755,34 @@ fn post_spawn_missing_output_pipe_is_outcome_unknown() {
         result.execution_state,
         ShellCommandExecutionState::OutcomeUnknown
     );
+}
+
+#[test]
+fn explicit_bash_uses_resolved_interpreter_instead_of_configured_powershell() {
+    let temp = tempfile::tempdir().unwrap();
+    let fake_bash = temp
+        .path()
+        .join(format!("bash{}", std::env::consts::EXE_SUFFIX));
+    create_fake_native_executable(&fake_bash);
+    let shell = ShellConfig {
+        program: "powershell".to_string(),
+        args: vec!["-NoProfile".to_string(), "-Command".to_string()],
+        dialect: Some(ShellDialect::PowerShell),
+        path_prepend: vec![temp.path().to_path_buf()],
+        ..Default::default()
+    };
+    let body = "printf '%s\\n' explicit-shell-ok";
+
+    let command =
+        configured_explicit_shell_command(&shell, None, ExecutionShell::Bash, body).unwrap();
+
+    assert_eq!(Path::new(command.get_program()), fake_bash.as_path());
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(args, vec!["-c".to_string(), body.to_string()]);
+    assert!(args.iter().all(|arg| !arg.starts_with("exec bash -c ")));
 }
 
 #[test]

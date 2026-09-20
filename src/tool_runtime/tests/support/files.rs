@@ -148,12 +148,12 @@ pub(in crate::tool_runtime::tests) fn large_marker_patch(filename: &str, marker:
     let mut s = String::new();
     s.push_str(&format!(
         "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
-             @@ -0,0 +1,300 @@\n",
+             @@ -0,0 +1,1200 @@\n",
         f = filename,
     ));
     s.push_str(&format!("+{m}\n", m = marker));
-    for i in 0..299 {
-        s.push_str(&format!("+line-{:04}-{}\n", i, "x".repeat(48)));
+    for i in 0..1199 {
+        s.push_str(&format!("+line-{:04}-{}\n", i, "x".repeat(64)));
     }
     s
 }

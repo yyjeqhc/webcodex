@@ -578,6 +578,7 @@ mod tests {
     ) -> QuicRegisterFrame {
         let capabilities = crate::test_support::current_runner_capabilities(RunnerCapabilities {
             shell: true,
+            explicit_shell_selection: false,
             file_read: true,
             file_write: true,
             artifact_export_chunk_read: false,

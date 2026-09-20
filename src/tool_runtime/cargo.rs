@@ -1188,6 +1188,7 @@ impl ToolRuntime {
                     project_cwd: Some(resolved_cwd.clone()),
                     purpose: Some(purpose.as_str().to_string()),
                     shell: Some(actual_shell.to_string()),
+                    explicit_shell: None,
                     validation_steps: vec![step.clone()],
                     validation: Some(ShellJobValidationMetadata {
                         tool: tool_name.to_string(),

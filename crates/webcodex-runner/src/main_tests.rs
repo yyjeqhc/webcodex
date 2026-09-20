@@ -367,6 +367,7 @@ fn json_file_op_request(
     payload: serde_json::Value,
 ) -> RunnerRequest {
     RunnerRequest {
+        shell: None,
         request_id: format!("req-{kind}"),
         client_id: "agent-1".to_string(),
         kind: kind.to_string(),
@@ -1047,6 +1048,7 @@ fn project_policy(root: &Path) -> RunnerPolicy {
 
 fn project_request(kind: &str, payload: serde_json::Value) -> RunnerRequest {
     RunnerRequest {
+        shell: None,
         request_id: format!("req-{}", kind),
         client_id: "oe".to_string(),
         kind: kind.to_string(),

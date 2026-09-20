@@ -193,6 +193,7 @@ fn process_ids(provider: &ClaudeCodeMcpProvider) -> Vec<u32> {
 
 fn runner_request(kind: &str, root: &Path, path: &str, content: Option<Value>) -> RunnerRequest {
     RunnerRequest {
+        shell: None,
         request_id: "request".to_string(),
         client_id: "client".to_string(),
         kind: kind.to_string(),

@@ -54,7 +54,7 @@ async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert!(names.contains(&crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
-        assert!(!names.contains(&"run_script"));
+        assert!(names.contains(&"run_script"));
         assert!(!names.contains(&"memory_search"));
         for direct in crate::model_surface::adaptive_runtime_direct_tool_specs() {
             if direct.name == crate::plugin_gateway::PLUGIN_TOOL_NAME {
@@ -2137,9 +2137,9 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     // plus 16,641 with Apps. About 10% byte headroom; new advertised tools
     // require an explicit count-budget review, rather than silent growth.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 33, 95_000),
-        ("scoped", Some(&scoped), 34, 98_000),
-        ("admin", Some(&admin), 40, 110_000),
+        ("anonymous", None, 34, 95_000),
+        ("scoped", Some(&scoped), 35, 98_000),
+        ("admin", Some(&admin), 41, 110_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

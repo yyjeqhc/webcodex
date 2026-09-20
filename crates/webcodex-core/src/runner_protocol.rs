@@ -58,18 +58,19 @@ fn default_transport_polling() -> String {
     "polling".to_string()
 }
 
-/// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
-/// escape hatch; larger program text belongs in `run_script`, while large
-/// literal data belongs in stdin/files/artifacts.
-pub const RAW_SHELL_COMMAND_MAX_BYTES: usize = 16_000;
+/// Model/user-authored raw shell command ceiling. Keep already-authored shell
+/// programs executable without forcing a second model turn just to move the
+/// same text into `run_script`; substantially larger typed programs still use
+/// that 512 KiB path, while large literal data belongs in stdin/files/artifacts.
+pub const RAW_SHELL_COMMAND_MAX_BYTES: usize = 64 * 1024;
 
-/// Internal Control -> Runner raw-shell command envelope. This is deliberately
-/// larger than the authored-command ceiling because an explicit `sh`/`bash`
-/// request is transported through the existing POSIX single-quote wrapper.
-/// In the worst case every authored byte is a single quote, expanding a
-/// 16,000-byte command to about 64 KiB. This transport bound is not a model
-/// input allowance.
-pub const RAW_SHELL_WIRE_MAX_BYTES: usize = 64 * 1024;
+/// Internal Control -> Runner raw-shell command envelope. Local explicit
+/// `sh`/`bash` execution is selected structurally, so its command body stays
+/// unexpanded. Session SSH compatibility still uses POSIX single-quote
+/// escaping, whose worst case expands every authored byte 4x; retain an
+/// additional fixed 1 KiB for wrapper syntax while staying well below the
+/// typed-script payload ceiling.
+pub const RAW_SHELL_WIRE_MAX_BYTES: usize = 4 * RAW_SHELL_COMMAND_MAX_BYTES + 1024;
 
 /// Validate the internal raw-shell request envelope accepted by Control and
 /// revalidated by the Runner. Model-facing authored commands use the smaller
@@ -140,6 +141,10 @@ pub const RUNNER_PROTOCOL_GENERATION_V2: RunnerProtocolGenerationNumber =
 pub const RUNNER_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
 pub const RUNNER_CAPABILITY_SHELL: &str = "shell";
+/// Structured local `sh`/`bash` selection on raw shell requests. Missing on
+/// older Runners is false; current Servers fail closed rather than sending a
+/// POSIX `exec ... -c` wrapper to an unrelated configured shell.
+pub const RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION: &str = "explicit_shell_selection";
 pub const RUNNER_CAPABILITY_FILE_READ: &str = "file_read";
 pub const RUNNER_CAPABILITY_FILE_WRITE: &str = "file_write";
 /// The Runner implements a narrow internal project-artifact export chunk read
@@ -437,6 +442,7 @@ pub const RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
 
 pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_SHELL,
+    RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION,
     RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE,
     RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
@@ -523,6 +529,10 @@ pub const PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS: usize = 8;
 pub struct RunnerCapabilities {
     #[serde(default = "default_shell_true")]
     pub shell: bool,
+    /// Additive structured selector for explicit local `sh`/`bash` raw shell
+    /// execution. Missing on older Runners is false and is never inferred.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub explicit_shell_selection: bool,
     #[serde(default)]
     pub file_read: bool,
     #[serde(default)]
@@ -1000,6 +1010,7 @@ impl Default for RunnerCapabilities {
     fn default() -> Self {
         Self {
             shell: true,
+            explicit_shell_selection: false,
             file_read: false,
             file_write: false,
             artifact_export_chunk_read: false,
@@ -1222,9 +1233,9 @@ pub struct ShellProfilesSummary {
     /// actual configuration; the server never guesses. Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_dialect: Option<String>,
-    /// Dialects an explicit `shell=` selection can resolve to on this runner
-    /// (always includes `sh` and `bash`; configured custom profiles add
-    /// `custom`). Older Runners omit it.
+    /// Dialects this exact Runner can resolve from its effective execution
+    /// environment for explicit `shell=` selection; configured custom profiles
+    /// may additionally report `custom`. Older Runners omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available_dialects: Option<Vec<String>>,
 }
@@ -1769,7 +1780,7 @@ pub fn validate_process_argv(process: &ShellProcessArgv) -> Result<(), String> {
     }
     if process_uses_shell_command_mode(process) {
         return Err(
-            "run_process does not accept shell command modes; use run_shell for shell syntax"
+            "run_process does not accept shell command modes; use run_shell for shell grammar/short chains or run_script for program-like scripts"
                 .to_string(),
         );
     }
@@ -1966,6 +1977,12 @@ pub struct RunnerRequest {
     #[serde(default)]
     pub create_dirs: bool,
     pub command: String,
+    /// Optional semantic local-shell selector for raw shell execution. Present
+    /// only for `kind = "run_shell"` or `kind = "start_job"`. Older Runners
+    /// ignore it, so current Servers send it only after explicit capability
+    /// admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<crate::workflow_session_contract::ExecutionShell>,
     /// Typed native process payload. Present only for `kind = "run_process"`
     /// or `kind = "start_process_job"`; defaults to `None` for backward
     /// compatibility with older envelopes.
@@ -2548,6 +2565,7 @@ mod envelope_tests {
             host_context: None,
             capabilities: RunnerCapabilities {
                 shell: true,
+                explicit_shell_selection: false,
                 file_read: true,
                 file_write: false,
                 artifact_export_chunk_read: false,
@@ -3805,6 +3823,7 @@ mod envelope_tests {
             RUNNER_CAPABILITY_NAMES,
             &[
                 "shell",
+                "explicit_shell_selection",
                 "file_read",
                 "file_write",
                 "artifact_export_chunk_read",

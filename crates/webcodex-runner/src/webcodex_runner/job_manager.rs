@@ -12,9 +12,10 @@ use super::detached_job::{
 use super::output_text::OutputTextSource;
 use super::runner_skills::run_skill_resource_with_profiles_and_execution_state;
 use super::shell::{
-    configured_prepared_shell_job_command, configured_shell_job_command,
-    configured_validation_job_command, cwd_allowed, prepare_detached_process_launch,
-    resolve_prepared_shell_profile, run_process_with_profiles_and_execution_state_with_start_hook,
+    configured_explicit_shell_command, configured_prepared_shell_job_command,
+    configured_shell_job_command, configured_validation_job_command, cwd_allowed,
+    prepare_detached_process_launch, resolve_prepared_shell_profile,
+    run_process_with_profiles_and_execution_state_with_start_hook,
     run_script_with_profiles_and_execution_state_with_start_hook, PreparedShellProfileCache,
 };
 use super::shutdown::{lock_unpoison, ActivityTracker};
@@ -2561,28 +2562,30 @@ impl JobManager {
             operation,
             ..
         } = start;
-        let (job_id, cwd, raw_command, steps, timeout_secs, context, validation) = match &operation
-        {
-            RunnerJobOperation::StartShell(request) => (
-                request.job_id.clone(),
-                request.cwd.clone(),
-                Some(request.command.clone()),
-                Vec::new(),
-                request.timeout_secs,
-                request.context.clone(),
-                false,
-            ),
-            RunnerJobOperation::StartValidation(request) => (
-                request.job_id.clone(),
-                request.cwd.clone(),
-                None,
-                request.steps.clone(),
-                request.timeout_secs,
-                request.context.clone(),
-                true,
-            ),
-            _ => unreachable!("shell Job starter received non shell/validation operation"),
-        };
+        let (job_id, cwd, raw_command, explicit_shell, steps, timeout_secs, context, validation) =
+            match &operation {
+                RunnerJobOperation::StartShell(request) => (
+                    request.job_id.clone(),
+                    request.cwd.clone(),
+                    Some(request.command.clone()),
+                    request.shell,
+                    Vec::new(),
+                    request.timeout_secs,
+                    request.context.clone(),
+                    false,
+                ),
+                RunnerJobOperation::StartValidation(request) => (
+                    request.job_id.clone(),
+                    request.cwd.clone(),
+                    None,
+                    None,
+                    request.steps.clone(),
+                    request.timeout_secs,
+                    request.context.clone(),
+                    true,
+                ),
+                _ => unreachable!("shell Job starter received non shell/validation operation"),
+            };
         let capture_cargo_test_count = context.validation.as_ref().is_some_and(|metadata| {
             metadata.tool == "cargo_test"
                 && metadata.kind == "test"
@@ -2660,9 +2663,19 @@ impl JobManager {
                 let raw_command = raw_command
                     .as_deref()
                     .expect("typed raw shell Job carries command text");
-                match prepared_profile.as_deref() {
-                    Some(profile) => configured_prepared_shell_job_command(profile, raw_command),
-                    None => configured_shell_job_command(&shell, raw_command),
+                match explicit_shell {
+                    Some(selection) => configured_explicit_shell_command(
+                        &shell,
+                        prepared_profile.as_deref(),
+                        selection,
+                        raw_command,
+                    ),
+                    None => match prepared_profile.as_deref() {
+                        Some(profile) => {
+                            configured_prepared_shell_job_command(profile, raw_command)
+                        }
+                        None => configured_shell_job_command(&shell, raw_command),
+                    },
                 }
             };
             let mut command = match configured {

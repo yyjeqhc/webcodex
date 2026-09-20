@@ -992,6 +992,7 @@ mod tests {
 
     fn artifact_request(root: &Path, kind: &str, path: &str, payload: Value) -> RunnerRequest {
         RunnerRequest {
+            shell: None,
             request_id: format!("req-{kind}"),
             client_id: "agent-1".to_string(),
             kind: kind.to_string(),

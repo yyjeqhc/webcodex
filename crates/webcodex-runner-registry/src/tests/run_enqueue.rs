@@ -39,6 +39,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
             "test".to_string(),
             None,
             Some("wc_sess_local".to_string()),
+            None,
         )
         .await
         .unwrap();
@@ -56,6 +57,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
             },
             "test".to_string(),
             Some("tmp".to_string()),
+            None,
             None,
         )
         .await

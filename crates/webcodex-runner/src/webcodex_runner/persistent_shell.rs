@@ -1189,6 +1189,7 @@ mod tests {
             end_line: None,
             create_dirs: false,
             command: command.unwrap_or_default().to_string(),
+            shell: None,
             process: None,
             script: None,
             stdin: None,

@@ -2262,7 +2262,15 @@ async fn run_process_shell_command_mode_recovery_is_lossless_parser_ready_and_pr
     let client = "shell-recovery";
     let project = runner_project_runtime_id(client, "demo");
     let auth = bootstrap_auth_context();
-    for dialect in [Some("bash"), Some("custom"), None] {
+    for (dialect, available_dialects) in [
+        (
+            Some("powershell"),
+            Some(vec!["sh".to_string(), "bash".to_string()]),
+        ),
+        (Some("custom"), Some(vec!["sh".to_string()])),
+        (Some("bash"), None),
+    ] {
+        let expected_available_dialects = available_dialects.clone();
         register_agent_with_shell_profiles(
             &runtime,
             client,
@@ -2273,7 +2281,7 @@ async fn run_process_shell_command_mode_recovery_is_lossless_parser_ready_and_pr
                     prepared_cache_count: 0,
                     profiles: vec![],
                     default_dialect: dialect.map(str::to_string),
-                    available_dialects: Some(vec!["sh".into(), "bash".into()]),
+                    available_dialects,
                 }),
                 ..Default::default()
             }),
@@ -2370,7 +2378,11 @@ async fn run_process_shell_command_mode_recovery_is_lossless_parser_ready_and_pr
             assert_eq!(result.output["failure_kind"], "invalid_arguments");
             assert!(result.output.get("job_id").is_none());
             assert!(result.output.get("recovery_kind").is_none());
-            if convertible && dialect == Some("bash") {
+            let recovery_available = convertible
+                && expected_available_dialects
+                    .as_ref()
+                    .is_some_and(|dialects| dialects.iter().any(|dialect| dialect == shell));
+            if recovery_available {
                 let suggested = &result.output["suggested_call"];
                 ToolCall::from_tool_name(
                     suggested["tool"].as_str().unwrap(),

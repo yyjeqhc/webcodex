@@ -1202,7 +1202,6 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
     }
     for gateway_specialist in [
         "apply_patch",
-        "run_script",
         "cargo_fmt",
         "go_test",
         "workspace_hygiene_check",
@@ -1228,6 +1227,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "read_files",
         "apply_text_edits",
         "run_process",
+        "run_script",
         "run_shell",
         "observe_jobs",
         "cargo_check",
@@ -2340,7 +2340,7 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
         ("session_discussion_summary", "direct", None),
         ("list_jobs", "direct", None),
         ("git_diff_hunks", "direct", None),
-        ("run_script", "gateway", Some("call_runtime_tool")),
+        ("run_script", "direct", None),
         (
             "workspace_hygiene_check",
             "gateway",

@@ -9,6 +9,7 @@ use webcodex_core::runner_protocol::{self as wire, RunnerCapabilities};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RunnerFeature {
     Shell,
+    ExplicitShellSelection,
     FileRead,
     FileWrite,
     ArtifactExportChunkRead,
@@ -77,6 +78,7 @@ pub enum RunnerFeature {
 
 const ALL_RUNNER_FEATURES: &[RunnerFeature] = &[
     RunnerFeature::Shell,
+    RunnerFeature::ExplicitShellSelection,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
     RunnerFeature::ArtifactExportChunkRead,
@@ -163,6 +165,7 @@ impl RunnerFeature {
     pub const fn as_wire_name(self) -> &'static str {
         match self {
             Self::Shell => wire::RUNNER_CAPABILITY_SHELL,
+            Self::ExplicitShellSelection => wire::RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION,
             Self::FileRead => wire::RUNNER_CAPABILITY_FILE_READ,
             Self::FileWrite => wire::RUNNER_CAPABILITY_FILE_WRITE,
             Self::ArtifactExportChunkRead => wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
@@ -249,6 +252,7 @@ impl RunnerFeature {
     pub(crate) fn from_wire_name(name: &str) -> Option<Self> {
         Some(match name {
             wire::RUNNER_CAPABILITY_SHELL => Self::Shell,
+            wire::RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION => Self::ExplicitShellSelection,
             wire::RUNNER_CAPABILITY_FILE_READ => Self::FileRead,
             wire::RUNNER_CAPABILITY_FILE_WRITE => Self::FileWrite,
             wire::RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ => Self::ArtifactExportChunkRead,
@@ -358,6 +362,7 @@ impl RunnerFeature {
             | Self::ProjectLifecycle
             | Self::ProjectPathRegistration => RunnerFeatureInference::GenerationEligible,
             Self::Shell
+            | Self::ExplicitShellSelection
             | Self::Git
             | Self::StructuredScriptJavascript
             | Self::StructuredScriptTypescript
@@ -406,6 +411,7 @@ impl RunnerFeature {
     fn advertised_by(self, capabilities: &RunnerCapabilities) -> bool {
         match self {
             Self::Shell => capabilities.shell,
+            Self::ExplicitShellSelection => capabilities.explicit_shell_selection,
             Self::FileRead => capabilities.file_read,
             Self::FileWrite => capabilities.file_write,
             Self::ArtifactExportChunkRead => capabilities.artifact_export_chunk_read,

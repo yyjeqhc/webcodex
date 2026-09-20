@@ -101,7 +101,8 @@ pub(crate) use runner_skills::{
 #[cfg(windows)]
 pub(crate) use shell::run_windows_native_single_file_search_with_profiles;
 pub(crate) use shell::{
-    configured_validation_job_command, run_internal_posix_script_with_profiles_and_execution_state,
+    configured_validation_job_command, explicit_shell_available,
+    run_internal_posix_script_with_profiles_and_execution_state,
     run_internal_search_script_with_profiles_and_execution_state,
     run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
     run_shell_with_profiles_and_execution_state, PreparedShellProfile,

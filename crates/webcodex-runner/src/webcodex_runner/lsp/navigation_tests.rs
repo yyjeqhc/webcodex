@@ -22,6 +22,7 @@ use webcodex_lsp::{
 /// Minimal agent shell request carrying a typed LSP payload.
 fn shell_lsp_request(payload: RunnerLspPayload) -> RunnerRequest {
     RunnerRequest {
+        shell: None,
         request_id: "lsp-1".to_string(),
         client_id: "agent".to_string(),
         kind: AGENT_LSP_REQUEST_KIND.to_string(),
@@ -665,6 +666,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         ..RunnerPolicy::default()
     };
     let req = RunnerRequest {
+        shell: None,
         request_id: "s".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),
@@ -1675,6 +1677,7 @@ fn missing_lsp_payload_returns_structured_error() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("normal");
     let req = RunnerRequest {
+        shell: None,
         request_id: "x".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),
@@ -1721,6 +1724,7 @@ fn lsp_request_ignores_command_field() {
     let fixture = NavFixture::new("normal");
     let marker = fixture._temp.path().join("shell-ran");
     let req = RunnerRequest {
+        shell: None,
         request_id: "req".into(),
         client_id: "c".into(),
         kind: AGENT_LSP_REQUEST_KIND.into(),

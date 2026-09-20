@@ -451,7 +451,7 @@ fn raw_shell_tools_expose_the_shared_authored_command_bound() {
         let command = &spec.input_schema["properties"]["command"];
         assert_eq!(command["maxLength"], RAW_SHELL_COMMAND_MAX_BYTES, "{name}");
         let description = command["description"].as_str().unwrap_or_default();
-        assert!(description.contains("16000") || description.contains("16,000"));
+        assert!(description.contains("65536") || description.contains("65,536"));
     }
 }
 

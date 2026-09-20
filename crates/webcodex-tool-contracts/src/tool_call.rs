@@ -1929,9 +1929,9 @@ pub enum ToolCall {
     RunShell {
         /// Configured project id.
         project: String,
-        /// Shell command to run. At most 16000 UTF-8 bytes; use run_script for larger program text and
-        /// stdin/files/artifacts for large data.
-        #[schemars(length(max = 16000))]
+        /// Shell command to run. At most 65536 UTF-8 bytes; use run_script for substantially larger
+        /// typed program text and stdin/files/artifacts for large data.
+        #[schemars(length(max = 65536))]
         command: String,
         /// Optional explicit wc_sess_* Workflow Session id from a prior compatible bootstrap. When
         /// provided, this tool call is recorded in that exact Session ledger; omission leaves the call
@@ -1991,8 +1991,8 @@ pub enum ToolCall {
         session_id: String,
         /// Opaque id returned by open_session_shell.
         shell_id: String,
-        /// One command evaluated by the existing long-lived shell. At most 16000 UTF-8 bytes.
-        #[schemars(length(max = 16000))]
+        /// One command evaluated by the existing long-lived shell. At most 65536 UTF-8 bytes.
+        #[schemars(length(max = 65536))]
         command: String,
         #[schemars(extend("default" = 60))]
         /// Command timeout in seconds (minimum 1, default 60). Values above 3600 are accepted and clamped
@@ -3632,9 +3632,9 @@ pub enum ToolCall {
     RunJob {
         /// Configured project id.
         project: String,
-        /// Shell command to run asynchronously. At most 16000 UTF-8 bytes; use run_script for larger
-        /// program text and stdin/files/artifacts for large data.
-        #[schemars(length(max = 16000))]
+        /// Shell command to run asynchronously. At most 65536 UTF-8 bytes; use run_script for
+        /// substantially larger typed program text and stdin/files/artifacts for large data.
+        #[schemars(length(max = 65536))]
         command: String,
         /// Optional explicit wc_sess_* Workflow Session id from a prior compatible bootstrap. When
         /// provided, this tool call is recorded in that exact Session ledger; omission leaves the call

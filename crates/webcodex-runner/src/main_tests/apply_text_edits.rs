@@ -24,6 +24,7 @@ fn apply_text_edits_request(
         });
     }
     RunnerRequest {
+        shell: None,
         request_id: "req-apply-text-edits".to_string(),
         client_id: "agent-1".to_string(),
         kind: "file_apply_text_edits".to_string(),

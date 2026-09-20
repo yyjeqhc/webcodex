@@ -81,6 +81,7 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
         crate::runner_protocol::RunnerCapabilities {
             shell: true,
             async_shell_jobs: true,
+            explicit_shell_selection: true,
             ..Default::default()
         },
         vec![registered_project("demo", &tmp.path().to_string_lossy())],

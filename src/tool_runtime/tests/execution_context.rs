@@ -32,7 +32,18 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
     std::fs::create_dir_all(&override_dir).unwrap();
 
     let runtime = test_runtime();
-    let project = register_runner_project_at_path(&runtime, "context-shell", "demo", &root).await;
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "context-shell",
+        "demo",
+        &root,
+        RunnerCapabilities {
+            shell: true,
+            explicit_shell_selection: true,
+            ..Default::default()
+        },
+    )
+    .await;
     let auth = auth_context(None, true);
     let session = runtime
         .sessions
@@ -75,7 +86,14 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
         inherited_request.cwd.as_deref(),
         Some(frontend.to_string_lossy().as_ref())
     );
-    assert!(inherited_request.command.starts_with("exec bash -c "));
+    assert_eq!(inherited_request.command, "pwd");
+    assert_eq!(
+        inherited_request
+            .job_context
+            .as_ref()
+            .and_then(|context| context.shell.as_deref()),
+        Some("bash")
+    );
     complete_patch_agent_request(
         &runtime,
         "context-shell",
@@ -118,7 +136,14 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
         override_request.cwd.as_deref(),
         Some(override_dir.to_string_lossy().as_ref())
     );
-    assert!(override_request.command.starts_with("exec sh -c "));
+    assert_eq!(override_request.command, "pwd");
+    assert_eq!(
+        override_request
+            .job_context
+            .as_ref()
+            .and_then(|context| context.shell.as_deref()),
+        Some("sh")
+    );
     complete_patch_agent_request(
         &runtime,
         "context-shell",
@@ -177,6 +202,56 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
 }
 
 #[tokio::test]
+async fn explicit_local_shell_fails_closed_on_older_runner_without_selector_capability() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    let runtime = test_runtime();
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "context-old-shell",
+        "demo",
+        &root,
+        RunnerCapabilities {
+            shell: true,
+            explicit_shell_selection: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                project,
+                command: "pwd".to_string(),
+                session_id: None,
+                timeout_secs: Some(30),
+                sync_wait_secs: Some(30),
+                cwd: None,
+                purpose: None,
+                shell: Some(ExecutionShell::Bash),
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success, "{result:?}");
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("explicit_shell_selection"));
+    assert!(probe_patch_agent_request(&runtime, "context-old-shell")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
 async fn outer_recorder_does_not_override_business_session_execution_context() {
     use crate::tool_runtime::kernel::{
         HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
@@ -190,8 +265,18 @@ async fn outer_recorder_does_not_override_business_session_execution_context() {
     std::fs::create_dir_all(&business_dir).unwrap();
 
     let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "context-recorder", "demo", &root).await;
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "context-recorder",
+        "demo",
+        &root,
+        RunnerCapabilities {
+            shell: true,
+            explicit_shell_selection: true,
+            ..Default::default()
+        },
+    )
+    .await;
     let auth = auth_context(None, true);
     let recorder = runtime
         .sessions
@@ -255,10 +340,14 @@ async fn outer_recorder_does_not_override_business_session_execution_context() {
         Some(business_dir.to_string_lossy().as_ref()),
         "business Session cwd must win over recorder context"
     );
-    assert!(
-        request.command.starts_with("exec bash -c "),
-        "business Session shell must win over recorder context: {}",
-        request.command
+    assert_eq!(request.command, "pwd");
+    assert_eq!(
+        request
+            .job_context
+            .as_ref()
+            .and_then(|context| context.shell.as_deref()),
+        Some("bash"),
+        "business Session shell must win over recorder context"
     );
     complete_patch_agent_request(&runtime, "context-recorder", &request.request_id, 0, "", "")
         .await;
@@ -281,6 +370,7 @@ async fn run_job_inherits_session_cwd_and_shell() {
     let auth = open_auth_context();
     let capabilities = RunnerCapabilities {
         async_shell_jobs: true,
+        explicit_shell_selection: true,
         ..Default::default()
     };
     register_agent_projects_for_auth(
@@ -328,7 +418,14 @@ async fn run_job_inherits_session_cwd_and_shell() {
         request.cwd.as_deref(),
         Some(frontend.to_string_lossy().as_ref())
     );
-    assert!(request.command.starts_with("exec bash -c "));
+    assert_eq!(request.command, "pwd");
+    assert_eq!(
+        request
+            .job_context
+            .as_ref()
+            .and_then(|context| context.shell.as_deref()),
+        Some("bash")
+    );
 }
 
 #[tokio::test]

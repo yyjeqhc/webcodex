@@ -1273,17 +1273,19 @@ impl ToolRuntime {
         } else {
             "configured"
         });
-        let dispatched_command = match shell {
-            Some(shell) => match explicit_shell_dispatch_command(&command, shell.as_str()) {
-                Ok(command) => command,
-                Err(error) => {
-                    return ToolResult::err(command_rejected_message(
-                        error,
-                        "use run_script for large or quote-dense explicit-shell program text.",
-                    ))
+        let dispatched_command = match (remote, shell) {
+            (true, Some(shell)) => {
+                match explicit_shell_dispatch_command(&command, shell.as_str()) {
+                    Ok(command) => command,
+                    Err(error) => {
+                        return ToolResult::err(command_rejected_message(
+                            error,
+                            "use run_script for substantially larger typed program text.",
+                        ))
+                    }
                 }
-            },
-            None => command.clone(),
+            }
+            _ => command.clone(),
         };
         match self
                 .runner_registry
@@ -1309,6 +1311,11 @@ impl ToolRuntime {
                         project_cwd: Some(resolved_cwd.clone()),
                         purpose: Some(declared_purpose.as_str().to_string()),
                         shell: Some(actual_shell.to_string()),
+                        explicit_shell: if !remote && validation_steps.is_empty() {
+                            shell
+                        } else {
+                            None
+                        },
                         validation_steps,
                         validation: None,
                         visibility: crate::runner_http::ShellJobVisibility::Public,

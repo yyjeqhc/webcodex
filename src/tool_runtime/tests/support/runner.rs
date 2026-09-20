@@ -47,6 +47,7 @@ pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path(
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
                 shell: true,
+                explicit_shell_selection: true,
                 git: true,
                 file_read: true,
                 file_write: true,
@@ -1362,9 +1363,10 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
+            capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
+                explicit_shell_selection: true,
+                ..Default::default()
+            }),
             policy,
         })
         .await

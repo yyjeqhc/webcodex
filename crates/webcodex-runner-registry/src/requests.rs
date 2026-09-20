@@ -50,7 +50,8 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE, RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA, RUNNER_CAPABILITY_FILE_READ,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
+    RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION, RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
@@ -59,6 +60,7 @@ use webcodex_core::runner_protocol::{
 };
 use webcodex_core::runner_skill::{RunnerSkillExecutionRequest, RunnerSkillRequest};
 use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
+use webcodex_core::workflow_session_contract::ExecutionShell;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnqueueLspError {
@@ -1116,7 +1118,7 @@ impl RunnerRegistry {
         body: ShellRunRequest,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        self.enqueue_run_with_ssh(body, requested_by, None, None)
+        self.enqueue_run_with_ssh(body, requested_by, None, None, None)
             .await
     }
 
@@ -1397,6 +1399,7 @@ impl RunnerRegistry {
         requested_by: String,
         ssh_resource: Option<String>,
         ssh_session_id: Option<String>,
+        explicit_shell: Option<ExecutionShell>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_run_request(&body)?;
         // A Workflow Session may execute locally without an SSH resource.
@@ -1408,11 +1411,10 @@ impl RunnerRegistry {
             );
         }
         let normalized_cwd = body.cwd.clone().map(|cwd| cwd.trim().to_string());
-        let ssh_context = ssh_resource
-            .zip(ssh_session_id)
-            .map(|(resource, session_id)| ShellJobContext {
+        let shell_context = if let Some(resource) = ssh_resource {
+            Some(ShellJobContext {
                 runtime_project_id: None,
-                workflow_session_id: Some(session_id),
+                workflow_session_id: ssh_session_id,
                 ssh_resource: Some(resource),
                 project_cwd: None,
                 cwd: normalized_cwd.clone(),
@@ -1422,12 +1424,28 @@ impl RunnerRegistry {
                 validation_steps: Vec::new(),
                 validation: None,
                 structured_execution: None,
-            });
+            })
+        } else {
+            explicit_shell.map(|shell| ShellJobContext {
+                runtime_project_id: None,
+                workflow_session_id: None,
+                ssh_resource: None,
+                project_cwd: None,
+                cwd: normalized_cwd.clone(),
+                purpose: None,
+                shell: Some(shell.as_str().to_string()),
+                command_preview: command_preview(&body.command),
+                validation_steps: Vec::new(),
+                validation: None,
+                structured_execution: None,
+            })
+        };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let has_ssh_context = ssh_context
+        let has_ssh_context = shell_context
             .as_ref()
             .is_some_and(|context| context.ssh_resource.is_some());
+        let has_explicit_shell = explicit_shell.is_some() && !has_ssh_context;
         let request = encode_runner_operation(
             &request_id,
             &body.client_id,
@@ -1435,21 +1453,32 @@ impl RunnerRegistry {
             RunnerOperation::RunShell(RunnerShellOperation {
                 cwd: normalized_cwd,
                 command: body.command.clone(),
+                shell: explicit_shell.filter(|_| !has_ssh_context),
                 stdin: body.stdin.clone(),
                 max_bytes: None,
                 timeout_secs: body.timeout_secs,
-                job_context: ssh_context,
+                job_context: shell_context,
             }),
         )?;
         let mut inner = self.inner.lock().await;
-        if has_ssh_context {
+        if has_ssh_context || has_explicit_shell {
             let Some(runner) = inner.runners.get(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
-            if !runner.runner_features.supports(RunnerFeature::SshShell) {
+            if has_ssh_context && !runner.runner_features.supports(RunnerFeature::SshShell) {
                 return Err(format!(
                     "agent_capability_unavailable: runner {} does not support ssh_shell",
                     body.client_id
+                ));
+            }
+            if has_explicit_shell
+                && !runner
+                    .runner_features
+                    .supports(RunnerFeature::ExplicitShellSelection)
+            {
+                return Err(format!(
+                    "capability_unavailable: runner {} does not support {}",
+                    body.client_id, RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION
                 ));
             }
         }

@@ -10,9 +10,9 @@ const DEFAULT_MAX_ROWS: i64 = 2_000;
 
 /// SQLite-backed [`ActivityRecorder`] wired into the server's `ToolRuntime`.
 /// Env knobs (self-hosted operators own the privacy tradeoff):
-/// - `WEBCODEX_ACTIVITY=0` disables recording entirely.
-/// - `WEBCODEX_ACTIVITY_COMMAND_PREVIEW=0` drops command previews.
-/// - `WEBCODEX_ACTIVITY_MAX_ROWS` bounds the ledger (default 2000).
+/// - `WEBPI_ACTIVITY=0` disables recording entirely.
+/// - `WEBPI_ACTIVITY_COMMAND_PREVIEW=0` drops command previews.
+/// - `WEBPI_ACTIVITY_MAX_ROWS` bounds the ledger (default 2000).
 pub(crate) struct WorkspaceActivityStore {
     db: Arc<Database>,
     preview_enabled: bool,
@@ -30,17 +30,17 @@ impl WorkspaceActivityStore {
     }
 
     pub(crate) fn from_env(db: Arc<Database>) -> Option<Self> {
-        if env_flag_disabled("WEBCODEX_ACTIVITY") {
+        if env_flag_disabled("WEBPI_ACTIVITY") {
             return None;
         }
-        let max_rows = std::env::var("WEBCODEX_ACTIVITY_MAX_ROWS")
+        let max_rows = std::env::var("WEBPI_ACTIVITY_MAX_ROWS")
             .ok()
             .and_then(|value| value.trim().parse::<i64>().ok())
             .unwrap_or(DEFAULT_MAX_ROWS)
             .clamp(100, 100_000);
         Some(Self {
             db,
-            preview_enabled: !env_flag_disabled("WEBCODEX_ACTIVITY_COMMAND_PREVIEW"),
+            preview_enabled: !env_flag_disabled("WEBPI_ACTIVITY_COMMAND_PREVIEW"),
             max_rows,
         })
     }

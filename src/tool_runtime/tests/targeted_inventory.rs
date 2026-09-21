@@ -375,8 +375,8 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
             )
         })
         .collect::<Vec<_>>();
-    let mut target = registered_project("webcodex-target", "/root/git/webcodex-target");
-    target.name = Some("WebCodex Target".to_string());
+    let mut target = registered_project("webpi-target", "/root/git/webpi-target");
+    target.name = Some("WebPi Target".to_string());
     target.description = Some("Focused Runtime Inventory".to_string());
     target.git_branch = Some("feat/targeted-inventory".to_string());
     target.git_head = Some("abc123".to_string());
@@ -403,7 +403,7 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
         .dispatch(list_projects_call(
             Some("special"),
             None,
-            Some("WEBCODEX"),
+            Some("WEBPI"),
             Some(1),
             true,
         ))
@@ -413,7 +413,7 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
     assert_eq!(focused.output["count"], 1);
     assert_eq!(focused.output["truncated"], false);
     let project = &focused.output["projects"][0];
-    assert_eq!(project["id"], "agent:special:webcodex-target");
+    assert_eq!(project["id"], "agent:special:webpi-target");
     for omitted in [
         "path",
         "revision",
@@ -434,7 +434,7 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
     let exact = runtime
         .dispatch(list_projects_call(
             None,
-            Some("agent:special:webcodex-target"),
+            Some("agent:special:webpi-target"),
             None,
             Some(1),
             false,
@@ -444,13 +444,13 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
     assert_eq!(exact.output["count"], 1);
     assert_eq!(
         exact.output["projects"][0]["id"],
-        "agent:special:webcodex-target"
+        "agent:special:webpi-target"
     );
 
     let wrong_runner = runtime
         .dispatch(list_projects_call(
             Some("mini"),
-            Some("agent:special:webcodex-target"),
+            Some("agent:special:webpi-target"),
             None,
             Some(1),
             false,
@@ -463,7 +463,7 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
         .dispatch(list_projects_call(
             Some("special"),
             None,
-            Some("webcodex"),
+            Some("webpi"),
             Some(1),
             true,
         ))
@@ -662,7 +662,7 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
         &runtime,
         "special",
         vec![
-            registered_project("webcodex", "/root/git/webcodex"),
+            registered_project("webpi", "/root/git/webcodex"),
             registered_project("other", "/tmp/other"),
         ],
         None,
@@ -775,7 +775,7 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
     register_target_agent(
         &runtime,
         "special",
-        vec![registered_project("webcodex", "/tmp/webcodex")],
+        vec![registered_project("webpi", "/tmp/webcodex")],
         Some(special_build),
     )
     .await;
@@ -864,7 +864,7 @@ async fn runtime_status_focus_preserves_selected_stale_runner_truth() {
     register_target_agent(
         &runtime,
         "special",
-        vec![registered_project("webcodex", "/tmp/webcodex")],
+        vec![registered_project("webpi", "/tmp/webcodex")],
         None,
     )
     .await;
@@ -931,7 +931,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
         serde_json::json!({
             "client_id": "special",
             "project": "agent:special:webcodex",
-            "query": "webcodex",
+            "query": "webpi",
             "limit": 3,
             "summary_only": true,
         }),

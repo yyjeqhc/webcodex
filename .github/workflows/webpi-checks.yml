@@ -1,0 +1,65 @@
+name: WebPi Windows checks
+
+on:
+  push:
+    branches: [main, webpi]
+  pull_request:
+  workflow_dispatch:
+
+# Validation only; no release, package or deployment writes.
+permissions:
+  contents: read
+concurrency:
+  group: webpi-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare isolated test runtime
+        run: |
+          New-Item -ItemType Directory -Force .webpi-runtime/node | Out-Null
+          Copy-Item (Get-Command node.exe).Source .webpi-runtime/node/node.exe
+          choco install ripgrep --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and test JavaScript assets
+        run: |
+          foreach ($directory in @('frontend', 'npm/plugin-sdk', 'plugins/pi-bridge')) {
+            Push-Location $directory
+            npm ci --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            npm test
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Pop-Location
+          }
+      - name: Build WebPi binaries
+        run: cargo build --profile dogfood --locked -p webcodex -p webcodex-cli -p webcodex-runner --bin webpi --bin webpi-server --bin webpi-runner
+      - name: Native contract regressions
+        run: cargo test --profile dogfood --locked -p webcodex-core -p webcodex-runner-config -p webcodex-cli -p webcodex-validation --lib
+      - name: Deployment and migration regressions
+        run: python -m unittest discover -s scripts/webpi/tests -v
+      - name: Isolated native HTTP and Pi acceptance
+        run: python scripts/webpi/http_auth_fixture.py
+      - name: Whitespace and formatting
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fmt --all -- --check

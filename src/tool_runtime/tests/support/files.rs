@@ -12,11 +12,13 @@ use std::path::Path;
 
 pub(in crate::tool_runtime::tests) fn init_git_repo(root: &Path) {
     for cmd in [
-        "git init",
+        "git init -b main",
         "git config user.email webcodex-test@example.com",
         "git config user.name 'WebCodex Test'",
         "git config core.autocrlf false",
         "git config core.longpaths true",
+        "git config gc.auto 0",
+        "git config maintenance.auto false",
     ] {
         let (exit_code, stdout, stderr, _) = run_command_sync(cmd, root, 30);
         assert_eq!(

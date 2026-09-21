@@ -7526,7 +7526,8 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
     );
     assert!(split_show_changes_stdout(&synthetic, false).framing_valid);
 
-    let legacy = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+    let legacy =
+        "## main\n@@WEBPI_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBPI_SHOW_CHANGES_SEP@@\n";
     let legacy_frames = split_show_changes_stdout(legacy, false);
     assert!(!legacy_frames.framing_valid);
     assert!(legacy_frames.status.is_empty());
@@ -8465,7 +8466,7 @@ fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
     let script_path = tmp.path().join("external-diff.sh");
     std::fs::write(
         &script_path,
-        "#!/bin/sh\ncat \"$WEBCODEX_TEST_DIFF_PAYLOAD\"\nexit 7\n",
+        "#!/bin/sh\ncat \"$WEBPI_TEST_DIFF_PAYLOAD\"\nexit 7\n",
     )
     .unwrap();
     let mut permissions = std::fs::metadata(&script_path).unwrap().permissions();
@@ -8473,7 +8474,7 @@ fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
     std::fs::set_permissions(&script_path, permissions).unwrap();
 
     let env = format!(
-        "export WEBCODEX_TEST_DIFF_PAYLOAD={}; export GIT_EXTERNAL_DIFF={};",
+        "export WEBPI_TEST_DIFF_PAYLOAD={}; export GIT_EXTERNAL_DIFF={};",
         shell_single_quote(payload_path.to_str().unwrap()),
         shell_single_quote(script_path.to_str().unwrap())
     );

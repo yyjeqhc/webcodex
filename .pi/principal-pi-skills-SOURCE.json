@@ -1,0 +1,77 @@
+{
+  "package": "principal-pi-skills",
+  "version": "3.2.0",
+  "packageTarballSha256": "4f1b72113732a40b1cd76cdbc99da44a4998f0c0188342a8e211e83628cac393",
+  "source": "npm fixed tarball fetched with npm pack --ignore-scripts in Ubuntu /tmp only",
+  "installedSurface": "skills+prompts only",
+  "excluded": [
+    "agents/",
+    "scripts/",
+    "schemas/",
+    "bin"
+  ],
+  "files": [
+    {
+      "path": ".pi/skills/principal-decide/SKILL.md",
+      "sha256": "d4c9851e92f8a619ca196fce8cbe0a4ca476326b1e2ea932998d868d3f2f3779"
+    },
+    {
+      "path": ".pi/skills/principal-architect/SKILL.md",
+      "sha256": "bac3d11c91de2d3b0801fd90975beaf14a9b671d3bd8da86caee89c0c4e74747"
+    },
+    {
+      "path": ".pi/skills/principal-plan/SKILL.md",
+      "sha256": "da2f13f9ef79b257b6eb68dbc9f23298973951122f49faca4b8e52aa78c41792"
+    },
+    {
+      "path": ".pi/skills/principal-build/SKILL.md",
+      "sha256": "3f68ef479ccfef53c23f6c160da4d1d0458508dc6e6f57619093599ed6745d79"
+    },
+    {
+      "path": ".pi/skills/principal-review/SKILL.md",
+      "sha256": "9cf455fa12bb597093dca031b281306df0f15fc06e3d9cd0fce802d43e0aad53"
+    },
+    {
+      "path": ".pi/skills/principal-debug/SKILL.md",
+      "sha256": "0bb3c5881cbc925e606c0e97f821168c785064934a6a7d1eee42ef96c790233c"
+    },
+    {
+      "path": ".pi/skills/principal-git-ops/SKILL.md",
+      "sha256": "af686ec3fa2ca2dd6c996f16886808a5bef27f6962919a5f7994c525328afcbd"
+    },
+    {
+      "path": ".pi/prompts/principal-bugfix.md",
+      "sha256": "4862e4268fc5b811d2a9d79ce00e677e344d8ee9cf20a43861f96d4a21574039"
+    },
+    {
+      "path": ".pi/prompts/principal-feature.md",
+      "sha256": "fd1a9a9d50daf33bb24923caa4ea0a1a6858d034d90afefe35c3ef423f8b4c54"
+    },
+    {
+      "path": ".pi/prompts/principal-principal-bugfix.md",
+      "sha256": "09b6c0b22828f03c59146fec87590096976e5a30f7b8b4860b84e73d714c34e1"
+    },
+    {
+      "path": ".pi/prompts/principal-principal-feature.md",
+      "sha256": "848ea1bba3670e49909ed51d8b693604ff0b53ff2c64215c63a50b7d1a636c47"
+    }
+  ],
+  "promptFiles": [
+    {
+      "path": ".pi/prompts/bugfix.md",
+      "sha256": "4862e4268fc5b811d2a9d79ce00e677e344d8ee9cf20a43861f96d4a21574039"
+    },
+    {
+      "path": ".pi/prompts/feature.md",
+      "sha256": "fd1a9a9d50daf33bb24923caa4ea0a1a6858d034d90afefe35c3ef423f8b4c54"
+    },
+    {
+      "path": ".pi/prompts/principal-bugfix.md",
+      "sha256": "09b6c0b22828f03c59146fec87590096976e5a30f7b8b4860b84e73d714c34e1"
+    },
+    {
+      "path": ".pi/prompts/principal-feature.md",
+      "sha256": "848ea1bba3670e49909ed51d8b693604ff0b53ff2c64215c63a50b7d1a636c47"
+    }
+  ]
+}

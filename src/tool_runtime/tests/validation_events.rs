@@ -221,7 +221,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
         json!({
             "project": project,
             "executable": "cargo",
-            "args": ["test", "focused", "-p", "webcodex"],
+            "args": ["test", "focused", "-p", "webpi"],
             "session_id": session_id,
             "timeout_secs": 121,
             "cwd": ".",

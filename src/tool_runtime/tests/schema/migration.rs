@@ -162,7 +162,8 @@ fn tool_definition_surface_counts_and_action_projection_stay_canonical() {
         operation_ids.len() < 30,
         "GPT Action operation budget exceeded"
     );
-    assert!(openapi["components"].get("schemas").is_none());
+    assert_eq!(openapi["components"]["schemas"], serde_json::json!({}));
+    assert!(openapi["components"]["schemas"].is_object());
     for forbidden in [
         "runCodex",
         "RunCodex",

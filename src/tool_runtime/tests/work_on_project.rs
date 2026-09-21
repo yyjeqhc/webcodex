@@ -188,7 +188,7 @@ async fn call_hygiene_in_window_with_local_runner_transport(
                 client_id,
                 &request.request_id,
                 0,
-                "\n@@WEBCODEX_HYGIENE_STATUS@@0\n",
+                "\n@@WEBPI_HYGIENE_STATUS@@0\n",
                 "",
             )
             .await;

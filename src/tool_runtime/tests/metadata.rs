@@ -501,7 +501,7 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
         "workstation-1",
         None,
         RunnerCapabilities::default(),
-        vec![registered_project("webcodex", "/root/git/webcodex")],
+        vec![registered_project("webpi", "/root/git/webcodex")],
     )
     .await;
 
@@ -510,8 +510,8 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
     assert_eq!(result.output["count"], 1);
     let projects = result.output["projects"].as_array().unwrap();
     assert_eq!(projects.len(), 1);
-    assert_eq!(projects[0]["id"], "agent:workstation-1:webcodex");
-    assert_eq!(projects[0]["agent_project_id"], "webcodex");
+    assert_eq!(projects[0]["id"], "agent:workstation-1:webpi");
+    assert_eq!(projects[0]["agent_project_id"], "webpi");
     assert_eq!(projects[0]["executor"], "agent");
     assert_eq!(projects[0]["source"], "agent_registered");
     assert!(projects[0]["capabilities"].is_object());
@@ -2265,7 +2265,7 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let out = &result.output;
-    assert_eq!(out["service"], "webcodex");
+    assert_eq!(out["service"], "webpi");
     assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
     assert!(out["server_time"].is_i64());
     assert!(out["pid"].is_i64());
@@ -2341,9 +2341,9 @@ async fn runtime_status_includes_build_metadata() {
 #[tokio::test]
 async fn runtime_status_preserves_allowlisted_effective_config_across_projections() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_SHARED_KEY_ENABLED", "true");
-    env.set("WEBCODEX_ALLOW_ANONYMOUS", "true");
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_SHARED_KEY_ENABLED", "true");
+    env.set("WEBPI_ALLOW_ANONYMOUS", "true");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
 
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: true,
@@ -2416,7 +2416,7 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
 #[tokio::test]
 async fn runtime_status_reports_effective_mcp_compact_schema_policy() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    env.remove("WEBPI_MCP_COMPACT_SCHEMAS");
     let runtime = test_runtime();
 
     let default = runtime.dispatch(runtime_status_call()).await;
@@ -2424,11 +2424,11 @@ async fn runtime_status_reports_effective_mcp_compact_schema_policy() {
     assert_eq!(default.output["mcp_compact_schemas"], true);
     assert!(default.output.get("runtime_exposure").is_none());
 
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "false");
     let full = runtime.dispatch(runtime_status_call()).await;
     assert_eq!(full.output["mcp_compact_schemas"], false);
 
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "true");
     let compact = runtime.dispatch(runtime_status_call()).await;
     assert_eq!(compact.output["mcp_compact_schemas"], true);
 }
@@ -2504,7 +2504,7 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
                 "compact runtime_status should include {pointer}: {summary:?}"
             );
         }
-        assert_eq!(summary["service"], "webcodex");
+        assert_eq!(summary["service"], "webpi");
         assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(summary["agents"]["summary"]["count"], 1);
         assert_eq!(summary["agents"]["summary"]["online"], 1);
@@ -2570,7 +2570,7 @@ async fn runtime_status_does_not_expose_tokens_or_secrets() {
     // The summary must never contain secret-like field names.
     for forbidden in [
         "token",
-        "WEBCODEX_TOKEN",
+        "WEBPI_TOKEN",
         "api_key",
         "apikey",
         "secret",
@@ -2602,8 +2602,8 @@ async fn runtime_status_quic_disabled_is_non_sensitive() {
     assert_eq!(result.output["quic"]["listener_started"], false);
     assert!(result.output["quic"]["last_error"].is_null());
     let serialized = serde_json::to_string(&result.output).unwrap();
-    assert!(!serialized.contains("WEBCODEX_QUIC_CERT"));
-    assert!(!serialized.contains("WEBCODEX_QUIC_KEY"));
+    assert!(!serialized.contains("WEBPI_QUIC_CERT"));
+    assert!(!serialized.contains("WEBPI_QUIC_KEY"));
     assert!(!serialized.to_ascii_lowercase().contains("token"));
 }
 
@@ -2620,7 +2620,7 @@ async fn runtime_status_quic_enabled_error_is_sanitized() {
     status
         .lock()
         .unwrap()
-        .mark_error("WEBCODEX_QUIC_KEY path does not exist: /secret/certs/privkey.pem");
+        .mark_error("WEBPI_QUIC_KEY path does not exist: /secret/certs/privkey.pem");
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: false,
         configured_public_url: None,
@@ -2634,7 +2634,7 @@ async fn runtime_status_quic_enabled_error_is_sanitized() {
     assert_eq!(result.output["quic"]["listener_started"], false);
     assert_eq!(
         result.output["quic"]["last_error"],
-        "WEBCODEX_QUIC_KEY path does not exist"
+        "WEBPI_QUIC_KEY path does not exist"
     );
     let serialized = serde_json::to_string(&result.output).unwrap();
     assert!(!serialized.contains("/secret/certs"));
@@ -2707,10 +2707,10 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
 #[test]
 fn runtime_info_from_env_reads_effective_server_config() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOKEN", "token");
-    env.set("WEBCODEX_PUBLIC_URL", "https://new.example.com");
-    env.set("WEBCODEX_OAUTH2_ENABLED", "true");
-    env.set("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
+    env.set("WEBPI_TOKEN", "token");
+    env.set("WEBPI_PUBLIC_URL", "https://new.example.com");
+    env.set("WEBPI_OAUTH2_ENABLED", "true");
+    env.set("WEBPI_OAUTH2_SHARED_KEY_BRIDGE", "true");
 
     let info = RuntimeInfo::from_env();
     assert!(info.auth_enabled);
@@ -2721,7 +2721,7 @@ fn runtime_info_from_env_reads_effective_server_config() {
     assert!(info.oauth2_enabled);
     assert!(info.oauth2_shared_key_bridge_enabled);
 
-    env.set("WEBCODEX_OAUTH2_ENABLED", "false");
+    env.set("WEBPI_OAUTH2_ENABLED", "false");
     let info = RuntimeInfo::from_env();
     assert!(!info.oauth2_enabled);
     assert!(!info.oauth2_shared_key_bridge_enabled);

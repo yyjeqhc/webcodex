@@ -206,7 +206,7 @@ async fn invalid_mode_blocks_mutation_and_does_not_auto_approve() {
     );
     let err = result.error.as_deref().unwrap();
     assert!(
-        err.contains("WEBCODEX_AUTHORITY_MODE") || err.contains("invalid"),
+        err.contains("WEBPI_AUTHORITY_MODE") || err.contains("invalid"),
         "{err}"
     );
     assert!(

@@ -237,8 +237,8 @@ These sources deliberately do **not** reuse A4b's active-Attempt correctness con
 ## G4 — Goal workflow stall detector
 
 The next concrete dogfood need is implemented as `goal_workflow_stalled`, the
-second narrow attention kind. Goal Plan shows bounded mechanical progress and
-submits a selector-only App recheck; the Server requires an active owned Goal,
+second narrow attention kind. Goal Plan shows bounded mechanical progress and uses one App-only `goal_plan_sync`;
+the Server requires an active owned Goal,
 explicit exact controller, authorized correlated current Session, fresh exact-Goal
 card observation, complete evidence and no active meaningful request. It reuses the
 existing Window activity ledger/registry and Agent attention/Wake transactions.
@@ -252,10 +252,12 @@ identity failure rather than a stall-detector failure. The Server had deployed t
 new `goal_plan_sync` wire, but the Goal Plan URI remained v4. During the armed
 five-minute window the Server received **234** stale `goal_plan_state` calls from
 the Host, all rejected as `direct_route_denied`, and **zero** `goal_plan_sync`
-calls; no Goal-stall Wake was created. This proves a Host may retain a live/cached
-same-URI Goal Plan View across a Server deploy. The canonical Goal Plan resource is
-therefore advanced to v5, v4 is not served as an alias, and the descriptor/resource
-tests lock that cache-breaking identity together with the v5 App self-version.
+calls; no Goal-stall Wake was created. This proves an already-open Host View may continue running its old same-URI
+Goal Plan template across a Server deploy until that App is refreshed/recreated.
+The run did not test a newly opened View. The canonical Goal Plan resource is still
+advanced to v5 for the incompatible wire change, v4 is not served as an alias, and
+the descriptor/resource tests lock that resource identity together with the v5 App
+self-version.
 
 The [G4 dogfood guide](goal-workflow-continuity-dogfood.md) distinguishes deterministic
 regression coverage from manual verification in a real, separately authorized Host.

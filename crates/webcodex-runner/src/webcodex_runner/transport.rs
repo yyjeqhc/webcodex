@@ -2662,12 +2662,12 @@ fn classify_quic_runner_connect_error(error: &str) -> &'static str {
     } else if lower.contains("timed out") || lower.contains("timeout") {
         "connect timeout; check UDP firewall/security group/NAT and that the server QUIC listener is enabled"
     } else if lower.contains("alpn") || lower.contains("no application protocol") {
-        "handshake failed; check WEBCODEX_QUIC_ENABLED, listener bind, and ALPN"
+        "handshake failed; check WEBPI_QUIC_ENABLED, listener bind, and ALPN"
     } else if lower.contains("applicationclosed")
         || lower.contains("connectionclosed")
         || lower.contains("closed")
     {
-        "handshake failed; check WEBCODEX_QUIC_ENABLED, listener bind, and server availability"
+        "handshake failed; check WEBPI_QUIC_ENABLED, listener bind, and server availability"
     } else {
         "handshake failed"
     }

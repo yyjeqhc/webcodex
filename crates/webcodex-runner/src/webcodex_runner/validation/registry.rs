@@ -19,7 +19,7 @@ const PYRIGHT: ValidationAdapterMeta = ValidationAdapterMeta {
     language: "python",
     validation_kind: "typecheck",
     executable_name: "pyright",
-    env_override: "WEBCODEX_PYRIGHT",
+    env_override: "WEBPI_PYRIGHT",
 };
 
 const ADAPTERS: &[ValidationAdapterMeta] = &[PYRIGHT];

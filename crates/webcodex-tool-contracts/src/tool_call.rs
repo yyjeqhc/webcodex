@@ -4019,6 +4019,17 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Issue one short-lived, one-shot HTTPS download capability for a bounded project artifact.
+    ProjectArtifactDownloadLink {
+        /// Runner-registered project id.
+        project: String,
+        /// Project-relative artifact path.
+        path: String,
+        /// Optional explicit wc_sess_* Workflow Session id.
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Read bounded metadata for a binary project artifact. Zip files are
     /// counted but never extracted.
     ReadProjectArtifactMetadata {
@@ -4415,6 +4426,27 @@ pub enum ToolCall {
         /// Optional explicit wc_sess_* Workflow Session id from a prior compatible bootstrap. When
         /// provided, this tool call is recorded in that exact Session ledger; omission leaves the call
         /// unlinked to Workflow Session state.
+        #[schemars(length(min = 1))]
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Capture one exact display snapshot and persist it directly as a create-only project artifact.
+    ComputerSaveDisplaySnapshot {
+        #[schemars(length(min = 1))]
+        project: String,
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        display_id: String,
+        #[schemars(range(min = 1))]
+        #[serde(default)]
+        max_width: Option<u32>,
+        #[schemars(range(min = 1))]
+        #[serde(default)]
+        max_height: Option<u32>,
         #[schemars(length(min = 1))]
         #[serde(default)]
         session_id: Option<String>,
@@ -5109,6 +5141,7 @@ impl ToolCall {
             Self::ImportConversationFilesToProject { .. } => "import_conversation_files_to_project",
             Self::ProjectArtifact { .. } => "project_artifact",
             Self::ExportProjectArtifact { .. } => "export_project_artifact",
+            Self::ProjectArtifactDownloadLink { .. } => "project_artifact_download_link",
             Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
             Self::ReadProjectArtifact { .. } => "read_project_artifact",
             Self::ArtifactUploadBegin { .. } => "artifact_upload_begin",
@@ -5129,6 +5162,7 @@ impl ToolCall {
             Self::ComputerObserve(..) => "computer_observe",
             Self::ComputerControl(..) => "computer_control",
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
+            Self::ComputerSaveDisplaySnapshot { .. } => "computer_save_display_snapshot",
             Self::ListProjects { .. } => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::UnregisterProject { .. } => "unregister_project",
@@ -5192,8 +5226,10 @@ impl ToolCall {
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
             | Self::ComputerSaveSnapshot { session_id, .. }
+            | Self::ComputerSaveDisplaySnapshot { session_id, .. }
             | Self::ProjectArtifact { session_id, .. }
             | Self::ExportProjectArtifact { session_id, .. }
+            | Self::ProjectArtifactDownloadLink { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
             | Self::ArtifactUploadBegin { session_id, .. }
@@ -5337,9 +5373,11 @@ impl ToolCall {
             | Self::WriteProjectFile { project, .. }
             | Self::SaveProjectArtifact { project, .. }
             | Self::ComputerSaveSnapshot { project, .. }
+            | Self::ComputerSaveDisplaySnapshot { project, .. }
             | Self::ImportConversationFilesToProject { project, .. }
             | Self::ProjectArtifact { project, .. }
             | Self::ExportProjectArtifact { project, .. }
+            | Self::ProjectArtifactDownloadLink { project, .. }
             | Self::ReadProjectArtifactMetadata { project, .. }
             | Self::ReadProjectArtifact { project, .. }
             | Self::ArtifactUploadBegin { project, .. }

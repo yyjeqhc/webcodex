@@ -36,7 +36,7 @@ const WINDOWS_DIRECT_PROGRAM_MAX_BYTES: usize =
 #[cfg(any(test, windows))]
 const WINDOWS_DIRECT_FRAME_MAX_BYTES: usize = WINDOWS_DIRECT_PROGRAM_MAX_BYTES * 5 + 7;
 #[cfg(any(test, windows))]
-const WINDOWS_DIRECT_BOOTSTRAP_PREFIX: &str = ": WEBCODEX_SSH_PROGRAM_BYTES=";
+const WINDOWS_DIRECT_BOOTSTRAP_PREFIX: &str = ": WEBPI_SSH_PROGRAM_BYTES=";
 
 /// In-memory identity for one OpenSSH multiplex transport. The Runner config
 /// generation protects a request after an operator changes a resource host.
@@ -1081,7 +1081,7 @@ fn windows_direct_program_frame(program: &str) -> String {
 #[cfg(any(test, windows))]
 fn windows_direct_program_bootstrap(frame_len: usize) -> String {
     format!(
-        r#"{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{frame_len}; eval "$(set +e; WEBCODEX_SSH_N={frame_len}; [ "$WEBCODEX_SSH_N" -gt 0 ] 2>/dev/null && [ "$WEBCODEX_SSH_N" -le {WINDOWS_DIRECT_FRAME_MAX_BYTES} ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: SSH program length out of range'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_FRAME=$(dd bs=1 count="$WEBCODEX_SSH_N" 2>/dev/null); WEBCODEX_SSH_DD_STATUS=$?; [ "$WEBCODEX_SSH_DD_STATUS" -eq 0 ] || {{ printf >&2 '%s\n' 'webcodex: SSH program upload failed'; printf '%s' 'exit 126'; exit 0; }}; WEBCODEX_SSH_ACTUAL=$(printf '%s' "$WEBCODEX_SSH_FRAME" | wc -c); [ "$WEBCODEX_SSH_ACTUAL" -eq "$WEBCODEX_SSH_N" ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: incomplete SSH program upload'; printf '%s' 'exit 126'; exit 0; }}; printf '%s' "$WEBCODEX_SSH_FRAME")""#
+        r#"{WINDOWS_DIRECT_BOOTSTRAP_PREFIX}{frame_len}; eval "$(set +e; WEBPI_SSH_N={frame_len}; [ "$WEBPI_SSH_N" -gt 0 ] 2>/dev/null && [ "$WEBPI_SSH_N" -le {WINDOWS_DIRECT_FRAME_MAX_BYTES} ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: SSH program length out of range'; printf '%s' 'exit 126'; exit 0; }}; WEBPI_SSH_FRAME=$(dd bs=1 count="$WEBPI_SSH_N" 2>/dev/null); WEBPI_SSH_DD_STATUS=$?; [ "$WEBPI_SSH_DD_STATUS" -eq 0 ] || {{ printf >&2 '%s\n' 'webcodex: SSH program upload failed'; printf '%s' 'exit 126'; exit 0; }}; WEBPI_SSH_ACTUAL=$(printf '%s' "$WEBPI_SSH_FRAME" | wc -c); [ "$WEBPI_SSH_ACTUAL" -eq "$WEBPI_SSH_N" ] 2>/dev/null || {{ printf >&2 '%s\n' 'webcodex: incomplete SSH program upload'; printf '%s' 'exit 126'; exit 0; }}; printf '%s' "$WEBPI_SSH_FRAME")""#
     )
 }
 
@@ -1980,10 +1980,10 @@ mod tests {
             let file = temp.path().join(format!("umask-{mask}.file"));
             let dir = temp.path().join(format!("umask-{mask}.dir"));
             let setup = format!(
-                "umask {mask}; set -- before 'two words'; export WEBCODEX_SSH_PROGRAM_BYTES=original WEBCODEX_SSH_N=OLD_N WEBCODEX_SSH_FRAME=OLD_TRANSPORT_FRAME WEBCODEX_SSH_FRAMED=OLD_FRAME WEBCODEX_SSH_DD_STATUS=OLD_STATUS WEBCODEX_SSH_PROGRAM=OLD_PROGRAM WEBCODEX_SSH_ACTUAL=OLD_ACTUAL n=N i=I d=D f=F actual=A; cleanup() {{ printf cleanup-original; }}"
+                "umask {mask}; set -- before 'two words'; export WEBPI_SSH_PROGRAM_BYTES=original WEBPI_SSH_N=OLD_N WEBPI_SSH_FRAME=OLD_TRANSPORT_FRAME WEBPI_SSH_FRAMED=OLD_FRAME WEBPI_SSH_DD_STATUS=OLD_STATUS WEBPI_SSH_PROGRAM=OLD_PROGRAM WEBPI_SSH_ACTUAL=OLD_ACTUAL n=N i=I d=D f=F actual=A; cleanup() {{ printf cleanup-original; }}"
             );
             let program = format!(
-                "printf 'mask=%s|meta=%s|private=%s,%s,%s,%s,%s,%s|generic=%s,%s,%s,%s,%s|args=%s,%s,%s|' \"$(umask)\" \"$WEBCODEX_SSH_PROGRAM_BYTES\" \"$WEBCODEX_SSH_N\" \"$WEBCODEX_SSH_FRAME\" \"$WEBCODEX_SSH_FRAMED\" \"$WEBCODEX_SSH_DD_STATUS\" \"$WEBCODEX_SSH_PROGRAM\" \"$WEBCODEX_SSH_ACTUAL\" \"$n\" \"$i\" \"$d\" \"$f\" \"$actual\" \"$#\" \"$1\" \"$2\"; cleanup; touch {}; mkdir {}",
+                "printf 'mask=%s|meta=%s|private=%s,%s,%s,%s,%s,%s|generic=%s,%s,%s,%s,%s|args=%s,%s,%s|' \"$(umask)\" \"$WEBPI_SSH_PROGRAM_BYTES\" \"$WEBPI_SSH_N\" \"$WEBPI_SSH_FRAME\" \"$WEBPI_SSH_FRAMED\" \"$WEBPI_SSH_DD_STATUS\" \"$WEBPI_SSH_PROGRAM\" \"$WEBPI_SSH_ACTUAL\" \"$n\" \"$i\" \"$d\" \"$f\" \"$actual\" \"$#\" \"$1\" \"$2\"; cleanup; touch {}; mkdir {}",
                 shell_quote(file.to_string_lossy().as_ref()),
                 shell_quote(dir.to_string_lossy().as_ref())
             );
@@ -2236,7 +2236,7 @@ mod tests {
             &config,
             "tmp",
             "wc_sess_1curTyGXcaXzyiCH",
-            "export WEBCODEX_SSH_TEST_STATE=kept; pwd; printf first",
+            "export WEBPI_SSH_TEST_STATE=kept; pwd; printf first",
         );
         assert_eq!(first.exit_code, Some(0), "{first:?}");
         assert!(first.error.is_none(), "{first:?}");
@@ -2267,7 +2267,7 @@ mod tests {
             &config,
             "tmp",
             "wc_sess_1curTyGXcaXzyiCH",
-            "test -z \"${WEBCODEX_SSH_TEST_STATE+x}\" && printf isolated",
+            "test -z \"${WEBPI_SSH_TEST_STATE+x}\" && printf isolated",
         );
         assert_eq!(isolated.exit_code, Some(0), "{isolated:?}");
         assert_eq!(isolated.stdout.as_deref(), Some("isolated"));
@@ -3379,7 +3379,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-const PROGRAM_PREFIX: &str = ": WEBCODEX_SSH_PROGRAM_BYTES=";
+const PROGRAM_PREFIX: &str = ": WEBPI_SSH_PROGRAM_BYTES=";
 
 fn decode_program_frame(frame: &str) -> Option<String> {
     let quoted = frame.strip_prefix("eval ")?;
@@ -4819,13 +4819,17 @@ fn main() {
 
     #[test]
     fn windows_real_host_one_shot_and_background_are_opt_in() {
-        let Ok(host) = std::env::var("WEBCODEX_TEST_WINDOWS_SSH_HOST") else {
-            eprintln!("skipping Windows real-host SSH integration: WEBCODEX_TEST_WINDOWS_SSH_HOST is unset");
+        let Ok(host) = std::env::var("WEBPI_TEST_WINDOWS_SSH_HOST") else {
+            eprintln!(
+                "skipping Windows real-host SSH integration: WEBPI_TEST_WINDOWS_SSH_HOST is unset"
+            );
             return;
         };
         let host = host.trim();
         if host.is_empty() {
-            eprintln!("skipping Windows real-host SSH integration: WEBCODEX_TEST_WINDOWS_SSH_HOST is empty");
+            eprintln!(
+                "skipping Windows real-host SSH integration: WEBPI_TEST_WINDOWS_SSH_HOST is empty"
+            );
             return;
         }
         let config = ssh_config(host, None);

@@ -405,7 +405,7 @@ mod tests {
     fn env_override_requires_an_executable_file() {
         use std::os::unix::fs::PermissionsExt;
 
-        const ENV: &str = "WEBCODEX_TEST_VALIDATION_EXECUTABLE";
+        const ENV: &str = "WEBPI_TEST_VALIDATION_EXECUTABLE";
         const MISSING_NAME: &str = "webcodex-validation-executable-that-does-not-exist";
         let _env_lock = crate::tests::test_env_lock();
         let temp = tempfile::tempdir().unwrap();

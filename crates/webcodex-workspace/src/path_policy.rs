@@ -21,7 +21,7 @@ pub fn sensitive_path(path: &str) -> bool {
                 | "projects.d"
                 | "runner.toml"
                 | "agent.toml"
-                | "webcodex.env"
+                | "webpi.env"
                 | ".env"
                 | ".npmrc"
                 | ".netrc"
@@ -39,7 +39,7 @@ pub fn sensitive_path(path: &str) -> bool {
         if part.starts_with(".env")
             || part.starts_with("runner.toml")
             || part.starts_with("agent.toml")
-            || part.starts_with("webcodex.env")
+            || part.starts_with("webpi.env")
         {
             return true;
         }

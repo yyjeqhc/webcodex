@@ -1126,12 +1126,12 @@ fn structured_bash_script_preserves_content_and_literal_argument_boundaries() {
     ];
     let script = format!(
         r#"printf '%s' "$0" > '{}'
-literal=$(cat <<'WEBCODEX_LITERAL'
+literal=$(cat <<'WEBPI_LITERAL'
 quotes: "'" $()
 semicolons: ;;; pipes: |||
 backslashes: C:\one\two\\
 Unicode: 雪だるま☃
-WEBCODEX_LITERAL
+WEBPI_LITERAL
 )
 printf '%s\n' "$literal"
 for value in "$@"; do
@@ -1793,7 +1793,7 @@ const payload: Payload = identity<Payload>({ value: process.argv[2] ?? '' });
 #[test]
 #[ignore = "real-process stdin isolation: runs an isolated test process with a fake Node runtime"]
 fn runner_real_process_typescript_probe_receives_eof_instead_of_runner_stdin() {
-    const FIXTURE_ENV: &str = "WEBCODEX_TEST_TYPESCRIPT_PROBE_FIXTURE";
+    const FIXTURE_ENV: &str = "WEBPI_TEST_TYPESCRIPT_PROBE_FIXTURE";
     if let Some(fixture) = std::env::var_os(FIXTURE_ENV) {
         let root = PathBuf::from(fixture);
         let mut shell = ShellConfig {
@@ -2180,7 +2180,7 @@ fn execution_environment_inherits_path_filters_credentials_and_honors_overrides(
     .unwrap();
     let _env = crate::tests::EnvGuard::new()
         .set("PATH", path)
-        .set("WEBCODEX_TOKEN", "test-secret");
+        .set("WEBPI_TOKEN", "test-secret");
     let shell = ShellConfig::default();
     let env = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
     assert_eq!(
@@ -2188,12 +2188,12 @@ fn execution_environment_inherits_path_filters_credentials_and_honors_overrides(
         std::env::var("PATH").ok()
     );
     assert!(std::env::split_paths(env_lookup(&env, "PATH").unwrap()).any(|path| path == marker));
-    assert!(!env.contains_key("WEBCODEX_TOKEN"));
+    assert!(!env.contains_key("WEBPI_TOKEN"));
     let shell = ShellConfig {
         environment_mode: ShellEnvironmentMode::Isolated,
         env: HashMap::from([
             ("PATH".into(), "shell-path".into()),
-            ("WEBCODEX_TOKEN".into(), "test-secret".into()),
+            ("WEBPI_TOKEN".into(), "test-secret".into()),
         ]),
         ..ShellConfig::default()
     };
@@ -2206,7 +2206,7 @@ fn execution_environment_inherits_path_filters_credentials_and_honors_overrides(
         env_lookup(&env, "PATH").map(String::as_str),
         Some("profile-path")
     );
-    assert!(!env.contains_key("WEBCODEX_TOKEN"));
+    assert!(!env.contains_key("WEBPI_TOKEN"));
     assert!(!env.contains_key("HOME"));
     let provider = PreparedExecutionEnvironment::prepare(
         1,
@@ -2217,7 +2217,7 @@ fn execution_environment_inherits_path_filters_credentials_and_honors_overrides(
         None,
     )
     .unwrap();
-    assert!(!provider.env_snapshot.contains_key("WEBCODEX_TOKEN"));
+    assert!(!provider.env_snapshot.contains_key("WEBPI_TOKEN"));
 }
 
 #[test]
@@ -2240,15 +2240,13 @@ fn isolated_environment_is_explicit_and_does_not_inherit_user_path() {
 fn default_shell_preserves_non_unicode_environment_without_panicking() {
     use std::os::unix::ffi::OsStringExt;
     let _lock = crate::tests::test_env_lock();
-    let _env = crate::tests::EnvGuard::new().set(
-        "WEBCODEX_OPAQUE_TOOLCHAIN_ENV",
-        OsString::from_vec(vec![0xff]),
-    );
+    let _env = crate::tests::EnvGuard::new()
+        .set("WEBPI_OPAQUE_TOOLCHAIN_ENV", OsString::from_vec(vec![0xff]));
     let shell = ShellConfig::default();
     configured_process_command(&shell, None, "true", &[], None).unwrap();
     let snapshot = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
     assert!(
-        !snapshot.contains_key("WEBCODEX_OPAQUE_TOOLCHAIN_ENV"),
+        !snapshot.contains_key("WEBPI_OPAQUE_TOOLCHAIN_ENV"),
         "String-backed prepared environments must ignore inherited values they cannot represent instead of panicking"
     );
     PreparedExecutionEnvironment::prepare(

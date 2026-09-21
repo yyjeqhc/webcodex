@@ -4003,6 +4003,22 @@ impl ToolCallAuditProjection for ToolCall {
                 "max_width": max_width,
                 "max_height": max_height,
             }),
+            Self::ComputerSaveDisplaySnapshot {
+                project,
+                path,
+                client_id,
+                display_id,
+                max_width,
+                max_height,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "client_id": client_id,
+                "display_id": display_id,
+                "max_width": max_width,
+                "max_height": max_height,
+            }),
             Self::StopJob {
                 project,
                 job_id,
@@ -5730,6 +5746,10 @@ impl ToolCallAuditProjection for ToolCall {
                 "offset": offset,
             }),
             Self::ExportProjectArtifact { project, path, .. } => serde_json::json!({
+                "project": project,
+                "path": path,
+            }),
+            Self::ProjectArtifactDownloadLink { project, path, .. } => serde_json::json!({
                 "project": project,
                 "path": path,
             }),

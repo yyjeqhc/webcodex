@@ -999,7 +999,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
         "authorization",
         "runner.toml",
         "agent.toml",
-        "webcodex.env",
+        "webpi.env",
         "secret",
     ] {
         assert!(
@@ -1167,7 +1167,7 @@ fn session_execution_context_parses_as_strongly_typed_replacement() {
             "project": "agent:oe:demo",
             "session_id": "wc_sess_context01",
             "execution_context": {
-                "default_cwd": "/opt/webcodex-edge",
+                "default_cwd": "/opt/webpi-edge",
                 "resource": "tmp"
             }
         }),
@@ -1182,7 +1182,7 @@ fn session_execution_context_parses_as_strongly_typed_replacement() {
                 ..
             },
             ..
-        } if cwd == "/opt/webcodex-edge" && resource == "tmp"
+        } if cwd == "/opt/webpi-edge" && resource == "tmp"
     ));
 
     let clear = ToolCall::from_tool_name(

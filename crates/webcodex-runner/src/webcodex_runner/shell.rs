@@ -106,10 +106,10 @@ fn resolve_dialect(program: &str, explicit: Option<ShellDialect>) -> ShellDialec
 mod desktop_mcp_env_tests;
 
 const SENSITIVE_ENV_KEYS: [&str; 5] = [
-    "WEBCODEX_TOKEN",
-    "WEBCODEX_PAT",
-    "WEBCODEX_AGENT_TOKEN",
-    "WEBCODEX_USER_TOKEN",
+    "WEBPI_TOKEN",
+    "WEBPI_PAT",
+    "WEBPI_AGENT_TOKEN",
+    "WEBPI_USER_TOKEN",
     "AUTHORIZATION",
 ];
 

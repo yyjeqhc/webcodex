@@ -135,7 +135,7 @@ fn with_path_mode<T>(bin_dir: &std::path::Path, available: bool, f: impl FnOnce(
     } else {
         bin_dir.join("webcodex-missing-pyright")
     };
-    let _env = crate::tests::EnvGuard::new().set("WEBCODEX_PYRIGHT", &program);
+    let _env = crate::tests::EnvGuard::new().set("WEBPI_PYRIGHT", &program);
     f()
 }
 

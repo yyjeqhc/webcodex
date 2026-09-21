@@ -298,6 +298,25 @@ impl Database {
     ) -> Result<JobTerminalWaitMatch, JobTerminalWaitStoreError> {
         validate_fact(fact, now)?;
         let mut conn = self.lock_connection(crate::StoreDomain::JobTerminalWait);
+        let needs_write: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM wc_job_terminal_waits WHERE expires_at<=?1 OR (job_id=?2 AND job_client_id=?3 AND job_auth_kind=?4 AND job_auth_value IS ?5))",
+                params![
+                    now,
+                    fact.source.job_id,
+                    fact.source.client_id,
+                    fact.source.auth_kind,
+                    fact.source.auth_value
+                ],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if !needs_write {
+            return Ok(JobTerminalWaitMatch {
+                matched_count: 0,
+                delivery_candidates: Vec::new(),
+            });
+        }
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;

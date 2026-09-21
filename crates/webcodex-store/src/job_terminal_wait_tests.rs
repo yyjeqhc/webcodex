@@ -39,6 +39,46 @@ fn waiting(job_id: &str, key: &str, expires_at: i64) -> NewJobTerminalWait {
 }
 
 #[test]
+fn terminal_fact_without_waits_does_not_require_a_sqlite_write_lock() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("job-terminal-read-fast-path.db");
+    let db = Database::open(&path).unwrap();
+    let external = rusqlite::Connection::open(&path).unwrap();
+    external.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let matched = db
+        .match_job_terminal_fact(&fact("job-without-wait", T0 + 1), T0 + 1)
+        .unwrap();
+    assert_eq!(matched.matched_count, 0);
+    assert!(matched.delivery_candidates.is_empty());
+
+    external.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
+fn terminal_fact_fast_path_still_prunes_expired_waits() {
+    let temp = tempdir().unwrap();
+    let db = Database::open(&temp.path().join("job-terminal-prune-fast-path.db")).unwrap();
+    let owner = principal('d');
+    db.create_job_terminal_wait(&owner, waiting("expired-job", "expired", T0 + 1), T0)
+        .unwrap();
+
+    let matched = db
+        .match_job_terminal_fact(&fact("different-job", T0 + 2), T0 + 2)
+        .unwrap();
+    assert_eq!(matched.matched_count, 0);
+    assert!(matched.delivery_candidates.is_empty());
+
+    let count: i64 = db
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM wc_job_terminal_waits", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
 fn keyed_registration_matching_and_owner_partition_are_one_shot() {
     let temp = tempdir().unwrap();
     let db = Database::open(&temp.path().join("job-terminal-wait.db")).unwrap();

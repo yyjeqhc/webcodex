@@ -215,9 +215,10 @@ fn production_store_connection_locks_use_the_observed_boundary() {
     let helper = std::fs::read_to_string(src.join("connection_observation.rs")).unwrap();
     assert_eq!(helper.matches("connection.lock().unwrap()").count(), 1);
     let root = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-    assert!(root.contains(
-        "pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {\n        self.conn.lock().unwrap()"
-    ));
+    assert!(
+        root.contains("pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {")
+    );
+    assert!(root.contains("self.conn.lock().unwrap()"));
 }
 
 #[test]

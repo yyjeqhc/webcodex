@@ -528,6 +528,50 @@ fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("content_base64", json!({"type": "string"})),
         ])),
+        "computer_save_display_snapshot" => Some(wrapped_output_schema(vec![
+            ("project", json!({"type": "string", "minLength": 1})),
+            (
+                "path",
+                json!({"type": "string", "minLength": 1, "maxLength": 4096}),
+            ),
+            (
+                "client_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "display_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "source_width",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "source_height",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "width",
+                json!({"type": "integer", "minimum": 1, "maximum": 4096}),
+            ),
+            (
+                "height",
+                json!({"type": "integer", "minimum": 1, "maximum": 4096}),
+            ),
+            (
+                "mime_type",
+                json!({"type": "string", "enum": ["image/jpeg"]}),
+            ),
+            (
+                "file_bytes",
+                json!({"type": "integer", "minimum": 1, "maximum": 1048576}),
+            ),
+            (
+                "sha256",
+                json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
+            ),
+            ("saved", json!({"type": "boolean", "const": true})),
+        ])),
         "computer_save_snapshot" => Some(wrapped_output_schema(vec![
             ("project", json!({"type": "string", "minLength": 1})),
             (

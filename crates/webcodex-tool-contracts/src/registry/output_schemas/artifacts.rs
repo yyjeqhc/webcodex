@@ -141,6 +141,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "export_project_artifact" => Some(wrapped_output_schema(vec![
+            // existing compatibility MCP export
             (
                 "project",
                 schema_type("string", "Canonical Runner-registered project id."),
@@ -162,6 +163,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "name",
                 schema_type("string", "Safe basename presented by the MCP ResourceLink."),
             ),
+        ])),
+        "project_artifact_download_link" => Some(wrapped_output_schema(vec![
+            ("project", schema_type("string", "Canonical Runner-registered project id.")),
+            ("path", schema_type("string", "Project-relative artifact path.")),
+            ("download_url", schema_type("string", "Short-lived one-shot HTTPS capability URL.")),
+            ("expires_in_secs", schema_type("integer", "Capability lifetime in seconds.")),
+            ("bytes", schema_type("integer", "Artifact size in bytes.")),
+            ("sha256", schema_type("string", "sha256 digest of the exact artifact snapshot.")),
+            ("mime_type", schema_type("string", "Validated artifact MIME type.")),
+            ("name", schema_type("string", "Safe artifact basename.")),
         ])),
         "read_project_artifact_metadata" => Some(wrapped_output_schema(vec![
             (

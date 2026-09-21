@@ -63,6 +63,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_observe",
             "computer_control",
             "computer_save_snapshot",
+            "computer_save_display_snapshot",
         ],
     },
     ToolDiscoveryGroup {
@@ -204,6 +205,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "import_conversation_files_to_project",
             "project_artifact",
             "export_project_artifact",
+            "project_artifact_download_link",
             "save_project_artifact",
             "read_project_artifact_metadata",
             "read_project_artifact",

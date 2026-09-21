@@ -358,16 +358,16 @@ fn session_execution_context_persistence_matrix() {
         (
             "remote-resource",
             SessionExecutionContext {
-                default_cwd: Some("/opt/webcodex-edge".to_string()),
+                default_cwd: Some("/opt/webpi-edge".to_string()),
                 default_shell: None,
                 resource: Some("tmp".to_string()),
             },
             SessionExecutionContext {
-                default_cwd: Some("/opt/webcodex-edge".to_string()),
+                default_cwd: Some("/opt/webpi-edge".to_string()),
                 default_shell: None,
                 resource: Some("tmp".to_string()),
             },
-            json!({"default_cwd": "/opt/webcodex-edge", "resource": "tmp"}),
+            json!({"default_cwd": "/opt/webpi-edge", "resource": "tmp"}),
         ),
     ];
 

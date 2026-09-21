@@ -120,6 +120,38 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     .with_gpt_action_unsupported(),
     model_spec(
         def(
+            "project_artifact_download_link",
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("path"),
+                super::ToolAuditResultField::value("download_url"),
+                super::ToolAuditResultField::value("expires_in_secs"),
+                super::ToolAuditResultField::value("bytes"),
+                super::ToolAuditResultField::value("sha256"),
+                super::ToolAuditResultField::value("mime_type"),
+                super::ToolAuditResultField::value("name"),
+            ]),
+            ModelVisible,
+            TOOL_CATEGORY_ARTIFACT,
+            Some(FileRead),
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(PROJECT_READ),
+            true,
+            Artifact,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE,
+        ),
+        "Issue one short-lived one-shot HTTPS download link for an exact bounded project artifact. The URL carries only an opaque capability id; project path and credentials are never embedded. Use this after computer_save_display_snapshot when GPT Actions must retrieve the complete image without base64 in Action JSON.",
+    ),
+    model_spec(
+        def(
             "read_project_artifact_metadata",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,

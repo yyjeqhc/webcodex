@@ -7,7 +7,8 @@ use super::{
 use crate::metadata::{
     ToolPathHint::{Artifact, None as NoPath},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, Read},
-    COMPUTER_CONTROL, COMPUTER_LAUNCH, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_CONTROL,
+    COMPUTER_CONTROL, COMPUTER_DISPLAY_READ, COMPUTER_LAUNCH, COMPUTER_READ, PROJECT_WRITE,
+    TOOL_PROVIDER_CONTROL,
 };
 
 const COMPUTER_CONTROL_GATEWAY_SCOPES: &[&str] = &[COMPUTER_CONTROL, COMPUTER_LAUNCH];
@@ -42,6 +43,44 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             PERMISSION_RISK_WRITE,
         ),
         COMPUTER_CONTROL_GATEWAY_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "computer_save_display_snapshot",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("path"),
+                    super::ToolAuditResultField::value("client_id"),
+                    super::ToolAuditResultField::value("display_id"),
+                    super::ToolAuditResultField::value("source_width"),
+                    super::ToolAuditResultField::value("source_height"),
+                    super::ToolAuditResultField::value("width"),
+                    super::ToolAuditResultField::value("height"),
+                    super::ToolAuditResultField::value("mime_type"),
+                    super::ToolAuditResultField::value("file_bytes"),
+                    super::ToolAuditResultField::value("saved"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_COMPUTER,
+                Some(FileWrite),
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: ProjectWrite,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(PROJECT_WRITE),
+                true,
+                Artifact,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Save one exact display snapshot as a create-only project artifact without returning image bytes. Reuses computer_observe(action=snapshot_display) downscale semantics and requires project:write, computer:read, and computer:display_read. No overwrite or encoding control. Unknown writes require artifact-metadata reconciliation before retry.",
+        ),
+        &[PROJECT_WRITE, COMPUTER_READ, COMPUTER_DISPLAY_READ],
     ),
     require_all_scopes(
         model_spec(

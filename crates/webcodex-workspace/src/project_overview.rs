@@ -324,7 +324,7 @@ fn is_excluded_component(component: &str) -> bool {
             | "password"
             | "runner.toml"
             | "agent.toml"
-            | "webcodex.env"
+            | "webpi.env"
             | ".env"
             | ".npmrc"
             | ".netrc"

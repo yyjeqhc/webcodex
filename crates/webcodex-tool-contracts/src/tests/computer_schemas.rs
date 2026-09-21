@@ -37,7 +37,7 @@ fn tool_specs_generic_sync_wait_is_runtime_clamped_and_scoped_to_process_and_scr
 }
 
 #[test]
-fn computer_primary_surface_is_three_canonical_tools() {
+fn computer_primary_surface_is_four_canonical_tools() {
     let names = registered_tool_specs()
         .into_iter()
         .filter(|spec| spec.name.starts_with("computer_"))
@@ -48,6 +48,7 @@ fn computer_primary_surface_is_three_canonical_tools() {
         vec![
             "computer_observe".to_string(),
             "computer_control".to_string(),
+            "computer_save_display_snapshot".to_string(),
             "computer_save_snapshot".to_string(),
         ]
     );
@@ -257,6 +258,37 @@ fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
     assert_eq!(
         control.output_schema["properties"]["output"]["additionalProperties"],
         false
+    );
+}
+
+#[test]
+fn computer_save_display_snapshot_is_separate_create_only_project_write_without_inline_bytes() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_save_display_snapshot");
+    assert_eq!(
+        required_fields(spec),
+        vec![
+            "project".to_string(),
+            "path".to_string(),
+            "client_id".to_string(),
+            "display_id".to_string(),
+        ]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_save_display_snapshot input schema",
+        present: ["project", "path", "client_id", "display_id", "max_width", "max_height", "session_id"],
+        absent: ["surface_id", "region", "overwrite", "format", "quality", "mime_type", "content_base64", "save"]
+    );
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_save_display_snapshot output schema",
+        present: ["project", "path", "client_id", "display_id", "source_width", "source_height", "width", "height", "mime_type", "file_bytes", "sha256", "saved"],
+        absent: ["surface_id", "region", "content_base64", "captured_at_unix_ms"]
     );
 }
 

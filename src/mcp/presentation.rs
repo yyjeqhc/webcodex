@@ -52,13 +52,7 @@ pub(super) fn tool_supports_job_terminal_continuation_app(tool_name: &str) -> bo
 /// gateway preserves ToolRuntime semantics, but the Host sees only the gateway
 /// descriptor and therefore cannot create the requested App card.
 pub(super) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "present_work_result"
-            | "present_goal_plan"
-            | "present_agent_continuation"
-            | "present_job_terminal_continuation"
-    )
+    crate::model_surface::tool_requires_direct_app_presentation(tool_name)
 }
 
 /// Bounded presentation projections retained for current milestone cards and for

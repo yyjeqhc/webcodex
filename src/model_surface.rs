@@ -19,6 +19,16 @@ pub(crate) const TOOL_SURFACE_AVAILABILITY_DIRECT: &str = "direct";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_GATEWAY: &str = "gateway";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_UNAVAILABLE: &str = "unavailable";
 
+pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "present_work_result"
+            | "present_goal_plan"
+            | "present_agent_continuation"
+            | "present_job_terminal_continuation"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AdaptiveRuntimeGatewayTargetRoute {
     Gateway,
@@ -453,6 +463,24 @@ mod tests {
                 .iter()
                 .any(|spec| spec.name == target);
         suggested_tool_call_route(target, operator_extension_admitted)
+    }
+
+    #[test]
+    fn direct_app_presentation_requirement_is_closed_and_explicit() {
+        for tool in [
+            "present_work_result",
+            "present_goal_plan",
+            "present_agent_continuation",
+            "present_job_terminal_continuation",
+        ] {
+            assert!(tool_requires_direct_app_presentation(tool), "{tool}");
+        }
+        for ordinary in ["run_shell", "run_script", "show_changes"] {
+            assert!(
+                !tool_requires_direct_app_presentation(ordinary),
+                "{ordinary}"
+            );
+        }
     }
 
     #[test]

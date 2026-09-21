@@ -30,7 +30,7 @@ use serde_json::Value;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1112,7 +1112,7 @@ impl DesktopCore {
         })?;
         cancellation.check()?;
 
-        let server_url = if env_file.is_file() {
+        let mut server_url = if env_file.is_file() {
             ensure_desktop_server_defaults(&env_file)?;
             self.adapter
                 .server_status(None, Some(&env_file), None, cancellation)
@@ -1127,12 +1127,7 @@ impl DesktopCore {
             ensure_desktop_server_defaults(&env_file)?;
             status.probe_url
         };
-        let reusable_identity = identity_from_config(&self.config)
-            .filter(|identity| same_server(&identity.server_url, &server_url));
-        let saved_runner_client_id = stored_runner_client_id(&self.config);
-        cancellation.check()?;
-
-        let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
+        let mut server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
         let running = self
             .adapter
             .server_status_until(
@@ -1144,6 +1139,26 @@ impl DesktopCore {
             )
             .await
             .is_ok_and(|status| status.http_reachable);
+        cancellation.check()?;
+        if !running
+            && !process_is_active(self.process_snapshot(ProcessKey::LocalServer).await)
+        {
+            if let Some(recovered_url) =
+                recover_stale_desktop_loopback_address(&env_file, &server_url)?
+            {
+                server_url = recovered_url;
+                server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
+                self.activity.push(
+                    ActivityEventKind::StateRecovered,
+                    "desktop",
+                    ActivityLevel::Warning,
+                    "Recovered the local Server from an unavailable saved loopback address",
+                );
+            }
+        }
+        let reusable_identity = identity_from_config(&self.config)
+            .filter(|identity| same_server(&identity.server_url, &server_url));
+        let saved_runner_client_id = stored_runner_client_id(&self.config);
         cancellation.check()?;
         let server_started = if !running {
             if server_deadline.is_elapsed() {
@@ -2617,6 +2632,129 @@ fn desktop_state_unavailable(message: &'static str) -> DesktopError {
     )
 }
 
+fn loopback_socket_from_server_url(server_url: &str) -> Option<SocketAddr> {
+    let url = url::Url::parse(server_url).ok()?;
+    if url.scheme() != "http" || url.path() != "/" || url.query().is_some() || url.fragment().is_some()
+    {
+        return None;
+    }
+    let port = url.port()?;
+    match url.host()? {
+        url::Host::Ipv4(address) if address.is_loopback() => Some(SocketAddr::new(address.into(), port)),
+        url::Host::Ipv6(address) if address.is_loopback() => Some(SocketAddr::new(address.into(), port)),
+        _ => None,
+    }
+}
+
+fn recover_stale_desktop_loopback_address(
+    env_file: &Path,
+    server_url: &str,
+) -> DesktopResult<Option<String>> {
+    let Some(address) = loopback_socket_from_server_url(server_url) else {
+        return Ok(None);
+    };
+    match TcpListener::bind(address) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(None)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            let listen = reserve_loopback_address()?;
+            rewrite_desktop_server_address(env_file, &listen)?;
+            Ok(Some(format!("http://{listen}")))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn rewrite_desktop_server_address(env_file: &Path, listen: &str) -> DesktopResult<()> {
+    let metadata = std::fs::symlink_metadata(env_file).map_err(|error| {
+        DesktopError::new(
+            "desktop_state_unavailable",
+            "Desktop could not inspect its local Server environment",
+            "Check local app-data permissions and retry.",
+        )
+        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    if !metadata.is_file() || metadata.len() > DESKTOP_SERVER_ENV_MAX_BYTES {
+        return Err(DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment is not a bounded regular file",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        ));
+    }
+    let bytes = std::fs::read(env_file).map_err(|error| {
+        DesktopError::new(
+            "desktop_state_unavailable",
+            "Desktop could not read its local Server environment",
+            "Check local app-data permissions and retry.",
+        )
+        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    let content = std::str::from_utf8(&bytes).map_err(|_| {
+        DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment is not valid UTF-8",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        )
+    })?;
+
+    let mut replaced = 0usize;
+    let mut updated = String::with_capacity(content.len().saturating_add(listen.len()));
+    for segment in content.split_inclusive('\n') {
+        let (body, ending) = if let Some(body) = segment.strip_suffix("\r\n") {
+            (body, "\r\n")
+        } else if let Some(body) = segment.strip_suffix('\n') {
+            (body, "\n")
+        } else {
+            (segment, "")
+        };
+        let candidate = body.trim_start();
+        let candidate = candidate.strip_prefix("export ").unwrap_or(candidate).trim_start();
+        let is_address = candidate
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim() == "WEBCODEX_ADDR");
+        if is_address {
+            replaced = replaced.saturating_add(1);
+            if replaced > 1 {
+                return Err(DesktopError::new(
+                    "desktop_state_invalid",
+                    "Desktop local Server environment contains duplicate WEBCODEX_ADDR entries",
+                    "Restore the Desktop-owned local Server configuration and retry.",
+                ));
+            }
+            let equals = body.find('=').ok_or_else(|| {
+                DesktopError::new(
+                    "desktop_state_invalid",
+                    "Desktop local Server address entry is malformed",
+                    "Restore the Desktop-owned local Server configuration and retry.",
+                )
+            })?;
+            updated.push_str(&body[..=equals]);
+            updated.push_str(listen);
+            updated.push_str(ending);
+        } else {
+            updated.push_str(segment);
+        }
+    }
+    if replaced != 1 {
+        return Err(DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment does not contain exactly one WEBCODEX_ADDR entry",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        ));
+    }
+    write_atomic_file(env_file, updated.as_bytes()).map_err(|error| {
+        desktop_state_unavailable("Desktop could not persist its recovered local Server address")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })
+}
+
 fn reserve_loopback_address() -> DesktopResult<String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| {
         DesktopError::new(
@@ -2856,6 +2994,99 @@ mod tests {
         ));
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn stale_desktop_loopback_port_recovery_preserves_other_env_values() {
+        let dir = unique_state_dir("stale-loopback-recovery");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("webcodex.env");
+
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let occupied_addr = occupied.local_addr().unwrap();
+        let original = format!(
+            "WEBCODEX_ADDR={occupied_addr}\r\nWEBCODEX_TOKEN=secret-value\r\nWEBCODEX_MCP_COMPACT_SCHEMAS=false\r\nCUSTOM_SETTING=preserved\r\n"
+        );
+        std::fs::write(&env_file, original).unwrap();
+
+        let recovered = recover_stale_desktop_loopback_address(
+            &env_file,
+            &format!("http://{occupied_addr}"),
+        )
+        .unwrap()
+        .expect("occupied persisted loopback address should recover");
+        assert_ne!(recovered, format!("http://{occupied_addr}"));
+
+        let recovered_addr =
+            loopback_socket_from_server_url(&recovered).expect("recovered loopback socket");
+        assert_ne!(recovered_addr, occupied_addr);
+        let rebound = TcpListener::bind(recovered_addr)
+            .expect("newly reserved replacement address should be bindable after reservation");
+        drop(rebound);
+
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        assert_eq!(content.matches("WEBCODEX_ADDR=").count(), 1);
+        assert!(content.contains(&format!("WEBCODEX_ADDR={recovered_addr}\r\n")));
+        assert!(content.contains("WEBCODEX_TOKEN=secret-value\r\n"));
+        assert!(content.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=false\r\n"));
+        assert!(content.contains("CUSTOM_SETTING=preserved\r\n"));
+        assert!(!content.contains(&format!("WEBCODEX_ADDR={occupied_addr}\r\n")));
+
+        drop(occupied);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bindable_or_non_loopback_saved_address_is_not_rewritten() {
+        let dir = unique_state_dir("loopback-recovery-noop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("webcodex.env");
+
+        let reservation = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let bindable_addr = reservation.local_addr().unwrap();
+        drop(reservation);
+        let original = format!(
+            "WEBCODEX_ADDR={bindable_addr}\nWEBCODEX_TOKEN=secret\nCUSTOM_SETTING=preserved\n"
+        );
+        std::fs::write(&env_file, &original).unwrap();
+
+        assert_eq!(
+            recover_stale_desktop_loopback_address(
+                &env_file,
+                &format!("http://{bindable_addr}")
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
+
+        assert_eq!(
+            recover_stale_desktop_loopback_address(
+                &env_file,
+                "https://example.com:8443"
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn desktop_server_address_rewrite_rejects_duplicate_address_entries() {
+        let dir = unique_state_dir("duplicate-server-address");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("webcodex.env");
+        let original =
+            "WEBCODEX_ADDR=127.0.0.1:1111\nWEBCODEX_TOKEN=secret\nWEBCODEX_ADDR=127.0.0.1:2222\n";
+        std::fs::write(&env_file, original).unwrap();
+
+        let error =
+            rewrite_desktop_server_address(&env_file, "127.0.0.1:3333").unwrap_err();
+        assert_eq!(error.code, "desktop_state_invalid");
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
 
     fn unique_state_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

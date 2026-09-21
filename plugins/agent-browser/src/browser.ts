@@ -25,7 +25,7 @@ export class BrowserController {
   async status() {
     return { plugin_version: '0.0.0', backend_version: await this.backend.version(), connection_mode: this.backend.mode,
       connection_state: this.connected ? 'connected_last_observed' : 'not_connected', live_connection_checked: false,
-      screenshot_delivery: 'local_project_artifact',
+      screenshot_delivery: 'provider_local_artifact',
       configuration: this.backend.configuration?.() ?? {},
       browser_ownership: this.backend.ownership ?? 'external',
       next_step: this.connected ? 'List tabs or obtain a fresh snapshot.' : 'Call browser_connect to use the configured native profile or explicit attachment mode.' };
@@ -322,7 +322,7 @@ export class BrowserController {
       await fs.chmod(filename, 0o600);
       return { page_id: page.id, artifact_path: relative, mime_type: 'image/png', bytes: png.length,
         width: png.readUInt32BE(16), height: png.readUInt32BE(20), sha256: createHash('sha256').update(png).digest('hex'),
-        delivery: 'project_artifact', note: 'Native Plugin v1 is text-only. Read/export this file through WebCodex project artifact tools; this is not an inline image.' };
+        delivery: 'provider_local_artifact', note: 'Stored under this Plugin checkout. Native Plugin v1 has no Project-artifact or image handoff, so this provider-relative path is not automatically readable through WebCodex Project artifact tools.' };
     } catch (error) { await fs.unlink(filename).catch(() => {}); throw error; }
   }
 

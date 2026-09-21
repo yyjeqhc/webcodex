@@ -54,6 +54,17 @@ test('unknown effect response poisons provider and never retries', async () => {
   await assert.rejects(backend.run(['click', '@e1'], true), UncertainAction);
   await backend.shutdown(); assert.equal(calls, 1);
 });
+test('effectful page disappearance remains outcome-unknown while observation is actionable', async () => {
+  const response = { stdout: '[{"success":false,"error":"tab not found"}]', exitCode: 1 };
+  let effectCalls = 0;
+  const effect = new NativeBackend({ executable: 'agent-browser', connection: 'auto' }, async () => { effectCalls++; return response; });
+  await assert.rejects(effect.run(['click', '@e1'], true), UncertainAction);
+  await assert.rejects(effect.run(['click', '@e1'], true), UncertainAction);
+  assert.equal(effectCalls, 1, 'uncertain effect must poison the provider and never retry');
+
+  const observation = new NativeBackend({ executable: 'agent-browser', connection: 'auto' }, async () => response);
+  await assert.rejects(observation.run(['tab', 'list']), code('page_gone'));
+});
 test('known missing Chrome is actionable, not silent fallback', async () => {
   const backend = new NativeBackend({ executable: 'agent-browser', connection: 'auto' }, async () => ({ stdout: '{"success":false,"error":"No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp."}', exitCode: 1 }));
   await assert.rejects(backend.run(['tab', 'list'], true), code('chrome_not_authorized'));
@@ -181,7 +192,7 @@ test('disconnect detaches without auto-connecting or closing Chrome', async () =
 });
 test('screenshot is a bounded owner-only artifact with digest', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wc-artifact-test-'));
-  try { const { browser, page } = await setup(dir); const shot = await browser.screenshot(page); assert.equal(shot.width, 800); assert.equal(shot.height, 600); assert.equal(shot.sha256.length, 64); assert(!shot.artifact_path.includes('..')); const stat = await fs.stat(path.join(dir, shot.artifact_path)); if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o600); }
+  try { const { browser, page } = await setup(dir); const shot = await browser.screenshot(page); assert.equal(shot.width, 800); assert.equal(shot.height, 600); assert.equal(shot.sha256.length, 64); assert.equal(shot.delivery, 'provider_local_artifact'); assert(!shot.artifact_path.includes('..')); assert.match(shot.note, /not automatically readable through WebCodex Project artifact tools/); const stat = await fs.stat(path.join(dir, shot.artifact_path)); if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o600); }
   finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 test('screenshot refuses symlink artifact directory', async () => {

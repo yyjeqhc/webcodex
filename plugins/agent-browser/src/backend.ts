@@ -153,10 +153,15 @@ export class NativeBackend implements Backend {
           throw new BrowserFault('chrome_not_authorized', 'No authorized local Chrome debugging connection is available.',
             'In your normal Chrome open chrome://inspect/#remote-debugging, enable remote debugging, then allow the Chrome connection prompt and call browser_connect again. The plugin never enables it for you.');
         }
-        if (/tab_gone|tab not found|unknown tab|no tab found|target.*not found/i.test(message) || r.code === 'tab_gone') {
+        const pageGone = /tab_gone|tab not found|unknown tab|no tab found|target.*not found/i.test(message) || r.code === 'tab_gone';
+        // Once an effect was dispatched, even a structured "tab gone" response
+        // cannot prove the action did not happen immediately before the target
+        // disappeared. Preserve OutcomeUnknown rather than presenting a retry-safe
+        // application error. Observations may still report page_gone directly.
+        if (effect) { this.poisoned = true; throw new UncertainAction(); }
+        if (pageGone) {
           throw new BrowserFault('page_gone', 'The selected tab no longer exists.', 'List tabs and explicitly select the intended page; do not reuse its old snapshot.');
         }
-        if (effect) { this.poisoned = true; throw new UncertainAction(); }
         throw new BrowserFault('browser_observation_failed', 'The browser observation could not be completed.', 'Check Chrome connection/permission/dialog state, then obtain a fresh observation.');
       }
       if (p.exitCode !== 0 || !record(r.result)) throw new BrowserFault('backend_protocol', 'Unexpected browser command result.');

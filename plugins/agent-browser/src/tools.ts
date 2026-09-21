@@ -57,7 +57,7 @@ export function createBrowserPlugin(browser: BrowserController) {
     defineTool({ name: 'browser_scroll', description: 'Scroll an explicitly selected supported page by 1..2000 pixels (default 600). Invalidates the current snapshot.',
       inputSchema: schema.object({ page_id: page, direction: schema.string({ enum: ['up', 'down', 'left', 'right'] }), pixels: schema.optional(schema.integer()) }),
       execute: ({ page_id, direction, pixels }) => respond(() => browser.scroll(page_id, direction, pixels)) }),
-    defineTool({ name: 'browser_screenshot', description: 'Capture the selected page viewport as a private PNG artifact in this plugin project. Returns a project-relative path and digest, NOT an inline image (Native Plugin v1 is text-only). Use WebCodex project artifact read/export tools to view it. No caller-controlled filesystem path.',
+    defineTool({ name: 'browser_screenshot', description: 'Capture the selected page viewport as a private provider-local PNG under this Plugin checkout. Returns a provider-relative path and digest, NOT a WebCodex Project artifact or inline image. Native Plugin v1 has no Project-artifact/image handoff; the operator may inspect or export the file locally. No caller-controlled filesystem path.',
       inputSchema: schema.object({ page_id: page }), execute: ({ page_id }) => respond(() => browser.screenshot(page_id)) }),
     defineTool({ name: 'browser_close_page', description: 'Close one exact tab CREATED BY THIS PLUGIN INSTANCE. Refuses to close the user’s pre-existing tabs. Does not close Chrome.',
       inputSchema: schema.object({ page_id: page }), execute: ({ page_id }) => respond(() => browser.closePage(page_id)) }),

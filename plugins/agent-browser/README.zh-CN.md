@@ -62,6 +62,8 @@ Native 模式可以读取 Agent Browser 自己的 user/project 配置和 `AGENT_
 
 snapshot 默认自适应：普通页面返回完整语义内容；大页面会自动压成只保留交互控件的结果。需要只找下一步控件时可显式 `interactive_only=true`；需要理解页面或确认操作结果时可显式 `interactive_only=false`。
 
+截图是保存在本插件 checkout 下的 provider-local 私有文件。Native Plugin v1 目前只有文本/结构化内容协议，没有 WebCodex Project artifact 或 image handoff；因此返回的 provider 相对路径不能自动作为 `project_artifact` 路径使用，需要 operator 在本机查看或另行导出。
+
 ## 安全边界
 
 - 只能关闭本插件创建的 tab，不能关闭用户原有 tab；

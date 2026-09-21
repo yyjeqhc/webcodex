@@ -106,7 +106,7 @@ Element actions require a fresh semantic snapshot. Snapshot and element identiti
 
 Snapshot observation is adaptive by default: ordinary pages return full semantic text, while large pages automatically compact to interactive controls. Callers can force `interactive_only=true` for action selection or `interactive_only=false` when static text is required for page understanding or outcome verification.
 
-Screenshots are private project artifacts because Native Plugin v1 is text/structured-content only.
+Screenshots are private provider-local files under this Plugin checkout. Native Plugin v1 is text/structured-content only and has no Project-artifact/image handoff, so the returned provider-relative path is not automatically addressable through WebCodex Project artifact tools.
 
 ## Safety boundary
 

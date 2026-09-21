@@ -140,6 +140,32 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
   });
 }
 
+test("historical resume proof remains visible after current epoch returns to ready", async () => {
+  const resumedHistory = {
+    ...plan,
+    continuity: {
+      ...plan.continuity,
+      state: "ready", wake_state: null,
+      host_delivery: "accepted", fresh_turn: "confirmed",
+      attention_candidate_at_unix_ms: 301000,
+      attention_created_at_unix_ms: 301100,
+      wake_created_at_unix_ms: 301100,
+      host_dispatch_prepared_at_unix_ms: 301200,
+      host_dispatch_accepted_at_unix_ms: 301250,
+      host_dispatch_unknown_at_unix_ms: null,
+      wake_consumed_at_unix_ms: 301500,
+      first_post_resume_meaningful_at_unix_ms: 301800,
+      last_post_resume_meaningful_at_unix_ms: 302000,
+      last_resume_at_unix_ms: 301500,
+    },
+  };
+  const view = await ready(resumedHistory);
+  assert.equal(view.nodes["continuity-state"].textContent, "Ready");
+  assert.equal(view.nodes["host-delivery"].textContent, "Accepted");
+  assert.equal(view.nodes["fresh-turn"].textContent, "Confirmed");
+  assert.match(view.nodes["last-resume"].textContent, /^Confirmed/);
+});
+
 test("latency fields are bounded projection only and do not change fresh-turn semantics", async () => {
   const resumed = {
     ...plan,

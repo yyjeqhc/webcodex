@@ -1537,6 +1537,15 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
         );
         let after_continuity = &after_work.output["goal_plan"]["continuity"];
         assert_eq!(
+            after_continuity["host_delivery"],
+            if delivery_unknown {
+                "unknown"
+            } else {
+                "accepted"
+            }
+        );
+        assert_eq!(after_continuity["fresh_turn"], "confirmed");
+        assert_eq!(
             after_continuity["attention_candidate_at_unix_ms"],
             T0 + THRESHOLD
         );

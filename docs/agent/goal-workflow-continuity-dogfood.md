@@ -22,12 +22,13 @@ setup should be reused as that controller, with the same Agent Continuation card
 The Agent may remain another Coordinator's Worker/Task assignee at the same time.
 Do not infer identity from Window co-location or create a second Goal-only Agent.
 
-The Goal Plan resource is solely `ui://webcodex/goal-plan/v5`, wire version 3. It
+The Goal Plan resource is solely `ui://webcodex/goal-plan/v6`, wire version 3. It
 renders step counts, current step, bounded milestones, last checkpoint, activity,
 and a bounded read-only continuity projection. Continuity keeps production Host
-carrier readiness, the exact current Goal-stall Wake lifecycle, Host delivery
-observation, and exact-consume fresh-turn proof separate. Historical consumed Wakes
-are shown only as a bounded last-resume timestamp after newer meaningful work.
+carrier readiness and the exact current Goal-stall Wake lifecycle separate from
+bounded Host delivery and exact-consume fresh-turn proof. After newer meaningful work,
+the current epoch returns to ready/stalled with no current Wake while the most recent
+confirmed resume keeps its bounded Host outcome, fresh-turn proof, and timeline.
 Old pre-production Goal resource aliases are not supported. Agent Continuation
 remains a separate card and the only Host turn-dispatch carrier.
 

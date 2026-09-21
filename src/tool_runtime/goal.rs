@@ -308,6 +308,21 @@ fn goal_continuity_observation(
     };
     let Some(wake) = durable.current_wake else {
         let resume = durable.last_resume.as_ref();
+        let (host_delivery, fresh_turn) = if let Some(resume) = resume {
+            let host_delivery = if resume.host_dispatch_accepted_at_unix_ms.is_some() {
+                GoalHostDeliveryState::Accepted
+            } else if resume.host_dispatch_unknown_at_unix_ms.is_some() {
+                GoalHostDeliveryState::Unknown
+            } else {
+                GoalHostDeliveryState::NotConfirmed
+            };
+            (host_delivery, GoalFreshTurnState::Confirmed)
+        } else {
+            (
+                GoalHostDeliveryState::NotStarted,
+                GoalFreshTurnState::NotConfirmed,
+            )
+        };
         return GoalContinuityObservation {
             available: true,
             state: if activity.state == GoalActivityState::AttentionNeeded {
@@ -317,8 +332,8 @@ fn goal_continuity_observation(
             },
             production_auto_resume_available,
             wake_state: None,
-            host_delivery: GoalHostDeliveryState::NotStarted,
-            fresh_turn: GoalFreshTurnState::NotConfirmed,
+            host_delivery,
+            fresh_turn,
             attention_candidate_at_unix_ms: resume
                 .map(|value| value.attention_candidate_at_unix_ms)
                 .or(attention_candidate_at_unix_ms),

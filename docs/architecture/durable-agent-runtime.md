@@ -256,7 +256,7 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 
 ### Goal Plan progress projection and inactivity detector
 
-The sole current Goal Plan resource is `ui://webcodex/goal-plan/v5`; its sole current
+The sole current Goal Plan resource is `ui://webcodex/goal-plan/v6`; its sole current
 wire version is **3**. Older pre-production Goal resource aliases are not served.
 Goal Plan deliberately advances its canonical resource URI whenever its shipped View
 or App-tool wire changes: production Hosts may retain a same-URI View across Server
@@ -268,10 +268,12 @@ stall Attention/Wake under the existing fences, and returns the final post-recon
 projection in the same RPC.
 The card projects title, lifecycle/revision, controller identity, step counts,
 bounded steps/current step, checkpoint summary/time, derived activity, and bounded
-continuity observation. Continuity separates current production carrier readiness,
-the exact current Goal-stall Wake lifecycle, Host delivery, and exact-consume
-fresh-turn proof; a historical consume becomes only a last-resume timestamp after
-newer meaningful work. It omits
+continuity observation. Continuity separates current production carrier readiness
+and the exact current Goal-stall Wake lifecycle from bounded continuation outcome
+evidence. While a current Wake exists, Host delivery and fresh-turn proof describe
+that Wake. After exact consume followed by newer meaningful work, the current state
+returns to ready/stalled with no current Wake, while Host delivery, fresh-turn proof,
+and the bounded timeline retain the most recent confirmed resume. It omits
 objective/conditions, Task bodies/results, private Project paths, correlation
 identities, Session ledger, Endpoint bindings, tokens/fences, stdout/stderr and full
 history. The presentation envelope is bounded to 40 KiB including metadata.

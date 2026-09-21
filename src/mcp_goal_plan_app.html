@@ -169,8 +169,23 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         && value.host_delivery === "not_applicable" && value.fresh_turn === "not_applicable";
     }
     if (value.wake_state === null) {
-      return (value.state === "ready" || value.state === "stalled")
-        && value.host_delivery === "not_started" && value.fresh_turn === "not_confirmed";
+      if (!(value.state === "ready" || value.state === "stalled")) return false;
+      if (value.last_resume_at_unix_ms === null) {
+        return value.host_delivery === "not_started" && value.fresh_turn === "not_confirmed";
+      }
+      if (value.fresh_turn !== "confirmed"
+          || value.wake_consumed_at_unix_ms !== value.last_resume_at_unix_ms) return false;
+      if (value.host_delivery === "accepted") {
+        return value.host_dispatch_accepted_at_unix_ms !== null
+          && value.host_dispatch_unknown_at_unix_ms === null;
+      }
+      if (value.host_delivery === "unknown") {
+        return value.host_dispatch_accepted_at_unix_ms === null
+          && value.host_dispatch_unknown_at_unix_ms !== null;
+      }
+      return value.host_delivery === "not_confirmed"
+        && value.host_dispatch_accepted_at_unix_ms === null
+        && value.host_dispatch_unknown_at_unix_ms === null;
     }
     if (value.wake_state === "pending" || value.wake_state === "claimed") {
       return value.state === "wake_queued" && value.host_delivery === "not_started"
@@ -506,7 +521,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "5.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "6.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;

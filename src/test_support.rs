@@ -16,7 +16,7 @@ thread_local! {
 ///
 /// libtest executes tests in parallel within one process. Trace tests still use
 /// [`TestEnvGuard`] to serialize env mutation, but unrelated test threads must
-/// not observe a temporary `WEBCODEX_TOOL_REQUEST_TRACE=full` and start feeding
+/// not observe a temporary `WEBPI_TOOL_REQUEST_TRACE=full` and start feeding
 /// the same bounded global trace writer. Child threads intentionally exercising
 /// trace behavior can opt in explicitly with this guard while the parent keeps
 /// the canonical env lock held.
@@ -66,7 +66,7 @@ impl TestEnvGuard {
     }
 
     fn remember(&mut self, name: &str) {
-        if name == "WEBCODEX_TOOL_REQUEST_TRACE" && self.tool_request_trace_env_reader.is_none() {
+        if name == "WEBPI_TOOL_REQUEST_TRACE" && self.tool_request_trace_env_reader.is_none() {
             self.tool_request_trace_env_reader = Some(TestToolRequestTraceEnvReaderGuard::new());
         }
         if !self.previous.contains_key(name) {

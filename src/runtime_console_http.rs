@@ -4000,14 +4000,7 @@ mod tests {
     #[tokio::test]
     async fn hosted_runtime_console_uses_ordinary_runtime_and_projects_are_safe() {
         let runtime = test_runtime();
-        register_project(
-            &runtime,
-            "special",
-            "webcodex",
-            "/root/private/webcodex",
-            None,
-        )
-        .await;
+        register_project(&runtime, "special", "webpi", "/root/private/webcodex", None).await;
         let (_tmp, service) = hosted_service(runtime);
         let mut response = TestClient::post("http://localhost/api/runtime-console/projects")
             .json(&serde_json::json!({}))
@@ -4015,7 +4008,7 @@ mod tests {
             .await;
         assert_eq!(response.status_code, Some(StatusCode::OK));
         let body: Value = response.take_json().await.unwrap();
-        assert_eq!(body["projects"][0]["id"], "agent:special:webcodex");
+        assert_eq!(body["projects"][0]["id"], "agent:special:webpi");
         assert_eq!(body["projects"][0]["client_id"], "special");
         assert_eq!(body["projects"][0]["path"], "/root/private/webcodex");
         let selector = body["projects"][0].as_object().unwrap();
@@ -4040,7 +4033,7 @@ mod tests {
         let mut filtered = TestClient::post("http://localhost/api/runtime-console/projects")
             .json(&serde_json::json!({
                 "client_id": "special",
-                "query": "webcodex",
+                "query": "webpi",
                 "limit": 100
             }))
             .send(&service)
@@ -4049,7 +4042,7 @@ mod tests {
         let filtered_body: Value = filtered.take_json().await.unwrap();
         assert_eq!(filtered_body["total"], 1);
         assert_eq!(filtered_body["truncated"], false);
-        assert_eq!(filtered_body["projects"][0]["id"], "agent:special:webcodex");
+        assert_eq!(filtered_body["projects"][0]["id"], "agent:special:webpi");
 
         let invalid_query = TestClient::post("http://localhost/api/runtime-console/projects")
             .json(&serde_json::json!({"query": "   "}))
@@ -4097,14 +4090,7 @@ mod tests {
             )
             .await;
         }
-        register_project(
-            &runtime,
-            "special",
-            "webcodex",
-            "/root/private/webcodex",
-            None,
-        )
-        .await;
+        register_project(&runtime, "special", "webpi", "/root/private/webcodex", None).await;
 
         let global = projects_for_auth(&runtime, &auth, Some(100)).await.unwrap();
         assert_eq!(global.total, 101);
@@ -4113,7 +4099,7 @@ mod tests {
         assert!(!global
             .projects
             .iter()
-            .any(|project| project.id == "agent:special:webcodex"));
+            .any(|project| project.id == "agent:special:webpi"));
 
         let by_runner =
             projects_for_filters_auth(&runtime, &auth, Some("special"), None, Some(100))
@@ -4121,27 +4107,21 @@ mod tests {
                 .unwrap();
         assert_eq!(by_runner.total, 1);
         assert!(!by_runner.truncated);
-        assert_eq!(by_runner.projects[0].id, "agent:special:webcodex");
+        assert_eq!(by_runner.projects[0].id, "agent:special:webpi");
 
-        let by_query =
-            projects_for_filters_auth(&runtime, &auth, None, Some("webcodex"), Some(100))
-                .await
-                .unwrap();
+        let by_query = projects_for_filters_auth(&runtime, &auth, None, Some("webpi"), Some(100))
+            .await
+            .unwrap();
         assert_eq!(by_query.total, 1);
         assert!(!by_query.truncated);
-        assert_eq!(by_query.projects[0].id, "agent:special:webcodex");
+        assert_eq!(by_query.projects[0].id, "agent:special:webpi");
 
-        let combined = projects_for_filters_auth(
-            &runtime,
-            &auth,
-            Some("special"),
-            Some("webcodex"),
-            Some(100),
-        )
-        .await
-        .unwrap();
+        let combined =
+            projects_for_filters_auth(&runtime, &auth, Some("special"), Some("webpi"), Some(100))
+                .await
+                .unwrap();
         assert_eq!(combined.total, 1);
-        assert_eq!(combined.projects[0].id, "agent:special:webcodex");
+        assert_eq!(combined.projects[0].id, "agent:special:webpi");
     }
 
     #[tokio::test]

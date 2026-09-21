@@ -22,7 +22,7 @@ pub(crate) const GIT_REVIEW_MAX_SYMBOL_BYTES: usize = 120;
 pub(crate) const GIT_REVIEW_MAX_DIFF_BYTES: usize = 64 * 1024;
 const GIT_REVIEW_METADATA_BYTES: usize = 64 * 1024;
 const GIT_REVIEW_MAX_WARNINGS: usize = 16;
-const GIT_REVIEW_ERROR_SENTINEL: &str = "@@WEBCODEX_GIT_REVIEW_COMMAND_FAILED@@";
+const GIT_REVIEW_ERROR_SENTINEL: &str = "@@WEBPI_GIT_REVIEW_COMMAND_FAILED@@";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NameStatusRecord {
@@ -521,7 +521,7 @@ fn runtime_config_surface(path: &str, classes: &[String]) -> bool {
     contains_any(
         &tokens,
         &[
-            "runner", "runtime", "agent", "server", "webcodex", "deploy", "config",
+            "runner", "runtime", "agent", "server", "webpi", "deploy", "config",
         ],
     )
 }

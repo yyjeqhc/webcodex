@@ -1998,7 +1998,8 @@ impl ToolRuntime {
             ToolCall::ComputerObserve(_) | ToolCall::ComputerControl(_) => ToolResult::err(
                 "Computer gateways must pass action-sensitive specialized governance".to_string(),
             ),
-            call @ ToolCall::ComputerSaveSnapshot { .. } => {
+            call @ (ToolCall::ComputerSaveSnapshot { .. }
+            | ToolCall::ComputerSaveDisplaySnapshot { .. }) => {
                 self.dispatch_computer_tool(call, auth).await
             }
 
@@ -2918,6 +2919,7 @@ impl ToolRuntime {
             | ToolCall::SaveProjectArtifact { .. }
             | ToolCall::ProjectArtifact { .. }
             | ToolCall::ExportProjectArtifact { .. }
+            | ToolCall::ProjectArtifactDownloadLink { .. }
             | ToolCall::ReadProjectArtifactMetadata { .. }
             | ToolCall::ReadProjectArtifact { .. }
             | ToolCall::ArtifactUploadBegin { .. }

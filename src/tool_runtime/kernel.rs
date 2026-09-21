@@ -1554,6 +1554,25 @@ mod tests {
     }
 
     #[test]
+    fn computer_save_display_snapshot_requires_project_write_computer_read_and_display_read() {
+        for scopes in [
+            vec!["project:write", "computer:read"],
+            vec!["project:write", "computer:display_read"],
+            vec!["computer:read", "computer:display_read"],
+        ] {
+            let denied = oauth(&scopes);
+            assert!(
+                check_runtime_tool_scope(Some(&denied), "computer_save_display_snapshot").is_err()
+            );
+        }
+        let allowed = oauth(&["project:write", "computer:read", "computer:display_read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&allowed), "computer_save_display_snapshot"),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn tool_scope_enforcement_applies_to_pat_and_direct_shared_key() {
         let mut pat = AuthContext::new(crate::auth::AuthKind::ApiToken);
         pat.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];

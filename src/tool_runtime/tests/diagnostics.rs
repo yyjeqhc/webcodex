@@ -43,7 +43,7 @@ fn missing_job_request() -> ToolCallRequest {
 #[tokio::test]
 async fn failed_tool_trace_ref_requires_full_mode_admin_and_operator_capability() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
     let runtime = ToolRuntime::new_for_tests();
     let admin = admin_auth();
     let ordinary = runtime_reader_auth();
@@ -113,7 +113,7 @@ async fn failed_tool_trace_ref_requires_full_mode_admin_and_operator_capability(
     assert!(!hidden_result.success);
     assert!(hidden_result.output.get("trace_ref").is_none());
 
-    env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+    env.remove("WEBPI_TOOL_REQUEST_TRACE");
     let disabled_trace = crate::tool_request_trace::new_trace_id();
     let disabled_result = crate::tool_request_trace::scope_active_trace(
         Some(disabled_trace),

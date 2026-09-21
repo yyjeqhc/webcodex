@@ -183,6 +183,7 @@ pub(crate) enum RouteId {
     AuditSession,
     AuditStats,
     OpenApiDocument,
+    ArtifactDownload,
     RuntimeWebRoot,
     RuntimeWebAppJs,
     RuntimeWebStylesCss,
@@ -607,7 +608,7 @@ mod tests {
         let routes = iter_routes()
             .filter(|spec| spec.surface == PublicWeb)
             .collect::<Vec<_>>();
-        assert_eq!(routes.len(), 7);
+        assert_eq!(routes.len(), 8);
         for route in routes {
             assert_eq!(route.method, RouteMethod::Get, "{:?}", route.id);
             assert_eq!(
@@ -616,9 +617,14 @@ mod tests {
                 "{:?}",
                 route.id
             );
-            assert_eq!(route.auth, RouteAuth::Public, "{:?}", route.id);
             assert_eq!(route.openapi_projection, Hidden, "{:?}", route.id);
-            assert_eq!(route.audit_class, Other, "{:?}", route.id);
+            if route.id == ArtifactDownload {
+                assert_eq!(route.auth, RouteAuth::HandlerManaged);
+                assert_eq!(route.audit_class, Artifact);
+            } else {
+                assert_eq!(route.auth, RouteAuth::Public, "{:?}", route.id);
+                assert_eq!(route.audit_class, Other, "{:?}", route.id);
+            }
         }
         assert_eq!(
             direct_child_path(RuntimeWebRoot, RuntimeWebStylesCss),

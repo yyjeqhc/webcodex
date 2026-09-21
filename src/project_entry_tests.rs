@@ -78,7 +78,7 @@ fn console_assets_are_validated_and_passed_only_to_the_serve_child() {
         .unwrap();
     assert_eq!(canonical, fs::canonicalize(&directory).unwrap());
 
-    let mut command = tokio::process::Command::new("webcodex");
+    let mut command = tokio::process::Command::new("webpi");
     configure_console_assets_environment(&mut command, Some(&canonical));
     let configured = command
         .as_std()
@@ -88,7 +88,7 @@ fn console_assets_are_validated_and_passed_only_to_the_serve_child() {
         .map(PathBuf::from);
     assert_eq!(configured, Some(canonical));
 
-    let mut embedded_command = tokio::process::Command::new("webcodex");
+    let mut embedded_command = tokio::process::Command::new("webpi");
     configure_console_assets_environment(&mut embedded_command, None);
     assert!(embedded_command
         .as_std()
@@ -103,11 +103,11 @@ fn console_assets_are_validated_and_passed_only_to_the_serve_child() {
 
 #[test]
 fn npm_wrapper_network_credentials_are_removed_from_runtime_children() {
-    let mut command = tokio::process::Command::new("webcodex-runner");
+    let mut command = tokio::process::Command::new("webpi-runner");
     for key in NPM_WRAPPER_NETWORK_ENV_KEYS {
         command.env(key, "credential-like-value");
     }
-    command.env("WEBCODEX_TEST_UNRELATED_ENV", "preserved");
+    command.env("WEBPI_TEST_UNRELATED_ENV", "preserved");
 
     remove_npm_wrapper_network_environment(&mut command);
     let envs: Vec<_> = command.as_std().get_envs().collect();
@@ -119,22 +119,22 @@ fn npm_wrapper_network_credentials_are_removed_from_runtime_children() {
         );
     }
     assert!(envs.iter().any(|(key, value)| {
-        key.to_str() == Some("WEBCODEX_TEST_UNRELATED_ENV")
+        key.to_str() == Some("WEBPI_TEST_UNRELATED_ENV")
             && value.and_then(|value| value.to_str()) == Some("preserved")
     }));
 }
 
 #[test]
 fn runner_parent_credentials_are_removed_before_spawn() {
-    let mut command = tokio::process::Command::new("webcodex-runner");
-    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT", "WEBCODEX_AGENT_TOKEN"] {
+    let mut command = tokio::process::Command::new("webpi-runner");
+    for key in ["WEBPI_TOKEN", "WEBPI_PAT", "WEBPI_AGENT_TOKEN"] {
         command.env(key, "credential-like-value");
     }
-    command.env("WEBCODEX_TEST_UNRELATED_ENV", "preserved");
+    command.env("WEBPI_TEST_UNRELATED_ENV", "preserved");
 
     remove_runner_parent_credentials(&mut command);
     let envs: Vec<_> = command.as_std().get_envs().collect();
-    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT", "WEBCODEX_AGENT_TOKEN"] {
+    for key in ["WEBPI_TOKEN", "WEBPI_PAT", "WEBPI_AGENT_TOKEN"] {
         assert!(
             envs.iter()
                 .any(|(candidate, value)| { candidate.to_str() == Some(key) && value.is_none() }),
@@ -142,7 +142,7 @@ fn runner_parent_credentials_are_removed_before_spawn() {
         );
     }
     assert!(envs.iter().any(|(key, value)| {
-        key.to_str() == Some("WEBCODEX_TEST_UNRELATED_ENV")
+        key.to_str() == Some("WEBPI_TEST_UNRELATED_ENV")
             && value.and_then(|value| value.to_str()) == Some("preserved")
     }));
 }
@@ -250,7 +250,7 @@ fn default_state_base_preserves_home_and_has_windows_localappdata_fallback() {
             Some(OsStr::new("/local")),
         )
         .unwrap(),
-        PathBuf::from("/home/user/.local/state/webcodex/projects")
+        PathBuf::from("/home/user/.local/state/webpi/projects")
     );
     assert_eq!(
         setup_service::default_state_base_from(None, None, Some(OsStr::new("/local"))).unwrap(),

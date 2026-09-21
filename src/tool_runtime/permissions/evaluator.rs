@@ -32,7 +32,7 @@ pub(crate) struct PermissionEvaluator {
 }
 
 impl PermissionEvaluator {
-    /// Evaluator using `WEBCODEX_AUTHORITY_MODE` (default `trusted_agent`).
+    /// Evaluator using `WEBPI_AUTHORITY_MODE` (default `trusted_agent`).
     pub(crate) fn from_env() -> Self {
         Self {
             config: EffectiveAuthorityConfig::from_env(),

@@ -152,7 +152,7 @@ pub struct ToolRuntime {
     /// restart intentionally invalidates old committed continuations fail-closed.
     pub(crate) git_diff_hunks_continuation_mac_key: Arc<[u8; 32]>,
     /// Authoritative permission evaluator for this runtime instance.
-    /// Resolved once at construction (`WEBCODEX_AUTHORITY_MODE`); dispatch
+    /// Resolved once at construction (`WEBPI_AUTHORITY_MODE`); dispatch
     /// evaluates once per tool request before mutation.
     pub(crate) permission_evaluator: PermissionEvaluator,
     /// Sink for the workspace activity ledger (mutating tool executions).

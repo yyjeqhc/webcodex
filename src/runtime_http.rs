@@ -581,10 +581,27 @@ fn parse_gpt_action_gateway(body: Value) -> Result<(String, Value), String> {
         .and_then(|value| value.as_str().map(str::trim).map(str::to_string))
         .filter(|tool| !tool.is_empty())
         .ok_or_else(|| "call_runtime_tool field 'tool' must be a non-empty string".to_string())?;
-    let arguments = object
-        .remove("arguments")
-        .filter(Value::is_object)
-        .ok_or_else(|| "call_runtime_tool field 'arguments' must be an object".to_string())?;
+    let arguments =
+        match object.remove("arguments") {
+            Some(value) if value.is_object() => value,
+            Some(Value::String(encoded)) => {
+                let parsed: Value = serde_json::from_str(&encoded).map_err(|_| {
+                "call_runtime_tool field 'arguments' must be a JSON object or a JSON object string"
+                    .to_string()
+            })?;
+                if !parsed.is_object() {
+                    return Err(
+                        "call_runtime_tool field 'arguments' JSON string must encode an object"
+                            .to_string(),
+                    );
+                }
+                parsed
+            }
+            _ => return Err(
+                "call_runtime_tool field 'arguments' must be a JSON object or a JSON object string"
+                    .to_string(),
+            ),
+        };
     Ok((tool, arguments))
 }
 

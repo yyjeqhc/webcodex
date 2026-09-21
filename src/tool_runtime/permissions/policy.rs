@@ -21,7 +21,7 @@ pub(crate) const RESTRICTED_DENY_REASON: &str = "restricted_requires_human_autho
 pub(crate) enum AuthoritySource {
     /// No explicit configuration; product default for self-hosted deployments.
     Default,
-    /// Explicit `WEBCODEX_AUTHORITY_MODE`.
+    /// Explicit `WEBPI_AUTHORITY_MODE`.
     Env,
     /// An unambiguous legacy operator configuration was migrated.
     LegacyEnv,
@@ -33,9 +33,9 @@ impl AuthoritySource {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
-            Self::Env => concat!("env:", "WEBCODEX_AUTHORITY_MODE"),
-            Self::LegacyEnv => "migrated_env:WEBCODEX_PERMISSION_MODE",
-            Self::LegacyEnvRejected => concat!("rejected_legacy_env:", "WEBCODEX_PERMISSION_MODE"),
+            Self::Env => concat!("env:", "WEBPI_AUTHORITY_MODE"),
+            Self::LegacyEnv => "migrated_env:WEBPI_PERMISSION_MODE",
+            Self::LegacyEnvRejected => concat!("rejected_legacy_env:", "WEBPI_PERMISSION_MODE"),
         }
     }
 }
@@ -58,7 +58,7 @@ pub(crate) enum EffectiveAuthorityConfig {
 impl EffectiveAuthorityConfig {
     /// Resolve the authority mode from the process environment.
     ///
-    /// Unset or empty `WEBCODEX_AUTHORITY_MODE` → [`AuthorityMode::TrustedAgent`]
+    /// Unset or empty `WEBPI_AUTHORITY_MODE` → [`AuthorityMode::TrustedAgent`]
     /// with source `default`. Unknown non-empty value → invalid (fail closed).
     /// Unambiguous legacy values migrate; unknown or conflicting values fail closed.
     pub(crate) fn from_env() -> Self {
@@ -332,10 +332,10 @@ mod tests {
             AuthoritySource::Env
         );
         assert_eq!(AuthoritySource::Default.as_str(), "default");
-        assert_eq!(AuthoritySource::Env.as_str(), "env:WEBCODEX_AUTHORITY_MODE");
+        assert_eq!(AuthoritySource::Env.as_str(), "env:WEBPI_AUTHORITY_MODE");
         assert_eq!(
             AuthoritySource::LegacyEnvRejected.as_str(),
-            "rejected_legacy_env:WEBCODEX_PERMISSION_MODE"
+            "rejected_legacy_env:WEBPI_PERMISSION_MODE"
         );
     }
 }

@@ -25,7 +25,7 @@ use crate::runner_protocol::ShellRunRequest;
 use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 
 #[cfg(test)]
-pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBCODEX_SHOW_CHANGES_SEP@@";
+pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBPI_SHOW_CHANGES_SEP@@";
 const SHOW_CHANGES_BLOCK_TRAILER_BYTES: usize = 30;
 const SHOW_CHANGES_BLOCK_MAGIC: &[u8; 6] = b"WCSF1:";
 
@@ -1672,7 +1672,7 @@ fn untracked_preview_path_is_sensitive(path: &str) -> bool {
                     | "projects.d"
                     | "runner.toml"
                     | "agent.toml"
-                    | "webcodex.env"
+                    | "webpi.env"
                     | ".env"
                     | "secrets"
                     | "tokens"
@@ -1681,7 +1681,7 @@ fn untracked_preview_path_is_sensitive(path: &str) -> bool {
             ) || part.starts_with(".env")
                 || part.starts_with("runner.toml")
                 || part.starts_with("agent.toml")
-                || part.starts_with("webcodex.env")
+                || part.starts_with("webpi.env")
                 || part.ends_with(".pem")
                 || part.ends_with(".key")
         })

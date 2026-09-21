@@ -246,6 +246,13 @@ impl ToolRuntime {
                     }
                 }
             }
+            ToolCall::ProjectArtifactDownloadLink {
+                project,
+                path,
+                session_id: _,
+            } => {
+                crate::artifact_download_http::issue_download_link(self, project, path, auth).await
+            }
             ToolCall::ReadProjectArtifactMetadata {
                 project,
                 path,

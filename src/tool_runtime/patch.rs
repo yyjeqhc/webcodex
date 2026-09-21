@@ -179,7 +179,7 @@ fn sensitive_path_warning(path: &str) -> Option<String> {
             lower.as_str(),
             "runner.toml"
                 | "agent.toml"
-                | "webcodex.env"
+                | "webpi.env"
                 | "secret.pem"
                 | "id_rsa"
                 | "project-registry"

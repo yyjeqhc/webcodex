@@ -8,10 +8,10 @@
 pub(crate) const DEFAULT_PERMISSION_RECENT_LIMIT: usize = 20;
 
 /// Environment variable for the canonical authority mode.
-pub(crate) const AUTHORITY_MODE_ENV: &str = "WEBCODEX_AUTHORITY_MODE";
+pub(crate) const AUTHORITY_MODE_ENV: &str = "WEBPI_AUTHORITY_MODE";
 
 /// Legacy operator configuration; unambiguous values migrate to authority modes.
-pub(crate) const LEGACY_PERMISSION_MODE_ENV: &str = "WEBCODEX_PERMISSION_MODE";
+pub(crate) const LEGACY_PERMISSION_MODE_ENV: &str = "WEBPI_PERMISSION_MODE";
 
 /// Canonical authority mode (soft policy; never overrides hard safety).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

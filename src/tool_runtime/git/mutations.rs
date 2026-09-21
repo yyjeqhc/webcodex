@@ -12,7 +12,7 @@ use crate::runner_protocol::ShellCommandExecutionState;
 const GIT_COMMIT_PATHS_MAX_PATHS: usize = 32;
 const GIT_COMMIT_PATH_MAX_CHARS: usize = 512;
 const GIT_COMMIT_MESSAGE_MAX_CHARS: usize = 1000;
-pub(crate) const GIT_COMMIT_RESULT_PREFIX: &str = "@@WEBCODEX_GIT_COMMIT@@";
+pub(crate) const GIT_COMMIT_RESULT_PREFIX: &str = "@@WEBPI_GIT_COMMIT@@";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitCommitMarker {

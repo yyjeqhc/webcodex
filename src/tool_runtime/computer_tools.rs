@@ -38,6 +38,17 @@ const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
 const MAX_ACCESSIBILITY_CHILD_COUNT: u64 = 1_000_000;
 const MAX_IMAGE_DIMENSION: u64 = 4096;
 
+#[derive(Debug)]
+enum ComputerSnapshotArtifactSource {
+    Window {
+        surface_id: String,
+        region: Option<ComputerSnapshotRegion>,
+    },
+    Display {
+        display_id: String,
+    },
+}
+
 fn effective_snapshot_dimension_bound(value: Option<u32>) -> Result<Option<u32>, ()> {
     match value {
         None => Ok(None),
@@ -816,7 +827,33 @@ impl ToolRuntime {
                 ..
             } => {
                 self.save_computer_snapshot_artifact(
-                    project, path, client_id, surface_id, region, max_width, max_height, auth,
+                    project,
+                    path,
+                    client_id,
+                    ComputerSnapshotArtifactSource::Window { surface_id, region },
+                    max_width,
+                    max_height,
+                    auth,
+                )
+                .await
+            }
+            ToolCall::ComputerSaveDisplaySnapshot {
+                project,
+                path,
+                client_id,
+                display_id,
+                max_width,
+                max_height,
+                ..
+            } => {
+                self.save_computer_snapshot_artifact(
+                    project,
+                    path,
+                    client_id,
+                    ComputerSnapshotArtifactSource::Display { display_id },
+                    max_width,
+                    max_height,
+                    auth,
                 )
                 .await
             }
@@ -873,14 +910,12 @@ impl ToolRuntime {
             .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn save_computer_snapshot_artifact(
         &self,
         project: String,
         path: String,
         client_id: String,
-        surface_id: String,
-        region: Option<ComputerSnapshotRegion>,
+        source: ComputerSnapshotArtifactSource,
         max_width: Option<u32>,
         max_height: Option<u32>,
         auth: Option<&AuthContext>,
@@ -908,9 +943,48 @@ impl ToolRuntime {
             }
         };
 
-        let capture = self
-            .capture_computer_snapshot(&client_id, &surface_id, region, max_width, max_height, auth)
-            .await;
+        let capture = match &source {
+            ComputerSnapshotArtifactSource::Window { surface_id, region } => {
+                self.capture_computer_snapshot(
+                    &client_id,
+                    surface_id,
+                    region.clone(),
+                    max_width,
+                    max_height,
+                    auth,
+                )
+                .await
+            }
+            ComputerSnapshotArtifactSource::Display { display_id } => {
+                if !valid_display_id(display_id) {
+                    return computer_error("invalid_display", "display_id is invalid");
+                }
+                let (max_width, max_height) =
+                    match effective_snapshot_dimension_bounds(max_width, max_height) {
+                        Ok(bounds) => bounds,
+                        Err(()) => {
+                            return computer_error(
+                                "invalid_request",
+                                "snapshot output dimension bound is invalid",
+                            )
+                        }
+                    };
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_snapshot_display",
+                    json!({
+                        "display_id": display_id,
+                        "max_width": max_width,
+                        "max_height": max_height,
+                    }),
+                    auth,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            }
+        };
         if !capture.success {
             return capture;
         }
@@ -954,21 +1028,25 @@ impl ToolRuntime {
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| sha256_hex(&decoded));
-        let Some(surface) = snapshot.get("surface") else {
-            return computer_error(
-                "invalid_runner_response",
-                "validated snapshot surface is missing",
-            );
-        };
         let source_width = snapshot
             .get("source_width")
             .and_then(Value::as_u64)
-            .or_else(|| surface.get("width").and_then(Value::as_u64))
+            .or_else(|| {
+                snapshot
+                    .get("surface")
+                    .and_then(|surface| surface.get("width"))
+                    .and_then(Value::as_u64)
+            })
             .unwrap_or_default();
         let source_height = snapshot
             .get("source_height")
             .and_then(Value::as_u64)
-            .or_else(|| surface.get("height").and_then(Value::as_u64))
+            .or_else(|| {
+                snapshot
+                    .get("surface")
+                    .and_then(|surface| surface.get("height"))
+                    .and_then(Value::as_u64)
+            })
             .unwrap_or_default();
         let width = snapshot
             .get("width")
@@ -978,9 +1056,14 @@ impl ToolRuntime {
             .get("height")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        let captured_region = snapshot.get("region").cloned().unwrap_or_else(
-            || json!({"x": 0, "y": 0, "width": source_width, "height": source_height}),
-        );
+        let captured_region = match &source {
+            ComputerSnapshotArtifactSource::Window { .. } => {
+                Some(snapshot.get("region").cloned().unwrap_or_else(
+                    || json!({"x": 0, "y": 0, "width": source_width, "height": source_height}),
+                ))
+            }
+            ComputerSnapshotArtifactSource::Display { .. } => None,
+        };
 
         let payload = json!({
             "path": path.clone(),
@@ -1170,21 +1253,37 @@ impl ToolRuntime {
             );
         }
 
-        ToolResult::ok(json!({
-            "project": project_id,
-            "path": path,
-            "client_id": client_id,
-            "surface_id": surface_id,
-            "source_width": source_width,
-            "source_height": source_height,
-            "region": captured_region,
-            "width": width,
-            "height": height,
-            "mime_type": mime_type,
-            "file_bytes": file_bytes,
-            "sha256": sha256,
-            "saved": true,
-        }))
+        match source {
+            ComputerSnapshotArtifactSource::Window { surface_id, .. } => ToolResult::ok(json!({
+                "project": project_id,
+                "path": path,
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "source_width": source_width,
+                "source_height": source_height,
+                "region": captured_region.expect("window snapshot region"),
+                "width": width,
+                "height": height,
+                "mime_type": mime_type,
+                "file_bytes": file_bytes,
+                "sha256": sha256,
+                "saved": true,
+            })),
+            ComputerSnapshotArtifactSource::Display { display_id } => ToolResult::ok(json!({
+                "project": project_id,
+                "path": path,
+                "client_id": client_id,
+                "display_id": display_id,
+                "source_width": source_width,
+                "source_height": source_height,
+                "width": width,
+                "height": height,
+                "mime_type": mime_type,
+                "file_bytes": file_bytes,
+                "sha256": sha256,
+                "saved": true,
+            })),
+        }
     }
 
     async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {

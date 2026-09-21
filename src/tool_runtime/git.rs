@@ -25,9 +25,9 @@ pub(crate) use self::show_changes::{
     non_git_show_changes_payload, parse_show_changes_output,
     parse_show_changes_output_with_observation, parse_show_changes_status_observation,
     parse_status_header, show_changes_command, show_changes_untracked_paths,
-    split_show_changes_stdout, ShowChangesStdout, SHOW_CHANGES_DIFF_BYTES,
-    SHOW_CHANGES_DIFF_STAT_BYTES, SHOW_CHANGES_HEAD_BYTES, SHOW_CHANGES_MAX_STATUS_FILES,
-    SHOW_CHANGES_OUTPUT_BUDGET_BYTES, SHOW_CHANGES_SENTINEL,
+    split_show_changes_stdout, ShowChangesStdout, SHOW_CHANGES_DIFF_STAT_BYTES,
+    SHOW_CHANGES_HEAD_BYTES, SHOW_CHANGES_MAX_STATUS_FILES, SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
+    SHOW_CHANGES_SENTINEL,
 };
 
 pub(crate) fn sparsify_complete_git_review_success(tool_name: &str, result: &mut ToolResult) {

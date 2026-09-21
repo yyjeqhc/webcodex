@@ -4554,7 +4554,7 @@ fn validate_edit_file_path_rejects_unsafe_and_sensitive_paths() {
         "agent.toml",
         "config/agent.toml",
         "agent.toml.bak",
-        "webcodex.env",
+        "webpi.env",
         ".env",
         ".env.local",
         "secrets/projects.d/x",

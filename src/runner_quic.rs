@@ -133,7 +133,7 @@ pub(crate) async fn run_runner_quic_listener(
     let listen: std::net::SocketAddr = match quic_cfg.listen.parse() {
         Ok(listen) => listen,
         Err(e) => {
-            let error = format!("invalid WEBCODEX_QUIC_LISTEN '{}': {}", quic_cfg.listen, e);
+            let error = format!("invalid WEBPI_QUIC_LISTEN '{}': {}", quic_cfg.listen, e);
             if let Some(status) = quic_status.as_ref() {
                 status
                     .lock()

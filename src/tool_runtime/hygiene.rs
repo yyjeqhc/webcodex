@@ -20,7 +20,7 @@ const MAX_MAX_FINDINGS: usize = 200;
 const LARGE_UNTRACKED_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 const HYGIENE_SCRIPT_TIMEOUT_SECS: u64 = 30;
 const HYGIENE_MAX_SCRIPT_ENTRIES: usize = 500;
-const HYGIENE_DIAGNOSTIC_SENTINEL: &str = "@@WEBCODEX_HYGIENE_STATUS@@";
+const HYGIENE_DIAGNOSTIC_SENTINEL: &str = "@@WEBPI_HYGIENE_STATUS@@";
 const HYGIENE_MAX_SIZE_PROBE_COMMAND_LEN: usize = 7_000;
 
 /// Kind of hygiene risk identified for a path or the worktree.

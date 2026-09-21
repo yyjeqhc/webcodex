@@ -514,7 +514,7 @@ async fn http_runtime_status_correct_bearer_returns_summary() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], true);
     let out = &body["output"];
-    assert_eq!(out["service"], "webcodex");
+    assert_eq!(out["service"], "webpi");
     assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(out["projects"]["mode"], "agent_registered");
     assert!(out["projects"].get("configured").is_none());
@@ -639,12 +639,12 @@ fn full_trace_dir_with_payload(
 async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() {
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
     env.set(
-        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        "WEBPI_TOOL_REQUEST_TRACE_DIR",
         trace_root.path().to_string_lossy().as_ref(),
     );
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+    env.set("WEBPI_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
 
     let (_tmp, service) = phase2_service();
     let request = json!({
@@ -695,12 +695,12 @@ async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() 
 async fn http_tools_call_full_trace_captures_pre_dispatch_error_response() {
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
     env.set(
-        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        "WEBPI_TOOL_REQUEST_TRACE_DIR",
         trace_root.path().to_string_lossy().as_ref(),
     );
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+    env.set("WEBPI_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
 
     let (_tmp, service) = phase2_service();
     let request = json!({"params": {"project": "demo"}});
@@ -2232,6 +2232,64 @@ async fn gpt_action_direct_and_gateway_admission_fail_closed() {
 }
 
 #[tokio::test]
+async fn gpt_action_list_projects_is_gateway_only_and_returns_canonical_list() {
+    let (_tmp, service) = phase2_service();
+    let (direct_status, direct_body, _) =
+        oauth_action_call(&service, "secret", "list_projects", json!({})).await;
+    assert_eq!(direct_status, StatusCode::BAD_REQUEST, "{direct_body}");
+    assert!(direct_body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("long-tail"));
+
+    let (gateway_status, gateway_body, _) = oauth_action_call(
+        &service,
+        "secret",
+        "call_runtime_tool",
+        json!({"tool":"list_projects","arguments":{}}),
+    )
+    .await;
+    assert_eq!(gateway_status, StatusCode::OK, "{gateway_body}");
+    assert_eq!(gateway_body["success"], true, "{gateway_body}");
+    assert!(
+        gateway_body["output"]["projects"].is_array(),
+        "{gateway_body}"
+    );
+    assert!(gateway_body["output"]["count"].is_u64(), "{gateway_body}");
+    assert!(
+        gateway_body["output"]["matched_count"].is_u64(),
+        "{gateway_body}"
+    );
+}
+
+#[tokio::test]
+async fn gpt_action_gateway_accepts_importer_safe_stringified_arguments() {
+    let (_tmp, service) = phase2_service();
+    let (status, body, _) = oauth_action_call(
+        &service,
+        "secret",
+        "call_runtime_tool",
+        json!({"tool":"list_projects","arguments":"{}"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true, "{body}");
+    assert!(body["output"]["projects"].is_array(), "{body}");
+
+    for invalid in ["[]", "not-json"] {
+        let (status, body, _) = oauth_action_call(
+            &service,
+            "secret",
+            "call_runtime_tool",
+            json!({"tool":"list_projects","arguments":invalid}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}: {body}");
+        assert!(body["error"].as_str().unwrap_or("").contains("arguments"));
+    }
+}
+
+#[tokio::test]
 async fn gpt_action_suggested_call_projection_preserves_canonical_generic_result() {
     let (_tmp, service) = phase2_service();
     let root = tempfile::tempdir().unwrap();
@@ -2285,6 +2343,51 @@ async fn gpt_action_suggested_call_projection_preserves_canonical_generic_result
     .await;
     assert_eq!(status, StatusCode::OK, "{recovery}");
     assert_eq!(recovery["success"], true, "{recovery}");
+}
+
+#[tokio::test]
+async fn public_invalid_auth_rate_limit_never_blocks_a_valid_action_token() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBPI_PUBLIC_ACTIONS_ONLY", "true");
+    env.set("WEBPI_PUBLIC_INVALID_AUTH_RATE_LIMIT_ENABLED", "true");
+    env.set("WEBPI_PUBLIC_INVALID_AUTH_RATE_LIMIT_MAX", "20");
+    env.set("WEBPI_PUBLIC_INVALID_AUTH_RATE_LIMIT_WINDOW_SECS", "60");
+    env.set("WEBPI_PUBLIC_INVALID_AUTH_RATE_LIMIT_PENALTY_SECS", "60");
+
+    let (_tmp, service, token) = phase2_oauth_service("runtime:read");
+    let url = "http://localhost/api/actions/runtime_status";
+    for attempt in 1..=20 {
+        let response = TestClient::post(url)
+            .add_header("cf-connecting-ip", "203.0.113.77", true)
+            .bearer_auth("webpi-invalid-rate-test")
+            .json(&json!({"compact": true}))
+            .send(&service)
+            .await;
+        assert_eq!(
+            effective_status(&response),
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt}"
+        );
+    }
+
+    let limited = TestClient::post(url)
+        .add_header("cf-connecting-ip", "203.0.113.77", true)
+        .bearer_auth("webpi-invalid-rate-test")
+        .json(&json!({"compact": true}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&limited), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key("retry-after"));
+
+    let mut valid = TestClient::post(url)
+        .add_header("cf-connecting-ip", "203.0.113.77", true)
+        .bearer_auth(&token)
+        .json(&json!({"compact": true}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&valid), StatusCode::OK);
+    let body = valid.take_json::<Value>().await.unwrap();
+    assert_eq!(body["success"], true, "{body}");
 }
 
 #[tokio::test]

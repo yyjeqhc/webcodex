@@ -10,7 +10,7 @@ async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
     let mut registration = runner_registration(
         client_id,
         "inst",
-        vec![project_summary("webcodex", "/tmp/webcodex")],
+        vec![project_summary("webpi", "/tmp/webcodex")],
     );
     registration.capabilities =
         crate::test_support::current_runner_capabilities(RunnerCapabilities {

@@ -191,7 +191,7 @@ fn authority_profile_payload_projects_canonical_fields() {
         Some("restricted"),
     ));
     assert_eq!(restricted["mode"], "restricted");
-    assert_eq!(restricted["source"], "env:WEBCODEX_AUTHORITY_MODE");
+    assert_eq!(restricted["source"], "env:WEBPI_AUTHORITY_MODE");
     assert_eq!(restricted["project_write"], false);
     assert_eq!(restricted["shell"], false);
     assert_eq!(restricted["release"], "human_approval");

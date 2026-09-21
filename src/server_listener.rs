@@ -129,7 +129,7 @@ fn activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> 
 
 fn configured_addr_matches(configured: &str, actual: SocketAddr) -> Result<bool, String> {
     let configured_addrs = configured.to_socket_addrs().map_err(|error| {
-        format!("invalid WEBCODEX_ADDR {configured:?}: cannot resolve configured listener address: {error}")
+        format!("invalid WEBPI_ADDR {configured:?}: cannot resolve configured listener address: {error}")
     })?;
     Ok(configured_addrs
         .into_iter()
@@ -245,7 +245,7 @@ fn take_inherited_listener(
     })?;
     if !configured_addr_matches(configured_addr, actual)? {
         return Err(format!(
-            "inherited systemd HTTP listener address {actual} does not match configured WEBCODEX_ADDR {configured_addr:?}"
+            "inherited systemd HTTP listener address {actual} does not match configured WEBPI_ADDR {configured_addr:?}"
         ));
     }
     Ok(listener)
@@ -501,7 +501,7 @@ mod tests {
         let raw_fd = move_to_isolated_test_fd(listener.into_raw_fd());
         let error = take_inherited_listener(raw_fd, "127.0.0.1:1").unwrap_err();
         assert!(
-            error.contains("does not match configured WEBCODEX_ADDR"),
+            error.contains("does not match configured WEBPI_ADDR"),
             "{error}"
         );
         assert_eq!(unsafe { libc::fcntl(raw_fd, libc::F_GETFD) }, -1);

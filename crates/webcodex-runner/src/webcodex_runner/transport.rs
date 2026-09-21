@@ -510,7 +510,34 @@ fn install_shutdown_listener(
         .map_err(|_| "failed to start process shutdown signal listener".to_string())
 }
 
+#[cfg(windows)]
+const PARENT_PIPE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+#[cfg(windows)]
 fn install_parent_liveness_listener(runtime: RunnerRuntimeState) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_PIPE};
+
+    let stdin = std::io::stdin();
+    let handle = stdin.as_raw_handle() as usize;
+    if unsafe { GetFileType(handle as _) } == FILE_TYPE_PIPE {
+        let listener = spawn_windows_pipe_parent_liveness_listener(handle, runtime)?;
+        // The process owns stdin for its whole lifetime. The listener stops on
+        // pipe EOF/error or an already-requested Runner shutdown, so detaching
+        // the JoinHandle does not transfer ownership of any external resource.
+        drop(listener);
+        return Ok(());
+    }
+
+    install_blocking_parent_liveness_listener(runtime)
+}
+
+#[cfg(not(windows))]
+fn install_parent_liveness_listener(runtime: RunnerRuntimeState) -> Result<(), String> {
+    install_blocking_parent_liveness_listener(runtime)
+}
+
+fn install_blocking_parent_liveness_listener(runtime: RunnerRuntimeState) -> Result<(), String> {
     use std::io::Read;
 
     let listener = std::thread::Builder::new()
@@ -529,12 +556,74 @@ fn install_parent_liveness_listener(runtime: RunnerRuntimeState) -> Result<(), S
             }
         })
         .map_err(|_| "failed to start parent-liveness listener".to_string())?;
-    // This reader is intentionally detached. A blocking stdin read cannot be
-    // cancelled portably; joining it during an ordinary signal-driven shutdown
-    // would hang until the parent closed the lease. Process exit reclaims the
-    // detached thread, while EOF still triggers exact-generation shutdown.
+    // Non-pipe stdin may require a genuinely blocking read. Keep the legacy
+    // detached behavior for consoles and Unix streams; process exit reclaims
+    // the listener while EOF still triggers exact-generation shutdown.
     drop(listener);
     Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_windows_pipe_parent_liveness_listener(
+    pipe_handle: usize,
+    runtime: RunnerRuntimeState,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+
+    std::thread::Builder::new()
+        .name("webcodex-runner-parent-lease".to_string())
+        .spawn(move || {
+            let pipe = pipe_handle as windows_sys::Win32::Foundation::HANDLE;
+            let mut discard = [0_u8; 64];
+            loop {
+                if runtime.shutdown_requested() {
+                    return;
+                }
+
+                let mut available = 0_u32;
+                let peeked = unsafe {
+                    PeekNamedPipe(
+                        pipe,
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                        &mut available,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if peeked == 0 {
+                    // Preserve the historical lease contract: any stdin read
+                    // failure is equivalent to parent EOF and requests Runner
+                    // shutdown. Broken anonymous pipes land here without a
+                    // blocking ReadFile on the Windows startup path.
+                    runtime.request_shutdown_signal();
+                    return;
+                }
+
+                if available == 0 {
+                    std::thread::sleep(PARENT_PIPE_POLL_INTERVAL);
+                    continue;
+                }
+
+                let to_read = available.min(discard.len() as u32);
+                let mut bytes_read = 0_u32;
+                let read = unsafe {
+                    ReadFile(
+                        pipe,
+                        discard.as_mut_ptr(),
+                        to_read,
+                        &mut bytes_read,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if read == 0 || bytes_read == 0 {
+                    runtime.request_shutdown_signal();
+                    return;
+                }
+            }
+        })
+        .map_err(|_| "failed to start parent-liveness listener".to_string())
 }
 
 fn send_polling_offline_best_effort(client: &Client, cfg: &RunnerConfig, runner_instance_id: &str) {

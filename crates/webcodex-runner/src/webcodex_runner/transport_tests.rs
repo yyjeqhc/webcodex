@@ -343,6 +343,149 @@ fn test_runtime(cfg: &RunnerConfig) -> RunnerRuntimeState {
     RunnerRuntimeState::new(cfg, PathBuf::new())
 }
 
+#[cfg(windows)]
+struct WindowsTestHandle(usize);
+
+#[cfg(windows)]
+impl WindowsTestHandle {
+    fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0 as windows_sys::Win32::Foundation::HANDLE
+    }
+
+    fn close(&mut self) {
+        if self.0 != 0 {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.raw());
+            }
+            self.0 = 0;
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsTestHandle {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+#[cfg(windows)]
+fn windows_test_pipe() -> (WindowsTestHandle, WindowsTestHandle) {
+    use windows_sys::Win32::System::Pipes::CreatePipe;
+
+    let mut read = std::ptr::null_mut();
+    let mut write = std::ptr::null_mut();
+    let created = unsafe { CreatePipe(&mut read, &mut write, std::ptr::null(), 0) };
+    assert_ne!(created, 0, "CreatePipe failed");
+    (
+        WindowsTestHandle(read as usize),
+        WindowsTestHandle(write as usize),
+    )
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_parent_pipe_lease_allows_registration_until_writer_closes() {
+    use windows_sys::Win32::Storage::FileSystem::WriteFile;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (registered_tx, registered_rx) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let _register = read_register(&mut ws).await;
+        send_registered_ack(&mut ws).await;
+        let _ = registered_tx.send(());
+
+        loop {
+            let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("Runner did not close after parent stdin EOF")
+                .expect("WebSocket closed before Runner goodbye")
+                .expect("Runner shutdown frame is valid");
+            if !msg.is_text() {
+                continue;
+            }
+            let envelope = RunnerEnvelope::from_slice(msg.into_text().unwrap().as_bytes()).unwrap();
+            if matches!(envelope, RunnerEnvelope::Goodbye { .. }) {
+                break;
+            }
+        }
+    });
+
+    let cfg = test_runner_config(format!("http://{}", addr));
+    let runtime = test_runtime(&cfg);
+    let (read_pipe, mut write_pipe) = windows_test_pipe();
+    let parent_listener =
+        spawn_windows_pipe_parent_liveness_listener(read_pipe.0, runtime.clone()).unwrap();
+
+    // Preserve the historical contract that stdin bytes are ignored. More
+    // importantly, prove the pipe watcher does not mistake an open idle lease
+    // for EOF while WebSocket registration and project inventory run.
+    let payload = b"ignored-parent-lease-data";
+    let mut bytes_written = 0_u32;
+    let wrote = unsafe {
+        WriteFile(
+            write_pipe.raw(),
+            payload.as_ptr(),
+            payload.len() as u32,
+            &mut bytes_written,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(wrote, 0, "WriteFile failed");
+    assert_eq!(bytes_written as usize, payload.len());
+    tokio::time::sleep(PARENT_PIPE_POLL_INTERVAL * 3).await;
+    assert!(
+        !runtime.shutdown_requested(),
+        "open parent stdin pipe requested shutdown before registration"
+    );
+
+    let session_cfg = cfg.clone();
+    let session_runtime = runtime.clone();
+    let session = tokio::spawn(async move {
+        websocket_session(
+            &session_cfg,
+            vec![test_project("parent-pipe-registration")],
+            "inst-parent-pipe",
+            &session_runtime,
+        )
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), registered_rx)
+        .await
+        .expect("Runner registration was blocked by the open parent stdin pipe")
+        .expect("registration fixture ended before reporting readiness");
+    assert!(
+        !runtime.shutdown_requested(),
+        "open parent stdin pipe requested shutdown after registration"
+    );
+    assert!(
+        !session.is_finished(),
+        "registered Runner session ended while the parent stdin pipe was still open"
+    );
+
+    write_pipe.close();
+
+    let exit = tokio::time::timeout(Duration::from_secs(5), session)
+        .await
+        .expect("Runner did not stop after parent stdin EOF")
+        .expect("Runner session task panicked")
+        .expect("Runner session returned an error");
+    assert_eq!(exit, RunnerSessionExit::Shutdown);
+    server.await.unwrap();
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        tokio::task::spawn_blocking(move || parent_listener.join().unwrap()),
+    )
+    .await
+    .expect("parent-liveness pipe watcher did not exit after EOF")
+    .unwrap();
+}
+
 #[cfg(feature = "runner-real-process-tests")]
 fn wait_for_path(path: &Path, deadline: Instant, context: &str) {
     while !path.exists() {

@@ -444,7 +444,7 @@ def doctor_status() -> dict[str, object]:
     alignment = focus_dict.get("source_alignment")
     alignment_dict = alignment if isinstance(alignment, dict) else {}
     alignment_status = alignment_dict.get("status")
-    if runtime_output and alignment_status not in (None, "current"):
+    if runtime_output and alignment_status not in (None, "current", "aligned"):
         warnings.append("source_alignment")
 
     pi_bridge_output: dict[str, object] = {}

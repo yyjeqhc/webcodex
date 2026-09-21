@@ -7,7 +7,7 @@ from scripts.webpi import standalone
 
 
 class WebPiDoctorTests(unittest.TestCase):
-    def runtime_payload(self, *, service="webpi", runner_status="online", connected=True, alignment="current"):
+    def runtime_payload(self, *, service="webpi", runner_status="online", connected=True, alignment="aligned"):
         return {
             "success": True,
             "output": {
@@ -25,7 +25,7 @@ class WebPiDoctorTests(unittest.TestCase):
                     "job_concurrency": {"limit": 4, "running": 0, "queued": 0},
                     "source_alignment": {
                         "status": alignment,
-                        "source_matches_server": alignment == "current",
+                        "source_matches_server": alignment in ("current", "aligned"),
                     },
                 },
                 "jobs": {"active_count": 0, "running_count": 0, "queued_count": 0},

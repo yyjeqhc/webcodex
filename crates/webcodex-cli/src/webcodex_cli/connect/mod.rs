@@ -58,7 +58,7 @@ pub(crate) fn write_connect_result(
         if let Err(error) = atomic_write(&marker, b"disclosed = true\n", false) {
             let _ = writeln!(
                 stderr,
-                "Warning: the connection is healthy, but WebCodex could not record that a generated credential was displayed ({error}). It may be displayed again on the next connect."
+                "Warning: the connection is healthy, but WebPi could not record that a generated credential was displayed ({error}). It may be displayed again on the next connect."
             );
             let _ = stderr.flush();
         }
@@ -155,9 +155,10 @@ async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, S
     let runner_bin = opts
         .runner_bin
         .clone()
-        .or_else(|| discover_internal_binary("webcodex-runner"))
+        .or_else(|| discover_internal_binary("webpi-runner"))
         .ok_or_else(|| {
-            "webcodex-runner was not found beside webcodex or in an absolute PATH entry".to_string()
+            "webpi-runner was not found beside this WebPi CLI; PATH fallback is disabled"
+                .to_string()
         })?;
 
     // Fail before replacing a healthy profile when the destination cannot

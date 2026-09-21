@@ -27,6 +27,8 @@ license = "Apache-2.0"
 edition = "2021"
 
 [package]
+# Crate identity stays compatible; product binaries are WebPi.
+autobins = false
 name = "webcodex"
 version.workspace = true
 license.workspace = true
@@ -47,7 +49,7 @@ workspace-checkpoints = [
 ]
 
 [[bin]]
-name = "webcodex-server"
+name = "webpi-server"
 path = "src/bin/webcodex-server.rs"
 
 [dependencies]

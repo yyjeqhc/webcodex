@@ -18,7 +18,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-server-image-${{ github.event.release.tag_name || inputs.tag }}
+  # Serialize all Server-image publications for this repository so an older,
+  # slower release can never race a newer release while mutating :latest.
+  group: release-webpi-server-image-${{ github.repository }}
   cancel-in-progress: false
 
 env:
@@ -26,6 +28,9 @@ env:
 
 jobs:
   resolve:
+    # Public image publication stays fail-closed until the full WebPi release
+    # contract is independently validated end-to-end.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -38,7 +43,6 @@ jobs:
       created_at: ${{ steps.release.outputs.created_at }}
       image: ${{ steps.release.outputs.image }}
       prerelease: ${{ steps.release.outputs.prerelease }}
-      publish_latest: ${{ steps.release.outputs.publish_latest }}
     steps:
       - name: Require reviewed workflow source
         if: github.event_name == 'workflow_dispatch'
@@ -128,16 +132,8 @@ jobs:
           print(str(bool(json.load(open(sys.argv[1], encoding="utf-8")).get("prerelease"))).lower())
           PY
           )"
-          publish_latest=false
-          if [ "$prerelease" = false ]; then
-            latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
-            if [ "$latest_tag" = "$tag" ]; then
-              publish_latest=true
-            fi
-          fi
-
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          image="$REGISTRY/$owner/webcodex-server"
+          image="$REGISTRY/$owner/webpi-server"
           {
             echo "tag=$tag"
             echo "version=$version"
@@ -148,7 +144,6 @@ jobs:
             echo "created_at=$created_at"
             echo "image=$image"
             echo "prerelease=$prerelease"
-            echo "publish_latest=$publish_latest"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -196,11 +191,11 @@ jobs:
           push: true
           outputs: type=image,name=${{ needs.resolve.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            WEBCODEX_GIT_COMMIT=${{ needs.resolve.outputs.source_short }}
-            WEBCODEX_GIT_DIRTY=false
-            WEBCODEX_BUILT_AT=${{ needs.resolve.outputs.built_at }}
+            WEBPI_GIT_COMMIT=${{ needs.resolve.outputs.source_short }}
+            WEBPI_GIT_DIRTY=false
+            WEBPI_BUILT_AT=${{ needs.resolve.outputs.built_at }}
           labels: |
-            org.opencontainers.image.title=WebCodex Server
+            org.opencontainers.image.title=WebPi Server
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.resolve.outputs.source_sha }}
             org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
@@ -230,24 +225,24 @@ jobs:
 
           actual_arch="$(docker image inspect --format '{{.Architecture}}' "$ref")"
           test "$actual_arch" = "$EXPECTED_ARCH"
-          test "$(docker image inspect --format '{{.Config.User}}' "$ref")" = "webcodex:webcodex"
+          test "$(docker image inspect --format '{{.Config.User}}' "$ref")" = "webpi:webpi"
           docker run --rm --entrypoint sh "$ref" -ec '
             test "$(id -u)" = 10001
             test "$(id -g)" = 10001
-            test ! -e /usr/local/bin/webcodex-runner
+            test ! -e /usr/local/bin/webpi-runner
           '
 
-          expected_server="webcodex-server $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
-          expected_cli="webcodex $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
+          expected_server="webpi-server $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
+          expected_cli="webpi $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
           test "$(docker run --rm "$ref" --version)" = "$expected_server"
-          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$ref" --version)" = "$expected_cli"
+          test "$(docker run --rm --entrypoint /usr/local/bin/webpi "$ref" --version)" = "$expected_cli"
 
-          name="webcodex-image-smoke-${GITHUB_RUN_ID}-${{ matrix.slug }}"
+          name="webpi-image-smoke-${GITHUB_RUN_ID}-${{ matrix.slug }}"
           cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           docker run -d --name "$name" \
-            -e WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
-            -e WEBCODEX_PUBLIC_URL=https://webcodex.invalid \
+            -e WEBPI_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e WEBPI_PUBLIC_URL=https://webpi.invalid \
             "$ref" >/dev/null
           for _ in $(seq 1 40); do
             health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name")"
@@ -324,13 +319,12 @@ jobs:
           IMAGE_VERSION: ${{ needs.resolve.outputs.image_version }}
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           CREATED_AT: ${{ needs.resolve.outputs.created_at }}
-          PUBLISH_LATEST: ${{ needs.resolve.outputs.publish_latest }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           version_ref="$IMAGE:v$IMAGE_VERSION"
           numeric_ref="$IMAGE:$IMAGE_VERSION"
-          metadata_name=webcodex-server-image.json
+          metadata_name=webpi-server-image.json
           metadata="$RUNNER_TEMP/$metadata_name"
           manifest_json="$RUNNER_TEMP/manifest.json"
           release_record_dir="$RUNNER_TEMP/existing-release-record"
@@ -423,9 +417,9 @@ jobs:
           config = image.get("config")
           if not isinstance(config, dict):
               raise SystemExit(f"child image config is missing for {platform}")
-          if config.get("User") != "webcodex:webcodex":
-              raise SystemExit(f"child image user is not the non-root WebCodex user for {platform}")
-          if config.get("Entrypoint") != ["/usr/local/bin/webcodex-server"]:
+          if config.get("User") != "webpi:webpi":
+              raise SystemExit(f"child image user is not the non-root WebPi user for {platform}")
+          if config.get("Entrypoint") != ["/usr/local/bin/webpi-server"]:
               raise SystemExit(f"child image entrypoint is unexpected for {platform}")
           labels = config.get("Labels")
           expected = {
@@ -455,7 +449,7 @@ jobs:
           print(next((str(asset["id"]) for asset in release.get("assets", []) if asset.get("name") == name), ""))
           PY
           )"
-          bootstrap_name=webcodex-server-bootstrap.sh
+          bootstrap_name=webpi-server-bootstrap.sh
           bootstrap_asset_id="$(python3 - "$release_json" "$bootstrap_name" <<'PY'
           import json
           import sys
@@ -512,7 +506,7 @@ jobs:
           value = json.load(open(metadata_path, encoding="utf-8"))
           deployment = json.load(open(deployment_path, encoding="utf-8"))
           assets = deployment.get("assets")
-          if not isinstance(assets, dict) or set(assets) != {"webcodex-server-bootstrap.sh"}:
+          if not isinstance(assets, dict) or set(assets) != {"webpi-server-bootstrap.sh"}:
               raise SystemExit("server deployment asset summary is incomplete")
           if not re.fullmatch(r"[0-9a-f]{40}", workflow_sha):
               raise SystemExit("publication workflow source SHA is invalid")
@@ -538,11 +532,16 @@ jobs:
             docker buildx imagetools create -t "$numeric_ref" "$version_ref"
           fi
 
-          # latest is intentionally mutable, but only the current latest stable
-          # GitHub Release may update it. Backfilling an older release never rolls
-          # latest backwards.
-          if [ "$PUBLISH_LATEST" = true ]; then
-            docker buildx imagetools create -t "$IMAGE:latest" "$version_ref"
+          # latest is mutable. Re-resolve GitHub's current latest stable Release
+          # immediately before the mutation while the repository-wide publication
+          # lock is held, so a slower older release cannot roll latest backwards.
+          if [ "${{ needs.resolve.outputs.prerelease }}" = false ]; then
+            current_latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ "$current_latest" = "$TAG" ]; then
+              docker buildx imagetools create -t "$IMAGE:latest" "$version_ref"
+            else
+              echo "Skipping :latest update because current latest release is $current_latest, not $TAG."
+            fi
           fi
 
           # Once metadata exists, it is the immutable durable deployment record.
@@ -580,12 +579,12 @@ jobs:
 
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           {
-            echo "### Published WebCodex Server image"
+            echo "### Published WebPi Server image"
             echo "- image: \`$version_ref\`"
             echo "- digest: \`$digest\`"
             echo "- platforms: \`linux/amd64\`, \`linux/arm64\`"
             echo "- release metadata asset: \`$metadata_name\`"
-            echo "- clone-free asset: \`webcodex-server-bootstrap.sh\` (embeds digest-pinned Compose)"
+            echo "- clone-free asset: \`webpi-server-bootstrap.sh\` (embeds digest-pinned Compose)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify-public:
@@ -606,7 +605,7 @@ jobs:
           set -euo pipefail
           tmp="$RUNNER_TEMP/server-image-public"
           mkdir -p "$tmp"
-          for name in webcodex-server-image.json webcodex-server-bootstrap.sh; do
+          for name in webpi-server-image.json webpi-server-bootstrap.sh; do
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$tmp"
           done
           readarray -t values < <(python3 - "$tmp" <<'PY'
@@ -617,9 +616,9 @@ jobs:
           import sys
 
           root = pathlib.Path(sys.argv[1])
-          value = json.loads((root / "webcodex-server-image.json").read_text(encoding="utf-8"))
+          value = json.loads((root / "webpi-server-image.json").read_text(encoding="utf-8"))
           assets = value.get("deployment_assets")
-          name = "webcodex-server-bootstrap.sh"
+          name = "webpi-server-bootstrap.sh"
           if not isinstance(assets, dict) or set(assets) != {name}:
               raise SystemExit("server deployment asset metadata is incomplete")
           data = (root / name).read_bytes()
@@ -631,9 +630,9 @@ jobs:
               raise SystemExit("server image metadata is incomplete")
           bootstrap = data.decode("utf-8")
           pinned = f"{image}@{digest}"
-          if bootstrap.count(pinned) != 1 or re.search(r"webcodex-server:latest", bootstrap):
+          if bootstrap.count(pinned) != 1 or re.search(r"webpi-server:latest", bootstrap):
               raise SystemExit("clone-free bootstrap is not pinned to the immutable image digest")
-          if "compose_target=webcodex-server-compose.yaml" not in bootstrap:
+          if "compose_target=webpi-server-compose.yaml" not in bootstrap:
               raise SystemExit("clone-free bootstrap does not materialize the canonical compose filename")
           print(image)
           print(digest)

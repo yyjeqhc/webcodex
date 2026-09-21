@@ -1,8 +1,10 @@
-# AGENTS.md — WebCodex Repository Guide
+# AGENTS.md — WebPi Repository Guide
 
 These rules apply to ordinary repository work. Read linked domain guidance only when relevant; a deeper `AGENTS.md` governs its directory.
 
-WebCodex is actively developed. Requested features, fixes, and reliability improvements are welcome; preserve credential, process-tree, transport, durability, and boundedness contracts.
+WebPi is an independent WebCodex-derived runtime. Requested features, fixes, and reliability improvements are welcome; preserve credential, process-tree, transport, durability, and boundedness contracts.
+
+For this fork, follow `docs/WEBPI_IDENTITY.md`: native programs and configuration use `webpi*` / `WEBPI_*`; internal Cargo names, wire protocols and existing credential formats remain compatible. Upstream publishing/download/bootstrap and Desktop packaging entry points are disabled references, not WebPi installation instructions. Never implicitly import another WebCodex installation's state or credentials.
 
 ## 1. Verify and preserve
 

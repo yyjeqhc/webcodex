@@ -1,4 +1,12 @@
-# WebCodex
+# WebPi
+
+这是独立 WebPi 派生项目，由网页 GPT 承担主推理，复用受保护的编码运行时和 Pi 原生扩展生态。当前操作入口见 [WebPi](docs/WEBPI.md) 与 [命名空间、配置迁移和升级指南](docs/WEBPI_IDENTITY.md)。
+
+新程序为 `webpi`、`webpi-server`、`webpi-runner`；Windows 独立安装使用 `webpi.cmd`。旧 WebPi 配置必须显式迁移后启动。上游 npm 下载器、Desktop 打包和发布自动化已禁用，不是本项目的安装方式。
+
+## 保留的上游文档：仅供历史参考
+
+下面保留 WebCodex 原始说明与出处。其安装、发布和配置建议不代表当前 WebPi，不要执行这些旧命令来安装本派生版本。
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 

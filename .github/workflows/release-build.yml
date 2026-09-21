@@ -30,6 +30,9 @@ env:
 
 jobs:
   prepare:
+    # WebPi Desktop/public release packaging remains intentionally disabled until
+    # the retained upstream Desktop is independently productized and validated.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -128,9 +131,9 @@ jobs:
 
           short_source="${source_sha:0:12}"
           if [ "$build_kind" = release ]; then
-            archive_stem="webcodex-v$version"
+            archive_stem="webpi-v$version"
           else
-            archive_stem="webcodex-$tag-$short_source-v$version"
+            archive_stem="webpi-$tag-$short_source-v$version"
           fi
 
           # An annotated tag has a stable tagger timestamp. Reusing it makes a
@@ -179,7 +182,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBPI_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
@@ -221,7 +224,7 @@ jobs:
             -e RUSTUP_HOME=/rustup \
             -e VERSION \
             -e SOURCE_SHA \
-            -e WEBCODEX_BUILT_AT \
+            -e WEBPI_BUILT_AT \
             -e WEBCODEX_RELEASE_VERSION \
             -e BUILD_KIND \
             -e ARCHIVE_STEM \
@@ -261,10 +264,10 @@ jobs:
               cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
 
               short_commit="$(git rev-parse --short=12 HEAD)"
-              for name in webcodex webcodex-server webcodex-runner; do
+              for name in webpi webpi-server webpi-runner; do
                 binary="target/release/$name"
                 output="$($binary --version)"
-                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBPI_BUILT_AT)"
                 if [ "$output" != "$expected" ]; then
                   echo "Unexpected $name release identity: $output" >&2
                   echo "Expected: $expected" >&2
@@ -280,7 +283,7 @@ jobs:
               report="dist/${WEBCODEX_RELEASE_PLATFORM}-elf.txt"
               : > "$report"
               allowed_needed="libc.so.6 libm.so.6 libgcc_s.so.1 libpthread.so.0 libdl.so.2 librt.so.1 libresolv.so.2 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
-              for name in webcodex webcodex-server webcodex-runner; do
+              for name in webpi webpi-server webpi-runner; do
                 binary="target/release/$name"
                 {
                   echo "== $name: ELF header =="
@@ -311,7 +314,7 @@ jobs:
               done
 
               scripts/package_release_artifact.sh dist
-              canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+              canonical_archive="dist/webpi-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
               archive="dist/$ARCHIVE_STEM-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
               if [ "$canonical_archive" != "$archive" ]; then
                 mv "$canonical_archive" "$archive"
@@ -353,7 +356,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBPI_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
@@ -404,10 +407,10 @@ jobs:
           rustc --version --verbose
           cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
           short_commit="$(git rev-parse --short=12 HEAD)"
-          for name in webcodex webcodex-server webcodex-runner; do
+          for name in webpi webpi-server webpi-runner; do
             binary="target/release/$name"
             output="$($binary --version)"
-            expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+            expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBPI_BUILT_AT)"
             if [ "$output" != "$expected" ]; then
               echo "Unexpected $name release identity: $output" >&2
               exit 1
@@ -421,7 +424,7 @@ jobs:
 
           mkdir -p dist
           scripts/package_release_artifact.sh dist
-          canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+          canonical_archive="dist/webpi-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
           archive="dist/$ARCHIVE_STEM-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
           if [ "$canonical_archive" != "$archive" ]; then
             mv "$canonical_archive" "$archive"
@@ -439,18 +442,18 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          stage="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-bundle"
+          stage="$RUNNER_TEMP/webpi-desktop-$WEBCODEX_RELEASE_PLATFORM-bundle"
           signing_mode=adhoc
           if [ "$BUILD_KIND" = release ]; then
-            desktop_name="webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
+            desktop_name="webpi-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           else
-            desktop_name="webcodex-desktop-$INPUT_TAG-${SOURCE_SHA:0:12}-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
+            desktop_name="webpi-desktop-$INPUT_TAG-${SOURCE_SHA:0:12}-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           fi
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir target/release \
             --version "$VERSION" \
             --source-sha "$SOURCE_SHA" \
-            --built-at "$WEBCODEX_BUILT_AT" \
+            --built-at "$WEBPI_BUILT_AT" \
             --platform "$WEBCODEX_RELEASE_PLATFORM" \
             --signing-mode "$signing_mode" \
             --output-dir "$stage"
@@ -471,7 +474,7 @@ jobs:
           set -euo pipefail
           export APPLE_SIGNING_IDENTITY="-"
 
-          export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-tauri"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/webpi-desktop-$WEBCODEX_RELEASE_PLATFORM-tauri"
           npm exec tauri -- build \
             --bundles dmg \
             --config "${{ steps.desktop_bundle.outputs.config }}" \
@@ -499,7 +502,7 @@ jobs:
             --dmg "${{ steps.desktop_dmg.outputs.path }}" \
             --version "$VERSION" \
             --source-sha "$SOURCE_SHA" \
-            --built-at "$WEBCODEX_BUILT_AT" \
+            --built-at "$WEBPI_BUILT_AT" \
             --platform "$WEBCODEX_RELEASE_PLATFORM" \
             --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
             --signing-mode "${{ steps.desktop_bundle.outputs.signing_mode }}" \
@@ -512,9 +515,9 @@ jobs:
           path: |
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
-            dist/webcodex-desktop-*.dmg
-            dist/webcodex-desktop-*.dmg.sha256
-            dist/webcodex-desktop-*.dmg.evidence.json
+            dist/webpi-desktop-*.dmg
+            dist/webpi-desktop-*.dmg.sha256
+            dist/webpi-desktop-*.dmg.evidence.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -542,7 +545,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBPI_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
@@ -593,7 +596,7 @@ jobs:
           $shortCommit = (git rev-parse --short=12 HEAD).Trim()
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
           $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
-          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+          foreach ($name in @("webpi", "webpi-server", "webpi-runner")) {
             $binary = Join-Path $binDir "$name.exe"
             $outputLines = @(& $binary --version)
             $exitCode = $LASTEXITCODE
@@ -601,7 +604,7 @@ jobs:
               throw "$name --version failed with exit code $exitCode"
             }
             $output = $outputLines[0].TrimEnd()
-            $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
+            $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBPI_BUILT_AT)"
             if ($output -ne $expected) {
               throw "Unexpected $name release identity: $output (expected $expected)"
             }
@@ -629,7 +632,7 @@ jobs:
           & powershell @packArgs
           if ($LASTEXITCODE -ne 0) { throw "Windows release packaging failed with exit code $LASTEXITCODE" }
 
-          $canonicalArchive = Join-Path "dist" "webcodex-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM.tar.gz"
+          $canonicalArchive = Join-Path "dist" "webpi-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM.tar.gz"
           $archive = Join-Path "dist" "$env:ARCHIVE_STEM-$env:WEBCODEX_RELEASE_PLATFORM.tar.gz"
           if ($canonicalArchive -ne $archive) {
             Move-Item -LiteralPath $canonicalArchive -Destination $archive
@@ -637,18 +640,6 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           $checksumLine = "$hash  $(Split-Path -Leaf $archive)`n"
           [System.IO.File]::WriteAllText("$archive.sha256", $checksumLine, [System.Text.Encoding]::ASCII)
-
-      - name: Smoke native Windows artifact through npm installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          & .\scripts\npm_install_windows_smoke.ps1 `
-            -BinDir $binDir `
-            -Platform $env:WEBCODEX_RELEASE_PLATFORM
-          if ($LASTEXITCODE -ne 0) {
-            throw "native Windows npm smoke failed with exit code $LASTEXITCODE"
-          }
 
       - name: Install Desktop dependencies
         run: npm ci --prefix apps/desktop
@@ -658,19 +649,19 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          $stage = Join-Path $env:RUNNER_TEMP "webcodex-desktop-$env:WEBCODEX_RELEASE_PLATFORM-release-bundle"
+          $stage = Join-Path $env:RUNNER_TEMP "webpi-desktop-$env:WEBCODEX_RELEASE_PLATFORM-release-bundle"
           & .\scripts\prepare_desktop_bundle.ps1 `
             -BinDir $binDir `
             -Version $env:VERSION `
             -SourceSha $env:SOURCE_SHA `
-            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT) `
+            -BuiltAt ([Int64]$env:WEBPI_BUILT_AT) `
             -OutputDir $stage
 
           $shortSource = $env:SOURCE_SHA.Substring(0, 12)
           if ($env:BUILD_KIND -eq "release") {
-            $installerName = "webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
+            $installerName = "webpi-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
           } else {
-            $installerName = "webcodex-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
+            $installerName = "webpi-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
           }
           $desktopDist = Join-Path $env:GITHUB_WORKSPACE "dist"
           $installerPath = Join-Path $desktopDist $installerName
@@ -708,7 +699,7 @@ jobs:
             -Installer $env:DESKTOP_INSTALLER_PATH `
             -Version $env:VERSION `
             -SourceSha $env:SOURCE_SHA `
-            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT) `
+            -BuiltAt ([Int64]$env:WEBPI_BUILT_AT) `
             -Platform $env:WEBCODEX_RELEASE_PLATFORM
 
       - name: Upload Windows candidate
@@ -727,8 +718,8 @@ jobs:
         with:
           name: ${{ needs.prepare.outputs.archive_stem }}-desktop-${{ matrix.platform }}
           path: |
-            dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe
-            dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe.sha256
+            dist/webpi-desktop-*-${{ matrix.platform }}-setup.exe
+            dist/webpi-desktop-*-${{ matrix.platform }}-setup.exe.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -740,7 +731,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBPI_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       INPUT_TAG: ${{ inputs.tag }}
@@ -765,15 +756,15 @@ jobs:
           set -euo pipefail
           short_source="${SOURCE_SHA:0:12}"
           if [ "$BUILD_KIND" = release ]; then
-            desktop_darwin_x64="webcodex-desktop-v$VERSION-darwin-x64.dmg"
-            desktop_darwin_arm64="webcodex-desktop-v$VERSION-darwin-arm64.dmg"
-            desktop_win32_x64="webcodex-desktop-v$VERSION-win32-x64-setup.exe"
-            desktop_win32_arm64="webcodex-desktop-v$VERSION-win32-arm64-setup.exe"
+            desktop_darwin_x64="webpi-desktop-v$VERSION-darwin-x64.dmg"
+            desktop_darwin_arm64="webpi-desktop-v$VERSION-darwin-arm64.dmg"
+            desktop_win32_x64="webpi-desktop-v$VERSION-win32-x64-setup.exe"
+            desktop_win32_arm64="webpi-desktop-v$VERSION-win32-arm64-setup.exe"
           else
-            desktop_darwin_x64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-x64.dmg"
-            desktop_darwin_arm64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-arm64.dmg"
-            desktop_win32_x64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-x64-setup.exe"
-            desktop_win32_arm64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-arm64-setup.exe"
+            desktop_darwin_x64="webpi-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-x64.dmg"
+            desktop_darwin_arm64="webpi-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-arm64.dmg"
+            desktop_win32_x64="webpi-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-x64-setup.exe"
+            desktop_win32_arm64="webpi-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-arm64-setup.exe"
           fi
           export DESKTOP_DARWIN_X64_FILENAME="$desktop_darwin_x64"
           export DESKTOP_DARWIN_ARM64_FILENAME="$desktop_darwin_arm64"
@@ -852,7 +843,7 @@ jobs:
               if evidence["dmg_sha256"] != actual:
                   raise SystemExit(f"native macOS Desktop DMG evidence digest mismatch: {platform}")
               runtime = evidence.get("runtime")
-              if not isinstance(runtime, dict) or set(runtime) != {"webcodex", "webcodex-server", "webcodex-runner"}:
+              if not isinstance(runtime, dict) or set(runtime) != {"webpi", "webpi-server", "webpi-runner"}:
                   raise SystemExit(f"native macOS Desktop runtime evidence set mismatch: {platform}")
               for name, item in runtime.items():
                   if not isinstance(item, dict) or set(item) != {"unsigned_input_sha256", "bundled_signed_sha256"}:
@@ -918,7 +909,7 @@ jobs:
               "tag": os.environ["INPUT_TAG"],
               "version": os.environ["VERSION"],
               "source_sha": os.environ["SOURCE_SHA"],
-              "built_at": int(os.environ["WEBCODEX_BUILT_AT"]),
+              "built_at": int(os.environ["WEBPI_BUILT_AT"]),
               "build_kind": os.environ["BUILD_KIND"],
               "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "archive_stem": stem,

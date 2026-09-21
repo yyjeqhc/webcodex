@@ -22,7 +22,7 @@ pub(super) fn render_connect_output(
         "the shared key supplied to this command (not reprinted)".to_string()
     };
     let mut output = String::new();
-    output.push_str("WebCodex connected\n\nWhat to do next\n");
+    output.push_str("WebPi connected\n\nWhat to do next\n");
     output.push_str("1. In ChatGPT Developer Mode, create a custom MCP app.\n");
     output.push_str(&format!("2. MCP URL: {}/mcp\n", server_url));
     output.push_str("3. Authentication: Bearer token\n");
@@ -77,7 +77,7 @@ mod tests {
             Path::new("runner.log"),
             &key(secret, true, None),
         );
-        assert!(output.starts_with("WebCodex connected\n\nWhat to do next"));
+        assert!(output.starts_with("WebPi connected\n\nWhat to do next"));
         assert_eq!(output.matches("https://webcodex.example/mcp").count(), 1);
         assert_eq!(output.matches(secret).count(), 1);
         assert!(output.contains("Authentication: Bearer token"));

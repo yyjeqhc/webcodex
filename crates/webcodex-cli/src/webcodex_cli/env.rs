@@ -13,8 +13,8 @@ pub(crate) struct ServerPathDefaults {
 pub(crate) fn default_server_paths() -> Result<ServerPathDefaults, String> {
     if paths::is_effective_root() {
         return Ok(ServerPathDefaults {
-            data_dir: PathBuf::from("/var/lib/webcodex"),
-            env_file: PathBuf::from("/etc/webcodex/webcodex.env"),
+            data_dir: PathBuf::from("/var/lib/webpi"),
+            env_file: PathBuf::from("/etc/webpi/webpi.env"),
         });
     }
     let home = paths::home_dir().ok_or_else(|| {
@@ -22,8 +22,8 @@ pub(crate) fn default_server_paths() -> Result<ServerPathDefaults, String> {
             .to_string()
     })?;
     Ok(ServerPathDefaults {
-        data_dir: home.join(".local/share/webcodex"),
-        env_file: home.join(".config/webcodex/webcodex.env"),
+        data_dir: home.join(".local/share/webpi"),
+        env_file: home.join(".config/webpi/webpi.env"),
     })
 }
 
@@ -33,20 +33,19 @@ pub(crate) fn is_effective_root() -> bool {
 
 pub(crate) fn render_server_env(opts: &ServerInitOptions, token: &str) -> String {
     let mut content = String::new();
-    content.push_str(&format!("WEBCODEX_ADDR={}\n", opts.listen.trim()));
-    content.push_str(&format!("WEBCODEX_DATA={}\n", opts.data_dir.display()));
-    content.push_str(&format!("WEBCODEX_TOKEN={}\n", token));
+    content.push_str(&format!("WEBPI_ADDR={}\n", opts.listen.trim()));
+    content.push_str(&format!("WEBPI_DATA={}\n", opts.data_dir.display()));
+    content.push_str(&format!("WEBPI_TOKEN={}\n", token));
     if let Some(public_url) = &opts.public_url {
         let public_url = public_url.trim().trim_end_matches('/');
-        content.push_str(&format!("WEBCODEX_PUBLIC_URL={public_url}\n"));
-        content.push_str("WEBCODEX_OAUTH2_ENABLED=true\n");
-        content.push_str(&format!("WEBCODEX_OAUTH2_ISSUER={public_url}\n"));
-        content.push_str("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true\n");
+        content.push_str(&format!("WEBPI_PUBLIC_URL={public_url}\n"));
+        content.push_str("WEBPI_OAUTH2_ENABLED=true\n");
+        content.push_str(&format!("WEBPI_OAUTH2_ISSUER={public_url}\n"));
+        content.push_str("WEBPI_OAUTH2_SHARED_KEY_BRIDGE=false\n");
     }
-    content.push_str("WEBCODEX_SHARED_KEY_ENABLED=true\n");
-    if opts.open {
-        content.push_str("WEBCODEX_ALLOW_ANONYMOUS=true\n");
-    }
+    content.push_str("WEBPI_SHARED_KEY_ENABLED=false\n");
+    content.push_str("WEBPI_ALLOW_ANONYMOUS=false\n");
+    content.push_str("WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED=false\n");
     content
 }
 

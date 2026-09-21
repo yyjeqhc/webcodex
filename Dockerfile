@@ -14,16 +14,15 @@ RUN apt-get update \
 
 COPY . .
 
-# The server image also contains the webcodex CLI so server-side pairing and
-# administration can be run with `docker compose exec webcodex webcodex ...`.
-# webcodex-runner is intentionally not built into this image. Git metadata is
+# WebPi server-only image includes its own CLI for pairing/admin.
+# The local WebPi Runner and Pi bridge remain a separate deployment. Git metadata is
 # supplied as build args because .git is intentionally outside the build context.
-ARG WEBCODEX_GIT_COMMIT
-ARG WEBCODEX_GIT_DIRTY
-ARG WEBCODEX_BUILT_AT
-RUN WEBCODEX_GIT_COMMIT="$WEBCODEX_GIT_COMMIT" \
-    WEBCODEX_GIT_DIRTY="$WEBCODEX_GIT_DIRTY" \
-    WEBCODEX_BUILT_AT="$WEBCODEX_BUILT_AT" \
+ARG WEBPI_GIT_COMMIT
+ARG WEBPI_GIT_DIRTY
+ARG WEBPI_BUILT_AT
+RUN WEBPI_GIT_COMMIT="$WEBPI_GIT_COMMIT" \
+    WEBPI_GIT_DIRTY="$WEBPI_GIT_DIRTY" \
+    WEBPI_BUILT_AT="$WEBPI_BUILT_AT" \
     cargo build --locked --release --bins -p webcodex -p webcodex-cli
 
 FROM debian:bookworm-slim AS runtime
@@ -35,25 +34,25 @@ RUN apt-get update \
         libgcc-s1 \
         libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 webcodex \
-    && useradd --system --uid 10001 --gid webcodex \
-        --home-dir /var/lib/webcodex webcodex \
-    && install -d -o webcodex -g webcodex -m 0700 /var/lib/webcodex
+    && groupadd --system --gid 10001 webpi \
+    && useradd --system --uid 10001 --gid webpi \
+        --home-dir /var/lib/webpi webpi \
+    && install -d -o webpi -g webpi -m 0700 /var/lib/webpi
 
-COPY --from=builder /src/target/release/webcodex-server /usr/local/bin/webcodex-server
-COPY --from=builder /src/target/release/webcodex /usr/local/bin/webcodex
+COPY --from=builder /src/target/release/webpi-server /usr/local/bin/webpi-server
+COPY --from=builder /src/target/release/webpi /usr/local/bin/webpi
 
-ENV WEBCODEX_ADDR=0.0.0.0:8080 \
-    WEBCODEX_DATA=/var/lib/webcodex \
+ENV WEBPI_ADDR=0.0.0.0:8080 \
+    WEBPI_DATA=/var/lib/webpi \
     RUST_LOG=info
 
-USER webcodex:webcodex
-WORKDIR /var/lib/webcodex
+USER webpi:webpi
+WORKDIR /var/lib/webpi
 
 EXPOSE 8080
-VOLUME ["/var/lib/webcodex"]
+VOLUME ["/var/lib/webpi"]
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8080/openapi.json >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/webcodex-server"]
+ENTRYPOINT ["/usr/local/bin/webpi-server"]

@@ -1,4 +1,12 @@
-# WebCodex
+# WebPi
+
+This repository is the independent WebPi fork: a web-GPT-primary coding runtime with the native Pi extension ecosystem. Use [WebPi setup](docs/WEBPI.md) and the authoritative [identity/configuration migration guide](docs/WEBPI_IDENTITY.md).
+
+The supported native programs are `webpi`, `webpi-server`, and `webpi-runner`; use `webpi.cmd` for the Windows standalone installation. Old WebPi env files must be explicitly migrated before startup. Upstream npm downloaders, Desktop packaging and release automation are disabled, not WebPi installation paths.
+
+## Retained upstream documentation — historical reference only
+
+The following original WebCodex documentation is retained for source attribution and architectural context. Its install, release and setup recommendations are **not** current WebPi instructions; do not execute them to install this fork.
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 

@@ -932,9 +932,9 @@ pub(crate) fn run_local_runner_service(
             }
             let runner = runner_bin
                 .map(Path::to_path_buf)
-                .or_else(|| discover_internal_binary("webcodex-runner"))
+                .or_else(|| discover_internal_binary("webpi-runner"))
                 .ok_or_else(|| {
-                    "webcodex-runner was not found beside webcodex or in an absolute PATH entry"
+                    "webpi-runner was not found beside this WebPi CLI; PATH fallback is disabled"
                         .to_string()
                 })?;
             let started = ensure_runner_unlocked(&runner, config, &state_dir)?;
@@ -1226,7 +1226,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = canonical_test_tempdir();
-        let runner = tmp.path().join("webcodex-runner");
+        let runner = tmp.path().join("webpi-runner");
         std::fs::write(
             &runner,
             "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
@@ -1375,7 +1375,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = canonical_test_tempdir();
-        let runner = tmp.path().join("webcodex-runner");
+        let runner = tmp.path().join("webpi-runner");
         std::fs::write(
             &runner,
             "#!/bin/sh\n\

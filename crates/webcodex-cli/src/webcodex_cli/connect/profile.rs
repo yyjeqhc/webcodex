@@ -106,7 +106,7 @@ impl ProfileLock {
             .map_err(|error| format!("failed to open profile lock {}: {error}", path.display()))?;
         file.try_lock_exclusive().map_err(|_| {
             format!(
-                "another WebCodex command is updating this profile; retry after it finishes ({})",
+                "another WebPi command is updating this profile; retry after it finishes ({})",
                 path.display()
             )
         })?;
@@ -140,7 +140,7 @@ fn normalize_shared_key(value: &str) -> Result<String, String> {
     }
     if key.starts_with("wc_") {
         return Err(
-            "wc_* values are managed WebCodex credentials, not hosted shared keys; use a different random value for `webcodex connect`, or use `webcodex login` for the managed flow"
+            "wc_* values are managed WebPi credentials, not hosted shared keys; use a different random value for `webpi connect`, or use `webpi login` for the managed flow"
                 .to_string(),
         );
     }
@@ -738,7 +738,7 @@ mod tests {
         assert!(normalize_shared_key("  ").unwrap_err().contains("empty"));
         for managed in ["wc_pat_example", "wc_agent_example", "wc_acct_example"] {
             let error = normalize_shared_key(managed).unwrap_err();
-            assert!(error.contains("managed WebCodex credentials"));
+            assert!(error.contains("managed WebPi credentials"));
             assert!(!error.contains(managed));
         }
     }

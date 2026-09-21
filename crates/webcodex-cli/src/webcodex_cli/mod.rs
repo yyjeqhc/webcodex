@@ -147,7 +147,7 @@ mod shell_command_tests {
 
     #[test]
     fn shell_quote_arg_handles_shell_metacharacters() {
-        assert_eq!(shell_quote_arg("webcodex-runner"), "webcodex-runner");
+        assert_eq!(shell_quote_arg("webpi-runner"), "webpi-runner");
         assert_eq!(shell_quote_arg("/tmp/runner.toml"), "/tmp/runner.toml");
         assert_eq!(shell_quote_arg(""), "''");
         assert_eq!(shell_quote_arg("path with spaces"), "'path with spaces'");

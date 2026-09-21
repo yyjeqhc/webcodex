@@ -1,21 +1,24 @@
-name: webcodex
+name: webpi
 
+# An explicit WebPi image is required. There is no upstream binary fallback.
 services:
-  webcodex:
-    image: ${WEBCODEX_SERVER_IMAGE:-ghcr.io/yyjeqhc/webcodex-server:latest}
+  webpi:
+    image: ${WEBPI_SERVER_IMAGE:?set an explicit reviewed WebPi image}
     pull_policy: always
     restart: unless-stopped
     environment:
-      WEBCODEX_TOKEN: ${WEBCODEX_TOKEN:?set WEBCODEX_TOKEN in .env}
-      WEBCODEX_ADDR: 0.0.0.0:8080
-      WEBCODEX_DATA: /var/lib/webcodex
-      WEBCODEX_PUBLIC_URL: ${WEBCODEX_PUBLIC_URL:?set WEBCODEX_PUBLIC_URL in .env}
+      WEBPI_TOKEN: ${WEBPI_TOKEN:?set a WebPi-only token in .env}
+      WEBPI_ADDR: 0.0.0.0:8080
+      WEBPI_DATA: /var/lib/webpi
+      WEBPI_PUBLIC_URL: ${WEBPI_PUBLIC_URL:?set the WebPi public origin in .env}
+      WEBPI_SHARED_KEY_ENABLED: "false"
+      WEBPI_ALLOW_ANONYMOUS: "false"
       RUST_LOG: ${RUST_LOG:-info}
     ports:
-      # Only the existing reverse proxy on this host should reach WebCodex.
-      - "${WEBCODEX_HOST_IP:-127.0.0.1}:${WEBCODEX_HOST_PORT:-8080}:8080"
+      # Only the host's existing reverse proxy should reach WebPi.
+      - "127.0.0.1:${WEBPI_HOST_PORT:-56542}:8080"
     volumes:
-      - webcodex_data:/var/lib/webcodex
+      - webpi_data:/var/lib/webpi
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -31,4 +34,4 @@ services:
       retries: 5
 
 volumes:
-  webcodex_data:
+  webpi_data:

@@ -37,7 +37,7 @@ pub(crate) struct DisconnectResult {
 impl DisconnectResult {
     pub(crate) fn render(&self) -> String {
         format!(
-            "Disconnected WebCodex project.\n  outcome: {}\n  profile: {}\n  project: {}\n  project_id: {}\n  runner: {}\n",
+            "Disconnected WebPi project.\n  outcome: {}\n  profile: {}\n  project: {}\n  project_id: {}\n  runner: {}\n",
             self.outcome,
             self.profile,
             self.project.display(),
@@ -99,7 +99,7 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
         .unwrap_or_else(default_client_state_base_dir)?;
     if !config_base.is_dir() || !state_base.is_dir() {
         return Err(format!(
-            "no hosted `webcodex connect` profile registers project {}",
+            "no hosted `webpi connect` profile registers project {}",
             canonical_project.display()
         ));
     }
@@ -145,7 +145,7 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
     let runner = local_runner_state_summary(&candidate.state_dir)?;
     if !runner.managed {
         return Err(format!(
-            "profile {} is not a hosted `webcodex connect` profile",
+            "profile {} is not a hosted `webpi connect` profile",
             candidate.profile
         ));
     }
@@ -263,7 +263,7 @@ fn resolve_registration(
         if !marker.exists() {
             if explicit_profile.is_some() {
                 return Err(format!(
-                    "profile {profile} is not a hosted `webcodex connect` profile"
+                    "profile {profile} is not a hosted `webpi connect` profile"
                 ));
             }
             continue;
@@ -318,7 +318,7 @@ fn resolve_registration(
     }
     matches.pop().ok_or_else(|| {
         format!(
-            "no hosted `webcodex connect` profile registers project {}",
+            "no hosted `webpi connect` profile registers project {}",
             canonical_project.display()
         )
     })
@@ -883,7 +883,7 @@ mod tests {
         .unwrap();
         let registration = profile_dir.join("project-registry/repo.toml");
 
-        let runner = tmp.path().join("webcodex-runner");
+        let runner = tmp.path().join("webpi-runner");
         std::fs::write(
             &runner,
             "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
@@ -976,7 +976,7 @@ mod tests {
         .unwrap();
         let registration = profile_dir.join("project-registry/repo.toml");
 
-        let runner = tmp.path().join("webcodex-runner");
+        let runner = tmp.path().join("webpi-runner");
         std::fs::write(
             &runner,
             "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
@@ -1109,7 +1109,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = canonical_test_tempdir();
-        let runner = tmp.path().join("webcodex-runner");
+        let runner = tmp.path().join("webpi-runner");
         std::fs::write(
             &runner,
             "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",

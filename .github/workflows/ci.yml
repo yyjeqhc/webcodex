@@ -330,10 +330,10 @@ jobs:
           set -euo pipefail
           version="$(node -p "require('./npm/webcodex/package.json').version")"
           {
-            echo "WEBCODEX_CI_VERSION=$version"
-            echo "WEBCODEX_CI_SOURCE_SHORT=$(git rev-parse --short=12 HEAD)"
-            echo "WEBCODEX_CI_BUILT_AT=$(git show -s --format=%ct HEAD)"
-            echo "WEBCODEX_CI_IMAGE=webcodex-server-ci:${GITHUB_SHA}"
+            echo "WEBPI_CI_VERSION=$version"
+            echo "WEBPI_CI_SOURCE_SHORT=$(git rev-parse --short=12 HEAD)"
+            echo "WEBPI_CI_BUILT_AT=$(git show -s --format=%ct HEAD)"
+            echo "WEBPI_CI_IMAGE=webpi-server-ci:${GITHUB_SHA}"
           } >> "$GITHUB_ENV"
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
@@ -345,11 +345,11 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ${{ env.WEBCODEX_CI_IMAGE }}
+          tags: ${{ env.WEBPI_CI_IMAGE }}
           build-args: |
-            WEBCODEX_GIT_COMMIT=${{ env.WEBCODEX_CI_SOURCE_SHORT }}
-            WEBCODEX_GIT_DIRTY=false
-            WEBCODEX_BUILT_AT=${{ env.WEBCODEX_CI_BUILT_AT }}
+            WEBPI_GIT_COMMIT=${{ env.WEBPI_CI_SOURCE_SHORT }}
+            WEBPI_GIT_DIRTY=false
+            WEBPI_BUILT_AT=${{ env.WEBPI_CI_BUILT_AT }}
           cache-from: type=gha,scope=server-image-ci-amd64
           cache-to: type=gha,mode=max,scope=server-image-ci-amd64
           provenance: false
@@ -358,24 +358,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="$WEBCODEX_CI_IMAGE"
+          image="$WEBPI_CI_IMAGE"
           test "$(docker image inspect --format '{{.Architecture}}' "$image")" = amd64
-          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "webcodex:webcodex"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "webpi:webpi"
           docker run --rm --entrypoint sh "$image" -ec '
             test "$(id -u)" = 10001
             test "$(id -g)" = 10001
-            test ! -e /usr/local/bin/webcodex-runner
+            test ! -e /usr/local/bin/webpi-runner
           '
-          expected_server="webcodex-server $WEBCODEX_CI_VERSION (commit $WEBCODEX_CI_SOURCE_SHORT, dirty=false, built_at=$WEBCODEX_CI_BUILT_AT)"
-          expected_cli="webcodex $WEBCODEX_CI_VERSION (commit $WEBCODEX_CI_SOURCE_SHORT, dirty=false, built_at=$WEBCODEX_CI_BUILT_AT)"
+          expected_server="webpi-server $WEBPI_CI_VERSION (commit $WEBPI_CI_SOURCE_SHORT, dirty=false, built_at=$WEBPI_CI_BUILT_AT)"
+          expected_cli="webpi $WEBPI_CI_VERSION (commit $WEBPI_CI_SOURCE_SHORT, dirty=false, built_at=$WEBPI_CI_BUILT_AT)"
           test "$(docker run --rm "$image" --version)" = "$expected_server"
-          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$image" --version)" = "$expected_cli"
-          name="webcodex-server-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$(docker run --rm --entrypoint /usr/local/bin/webpi "$image" --version)" = "$expected_cli"
+          name="webpi-server-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           docker run -d --name "$name" \
-            -e WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
-            -e WEBCODEX_PUBLIC_URL=https://webcodex.invalid \
+            -e WEBPI_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e WEBPI_PUBLIC_URL=https://webpi.invalid \
             "$image" >/dev/null
           for _ in $(seq 1 40); do
             health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name")"
@@ -479,9 +479,9 @@ jobs:
           short_source="$(git rev-parse --short=12 HEAD)"
           version="$(node -p "require('./npm/webcodex/package.json').version")"
           built_at="$(git show -s --format=%ct HEAD)"
-          export WEBCODEX_BUILT_AT="$built_at"
+          export WEBPI_BUILT_AT="$built_at"
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
-          for name in webcodex webcodex-server webcodex-runner; do
+          for name in webpi webpi-server webpi-runner; do
             binary="target/dogfood/$name"
             actual="$($binary --version)"
             expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
@@ -634,16 +634,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Test npm installer and release manifest natively
+      - name: Test private upstream-wrapper reference contract
+        # The legacy public npm runtime installer is intentionally disabled in
+        # WebPi. Keep its private reference package tests, but do not treat a
+        # disabled installer as a production distribution channel.
         run: npm --prefix npm/webcodex test
-      - name: Windows artifact to npm install smoke
-        # Builds the three Windows binaries, packages the win32-x64 artifact
-        # with the native PowerShell script, installs it through the npm
-        # installer into a temporary prefix, and verifies the wrapper plus
-        # --version/--help and the failure-preserves-old-binaries path. Never
-        # touches the npm registry.
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm_install_windows_smoke.ps1
 
   test-windows-desktop:
     needs: changes
@@ -686,10 +681,10 @@ jobs:
           $short = (git rev-parse --short=12 HEAD).Trim()
           $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
           $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
-          $env:WEBCODEX_BUILT_AT = "$builtAt"
+          $env:WEBPI_BUILT_AT = "$builtAt"
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
-          if ($LASTEXITCODE -ne 0) { throw "WebCodex runtime build failed" }
-          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+          if ($LASTEXITCODE -ne 0) { throw "WebPi runtime build failed" }
+          foreach ($name in @("webpi", "webpi-server", "webpi-runner")) {
             $binary = Join-Path "target\dogfood" "$name.exe"
             $output = @(& $binary --version)
             $exitCode = $LASTEXITCODE

@@ -600,13 +600,13 @@ pub(crate) fn render_login_result(
     print_mcp_config: bool,
 ) -> Result<String, String> {
     let foreground_argv = vec![
-        "webcodex-runner".to_string(),
+        "webpi-runner".to_string(),
         "--config".to_string(),
         paths.runner_config.to_string_lossy().into_owned(),
     ];
     let runner_install_argv = cfg!(target_os = "linux").then(|| {
         let mut argv = vec![
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "runner".to_string(),
             "install".to_string(),
             "--scope".to_string(),
@@ -629,7 +629,7 @@ pub(crate) fn render_login_result(
     let foreground_command = shell_command(&foreground_argv);
     let runner_install_command = runner_install_argv.as_ref().map(|argv| shell_command(argv));
     let human_foreground_command = shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "runner".to_string(),
         "run".to_string(),
         "--config".to_string(),
@@ -638,7 +638,7 @@ pub(crate) fn render_login_result(
     let register_command = format!(
         "{} <existing-workspace>",
         shell_command(&[
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "project".to_string(),
             "register".to_string(),
             "--config".to_string(),
@@ -648,7 +648,7 @@ pub(crate) fn render_login_result(
     let human_register_command = format!(
         "{} /path/to/project",
         shell_command(&[
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "project".to_string(),
             "register".to_string(),
             "--config".to_string(),
@@ -695,7 +695,7 @@ pub(crate) fn render_login_result(
             },
             "registered_projects": registered_projects,
             "credential_usage": {
-                "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
+                "webpi-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "runner_config_token": "Runner transport only",
             },
             "foreground_available": true,
@@ -810,7 +810,7 @@ pub(crate) fn render_status(connections: &[Connection], json: bool) -> Result<St
     }
     if connections.is_empty() {
         return Ok(
-            "Not logged in to any server.\n\nRun: webcodex login <server-url> --code <pairing-code>\n"
+            "Not logged in to any server.\n\nRun: webpi login <server-url> --code <pairing-code>\n"
                 .to_string(),
         );
     }
@@ -1117,7 +1117,7 @@ pub(crate) fn run_logout(opts: LogoutOptions) -> Result<String, String> {
             return Err(output);
         }
         return Err(format!(
-            "multiple local users are logged in to {server_url}:\n  {}\n\nChoose one user:\n  webcodex logout {server_url} --user <USER>\n\nOr explicitly choose every saved user:\n  webcodex logout {server_url} --all",
+            "multiple local users are logged in to {server_url}:\n  {}\n\nChoose one user:\n  webpi logout {server_url} --user <USER>\n\nOr explicitly choose every saved user:\n  webpi logout {server_url} --all",
             users.join("\n  ")
         ));
     }
@@ -1358,7 +1358,7 @@ mod tests {
             0
         );
         // The Runner transport token has exactly one home.
-        assert!(!paths.dir.join("webcodex-runner-token").exists());
+        assert!(!paths.dir.join("webpi-runner-token").exists());
         let runner_config = std::fs::read_to_string(&paths.runner_config).unwrap();
         assert!(runner_config.contains(AGENT_TOKEN));
         let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
@@ -1835,7 +1835,7 @@ mod tests {
             let name = entry.unwrap().file_name().to_string_lossy().to_string();
             if matches!(
                 name.as_str(),
-                "server.toml" | "runner.toml" | "webcodex-user-token"
+                "server.toml" | "runner.toml" | "webpi-user-token"
             ) || name.starts_with(INTERNAL_DIR_PREFIX)
             {
                 offenders.push(name);
@@ -2715,8 +2715,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("webcodex project register --config")
-                && text.contains("/path/to/project"),
+            text.contains("webpi project register --config") && text.contains("/path/to/project"),
             "{text}"
         );
         assert!(!text.contains("device/client_id"), "{text}");
@@ -2726,7 +2725,7 @@ mod tests {
             !text.contains(&paths.user_token.display().to_string()),
             "{text}"
         );
-        assert!(!text.contains("webcodex runner install"), "{text}");
+        assert!(!text.contains("webpi runner install"), "{text}");
         assert!(!text.contains(USER_TOKEN), "default text leaked a token");
         assert!(!text.contains(AGENT_TOKEN), "default text leaked a token");
 
@@ -2819,11 +2818,11 @@ mod tests {
             text.contains("Projects may be added under:\n  /tmp"),
             "{text}"
         );
-        assert!(text.contains("webcodex runner run --config"), "{text}");
+        assert!(text.contains("webpi runner run --config"), "{text}");
         assert!(text.contains("Keep this terminal open."), "{text}");
         assert!(text.contains("Ctrl-C stops this Runner."), "{text}");
         assert_eq!(
-            text.contains("webcodex runner install --scope user --config"),
+            text.contains("webpi runner install --scope user --config"),
             cfg!(target_os = "linux"),
             "{text}"
         );
@@ -2835,12 +2834,12 @@ mod tests {
     fn render_login_result_quotes_config_paths_and_exposes_argv() {
         let paths = ConnectionPaths::new(PathBuf::from("/tmp/path with 'quote/$value/`tick`;semi"));
         let foreground_argv = vec![
-            "webcodex-runner".to_string(),
+            "webpi-runner".to_string(),
             "--config".to_string(),
             paths.runner_config.to_string_lossy().into_owned(),
         ];
         let install_argv = vec![
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "runner".to_string(),
             "install".to_string(),
             "--scope".to_string(),
@@ -2849,7 +2848,7 @@ mod tests {
             paths.runner_config.to_string_lossy().into_owned(),
         ];
         let human_foreground_argv = vec![
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "runner".to_string(),
             "run".to_string(),
             "--config".to_string(),
@@ -2928,7 +2927,7 @@ mod tests {
         assert!(value["next_steps"][0]
             .as_str()
             .unwrap()
-            .contains("webcodex project register"));
+            .contains("webpi project register"));
         assert_eq!(
             value["next_steps"][1].as_str().unwrap(),
             shell_command(&foreground_argv)
@@ -2953,16 +2952,27 @@ mod tests {
             install_argv.clone()
         };
         let parser_env = canonical_test_tempdir();
-        std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();
+        std::fs::write(parser_env.path().join("webpi-runner"), "").unwrap();
         #[cfg(windows)]
-        std::fs::write(parser_env.path().join("webcodex-runner.exe"), "").unwrap();
+        std::fs::write(parser_env.path().join("webpi-runner.exe"), "").unwrap();
         let _guard = crate::webcodex_cli::test_support::env_test_guard();
         let _env = crate::webcodex_cli::test_support::EnvGuard::new()
             .set_os("HOME", parser_env.path().as_os_str().to_owned())
             .set_os("XDG_CONFIG_HOME", parser_env.path().as_os_str().to_owned())
             .set_os("PATH", parser_env.path().as_os_str().to_owned());
-        let parsed =
-            crate::parse_runner_install_service_with_identity(&recommended_argv[3..], false);
+        // This test checks install scope/quoting, not ambient PATH discovery.
+        // Product discovery now requires sibling binaries; select the fixture
+        // explicitly rather than weakening that production rule for the test.
+        let mut parser_args = recommended_argv[3..].to_vec();
+        parser_args.extend([
+            "--bin".to_string(),
+            parser_env
+                .path()
+                .join("webpi-runner")
+                .to_string_lossy()
+                .into_owned(),
+        ]);
+        let parsed = crate::parse_runner_install_service_with_identity(&parser_args, false);
         assert!(
             parsed.is_ok(),
             "non-root recommendation was rejected by the install parser: {parsed:?}"
@@ -2973,7 +2983,7 @@ mod tests {
     fn render_login_result_root_has_usable_commands_and_warning() {
         let paths = ConnectionPaths::new(PathBuf::from("/tmp/root-login"));
         let foreground_argv = vec![
-            "webcodex-runner".to_string(),
+            "webpi-runner".to_string(),
             "--config".to_string(),
             paths.runner_config.to_string_lossy().into_owned(),
         ];
@@ -2997,7 +3007,7 @@ mod tests {
         )
         .unwrap();
         assert!(text.contains(ROOT_RUNNER_WARNING));
-        assert!(text.contains("webcodex runner run"));
+        assert!(text.contains("webpi runner run"));
         assert!(!text.contains("fresh one-time login code"));
         assert_eq!(
             text.contains("--allow-root-runner"),
@@ -3032,7 +3042,7 @@ mod tests {
             // deterministic PATH candidate instead of depending on stale target
             // artifacts from another shard/build.
             let parser_env = canonical_test_tempdir();
-            std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();
+            std::fs::write(parser_env.path().join("webpi-runner"), "").unwrap();
             let _guard = crate::webcodex_cli::test_support::env_test_guard();
             let _env = crate::webcodex_cli::test_support::EnvGuard::new()
                 .set_os("PATH", parser_env.path().as_os_str().to_owned());
@@ -3107,7 +3117,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("Runner transport token"), "{error}");
-        assert!(error.contains("webcodex-user-token"), "{error}");
+        assert!(error.contains("webpi-user-token"), "{error}");
         assert!(!error.contains(secret));
     }
 

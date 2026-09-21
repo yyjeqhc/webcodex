@@ -4,12 +4,12 @@
 //! layout mirrors that directly:
 //!
 //! ```text
-//! ~/.config/webcodex/
+//! ~/.config/webpi/
 //!   https_api.example.com/
 //!     alice/
 //!       server.toml               canonical server_url, username, device, time
 //!       runner.toml               the Runner token lives here, inline
-//!       webcodex-user-token
+//!       webpi-user-token
 //!       project-registry/
 //! ```
 //!
@@ -23,7 +23,7 @@
 //! # Credential source of truth
 //!
 //! The Runner token is stored **only** inline in `runner.toml`. `login` used to
-//! also drop a `webcodex-runner-token` file, which left two copies that could
+//! also drop a `webpi-runner-token` file, which left two copies that could
 //! drift with nothing saying which one won. The user token keeps its own file
 //! because a different consumer reads it (GPT Actions / MCP clients), not the
 //! Runner.
@@ -44,7 +44,7 @@ pub(crate) fn default_base_dir() -> Result<PathBuf, String> {
     paths::default_client_config_base_dir()
 }
 
-/// A server URL reduced to the exact identity WebCodex uses for it.
+/// A server URL reduced to the exact identity WebPi uses for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CanonicalServerUrl {
     /// Canonical text form. Two inputs naming the same server produce the same
@@ -61,7 +61,7 @@ pub(crate) struct CanonicalServerUrl {
 /// `https://host`) but any other port is kept, so one host can run several
 /// servers without them colliding.
 ///
-/// Anything the WebCodex server URL has no meaning for is rejected rather than
+/// Anything the WebPi server URL has no meaning for is rejected rather than
 /// silently dropped, because dropping it would make two different inputs look
 /// like the same server: credentials, a query, a fragment, or a non-root path.
 pub(crate) fn canonical_server_url(raw: &str) -> Result<CanonicalServerUrl, String> {
@@ -370,7 +370,7 @@ impl ConnectionPaths {
             runner_config: dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE),
             project_registry_dir: dir
                 .join(webcodex_runner_config::paths::PROJECT_REGISTRY_DIR_NAME),
-            user_token: dir.join("webcodex-user-token"),
+            user_token: dir.join("webpi-user-token"),
             dir,
         }
     }
@@ -405,7 +405,7 @@ pub(crate) fn descriptor_toml(
     logged_in_at: &str,
 ) -> String {
     format!(
-        "# Written by `webcodex login`. The directory name is only an index;\n\
+        "# Written by `webpi login`. The directory name is only an index;\n\
          # this file is the authoritative record of the connection.\n\
          server_url = {}\n\
          username = {}\n\

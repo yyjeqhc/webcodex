@@ -564,7 +564,7 @@ fn ops_http_failure_reason(failure: &OpsHttpFailure, token_present: bool) -> &'s
 fn ops_http_failure_action(kind: OpsHttpFailureKind) -> &'static str {
     match kind {
         OpsHttpFailureKind::Unauthorized => {
-            "provide a user token/PAT or bearer token accepted by the WebCodex server"
+            "provide a user token/PAT or bearer token accepted by the WebPi server"
         }
         OpsHttpFailureKind::Forbidden => {
             "use a bearer token with the required runtime, project, or job scope"
@@ -573,9 +573,7 @@ fn ops_http_failure_action(kind: OpsHttpFailureKind) -> &'static str {
         OpsHttpFailureKind::RequestTimeout => {
             "retry the exact Runner observation within its bounded request deadline"
         }
-        OpsHttpFailureKind::ServerError => {
-            "inspect WebCodex server logs for the failing ops request"
-        }
+        OpsHttpFailureKind::ServerError => "inspect WebPi server logs for the failing ops request",
         OpsHttpFailureKind::NonJson => {
             "check the reverse proxy and server route; expected a JSON response"
         }

@@ -67,7 +67,7 @@ pub fn usage() -> &'static str {
       webcodex runner-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex runner-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex runner-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
-    Token fallback: WEBCODEX_TOKEN\n\
+    Token fallback: WEBPI_TOKEN\n\
     Proxy: standard HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY environment by default;\n\
            --proxy http://HOST:PORT overrides it, --no-system-proxy forces direct.\n\
     Output: JSON\n"
@@ -500,14 +500,14 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
 
 fn resolve_bearer_token(opts: &AdminOptions, prefer_credential: bool) -> Result<String, String> {
     if opts.token.is_some() || opts.token_file.is_some() || opts.token_env.is_some() {
-        return resolve_token(opts, "WEBCODEX_TOKEN");
+        return resolve_token(opts, "WEBPI_TOKEN");
     }
     if prefer_credential {
         if let Some(token) = resolve_credential_token(opts)? {
             return Ok(token);
         }
     }
-    resolve_token(opts, "WEBCODEX_TOKEN")
+    resolve_token(opts, "WEBPI_TOKEN")
 }
 
 fn resolve_credential_token(opts: &AdminOptions) -> Result<Option<String>, String> {
@@ -526,7 +526,7 @@ fn resolve_credential_token(opts: &AdminOptions) -> Result<Option<String>, Strin
         require_non_empty(env_name, &token)?;
         return Ok(Some(token));
     }
-    match std::env::var("WEBCODEX_ACCOUNT_CREDENTIAL") {
+    match std::env::var("WEBPI_ACCOUNT_CREDENTIAL") {
         Ok(token) if !token.trim().is_empty() => Ok(Some(token.trim().to_string())),
         _ => Ok(None),
     }

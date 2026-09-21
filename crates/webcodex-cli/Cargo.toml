@@ -5,7 +5,7 @@ license.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "webcodex"
+name = "webpi"
 path = "src/main.rs"
 
 [dependencies]

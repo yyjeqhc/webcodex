@@ -1,4 +1,4 @@
-//! `webcodex` — standalone management/setup binary for WebCodex.
+//! `webcodex` — standalone management/setup binary for WebPi.
 //!
 //! Provides canonical users / tokens / runner-tokens management (reusing the
 //! shared `admin_cli` module) and low-level `runner init` (reusing the shared
@@ -325,12 +325,12 @@ where
         },
         "--version" | "-V" => CliAction::Exit {
             code: 0,
-            stdout: build_info::version_output("webcodex"),
+            stdout: build_info::version_output("webpi"),
             stderr: String::new(),
         },
         "status" | "doctor" | "run" | "share" => CliAction::Project(args),
         "setup" if args.get(1).map(String::as_str) == Some("single-user") => cli_parse_error(
-            "`webcodex setup single-user` was removed; use `webcodex pairing create` followed by `webcodex login`"
+            "`webcodex setup single-user` was removed; use `webpi pairing create` followed by `webpi login`"
                 .to_string(),
         ),
         "setup" => CliAction::Project(args),
@@ -347,7 +347,7 @@ where
         "server" => parse_server_subcommand(&args[1..]),
         "pairing" => parse_pairing_subcommand(&args[1..]),
         "client" if args.get(1).map(String::as_str) == Some("enroll") => cli_parse_error(
-            "`webcodex client enroll` was removed; use `webcodex login <server-url> --code <code>`"
+            "`webcodex client enroll` was removed; use `webpi login <server-url> --code <code>`"
                 .to_string(),
         ),
         "login" => parse_login(&args[1..]),
@@ -357,11 +357,11 @@ where
         "plugin" => parse_plugin_subcommand(&args[1..]),
         "runner" => parse_runner_subcommand(&args[1..]),
         "agent-token" => cli_parse_error(
-            "`webcodex agent-token` was removed; use `webcodex runner-tokens ...`".to_string(),
+            "`webcodex agent-token` was removed; use `webpi runner-tokens ...`".to_string(),
         ),
         "runner-tokens" | "agent-tokens" => parse_runner_token_subcommand(&args[1..]),
         "token" => cli_parse_error(
-            "`webcodex token` was removed; use `webcodex tokens ...`".to_string(),
+            "`webpi token` was removed; use `webpi tokens ...`".to_string(),
         ),
         "tokens" => parse_token_subcommand(&args[1..]),
         group if admin_cli::is_admin_group(group) => {
@@ -571,7 +571,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     }
     let Some(server_url) = server_url else {
         return cli_parse_error(
-            "connect needs a Server URL, e.g. `webcodex connect https://example.com --project .`"
+            "connect needs a Server URL, e.g. `webpi connect https://example.com --project .`"
                 .to_string(),
         );
     };
@@ -774,12 +774,12 @@ fn parse_project_subcommand(args: &[String]) -> CliAction {
         }
         Some("--help" | "-h") => CliAction::Exit {
             code: 0,
-            stdout: "Usage: webcodex project <COMMAND>\n\nCommands:\n  activate    Activate a project on the current Runner without restarting it\n  register    Add a project for a stopped/legacy Runner\n".to_string(),
+            stdout: "Usage: webpi project <COMMAND>\n\nCommands:\n  activate    Activate a project on the current Runner without restarting it\n  register    Add a project for a stopped/legacy Runner\n".to_string(),
             stderr: String::new(),
         },
         Some(other) => cli_parse_error(format!("unknown project subcommand: {other}")),
         None => cli_parse_error(
-            "missing project subcommand; try `webcodex project --help`".to_string(),
+            "missing project subcommand; try `webpi project --help`".to_string(),
         ),
     }
 }
@@ -789,7 +789,7 @@ fn parse_auth_subcommand(args: &[String]) -> CliAction {
         Some("status") => parse_status(&args[1..]),
         Some("--help" | "-h") => CliAction::Exit {
             code: 0,
-            stdout: "Usage: webcodex auth <COMMAND>\n\nCommands:\n  status    Show which servers this device is logged in to\n".to_string(),
+            stdout: "Usage: webpi auth <COMMAND>\n\nCommands:\n  status    Show which servers this device is logged in to\n".to_string(),
             stderr: String::new(),
         },
         Some(other) => CliAction::Exit {
@@ -899,7 +899,7 @@ fn parse_login(args: &[String]) -> CliAction {
     }
     let Some(server_url) = server_url else {
         return cli_parse_error(
-            "login needs a server URL, e.g. `webcodex login https://example.com --code wc_pair_...`"
+            "login needs a server URL, e.g. `webpi login https://example.com --code wc_pair_...`"
                 .to_string(),
         );
     };
@@ -1113,7 +1113,7 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
         match flag.as_str() {
             "--kind" => kind = p.value(&flag)?,
             "-h" | "--help" => {
-                return Err("Usage: webcodex tokens generate --kind api|runner".to_string())
+                return Err("Usage: webpi tokens generate --kind api|runner".to_string())
             }
             _ => return Err(format!("unknown tokens generate flag: {}", flag)),
         }
@@ -1169,7 +1169,7 @@ fn parse_runner_token_create_local(
                         .map(str::to_string),
                 );
             }
-            "-h" | "--help" => return Err("Usage: webcodex runner-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
+            "-h" | "--help" => return Err("Usage: webpi runner-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
             _ => return Err(format!("unknown runner-tokens create-local flag: {}", flag)),
         }
     }
@@ -1212,7 +1212,7 @@ fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, 
                 );
             }
             "-h" | "--help" => {
-                return Err("Usage: webcodex tokens create-local --server-url URL --username USER --credential CRED [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string())
+                return Err("Usage: webpi tokens create-local --server-url URL --username USER --credential CRED [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string())
             }
             _ => return Err(format!("unknown tokens create-local flag: {}", flag)),
         }
@@ -1289,7 +1289,7 @@ fn parse_runner_subcommand(args: &[String]) -> CliAction {
         return exit_help(runner_usage());
     }
     if command == "run" && args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V") {
-        return exit_help(&build_info::version_output("webcodex-runner"));
+        return exit_help(&build_info::version_output("webpi-runner"));
     }
     if args
         .get(1)
@@ -1298,13 +1298,13 @@ fn parse_runner_subcommand(args: &[String]) -> CliAction {
         let help = match command {
             "init" => runner_init_usage(),
             "install" => runner_install_service_usage(),
-            "run" => "Usage: webcodex runner run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
-            "restart" => "Usage: webcodex runner restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
-            "start" | "stop" => "Usage: webcodex runner <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
+            "run" => "Usage: webpi runner run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
+            "restart" => "Usage: webpi runner restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webpi connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
+            "start" | "stop" => "Usage: webpi runner <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webpi connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
             "status" => runner_status_usage(),
-            "logs" => "Usage: webcodex runner logs [--profile NAME] [--scope user|system] [--service-file PATH] [--lines N] [--since VALUE] [--follow]\n",
-            "uninstall" => "Usage: webcodex runner uninstall [--profile NAME] [--scope user|system] [--service-file PATH] --confirm\n",
-            "install-service" => "`webcodex runner install-service` was removed; use `webcodex runner install`.\n",
+            "logs" => "Usage: webpi runner logs [--profile NAME] [--scope user|system] [--service-file PATH] [--lines N] [--since VALUE] [--follow]\n",
+            "uninstall" => "Usage: webpi runner uninstall [--profile NAME] [--scope user|system] [--service-file PATH] --confirm\n",
+            "install-service" => "`webpi runner install-service` was removed; use `webpi runner install`.\n",
             _ => runner_usage(),
         };
         return exit_help(help);
@@ -1321,9 +1321,9 @@ fn parse_runner_subcommand(args: &[String]) -> CliAction {
             parse_runner_service_action(command, &args[1..]),
             CliAction::RunnerService,
         ),
-        "install-service" => exit_error(
-            "`webcodex runner install-service` was removed; use `webcodex runner install`.\n",
-        ),
+        "install-service" => {
+            exit_error("`webpi runner install-service` was removed; use `webpi runner install`.\n")
+        }
         other => exit_error(&format!(
             "unknown runner subcommand: {other}\n\n{}",
             runner_usage()
@@ -1556,7 +1556,7 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
 
 fn default_ops_common_options() -> OpsCommonOptions {
     OpsCommonOptions {
-        server_url: "http://127.0.0.1:8080".to_string(),
+        server_url: "http://127.0.0.1:56542".to_string(),
         server_http: ServerHttpOptions::default(),
         env_file: None,
         token_file: None,
@@ -1714,7 +1714,7 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
         return exit_help(server_usage());
     }
     if command == "run" && args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V") {
-        return exit_help(&build_info::version_output("webcodex-server"));
+        return exit_help(&build_info::version_output("webpi-server"));
     }
     if args
         .get(1)
@@ -1723,14 +1723,14 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
         let help = match command {
             "init" => server_init_usage(),
             "install" => server_install_service_usage(),
-            "run" => "Usage: webcodex server run [--env-file PATH] [--help|--version]\n\nRun webcodex-server directly in the foreground. --env-file passes the exact path through WEBCODEX_ENV_FILE; the Server remains the authoritative env-file parser.\n",
+            "run" => "Usage: webpi server run [--env-file PATH] [--help|--version]\n\nRun webcodex-server directly in the foreground. --env-file passes the exact path through WEBPI_ENV_FILE; the Server remains the authoritative env-file parser.\n",
             "tunnel" => server_tunnel_usage(),
-            "start" | "stop" | "restart" => "Usage: webcodex server <start|stop|restart>\n",
+            "start" | "stop" | "restart" => "Usage: webpi server <start|stop|restart>\n",
             "status" => server_status_usage(),
-            "logs" => "Usage: webcodex server logs [--lines N] [--since VALUE] [--follow]\n",
-            "uninstall" => "Usage: webcodex server uninstall --confirm\n",
-            "up" => "`webcodex server up` was removed; use `webcodex server init`.\n",
-            "install-service" => "`webcodex server install-service` was removed; use `webcodex server install`.\n",
+            "logs" => "Usage: webpi server logs [--lines N] [--since VALUE] [--follow]\n",
+            "uninstall" => "Usage: webpi server uninstall --confirm\n",
+            "up" => "`webpi server up` was removed; use `webpi server init`.\n",
+            "install-service" => "`webpi server install-service` was removed; use `webpi server install`.\n",
             _ => server_usage(),
         };
         return exit_help(help);
@@ -1748,10 +1748,10 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
             parse_server_service_action(command, &args[1..]),
             CliAction::ServerService,
         ),
-        "up" => exit_error("`webcodex server up` was removed; use `webcodex server init`.\n"),
-        "install-service" => exit_error(
-            "`webcodex server install-service` was removed; use `webcodex server install`.\n",
-        ),
+        "up" => exit_error("`webpi server up` was removed; use `webpi server init`.\n"),
+        "install-service" => {
+            exit_error("`webpi server install-service` was removed; use `webpi server install`.\n")
+        }
         other => exit_error(&format!(
             "unknown server subcommand: {other}\n\n{}",
             server_usage()
@@ -1761,11 +1761,18 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
 
 pub(crate) fn foreground_run_banner(component: &str) -> String {
     format!(
-        "Starting WebCodex {component} in the foreground.\nKeep this terminal open. Ctrl-C stops the {component}.\n\n"
+        "Starting WebPi {component} in the foreground.\nKeep this terminal open. Ctrl-C stops the {component}.\n\n"
     )
 }
 
 fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
+    parse_server_run_with_resolver(args, || discover_internal_binary("webpi-server"))
+}
+
+fn parse_server_run_with_resolver(
+    args: &[String],
+    resolve: impl FnOnce() -> Option<PathBuf>,
+) -> Result<InternalRunOptions, String> {
     let mut env_file: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -1783,14 +1790,14 @@ fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
             other => return Err(format!("unknown server run option: {other}")),
         }
     }
-    let bin = discover_internal_binary("webcodex-server").ok_or_else(|| {
-        "webcodex-server was not found beside webcodex or in an absolute PATH entry".to_string()
+    let bin = resolve().ok_or_else(|| {
+        "webpi-server was not found beside this WebPi CLI; PATH fallback is disabled".to_string()
     })?;
     Ok(InternalRunOptions {
         bin,
         args: Vec::new(),
         env: env_file
-            .map(|path| vec![(OsString::from("WEBCODEX_ENV_FILE"), path.into_os_string())])
+            .map(|path| vec![(OsString::from("WEBPI_ENV_FILE"), path.into_os_string())])
             .unwrap_or_default(),
     })
 }
@@ -1842,13 +1849,13 @@ fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
         Some(config) => config,
         None => match profile.as_deref() {
             Some(profile) => client_profile_runner_config(profile)?,
-            None => webcodex_runner_config::paths::resolve_runner_config_path(Path::new(
-                "/etc/webcodex",
-            ))?,
+            None => {
+                webcodex_runner_config::paths::resolve_runner_config_path(Path::new("/etc/webpi"))?
+            }
         },
     };
-    let bin = discover_internal_binary("webcodex-runner").ok_or_else(|| {
-        "webcodex-runner was not found beside webcodex or in an absolute PATH entry".to_string()
+    let bin = discover_internal_binary("webpi-runner").ok_or_else(|| {
+        "webpi-runner was not found beside this WebPi CLI; PATH fallback is disabled".to_string()
     })?;
     Ok(InternalRunOptions {
         bin,
@@ -1871,7 +1878,7 @@ fn parse_service_kind(command: &str, args: &[String]) -> Result<ServiceActionKin
         if let Some(flag) = args.first() {
             if flag == "--root" || flag == "--state-dir" || flag == "--console-assets-dir" {
                 return Err(format!(
-                    "`webcodex runner {command}` manages the installed service; use `webcodex run` for project runtime options"
+                    "`webpi runner {command}` manages the installed service; use `webcodex run` for project runtime options"
                 ));
             }
             return Err(format!("unknown {command} option: {flag}"));
@@ -1988,7 +1995,7 @@ fn parse_runner_service_action(
         }
         if command != "restart" {
             return Err(
-                "--bin is valid only with `webcodex runner restart --profile <name>`".to_string(),
+                "--bin is valid only with `webpi runner restart --profile <name>`".to_string(),
             );
         }
     }
@@ -2030,7 +2037,7 @@ fn parse_runner_service_action(
 fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
     let defaults = default_server_paths()?;
     let mut opts = ServerInitOptions {
-        listen: "127.0.0.1:8080".to_string(),
+        listen: "127.0.0.1:56542".to_string(),
         data_dir: defaults.data_dir,
         env_file: defaults.env_file,
         public_url: None,
@@ -2045,7 +2052,9 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
             "--data-dir" => opts.data_dir = PathBuf::from(next_value(&mut iter, arg)?),
             "--env-file" => opts.env_file = PathBuf::from(next_value(&mut iter, arg)?),
             "--public-url" => opts.public_url = Some(next_value(&mut iter, arg)?),
-            "--open" => opts.open = true,
+            "--open" => {
+                return Err("WebPi does not support anonymous --open deployment".to_string())
+            }
             "--overwrite" => opts.overwrite = true,
             "--json" => opts.json = true,
             _ => return Err(format!("unknown server init flag: {}", arg)),
@@ -2135,11 +2144,11 @@ fn parse_runner_install_service_with_identity(
         .map(Ok)
         .unwrap_or_else(|| runner_service_file_for_scope(scope, profile.as_deref()))?;
     validate_service_file_scope(scope, &service_file)?;
-    let bin = match bin.or_else(|| discover_internal_binary("webcodex-runner")) {
+    let bin = match bin.or_else(|| discover_internal_binary("webpi-runner")) {
         Some(path) => path,
         None => {
             return Err(
-                "--bin is required because webcodex-runner was not found in PATH".to_string(),
+                "--bin is required because this installation has no webpi-runner".to_string(),
             )
         }
     };
@@ -2325,7 +2334,7 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
     let defaults = default_server_paths()?;
     let mut env_file = defaults.env_file;
     let mut bin: Option<PathBuf> = None;
-    let mut service_file = PathBuf::from("/etc/systemd/system/webcodex.service");
+    let mut service_file = PathBuf::from("/etc/systemd/system/webpi.service");
     let mut user = None;
     let mut group = None;
     let mut working_directory: Option<PathBuf> = None;
@@ -2359,17 +2368,21 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
             _ => return Err(format!("unknown server install flag: {}", arg)),
         }
     }
-    let bin = match bin.or_else(|| discover_internal_binary("webcodex-server")) {
+    let bin = match bin.or_else(|| discover_internal_binary("webpi-server")) {
         Some(path) => path,
-        None => return Err("--bin is required because webcodex-server was not found beside webcodex or in an absolute PATH entry".to_string()),
+        None => {
+            return Err(
+                "--bin is required because this installation has no webpi-server".to_string(),
+            )
+        }
     };
     let working_directory = match working_directory {
         Some(path) => path,
-        None if env_file.exists() => match read_env_file_value(&env_file, "WEBCODEX_DATA")? {
+        None if env_file.exists() => match read_env_file_value(&env_file, "WEBPI_DATA")? {
             Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
             Some(_) => {
                 return Err(format!(
-                    "{} defines an empty WEBCODEX_DATA; pass --working-directory explicitly",
+                    "{} defines an empty WEBPI_DATA; pass --working-directory explicitly",
                     env_file.display()
                 ))
             }
@@ -2409,7 +2422,7 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
 
 fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     let mut opts = ServerStatusOptions {
-        url: "http://127.0.0.1:8080".to_string(),
+        url: "http://127.0.0.1:56542".to_string(),
         url_explicit: false,
         server_http: ServerHttpOptions::default(),
         env_file: Some(default_server_paths()?.env_file),
@@ -2496,7 +2509,7 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
     Ok(opts)
 }
 
-/// Small flag parser for `webcodex runner init`. Produces an
+/// Small flag parser for `webpi runner init`. Produces an
 /// `RunnerInitOptions` consumed by the shared `runner_config::run_runner_init`.
 fn parse_cli_runner_init(args: &[String]) -> Result<RunnerInitOptions, String> {
     let mut opts = RunnerInitOptions {
@@ -2625,13 +2638,13 @@ fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> 
             Some("init") | Some("run") => None,
             Some("install" | "start" | "stop" | "restart" | "logs" | "uninstall") | None => Some(
                 "Windows service-managed Server lifecycle is not supported yet.\n\
-                 Use `webcodex server run` for foreground operation.",
+                 Use `webpi server run` for foreground operation.",
             ),
             _ => None,
         },
         Some("runner") if args.get(1).map(String::as_str) == Some("install") => Some(
             "Automatic Windows Runner startup is not supported yet.\n\
-             Use `webcodex connect` or `webcodex runner start --profile <name>.",
+             Use `webpi connect` or `webpi runner start --profile <name>.",
         ),
         _ => None,
     }

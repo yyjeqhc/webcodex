@@ -158,19 +158,19 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
           test -z "$(git status --porcelain --untracked-files=all)"
-          cargo build --locked -p webcodex --bin webcodex-server
-          cargo build --locked -p webcodex-runner --bin webcodex-runner
+          cargo build --locked -p webcodex --bin webpi-server
+          cargo build --locked -p webcodex-runner --bin webpi-runner
 
       - name: Run WebSocket zero-config E2E
         env:
-          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
-          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
+          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webpi-server
+          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webpi-runner
         run: bash scripts/e2e_zero_config_ws.sh
 
       - name: Run polling zero-config E2E
         env:
-          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
-          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
+          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webpi-server
+          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webpi-runner
           E2E_TRANSPORT: polling
         run: bash scripts/e2e_zero_config_ws.sh
 
@@ -221,14 +221,14 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
           test -z "$(git status --porcelain --untracked-files=all)"
-          cargo build --locked -p webcodex --bin webcodex-server
-          cargo build --locked -p webcodex-runner --bin webcodex-runner
+          cargo build --locked -p webcodex --bin webpi-server
+          cargo build --locked -p webcodex-runner --bin webpi-runner
 
       - name: Run coding-loop eval compare
         env:
           EVAL_MODE: compare
-          EVAL_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
-          EVAL_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
+          EVAL_SERVER_BIN: ${{ github.workspace }}/target/debug/webpi-server
+          EVAL_RUNNER_BIN: ${{ github.workspace }}/target/debug/webpi-runner
         run: bash scripts/eval_coding_loop.sh
 
       - name: Require final eval source cleanliness
@@ -305,8 +305,8 @@ jobs:
           version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
           built_at="$(git show -s --format=%ct HEAD)"
           short_commit="${INPUT_SOURCE_SHA:0:12}"
-          image="webcodex-server-readiness:${INPUT_REQUEST_ID#rr_}-$IMAGE_SLUG"
-          name="webcodex-server-readiness-${GITHUB_RUN_ID}-$IMAGE_SLUG"
+          image="webpi-server-readiness:${INPUT_REQUEST_ID#rr_}-$IMAGE_SLUG"
+          name="webpi-server-readiness-${GITHUB_RUN_ID}-$IMAGE_SLUG"
           cleanup() {
             docker rm -f "$name" >/dev/null 2>&1 || true
             docker image rm -f "$image" >/dev/null 2>&1 || true
@@ -314,30 +314,30 @@ jobs:
           trap cleanup EXIT
 
           DOCKER_BUILDKIT=1 docker build \
-            --build-arg "WEBCODEX_GIT_COMMIT=$short_commit" \
-            --build-arg WEBCODEX_GIT_DIRTY=false \
-            --build-arg "WEBCODEX_BUILT_AT=$built_at" \
+            --build-arg "WEBPI_GIT_COMMIT=$short_commit" \
+            --build-arg WEBPI_GIT_DIRTY=false \
+            --build-arg "WEBPI_BUILT_AT=$built_at" \
             -t "$image" \
             -f Dockerfile \
             .
 
           test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$EXPECTED_ARCH"
           test "$(docker image inspect --format '{{.Os}}' "$image")/$EXPECTED_ARCH" = "$EXPECTED_PLATFORM"
-          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "webcodex:webcodex"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "webpi:webpi"
           docker run --rm --entrypoint sh "$image" -ec '
             test "$(id -u)" = 10001
             test "$(id -g)" = 10001
-            test ! -e /usr/local/bin/webcodex-runner
+            test ! -e /usr/local/bin/webpi-runner
           '
 
-          expected_server="webcodex-server $version (commit $short_commit, dirty=false, built_at=$built_at)"
-          expected_cli="webcodex $version (commit $short_commit, dirty=false, built_at=$built_at)"
+          expected_server="webpi-server $version (commit $short_commit, dirty=false, built_at=$built_at)"
+          expected_cli="webpi $version (commit $short_commit, dirty=false, built_at=$built_at)"
           test "$(docker run --rm "$image" --version)" = "$expected_server"
-          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$image" --version)" = "$expected_cli"
+          test "$(docker run --rm --entrypoint /usr/local/bin/webpi "$image" --version)" = "$expected_cli"
 
           docker run -d --name "$name" \
-            -e WEBCODEX_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
-            -e WEBCODEX_PUBLIC_URL=https://webcodex.invalid \
+            -e WEBPI_TOKEN=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e WEBPI_PUBLIC_URL=https://webpi.invalid \
             "$image" >/dev/null
           for _ in $(seq 1 40); do
             health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name")"
@@ -373,10 +373,10 @@ jobs:
             --output-dir "$deployment_dir" \
             --digest "$digest" \
             --summary "$deployment_summary" >/dev/null
-          bootstrap="$deployment_dir/webcodex-server-bootstrap.sh"
+          bootstrap="$deployment_dir/webpi-server-bootstrap.sh"
           sh -n "$bootstrap"
-          grep -Fq "ghcr.io/yyjeqhc/webcodex-server@$digest" "$bootstrap"
-          if grep -Fq "ghcr.io/yyjeqhc/webcodex-server:latest" "$bootstrap"; then
+          grep -Fq "ghcr.io/yyjeqhc/webpi-server@$digest" "$bootstrap"
+          if grep -Fq "ghcr.io/yyjeqhc/webpi-server:latest" "$bootstrap"; then
             echo "Disposable release bootstrap retained a mutable latest image reference." >&2
             exit 1
           fi
@@ -390,7 +390,7 @@ jobs:
           summary = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
           assets = summary.get("assets")
           expected = hashlib.sha256(bootstrap.read_bytes()).hexdigest()
-          if assets != {"webcodex-server-bootstrap.sh": expected}:
+          if assets != {"webpi-server-bootstrap.sh": expected}:
               raise SystemExit("disposable Server deployment-asset digest summary is inconsistent")
           PY
 

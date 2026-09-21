@@ -1,13 +1,13 @@
 services:
-  webcodex:
-    # Explicit developer/source-build override. The default compose.yaml consumes
-    # the published GHCR image instead of compiling Rust on the deployment host.
-    image: webcodex-server-local:${WEBCODEX_IMAGE_TAG:-latest}
+  webpi:
+    # Source-build override. Set WEBPI_SERVER_IMAGE=webpi-server-local:reviewed
+    # before Compose interpolates the mandatory image in compose.yaml.
+    image: webpi-server-local:${WEBPI_IMAGE_TAG:-reviewed}
     pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        WEBCODEX_GIT_COMMIT: ${WEBCODEX_GIT_COMMIT:-}
-        WEBCODEX_GIT_DIRTY: ${WEBCODEX_GIT_DIRTY:-}
-        WEBCODEX_BUILT_AT: ${WEBCODEX_BUILT_AT:-}
+        WEBPI_GIT_COMMIT: ${WEBPI_GIT_COMMIT:-}
+        WEBPI_GIT_DIRTY: ${WEBPI_GIT_DIRTY:-}
+        WEBPI_BUILT_AT: ${WEBPI_BUILT_AT:-}

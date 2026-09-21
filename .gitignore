@@ -7,6 +7,8 @@ __pycache__/
 
 # Local runtime data (SQLite DB and durable runtime state)
 data*
+/webpi-data/
+/.webpi-managed-worktrees/
 
 # Local Codex CLI workspace
 .codex
@@ -19,7 +21,7 @@ data*
 
 # Local sensitive deployment config — NEVER commit these.
 # They contain real server URLs, tokens, and host paths. If a token was ever
-# committed or exposed, rotate WEBCODEX_TOKEN immediately.
+# committed or exposed, rotate the affected installation's credential immediately.
 /.env
 /.webcodex-bootstrap.receipt
 /runner.toml
@@ -27,7 +29,9 @@ data*
 /project-registry/
 /projects.d/
 /*.local.toml
-/webcodex.env
+/webcodex.env*
+/webpi.env*
+/.webpi-bootstrap.receipt
 
 # Generated publish-ready npm manifest. Release checksums are created on OE
 # after all native artifacts exist; only manifest.example.json is source-controlled.
@@ -54,3 +58,8 @@ data*
 # Regenerable isolated UI verification output; curated screenshots live in docs/ux/.
 /artifacts/issue470-ui/
 /scripts/ui-smoke/node_modules/
+
+# WebPi local portable runtime and local SDK build dependencies
+/.webpi-runtime/
+/.webpi-state/
+/npm/plugin-sdk/node_modules/

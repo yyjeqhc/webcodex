@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WebCodex Desktop",
-  "mainBinaryName": "WebCodex",
+  "productName": "WebPi Desktop (not packaged)",
+  "mainBinaryName": "WebPi",
   "version": "0.4.1",
-  "identifier": "dev.webcodex.desktop",
+  "identifier": "vip.piforme.webpi.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "WebCodex",
+        "title": "WebPi",
         "width": 1180,
         "height": 760,
         "minWidth": 780,
@@ -31,7 +31,7 @@
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "targets": ["nsis"],
     "windows": {

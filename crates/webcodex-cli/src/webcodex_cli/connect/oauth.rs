@@ -115,13 +115,13 @@ fn read_managed_identity(
         1 => connections.remove(0),
         0 if requested_user.is_some() => {
             return Err(format!(
-                "no logged-in WebCodex user '{}' exists for this Server; run `webcodex login` first",
+                "no logged-in WebPi user '{}' exists for this Server; run `webpi login` first",
                 requested_user.unwrap_or_default()
             ))
         }
         0 => {
             return Err(
-                "OAuth connect requires a managed login for this Server; run `webcodex login <server> --code ...` first"
+                "OAuth connect requires a managed login for this Server; run `webpi login <server> --code ...` first"
                     .to_string(),
             )
         }
@@ -170,7 +170,7 @@ async fn fetch_oauth_metadata(
         .await
         .map_err(|error| format!("failed to discover Server OAuth metadata: {error}"))?;
     if response.status().as_u16() == 404 {
-        return Err("the remote WebCodex Server does not have OAuth enabled".to_string());
+        return Err("the remote WebPi Server does not have OAuth enabled".to_string());
     }
     let status = response.status();
     let value: Value = response
@@ -206,7 +206,7 @@ async fn fetch_oauth_metadata(
         .collect::<Vec<_>>();
     if scopes_supported.is_empty() {
         return Err(
-            "Server OAuth metadata exposes no delegable WebCodex permission scopes".to_string(),
+            "Server OAuth metadata exposes no delegable WebPi permission scopes".to_string(),
         );
     }
     Ok(OAuthServerMetadata {
@@ -341,7 +341,7 @@ async fn create_runner_token(
         body: json!({
             "username": username,
             "client_id": client_id,
-            "name": format!("webcodex connect oauth {client_id}"),
+            "name": format!("webpi connect oauth {client_id}"),
         }),
     })
     .await?;
@@ -437,7 +437,7 @@ async fn ensure_oauth_client(
         server_url,
         opts,
         user_token,
-        &format!("WebCodex connect {profile_name}"),
+        &format!("WebPi connect {profile_name}"),
         &profile.oauth_redirect_uri,
         &profile.allowed_scopes,
     )
@@ -468,7 +468,7 @@ fn render_oauth_output(
         )
     };
     format!(
-        "WebCodex connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete browser authorization.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\nScopes:          {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Runner token and OAuth credentials are never sent to Runner transport.\n",
+        "WebPi connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete browser authorization.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\nScopes:          {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Runner token and OAuth credentials are never sent to Runner transport.\n",
         oauth.oauth_client_id,
         oauth.oauth_redirect_uri,
         config_path.display(),
@@ -625,9 +625,10 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
     let runner_bin = opts
         .runner_bin
         .clone()
-        .or_else(|| discover_internal_binary("webcodex-runner"))
+        .or_else(|| discover_internal_binary("webpi-runner"))
         .ok_or_else(|| {
-            "webcodex-runner was not found beside webcodex or in an absolute PATH entry".to_string()
+            "webpi-runner was not found beside this WebPi CLI; PATH fallback is disabled"
+                .to_string()
         })?;
 
     let (runner_token, oauth_profile, created_runner_token, created_oauth) = if let Some(
@@ -685,7 +686,7 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
             &canonical_server.url,
             &opts,
             &identity.user_token,
-            &format!("WebCodex connect {profile}"),
+            &format!("WebPi connect {profile}"),
             &redirect_uri,
             &scopes,
         )
@@ -916,7 +917,7 @@ pub(super) fn observer_token_for_disconnect(
         .collect::<Vec<_>>();
     if connections.len() != 1 {
         return Err(format!(
-            "OAuth hosted profile requires the managed login for user {}; run `webcodex login` again before disconnecting the live project",
+            "OAuth hosted profile requires the managed login for user {}; run `webpi login` again before disconnecting the live project",
             profile.username
         ));
     }
@@ -1260,7 +1261,7 @@ mod tests {
                 ),
             )
             .unwrap();
-            std::fs::write(dir.join("webcodex-user-token"), format!("wc_pat_{user}\n")).unwrap();
+            std::fs::write(dir.join("webpi-user-token"), format!("wc_pat_{user}\n")).unwrap();
         }
         let error = read_managed_identity(base, &server.url, None).unwrap_err();
         assert!(error.contains("more than one logged-in user"), "{error}");
@@ -1289,7 +1290,7 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::write(login_dir.join("webcodex-user-token"), "wc_pat_managed\n").unwrap();
+        std::fs::write(login_dir.join("webpi-user-token"), "wc_pat_managed\n").unwrap();
         let oauth = OAuthConnectProfile {
             version: OAUTH_PROFILE_VERSION,
             server_url: server.url.clone(),
@@ -1423,7 +1424,7 @@ mod tests {
         );
         assert!(!reused.contains("wc_csec_existing"));
         assert!(!reused.contains("Client secret:"));
-        assert!(reused.starts_with("WebCodex connected\n\nWhat to do next"));
+        assert!(reused.starts_with("WebPi connected\n\nWhat to do next"));
         assert!(reused.find("MCP URL:").unwrap() < reused.find("Details").unwrap());
         assert!(reused.contains("Credential source:"));
         assert!(reused.contains("/protected/profile/oauth-client.toml"));

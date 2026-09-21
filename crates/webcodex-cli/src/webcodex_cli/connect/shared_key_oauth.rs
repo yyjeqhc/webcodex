@@ -277,7 +277,7 @@ async fn fetch_metadata(opts: &ConnectOptions, server_url: &str) -> Result<OAuth
         .await
         .map_err(|error| format!("failed to discover Server OAuth metadata: {error}"))?;
     if response.status().as_u16() == 404 {
-        return Err("the remote WebCodex Server does not have OAuth enabled".to_string());
+        return Err("the remote WebPi Server does not have OAuth enabled".to_string());
     }
     let status = response.status();
     let value: Value = response
@@ -495,7 +495,7 @@ async fn provision_client(
 fn bridge_scope_output(profile: &SharedKeyOAuthProfile) -> String {
     if profile.computer_permissions_enabled {
         format!(
-            "Client may request: {}\nProtocol scope: offline_access\nBrowser consent: Additional Computer permissions are granted only when selected on the WebCodex authorization page.\n",
+            "Client may request: {}\nProtocol scope: offline_access\nBrowser consent: Additional Computer permissions are granted only when selected on the WebPi authorization page.\n",
             profile.allowed_scopes.join(" ")
         )
     } else {
@@ -510,16 +510,16 @@ fn bridge_scope_output(profile: &SharedKeyOAuthProfile) -> String {
 fn bridge_browser_authorization_key_line(resolved_key: &ResolvedKey, config_path: &Path) -> String {
     if resolved_key.generated {
         format!(
-            "Browser authorization key: {}\nEnter this key only on the WebCodex authorize page; do not put it in ChatGPT.\n",
+            "Browser authorization key: {}\nEnter this key only on the WebPi authorize page; do not put it in ChatGPT.\n",
             resolved_key.value
         )
     } else if resolved_key.recovered_profile.is_some() {
         format!(
-            "Browser authorization key source: {} (top-level token; not reprinted).\nEnter that key only on the WebCodex authorize page; do not put it in ChatGPT.\n",
+            "Browser authorization key source: {} (top-level token; not reprinted).\nEnter that key only on the WebPi authorize page; do not put it in ChatGPT.\n",
             config_path.display()
         )
     } else {
-        "Browser authorization key: use the shared key supplied to this command on the WebCodex authorize page; do not put it in ChatGPT.\n".to_string()
+        "Browser authorization key: use the shared key supplied to this command on the WebPi authorize page; do not put it in ChatGPT.\n".to_string()
     }
 }
 
@@ -623,7 +623,7 @@ pub(super) async fn finish_shared_key_oauth_connect(
     let authorization_endpoint = bridge_authorization_endpoint(&metadata)?;
     let scope_lines = bridge_scope_output(&oauth);
     let output = format!(
-        "WebCodex connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. OAuth client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex browser authorization flow.\n{key_line}8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {runner_client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\n{scope_lines}\nThe Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Runner transport.\n",
+        "WebPi connected\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {server_url}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. OAuth client ID: {}\n5. {secret_line}6. Redirect URI: {}\n7. Scan Tools and complete the WebPi browser authorization flow.\n{key_line}8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nDetails\nServer:          {server_url}\nRunner:          running\nProfile:         {profile}\nClient:          {runner_client_id}\nRuntime project: {runtime_project_id}\nConfig:          {}\nLogs:            {}\nIssuer:          {}\nAuthorization:   {}\nToken endpoint:  {}\n{scope_lines}\nThe Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Runner transport.\n",
         oauth.client_id,
         oauth.redirect_uri,
         config_path.display(),

@@ -206,7 +206,7 @@ fn runner_tokens_register_hash_builds_hash_registration_request() {
 #[test]
 fn runner_tokens_register_hash_defaults_runner_scopes_and_prefers_explicit_token() {
     let mut env = EnvGuard::new();
-    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    env.set("WEBPI_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
         "runner-tokens",
         "register-hash",
@@ -233,7 +233,7 @@ fn runner_tokens_register_hash_defaults_runner_scopes_and_prefers_explicit_token
             "agent:job_update"
         ])
     );
-    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBPI_ACCOUNT_CREDENTIAL");
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn runner_tokens_register_hash_uses_credential_env_and_default_account_credentia
     assert_eq!(req.token, "wc_acct_custom");
     env.remove("CUSTOM_ACCT");
 
-    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    env.set("WEBPI_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let req = request(&[
         "runner-tokens",
         "register-hash",
@@ -275,7 +275,7 @@ fn runner_tokens_register_hash_uses_credential_env_and_default_account_credentia
         "wc_agent_bbbbbbb",
     ]);
     assert_eq!(req.token, "wc_acct_default");
-    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBPI_ACCOUNT_CREDENTIAL");
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn token_file_is_read() {
 #[test]
 fn env_token_fallback_is_used() {
     let mut env = EnvGuard::new();
-    env.set("WEBCODEX_TOKEN", "fake-env-token");
+    env.set("WEBPI_TOKEN", "fake-env-token");
     let cmd = parse_admin_cli(&args(&[
         "users",
         "list",
@@ -343,13 +343,13 @@ fn env_token_fallback_is_used() {
     .unwrap();
     let req = build_admin_request(&cmd).unwrap();
     assert_eq!(req.token, "fake-env-token");
-    env.remove("WEBCODEX_TOKEN");
+    env.remove("WEBPI_TOKEN");
 }
 
 #[test]
 fn explicit_token_wins_over_default_account_credential_env() {
     let mut env = EnvGuard::new();
-    env.set("WEBCODEX_ACCOUNT_CREDENTIAL", "fake-account-credential");
+    env.set("WEBPI_ACCOUNT_CREDENTIAL", "fake-account-credential");
     let cmd = parse_admin_cli(&args(&[
         "tokens",
         "register-hash",
@@ -367,7 +367,7 @@ fn explicit_token_wins_over_default_account_credential_env() {
     .unwrap();
     let req = build_admin_request(&cmd).unwrap();
     assert_eq!(req.token, "fake-admin");
-    env.remove("WEBCODEX_ACCOUNT_CREDENTIAL");
+    env.remove("WEBPI_ACCOUNT_CREDENTIAL");
 }
 
 #[test]

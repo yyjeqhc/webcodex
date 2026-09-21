@@ -128,6 +128,7 @@ const projectErrors = new Set([
   "project_unavailable",
   "project_not_directory",
   "project_not_loaded",
+  "project_not_ready",
 ]);
 const enrollmentErrors = new Set([
   "webcodex_command_failed",

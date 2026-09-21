@@ -29,6 +29,18 @@ describe("Desktop command error presentation", () => {
     });
   });
 
+  it("presents a missing explicit local Project as a Project recovery problem", () => {
+    const error: DesktopError = {
+      code: "project_not_ready",
+      message: "Local setup requires an explicit project folder",
+      next_action: "Choose the project folder that this Runner should manage, then retry setup.",
+    };
+    expect(desktopErrorPresentation(error, zh)).toEqual({
+      title: messages["zh-CN"]["error.projectTitle"],
+      action: messages["zh-CN"]["error.projectAction"],
+    });
+  });
+
   it("never projects arbitrary or secret-bearing detail fields", () => {
     const error: DesktopError = {
       code: "webcodex_command_failed",

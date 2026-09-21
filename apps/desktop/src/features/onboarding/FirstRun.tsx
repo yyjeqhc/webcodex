@@ -5,6 +5,7 @@ import { useLocale } from "../../i18n/locale";
 import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
 import { PowerShellInstallGuidance } from "../settings/PowerShellInstallGuidance";
 import {
+  desktopCommandDiagnostics,
   desktopErrorPresentation,
   normalizeDesktopError,
 } from "../../i18n/presentation";
@@ -146,6 +147,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   }
 
   const presentation = error ? desktopErrorPresentation(error, t) : null;
+  const diagnostics = error ? desktopCommandDiagnostics(error) : null;
   const serverInvalid = error?.code === "server_url_invalid" || error?.code === "server_unreachable";
   const pairingInvalid = error?.code === "pairing_code_invalid";
 
@@ -294,6 +296,15 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
             <summary>{t("common.details")}</summary>
             <code>{error.code}</code>
             <p>{error.message}</p>
+            {diagnostics && (
+              <dl className="error-diagnostics">
+                {diagnostics.phase && <><dt>phase</dt><dd><code>{diagnostics.phase}</code></dd></>}
+                {diagnostics.logicalCommand && <><dt>command</dt><dd><code>{diagnostics.logicalCommand}</code></dd></>}
+                {diagnostics.executable && <><dt>executable</dt><dd><code>{diagnostics.executable}</code></dd></>}
+                {diagnostics.exitCode !== undefined && <><dt>exit code</dt><dd><code>{diagnostics.exitCode}</code></dd></>}
+                {diagnostics.reasonCode && <><dt>reason</dt><dd><code>{diagnostics.reasonCode}</code></dd></>}
+              </dl>
+            )}
           </details>
           {error.code === "project_not_loaded" && (
             <div className="setup-recovery-actions">

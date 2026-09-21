@@ -20,6 +20,21 @@ const CLI_CLEANUP_SLACK: Duration = Duration::from_secs(2);
 const CLI_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CLI_GRACEFUL_CLEANUP: Duration = Duration::from_millis(250);
 
+#[derive(Debug, Clone, Copy)]
+pub struct CliCommandContext {
+    pub phase: &'static str,
+    pub logical_command: &'static str,
+}
+
+impl CliCommandContext {
+    pub const fn new(phase: &'static str, logical_command: &'static str) -> Self {
+        Self {
+            phase,
+            logical_command,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedBinarySource {
     Bundled,
@@ -250,6 +265,7 @@ pub async fn run_json<T: DeserializeOwned>(
     args: &[String],
     stdin: Option<&[u8]>,
     secret_output: bool,
+    context: CliCommandContext,
     cancellation: &CancellationContext,
 ) -> DesktopResult<T> {
     run_json_until(
@@ -257,6 +273,7 @@ pub async fn run_json<T: DeserializeOwned>(
         args,
         stdin,
         secret_output,
+        context,
         cancellation,
         Deadline::after(CLI_TIMEOUT),
     )
@@ -268,6 +285,7 @@ pub async fn run_project_activation_json<T: DeserializeOwned>(
     args: &[String],
     cancellation: &CancellationContext,
 ) -> DesktopResult<T> {
+    let context = CliCommandContext::new("project_activation", "project activate");
     let output = run_bounded_until(
         executable,
         args,
@@ -276,9 +294,10 @@ pub async fn run_project_activation_json<T: DeserializeOwned>(
         cancellation,
         Deadline::after(PROJECT_ACTIVATION_TIMEOUT),
     )
-    .await?;
+    .await
+    .map_err(|error| with_command_diagnostics(error, executable, context, None, None))?;
     if output.exit_code != Some(0) {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason_code = safe_reason_code(&output.stderr);
         let code = [
             "project_activation_capability_unavailable",
             "project_activation_restart_required",
@@ -287,7 +306,7 @@ pub async fn run_project_activation_json<T: DeserializeOwned>(
             "runner_config_concurrent_change",
         ]
         .into_iter()
-        .find(|code| stderr.trim_start().starts_with(code))
+        .find(|code| reason_code == *code)
         .unwrap_or("webcodex_command_failed");
         let next_action = match code {
             "project_activation_capability_unavailable" | "project_activation_restart_required" => {
@@ -301,12 +320,17 @@ pub async fn run_project_activation_json<T: DeserializeOwned>(
             }
             _ => "Open Activity for safe diagnostics, correct the configuration, and retry.",
         };
-        return Err(DesktopError::new(
-            code,
-            "WebCodex could not activate the selected project on the current Runner",
-            next_action,
-        )
-        .with_details(serde_json::json!({ "exit_code": output.exit_code })));
+        return Err(with_command_diagnostics(
+            DesktopError::new(
+                code,
+                "WebCodex could not activate the selected project on the current Runner",
+                next_action,
+            ),
+            executable,
+            context,
+            output.exit_code,
+            Some(&reason_code),
+        ));
     }
     serde_json::from_slice(&output.stdout).map_err(|_| {
         DesktopError::new(
@@ -322,6 +346,7 @@ pub async fn run_json_until<T: DeserializeOwned>(
     args: &[String],
     stdin: Option<&[u8]>,
     secret_output: bool,
+    context: CliCommandContext,
     cancellation: &CancellationContext,
     deadline: Deadline,
 ) -> DesktopResult<T> {
@@ -333,14 +358,21 @@ pub async fn run_json_until<T: DeserializeOwned>(
         cancellation,
         deadline,
     )
-    .await?;
+    .await
+    .map_err(|error| with_command_diagnostics(error, executable, context, None, None))?;
     if output.exit_code != Some(0) {
-        return Err(DesktopError::new(
-            "webcodex_command_failed",
-            "WebCodex did not complete the requested operation",
-            "Open Activity for safe diagnostics, correct the configuration, and retry.",
-        )
-        .with_details(serde_json::json!({ "exit_code": output.exit_code })));
+        let reason_code = safe_reason_code(&output.stderr);
+        return Err(with_command_diagnostics(
+            DesktopError::new(
+                "webcodex_command_failed",
+                "WebCodex did not complete the requested operation",
+                "Open Activity for safe diagnostics, correct the configuration, and retry.",
+            ),
+            executable,
+            context,
+            output.exit_code,
+            Some(&reason_code),
+        ));
     }
     serde_json::from_slice(&output.stdout).map_err(|_| {
         DesktopError::new(
@@ -357,6 +389,110 @@ struct BoundedOutput {
     stdout: Vec<u8>,
     #[allow(dead_code)]
     stderr: Vec<u8>,
+}
+
+fn with_command_diagnostics(
+    mut error: DesktopError,
+    executable: &Path,
+    context: CliCommandContext,
+    exit_code: Option<i32>,
+    reason_code: Option<&str>,
+) -> DesktopError {
+    let mut details = match error.details.take() {
+        Some(serde_json::Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert(
+        "phase".to_string(),
+        serde_json::Value::String(context.phase.to_string()),
+    );
+    details.insert(
+        "logical_command".to_string(),
+        serde_json::Value::String(context.logical_command.to_string()),
+    );
+    details.insert(
+        "executable".to_string(),
+        serde_json::Value::String(
+            executable
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("webcodex")
+                .to_string(),
+        ),
+    );
+    if let Some(exit_code) = exit_code {
+        details.insert("exit_code".to_string(), exit_code.into());
+    }
+    if let Some(reason_code) = reason_code {
+        details.insert(
+            "reason_code".to_string(),
+            serde_json::Value::String(reason_code.to_string()),
+        );
+    }
+    error.details = Some(serde_json::Value::Object(details));
+    error
+}
+
+fn safe_reason_code(stderr: &[u8]) -> String {
+    const FALLBACK: &str = "nonzero_exit";
+    let Ok(text) = std::str::from_utf8(stderr) else {
+        return FALLBACK.to_string();
+    };
+    let trimmed = text.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(code) = machine_reason_code(&value) {
+            return code.to_string();
+        }
+    }
+    for line in text.lines().take(32) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(code) = machine_reason_code(&value) {
+                return code.to_string();
+            }
+        }
+        let candidate = line
+            .split_once(':')
+            .map(|(prefix, _)| prefix)
+            .unwrap_or_else(|| line.split_whitespace().next().unwrap_or(""));
+        if is_safe_reason_code(candidate) {
+            return candidate.to_string();
+        }
+    }
+    FALLBACK.to_string()
+}
+
+fn machine_reason_code(value: &serde_json::Value) -> Option<&str> {
+    let object = value.as_object()?;
+    ["code", "error_code", "reason_code"]
+        .into_iter()
+        .filter_map(|key| object.get(key).and_then(serde_json::Value::as_str))
+        .find(|value| is_safe_reason_code(value))
+}
+
+fn is_safe_reason_code(value: &str) -> bool {
+    let value = value.trim();
+    if value.len() < 3 || value.len() > 96 || !value.contains('_') {
+        return false;
+    }
+    if !value.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+    }) {
+        return false;
+    }
+    ![
+        "token",
+        "secret",
+        "password",
+        "credential",
+        "api_key",
+        "authorization",
+    ]
+    .into_iter()
+    .any(|sensitive| value.contains(sensitive))
 }
 
 #[cfg(test)]
@@ -905,6 +1041,48 @@ mod tests {
     #[test]
     fn bundled_source_label_is_stable() {
         assert_eq!(ResolvedBinarySource::Bundled.label(), "Bundled");
+    }
+
+    #[test]
+    fn command_reason_code_keeps_only_safe_machine_diagnostics() {
+        assert_eq!(
+            safe_reason_code(
+                br#"{"code":"path_outside_allowed_roots","message":"Bearer secret must never surface"}"#
+            ),
+            "path_outside_allowed_roots"
+        );
+        assert_eq!(
+            safe_reason_code(b"project_activation_restart_required: refresh Runner"),
+            "project_activation_restart_required"
+        );
+        assert_eq!(
+            safe_reason_code(b"authorization_token_deadbeef: must stay private"),
+            "nonzero_exit"
+        );
+        assert_eq!(
+            safe_reason_code(b"ordinary human-readable failure containing a private value"),
+            "nonzero_exit"
+        );
+    }
+
+    #[test]
+    fn command_failure_diagnostics_never_copy_stderr_text() {
+        let context = CliCommandContext::new("login", "login");
+        let reason = safe_reason_code(b"login_failed: Bearer super-secret-value");
+        let error = with_command_diagnostics(
+            DesktopError::new("webcodex_command_failed", "failed", "retry"),
+            Path::new(r"C:\Program Files\WebCodex\webcodex.exe"),
+            context,
+            Some(7),
+            Some(&reason),
+        );
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(serialized.contains("\"phase\":\"login\""));
+        assert!(serialized.contains("\"logical_command\":\"login\""));
+        assert!(serialized.contains("\"executable\":\"webcodex.exe\""));
+        assert!(serialized.contains("\"exit_code\":7"));
+        assert!(serialized.contains("\"reason_code\":\"login_failed\""));
+        assert!(!serialized.contains("super-secret-value"));
     }
 
     #[cfg(unix)]

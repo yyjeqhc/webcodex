@@ -1,4 +1,6 @@
-use super::cli::{run_json, run_json_until, run_project_activation_json, ResolvedBinaries};
+use super::cli::{
+    run_json, run_json_until, run_project_activation_json, CliCommandContext, ResolvedBinaries,
+};
 use super::models::{
     LegacyProjectRegisterOutput, LoginOutput, OpsProjectsOutput, OpsWindowsOutput,
     PairingCreateOutput, ProjectActivationOutput, RunnerStatusOutput, ServerStatusOutput,
@@ -122,6 +124,7 @@ impl WebCodexAdapter {
             ],
             None,
             false,
+            CliCommandContext::new("server_init", "server init"),
             cancellation,
         )
         .await?;
@@ -202,9 +205,28 @@ impl WebCodexAdapter {
         args.push("--json".into());
         let output: ServerStatusOutput = match deadline {
             Some(deadline) => {
-                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+                run_json_until(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("server_status", "server status"),
+                    cancellation,
+                    deadline,
+                )
+                .await?
             }
-            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+            None => {
+                run_json(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("server_status", "server status"),
+                    cancellation,
+                )
+                .await?
+            }
         };
         if output.probe_url.trim().is_empty() {
             return Err(invalid_contract("server status"));
@@ -327,8 +349,15 @@ impl WebCodexAdapter {
             "--json".into(),
         ];
         args.push("--no-system-proxy".into());
-        let output: PairingCreateOutput =
-            run_json(&webcodex, &args, None, true, cancellation).await?;
+        let output: PairingCreateOutput = run_json(
+            &webcodex,
+            &args,
+            None,
+            true,
+            CliCommandContext::new("pairing_create", "pairing create"),
+            cancellation,
+        )
+        .await?;
         if !output.pairing_code.starts_with("wc_pair_") {
             return Err(invalid_contract("pairing create"));
         }
@@ -388,6 +417,7 @@ impl WebCodexAdapter {
             &args,
             Some(pairing_code.as_bytes()),
             true,
+            CliCommandContext::new("login", "login"),
             cancellation,
         )
         .await?;
@@ -459,9 +489,28 @@ impl WebCodexAdapter {
         }
         let output: RunnerStatusOutput = match deadline {
             Some(deadline) => {
-                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+                run_json_until(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("runner_status", "runner status"),
+                    cancellation,
+                    deadline,
+                )
+                .await?
             }
-            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+            None => {
+                run_json(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("runner_status", "runner status"),
+                    cancellation,
+                )
+                .await?
+            }
         };
         if output.config.path.trim().is_empty()
             || output.config.client_id.trim().is_empty()
@@ -558,8 +607,15 @@ impl WebCodexAdapter {
             project.path.clone(),
             "--json".into(),
         ];
-        let output: LegacyProjectRegisterOutput =
-            run_json(&webcodex, &args, None, false, cancellation).await?;
+        let output: LegacyProjectRegisterOutput = run_json(
+            &webcodex,
+            &args,
+            None,
+            false,
+            CliCommandContext::new("project_register", "project register"),
+            cancellation,
+        )
+        .await?;
         if output.project.id.trim().is_empty() || !same_path(&output.project.path, &project.path) {
             return Err(invalid_contract("legacy project registration"));
         }
@@ -603,7 +659,15 @@ impl WebCodexAdapter {
         if server_url_is_loopback(&identity.server_url) {
             args.push("--no-system-proxy".into());
         }
-        let output: OpsWindowsOutput = run_json(webcodex, &args, None, false, cancellation).await?;
+        let output: OpsWindowsOutput = run_json(
+            webcodex,
+            &args,
+            None,
+            false,
+            CliCommandContext::new("window_activity", "ops windows"),
+            cancellation,
+        )
+        .await?;
         Ok(latest_chatgpt_activity(&output))
     }
 
@@ -654,9 +718,28 @@ impl WebCodexAdapter {
         }
         let output: OpsProjectsOutput = match deadline {
             Some(deadline) => {
-                run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
+                run_json_until(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("project_readiness", "ops projects"),
+                    cancellation,
+                    deadline,
+                )
+                .await?
             }
-            None => run_json(&webcodex, &args, None, false, cancellation).await?,
+            None => {
+                run_json(
+                    &webcodex,
+                    &args,
+                    None,
+                    false,
+                    CliCommandContext::new("project_readiness", "ops projects"),
+                    cancellation,
+                )
+                .await?
+            }
         };
         Ok(output
             .summary

@@ -15,7 +15,7 @@ import { ConnectionPanel } from "./features/connection/ConnectionPanel";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
 import { useLocale } from "./i18n/locale";
-import { desktopErrorPresentation, operationLabel } from "./i18n/presentation";
+import { desktopCommandDiagnostics, desktopErrorPresentation, operationLabel } from "./i18n/presentation";
 
 export default function App() {
   const { t } = useLocale();
@@ -131,6 +131,7 @@ export default function App() {
 function AppError({ error }: { error: DesktopError }) {
   const { t } = useLocale();
   const presentation = desktopErrorPresentation(error, t);
+  const diagnostics = desktopCommandDiagnostics(error);
   return (
     <div className="error-card app-error" role="alert">
       <strong>{presentation.title}</strong>
@@ -139,6 +140,15 @@ function AppError({ error }: { error: DesktopError }) {
         <summary>{t("common.details")}</summary>
         <code>{error.code}</code>
         <p>{error.message}</p>
+        {diagnostics && (
+          <dl className="error-diagnostics">
+            {diagnostics.phase && <><dt>phase</dt><dd><code>{diagnostics.phase}</code></dd></>}
+            {diagnostics.logicalCommand && <><dt>command</dt><dd><code>{diagnostics.logicalCommand}</code></dd></>}
+            {diagnostics.executable && <><dt>executable</dt><dd><code>{diagnostics.executable}</code></dd></>}
+            {diagnostics.exitCode !== undefined && <><dt>exit code</dt><dd><code>{diagnostics.exitCode}</code></dd></>}
+            {diagnostics.reasonCode && <><dt>reason</dt><dd><code>{diagnostics.reasonCode}</code></dd></>}
+          </dl>
+        )}
       </details>
     </div>
   );

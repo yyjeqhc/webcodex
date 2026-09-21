@@ -256,8 +256,11 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 
 ### Goal Plan progress projection and inactivity detector
 
-The sole current Goal Plan resource is `ui://webcodex/goal-plan/v4`; its sole current
+The sole current Goal Plan resource is `ui://webcodex/goal-plan/v5`; its sole current
 wire version is **3**. Older pre-production Goal resource aliases are not served.
+Goal Plan deliberately advances its canonical resource URI whenever its shipped View
+or App-tool wire changes: production Hosts may retain a same-URI View across Server
+deploys, so resource identity—not an assumed refresh—is the cache/version fence.
 `present_goal_plan` is the only model-visible App-bound presentation tool.
 `goal_plan_sync` is the single App-only effectful observation/synchronization primitive.
 It accepts only `goal_id`, re-authorizes on every call, may commit one authoritative

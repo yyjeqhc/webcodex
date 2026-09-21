@@ -225,7 +225,7 @@ Visible status distinguishes script activity, Host initialization, exact identit
 selection, and live binding/polling, with separate initialization, binding, and
 identity errors. Diagnostics do not display binding ids, claim fences, or consume
 tokens. `tools/list` and `resources/list` advertise only the canonical
-`ui://webcodex/agent-continuation/v17` and `ui://webcodex/goal-plan/v4` resources. Goal Plan now uses only its current resource (wire version 3), with no old Goal-resource aliases. The G5 projection keeps production carrier readiness, exact Goal-stall Wake lifecycle, Host delivery outcome, and exact-consume fresh-turn proof as separate bounded facts; it exposes no Wake/Attempt/Endpoint identifiers or continuation proofs.
+`ui://webcodex/agent-continuation/v17` and `ui://webcodex/goal-plan/v5` resources. Goal Plan now uses only its current resource (wire version 3), with no old Goal-resource aliases. The G5 projection keeps production carrier readiness, exact Goal-stall Wake lifecycle, Host delivery outcome, and exact-consume fresh-turn proof as separate bounded facts; it exposes no Wake/Attempt/Endpoint identifiers or continuation proofs.
 Agent continuation v1-v15 are hidden read aliases serving the same current template. Reading an alias does not revive an expired Endpoint or bypass exact generation/authorization fencing; the same current template must still complete explicit Server-authorized one-hop replacement transitions. The v11 fingerprint-proven restart fallback, v12 strict restart projection, v13 canonical Host-window refresh fence, v14 expired-Endpoint replacement, and v15 bounded successor replay remain intact; v16 changes only visibility eligibility for automatic dispatch.
 
 ## Goal-correlated terminal attention carrier
@@ -246,6 +246,16 @@ Same-epoch polling cannot mint repeated turns. The separate Agent Continuation
 card remains the only `ui/message` carrier; accepted dispatch is not resume, and
 uncertain delivery is not an automatic retry. The same Agent may be both callable
 Worker and Goal controller. No repository `AGENTS.md` is required for this workflow.
+
+The first production dogfood of the single-RPC Goal Plan design exposed a resource
+identity failure rather than a stall-detector failure. The Server had deployed the
+new `goal_plan_sync` wire, but the Goal Plan URI remained v4. During the armed
+five-minute window the Server received **234** stale `goal_plan_state` calls from
+the Host, all rejected as `direct_route_denied`, and **zero** `goal_plan_sync`
+calls; no Goal-stall Wake was created. This proves a Host may retain a live/cached
+same-URI Goal Plan View across a Server deploy. The canonical Goal Plan resource is
+therefore advanced to v5, v4 is not served as an alias, and the descriptor/resource
+tests lock that cache-breaking identity together with the v5 App self-version.
 
 The [G4 dogfood guide](goal-workflow-continuity-dogfood.md) distinguishes deterministic
 regression coverage from manual verification in a real, separately authorized Host.

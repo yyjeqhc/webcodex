@@ -22,7 +22,7 @@ setup should be reused as that controller, with the same Agent Continuation card
 The Agent may remain another Coordinator's Worker/Task assignee at the same time.
 Do not infer identity from Window co-location or create a second Goal-only Agent.
 
-The Goal Plan resource is solely `ui://webcodex/goal-plan/v4`, wire version 3. It
+The Goal Plan resource is solely `ui://webcodex/goal-plan/v5`, wire version 3. It
 renders step counts, current step, bounded milestones, last checkpoint, activity,
 and a bounded read-only continuity projection. Continuity keeps production Host
 carrier readiness, the exact current Goal-stall Wake lifecycle, Host delivery
@@ -50,12 +50,12 @@ persistence; and Goal closeout privacy. They also exercise the same Agent as Wor
 and controller, the existing dispatch fence, accepted versus unknown delivery,
 exact consume, compact source-specific recovery messages, and no Task spawning.
 
-The Goal Plan JavaScript contract tests drive 10,000 same-epoch polls and verify
-that a committed attention result suppresses repeated detector requests. Server
-idempotency, not that local optimization, is the durable duplicate-prevention
-boundary. Detector calls carry only `goal_id`; no browser timestamp, Session,
-controller, Window selector or claimed coverage is trusted. There is no Goal Plan
-`ui/message` path. Terminal state stops both polling and detector follow-up.
+The Goal Plan JavaScript contract tests verify one exact `goal_plan_sync` App RPC,
+serial adaptive polling, hidden/visible cadence, teardown, and no conditional second
+RPC. Server idempotency remains the durable duplicate-prevention boundary. Sync
+calls carry only `goal_id`; no browser timestamp, Session, controller, Window
+selector or claimed coverage is trusted. There is no Goal Plan `ui/message` path.
+Terminal state stops polling.
 
 Representative focused commands:
 

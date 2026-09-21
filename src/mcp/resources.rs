@@ -65,7 +65,11 @@ pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-res
 // reads working with the safe canonical template, not a second admitted App.
 // Legacy payloads are never promoted into authoritative Work Result state.
 pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &["ui://webcodex/changes/v3"];
-pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v4";
+// Goal Plan intentionally serves only one current resource identity. Hosts may
+// retain a live/cached View by URI across Server deploys, so any shipped App
+// template or incompatible App-tool wire change must advance this URI rather
+// than relying on a same-URI resource refresh.
+pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v5";
 pub(super) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v17";
 pub(super) const MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI: &str =

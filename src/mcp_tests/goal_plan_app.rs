@@ -73,7 +73,11 @@ async fn handle_with_server_apps_enabled(
 
 #[tokio::test]
 async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptive_direct() {
-    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v4");
+    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v5");
+    assert!(
+        MCP_GOAL_PLAN_APP_HTML.contains("version: \"5.0.0\""),
+        "Goal Plan App self-version must advance with its cache-breaking resource identity"
+    );
     let (_temp, _db, adaptive) = goal_runtime();
     let auth = goal_auth("goal-plan-descriptor");
 
@@ -198,6 +202,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         "ui://webcodex/goal-plan/v1",
         "ui://webcodex/goal-plan/v2",
         "ui://webcodex/goal-plan/v3",
+        "ui://webcodex/goal-plan/v4",
     ] {
         assert!(super::super::resources::mcp_goal_plan_app_resource_read(old_uri, None).is_none());
     }

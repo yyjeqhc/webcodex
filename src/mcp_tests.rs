@@ -29,6 +29,27 @@ fn mcp_gateway_tool_call_params_do_not_retain_outer_meta() {
     }
 }
 
+#[test]
+fn mcp_tool_action_audit_ids_keep_successful_business_session_internal_and_bounded() {
+    let mut correlation = crate::tool_runtime::ToolCallCorrelation::default();
+    correlation.business_session_id = Some("wc_sess_AAAAAAAAAAAAAAAA".to_string());
+    let ids = mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation)
+        .expect("successful bounded ids");
+    assert_eq!(ids["business_session_id"], "wc_sess_AAAAAAAAAAAAAAAA");
+    assert_eq!(ids["goal_id"], "wc_goal_BBBBBBBBBBBBBBBB");
+    assert_eq!(ids.as_object().unwrap().len(), 2);
+    assert!(
+        mcp_tool_action_audit_ids(false, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation).is_none()
+    );
+
+    correlation.business_session_id = None;
+    assert_eq!(
+        mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation),
+        Some(json!({"goal_id": "wc_goal_BBBBBBBBBBBBBBBB"}))
+    );
+    assert!(mcp_tool_action_audit_ids(true, None, &correlation).is_none());
+}
+
 fn test_runtime() -> ToolRuntime {
     ToolRuntime::new_for_tests()
 }

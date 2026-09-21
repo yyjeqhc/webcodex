@@ -672,10 +672,24 @@ impl Database {
                                   AND window_ended_at_ms >= window_started_at_ms
                                   AND (CASE WHEN json_valid(ids_json) THEN json_extract(ids_json, '$.goal_id') ELSE NULL END) = ?4
                              THEN window_ended_at_ms END),
-                    MAX(CASE WHEN recorder_gap_session_id IS NOT NULL THEN window_ended_at_ms END)
+                    MAX(CASE WHEN recorder_gap_session_id IS NOT NULL
+                              AND NOT (
+                                  COALESCE(recorder_gap_session_id, '') = ?5
+                                  AND COALESCE(project, '') = ?6
+                                  AND json_valid(ids_json) = 1
+                                  AND COALESCE(json_extract(ids_json, '$.business_session_id'), '') = ?5
+                              )
+                             THEN window_ended_at_ms END)
              FROM action_events WHERE client_window_key = ?1
                AND principal_correlation_kind = ?2 AND principal_correlation_id = ?3",
-            params![candidate.observed_window_key, candidate.observation_principal_kind, candidate.observation_principal_id, candidate.goal_id],
+            params![
+                candidate.observed_window_key,
+                candidate.observation_principal_kind,
+                candidate.observation_principal_id,
+                candidate.goal_id,
+                candidate.workflow_session_id,
+                candidate.project_id
+            ],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(store_error)?;
         let Some(last_seen) = last_seen else {

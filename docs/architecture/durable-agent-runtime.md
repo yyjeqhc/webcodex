@@ -348,6 +348,16 @@ runs under either lock. The transaction recomputes persisted evidence rather tha
 trusting a browser clock or a stale async snapshot. A closed/disappeared card or
 unobserved Window never triggers an automatic turn.
 
+A missing outer `recording_session_id` remains durable forensic truth in ActionAudit.
+It is not, however, a Goal-liveness coverage hole when that exact successful MCP
+action already carries canonical business-Session evidence for the same Goal Session
+and Project: the typed ToolCall has independently passed business Session authority
+and lifecycle checks, and MCP persists only that exact `business_session_id` as a
+bounded internal audit id. Different/missing Session evidence, Project mismatch,
+malformed audit ids, and unrecorded calls remain fail-closed. ClientWindow/_meta is
+used only to correlate the observation; it never selects or authorizes a Session,
+and this does not create a sticky recorder or backfill the Session ledger.
+
 ### Narrow Goal workflow stall attention and fresh-turn recovery
 
 An eligible sync atomically creates one `goal_workflow_stalled` Event and one

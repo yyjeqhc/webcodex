@@ -50,6 +50,9 @@ pub(crate) struct WorkflowSessionCorrelation {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolCallCorrelation {
     pub(crate) resolved_project: Option<String>,
+    /// Exact business Workflow Session selected by the typed ToolCall after
+    /// canonical dispatch succeeds. Audit evidence only; never recorder or execution authority.
+    pub(crate) business_session_id: Option<String>,
     pub(crate) workflow_sessions: Vec<WorkflowSessionCorrelation>,
     pub(crate) recorder_gap_session_id: Option<String>,
     #[cfg(feature = "experimental-code-mode")]

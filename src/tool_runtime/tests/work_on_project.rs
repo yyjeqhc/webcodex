@@ -2050,6 +2050,7 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
     .await;
     assert!(recorded.success, "{:?}", recorded.error_status);
     assert!(recorded.correlation.recorder_gap_session_id.is_none());
+    assert!(recorded.correlation.business_session_id.is_none());
     assert!(recorded.correlation.workflow_sessions.iter().any(|link| {
         link.session_id == session_id
             && link.relation == crate::tool_runtime::WorkflowSessionCorrelationRelation::Recording
@@ -2082,6 +2083,7 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
     )
     .await;
     assert!(unrecorded.success, "{:?}", unrecorded.error_status);
+    assert!(unrecorded.correlation.business_session_id.is_none());
     assert_eq!(
         unrecorded.correlation.recorder_gap_session_id.as_deref(),
         Some(session_id.as_str())
@@ -2132,6 +2134,10 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
             .as_deref(),
         Some(session_id.as_str())
     );
+    assert_eq!(
+        business_bound.correlation.business_session_id.as_deref(),
+        Some(session_id.as_str())
+    );
     assert!(business_bound
         .result
         .as_ref()
@@ -2175,6 +2181,13 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
             .recorder_gap_session_id
             .as_deref(),
         Some(session_id.as_str())
+    );
+    assert_eq!(
+        different_business
+            .correlation
+            .business_session_id
+            .as_deref(),
+        Some(different_session.session_id.as_str())
     );
     assert_eq!(
         different_business

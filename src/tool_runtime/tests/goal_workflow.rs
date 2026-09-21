@@ -108,6 +108,42 @@ impl Workflow {
         );
     }
 
+    fn recorder_gap_work(
+        &self,
+        completed_at: i64,
+        business_session_id: Option<&str>,
+        event_project: Option<&str>,
+    ) {
+        let at_ms = completed_at - 1;
+        record_goal_window_event(
+            &self.db,
+            &self.auth,
+            WINDOW,
+            event_project.unwrap_or(&self.project),
+            "cargo_test",
+            true,
+            None,
+            at_ms,
+        );
+        let ids = business_session_id
+            .map(|session_id| json!({"business_session_id": session_id}))
+            .unwrap_or_else(|| json!({}));
+        self.db
+            .conn_for_tests()
+            .execute(
+                "UPDATE action_events
+                 SET recorder_gap_session_id = ?1, ids_json = ?2, project = ?3
+                 WHERE server_trace_id = ?4",
+                rusqlite::params![
+                    self.session_id,
+                    ids.to_string(),
+                    event_project.unwrap_or(&self.project),
+                    format!("goal-activity-{WINDOW}-cargo_test-{at_ms}")
+                ],
+            )
+            .unwrap();
+    }
+
     fn poll(&self, completed_at: i64) {
         self.poll_goal(&self.goal_id, completed_at);
     }
@@ -879,6 +915,90 @@ async fn goal_workflow_partial_window_coverage_never_commits_attention() {
     fixture.poll(T0 + THRESHOLD);
     assert_no_attention(&fixture.recheck(T0 + THRESHOLD).await);
     assert_eq!(fixture.counts(), (0, 0));
+}
+
+#[tokio::test]
+async fn goal_workflow_exact_business_session_evidence_covers_only_its_own_recorder_gap() {
+    let covered = Workflow::new(true).await;
+    let covered_work = T0 + 1_000;
+    covered.recorder_gap_work(covered_work, Some(&covered.session_id), None);
+    let covered_now = covered_work + THRESHOLD;
+    covered.poll(covered_now);
+    let resumed = covered.recheck(covered_now).await;
+    assert!(resumed.success, "{:?}", resumed.output);
+    assert_eq!(resumed.output["state_changed"], true);
+    assert_eq!(covered.counts(), (1, 1));
+    let forensic_gap_count: i64 = covered
+        .db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM action_events
+             WHERE recorder_gap_session_id = ?1
+               AND json_valid(ids_json)
+               AND json_extract(ids_json, '$.business_session_id') = ?1",
+            [&covered.session_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        forensic_gap_count, 1,
+        "covered gap must remain durable forensic truth"
+    );
+
+    let missing = Workflow::new(true).await;
+    let missing_work = T0 + 2_000;
+    missing.recorder_gap_work(missing_work, None, None);
+    let missing_now = missing_work + THRESHOLD;
+    missing.poll(missing_now);
+    assert_no_attention(&missing.recheck(missing_now).await);
+    assert_eq!(missing.counts(), (0, 0));
+
+    let different = Workflow::new(true).await;
+    let other_session = start_goal_activity_session(
+        &different.runtime,
+        &different.auth,
+        &different.project,
+        "Different business Session",
+    )
+    .session_id;
+    let different_work = T0 + 3_000;
+    different.recorder_gap_work(different_work, Some(&other_session), None);
+    let different_now = different_work + THRESHOLD;
+    different.poll(different_now);
+    assert_no_attention(&different.recheck(different_now).await);
+    assert_eq!(different.counts(), (0, 0));
+
+    let malformed = Workflow::new(true).await;
+    let malformed_work = T0 + 3_500;
+    malformed.recorder_gap_work(malformed_work, Some(&malformed.session_id), None);
+    malformed
+        .db
+        .conn_for_tests()
+        .execute(
+            "UPDATE action_events SET ids_json = 'malformed-json'
+             WHERE server_trace_id = ?1",
+            [format!(
+                "goal-activity-{WINDOW}-cargo_test-{}",
+                malformed_work - 1
+            )],
+        )
+        .unwrap();
+    let malformed_now = malformed_work + THRESHOLD;
+    malformed.poll(malformed_now);
+    assert_no_attention(&malformed.recheck(malformed_now).await);
+    assert_eq!(malformed.counts(), (0, 0));
+
+    let wrong_project = Workflow::new(true).await;
+    let wrong_project_work = T0 + 4_000;
+    wrong_project.recorder_gap_work(
+        wrong_project_work,
+        Some(&wrong_project.session_id),
+        Some("agent:other:project"),
+    );
+    let wrong_project_now = wrong_project_work + THRESHOLD;
+    wrong_project.poll(wrong_project_now);
+    assert_no_attention(&wrong_project.recheck(wrong_project_now).await);
+    assert_eq!(wrong_project.counts(), (0, 0));
 }
 
 #[tokio::test]

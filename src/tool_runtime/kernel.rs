@@ -862,9 +862,9 @@ impl ToolRuntime {
         }
 
         let project = tool_project(&call);
-        // Preserve the concrete business Session only for final presentation. The
-        // generic recorder remains independent provenance and Window affinity
-        // never becomes execution or Session authority.
+        // Preserve the concrete business Session for final presentation and
+        // bounded ActionAudit evidence. The generic recorder remains independent
+        // provenance and Window affinity never becomes execution or Session authority.
         let business_session_id = call.session_id().map(str::to_string);
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
@@ -885,6 +885,12 @@ impl ToolRuntime {
                 capabilities,
             )
             .await;
+        if result.success {
+            // The concrete ToolCall has already passed canonical business Session
+            // lifecycle/authority checks. Retain only its exact identity as bounded
+            // audit evidence; it never becomes recorder or execution authority.
+            correlation.business_session_id = business_session_id.clone();
+        }
         if let Some(session_id) = context.session_id {
             correlation.add_workflow_session(super::window_activity::WorkflowSessionCorrelation {
                 session_id: session_id.to_string(),

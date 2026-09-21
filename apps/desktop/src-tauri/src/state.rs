@@ -4092,6 +4092,104 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires current-source dogfood binaries and a temporary project"]
+    async fn native_local_stale_loopback_port_dogfood_recovers_to_ready() {
+        let project = std::env::var("WEBCODEX_DESKTOP_DOGFOOD_PROJECT")
+            .expect("WEBCODEX_DESKTOP_DOGFOOD_PROJECT must point to the temporary fixture");
+        let _username_guard = EnvVarGuard::set("USERNAME", "Alice Port Recovery");
+        let temporary_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("resolve the native temporary fixture root");
+        let data_dir = temporary_root.join(format!(
+            "webcodex-desktop-stale-port-dogfood-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&data_dir);
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"))
+            .expect("create stale-port dogfood state");
+        let cancellation = CancellationContext::never();
+
+        let first = core
+            .configure_local_setup(Some(&project), &cancellation)
+            .await
+            .expect("initial local setup");
+        assert_eq!(first.readiness.server, ServerReadiness::Ready);
+        assert_eq!(first.readiness.runner, RunnerReadiness::Ready);
+        assert_eq!(first.readiness.project, ProjectReadiness::Ready);
+        let first_runtime = core
+            .config
+            .runtime
+            .as_ref()
+            .expect("initial setup stores runtime")
+            .clone();
+        let first_url = first_runtime.server_url.clone();
+        let first_addr =
+            loopback_socket_from_server_url(&first_url).expect("initial local loopback address");
+        let env_file = first_runtime
+            .server_env_file
+            .clone()
+            .expect("initial local setup stores Server env file");
+
+        core.stop_local_runtime(&cancellation)
+            .await
+            .expect("stop initial runtime");
+        assert!(core
+            .process_snapshot(ProcessKey::LocalServer)
+            .await
+            .is_none());
+        assert!(core
+            .process_snapshot(ProcessKey::LocalRunner)
+            .await
+            .is_none());
+
+        let occupied = TcpListener::bind(first_addr)
+            .expect("occupy the saved local Server port before restart");
+        let restarted = core
+            .configure_local_setup(Some(&project), &cancellation)
+            .await
+            .expect("restart must recover stale persisted loopback port");
+        assert_eq!(restarted.readiness.server, ServerReadiness::Ready);
+        assert_eq!(restarted.readiness.runner, RunnerReadiness::Ready);
+        assert_eq!(restarted.readiness.project, ProjectReadiness::Ready);
+
+        let second_runtime = core
+            .config
+            .runtime
+            .as_ref()
+            .expect("recovered setup stores runtime");
+        assert_ne!(
+            second_runtime.server_url, first_url,
+            "port conflict must migrate the local Server URL"
+        );
+        let second_addr = loopback_socket_from_server_url(&second_runtime.server_url)
+            .expect("recovered local loopback address");
+        assert_ne!(second_addr, first_addr);
+        assert_eq!(
+            occupied.local_addr().expect("occupied address remains live"),
+            first_addr,
+            "Desktop recovery must not disturb the external process holding the old port"
+        );
+
+        let env = std::fs::read_to_string(&env_file).expect("read recovered Server env");
+        assert!(env.contains(&format!("WEBCODEX_ADDR={second_addr}")));
+        assert!(!env.contains(&format!("WEBCODEX_ADDR={first_addr}")));
+        assert!(
+            core.activity
+                .snapshot()
+                .iter()
+                .any(|entry| entry.event_kind == ActivityEventKind::StateRecovered),
+            "stale port migration must leave a safe recovery activity event"
+        );
+
+        core.stop_local_runtime(&cancellation)
+            .await
+            .expect("stop recovered runtime");
+        drop(occupied);
+        drop(core);
+        std::fs::remove_dir_all(&data_dir).expect("remove stale-port dogfood app data");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires current-source dogfood binaries and a temporary project"]
     async fn windows_quick_share_dogfood_reaches_ready_and_stops_foreground_owner() {
         if !cfg!(windows) {
             return;

@@ -4,6 +4,7 @@ import { relativeTime } from "../model/format.js";
 import type { WorkBucket, WorkItem } from "../model/work.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
+import { WorkSurfaceSwitch, type WorkSurface } from "./GoalWorkbench.js";
 
 const BUCKET_ORDER: WorkBucket[] = ["running", "attention", "active", "recent"];
 export const BUCKET_LABEL: Record<WorkBucket, string> = {
@@ -20,6 +21,8 @@ type Props = {
   locating: boolean;
   language: RuntimeLanguage;
   inventoryIncomplete: boolean;
+  surface: WorkSurface;
+  onSurfaceChange: (surface: WorkSurface) => void;
   onSearch: (value: string) => void;
   onLocateExact: () => void;
   onSelect: (item: WorkItem) => void;
@@ -32,6 +35,8 @@ export function WorkList({
   locating,
   language,
   inventoryIncomplete,
+  surface,
+  onSurfaceChange,
   onSearch,
   onLocateExact,
   onSelect,
@@ -57,6 +62,7 @@ export function WorkList({
     <aside className="work-list-panel">
       <div className="work-list-header">
         <div><span className="eyebrow">{t("Workspace")}</span><h1>{t("Work")}</h1></div>
+        <WorkSurfaceSwitch surface={surface} onSurfaceChange={onSurfaceChange} language={language} />
       </div>
       <div className="work-search">
         <Search size={15} />

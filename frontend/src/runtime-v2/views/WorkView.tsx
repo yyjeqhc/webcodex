@@ -4,6 +4,7 @@ import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import { SessionExecution } from "../components/SessionExecution.js";
+import { GoalWorkbench, type WorkSurface } from "../components/GoalWorkbench.js";
 import { SessionInspector } from "../components/SessionInspector.js";
 import { WorkList } from "../components/WorkList.js";
 import { selectedWorkFromDetail, workBucket, type WorkItem } from "../model/work.js";
@@ -18,6 +19,10 @@ type Props = {
   projects: ProjectRow[];
   language: RuntimeLanguage;
   inventoryIncomplete: boolean;
+  surface?: WorkSurface;
+  onSurfaceChange?: (surface: WorkSurface) => void;
+  onOpenAgent?: (agentId: string) => void;
+  onOpenWindow?: (windowKey: string) => void;
   onOpenSession: (location: SessionLocation) => void;
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
@@ -30,6 +35,10 @@ export function WorkView({
   projects,
   language,
   inventoryIncomplete,
+  surface = "sessions",
+  onSurfaceChange = () => {},
+  onOpenAgent = () => {},
+  onOpenWindow = () => {},
   onOpenSession,
   onLocateSession,
   onUnauthorized,
@@ -37,9 +46,25 @@ export function WorkView({
   const t = (value: string) => translate(value, language);
   const [search, setSearch] = useState("");
   const [locating, setLocating] = useState(false);
-  const session = useSessionWorkspace(client, Boolean(selected), selected, onUnauthorized);
+  const session = useSessionWorkspace(client, Boolean(selected && surface === "sessions"), selected, onUnauthorized);
   const project = selected ? projects.find((row) => row.id === selected.projectId) : undefined;
-  const git = useProjectGit(client, Boolean(selected), selected?.projectId || "");
+  const git = useProjectGit(client, Boolean(selected && surface === "sessions"), selected?.projectId || "");
+
+  if (surface === "goals") {
+    return (
+      <GoalWorkbench
+        client={client}
+        language={language}
+        projects={projects}
+        surface={surface}
+        onSurfaceChange={onSurfaceChange}
+        onOpenSession={onOpenSession}
+        onOpenAgent={onOpenAgent}
+        onOpenWindow={onOpenWindow}
+        onUnauthorized={onUnauthorized}
+      />
+    );
+  }
 
   const selectedBase = selected
     ? items.find((item) => item.sessionId === selected.sessionId && item.projectId === selected.projectId)
@@ -106,6 +131,8 @@ export function WorkView({
         locating={locating}
         language={language}
         inventoryIncomplete={inventoryIncomplete}
+        surface={surface}
+        onSurfaceChange={onSurfaceChange}
         onSearch={setSearch}
         onLocateExact={() => void locateExact()}
         onSelect={open}

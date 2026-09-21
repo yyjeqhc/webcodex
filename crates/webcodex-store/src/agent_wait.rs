@@ -19,6 +19,7 @@ pub const AGENT_WAIT_ID_PREFIX: &str = "wc_agent_wait_";
 pub const MAX_AGENT_WAIT_SOURCES: usize = 8;
 pub const MAX_ACTIVE_AGENT_WAITS_PER_AGENT: i64 = 32;
 pub const MAX_AGENT_WAITS_PER_SOURCE: i64 = 32;
+pub const MAX_GOAL_AGENT_WAIT_LIST_LIMIT: usize = 64;
 pub const AGENT_WAIT_EVENT_KIND_AGENT_TASK_TERMINAL: &str = "agent_task_terminal";
 
 const OP_WAIT_FOR_AGENT_EVENTS: &str = "wait_for_agent_events";
@@ -567,6 +568,45 @@ impl Database {
         validate_id(wait_id, AGENT_WAIT_ID_PREFIX, "invalid_agent_wait_id")?;
         let conn = self.lock_connection(crate::StoreDomain::AgentWait);
         load_owned_agent_wait_detail(&conn, principal, wait_id)
+    }
+
+    pub fn list_agent_waits_for_goal(
+        &self,
+        principal: &CommunicationPrincipal,
+        goal_id: &str,
+        limit: usize,
+    ) -> Result<(Vec<AgentWaitDetail>, bool), CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(goal_id, GOAL_ID_PREFIX, "invalid_goal_id")?;
+        let limit = limit.clamp(1, MAX_GOAL_AGENT_WAIT_LIST_LIMIT);
+        let conn = self.lock_connection(crate::StoreDomain::AgentWait);
+        let mut stmt = conn
+            .prepare(
+                "SELECT wait_id FROM wc_agent_waits
+                 WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2 AND goal_id = ?3
+                 ORDER BY updated_at_unix_ms DESC, wait_id
+                 LIMIT ?4",
+            )
+            .map_err(store_error)?;
+        let ids = stmt
+            .query_map(
+                params![
+                    principal.kind,
+                    principal.digest,
+                    goal_id,
+                    (limit + 1) as i64
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(store_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(store_error)?;
+        let truncated = ids.len() > limit;
+        let mut waits = Vec::with_capacity(ids.len().min(limit));
+        for wait_id in ids.into_iter().take(limit) {
+            waits.push(load_owned_agent_wait_detail(&conn, principal, &wait_id)?);
+        }
+        Ok((waits, truncated))
     }
 
     pub fn cancel_agent_wait(

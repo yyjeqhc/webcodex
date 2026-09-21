@@ -26,6 +26,7 @@ import {
 import { locateSession } from "./api/sessions.js";
 import { RuntimeV2Client } from "./api/client.js";
 import { AuthGate } from "./components/AuthGate.js";
+import type { WorkSurface } from "./components/GoalWorkbench.js";
 import type { Availability } from "./model/types.js";
 import { workItemFromRecent, type WorkBucket } from "./model/work.js";
 import { useRuntimeOverview } from "./state/useRuntimeOverview.js";
@@ -35,6 +36,7 @@ import { RuntimeView } from "./views/RuntimeView.js";
 import { WorkView } from "./views/WorkView.js";
 
 type PrimaryView = "work" | "projects" | "runtime";
+type RuntimeTarget = { mode: "windows"; windowKey: string } | { mode: "agents"; agentId: string };
 const VIEW_KEY = "webcodex.runtime.v2.view.v1";
 const BUCKET_PRIORITY: Record<WorkBucket, number> = { running: 0, attention: 1, active: 2, recent: 3 };
 
@@ -63,6 +65,8 @@ export function App() {
   const [token, setToken] = useState(initialToken);
   const [view, setViewState] = useState<PrimaryView>(initialView);
   const [selected, setSelected] = useState<SessionLocation | null>(null);
+  const [workSurface, setWorkSurface] = useState<WorkSurface>("goals");
+  const [runtimeTarget, setRuntimeTarget] = useState<RuntimeTarget | null>(null);
   const [language, setLanguage] = useState<RuntimeLanguage>(loadLanguagePreference);
   const [appearance, setAppearance] = useState<AppearancePreference>(loadAppearancePreference);
   const [notice, setNotice] = useState("");
@@ -107,7 +111,23 @@ export function App() {
 
   const openSession = useCallback((location: SessionLocation) => {
     setSelected(location);
+    setWorkSurface("sessions");
     setView("work");
+  }, [setView]);
+
+  const openWork = useCallback(() => {
+    setWorkSurface("goals");
+    setView("work");
+  }, [setView]);
+
+  const openAgent = useCallback((agentId: string) => {
+    setRuntimeTarget({ mode: "agents", agentId });
+    setView("runtime");
+  }, [setView]);
+
+  const openWindow = useCallback((windowKey: string) => {
+    setRuntimeTarget({ mode: "windows", windowKey });
+    setView("runtime");
   }, [setView]);
 
   useEffect(() => {
@@ -214,7 +234,7 @@ export function App() {
         </div>
 
         <nav aria-label={translate("Workspace views", language)}>
-          <button className={"nav-button " + (view === "work" ? "active" : "")} type="button" onClick={() => setView("work")}>
+          <button className={"nav-button " + (view === "work" ? "active" : "")} type="button" onClick={openWork}>
             <span className="nav-icon"><BriefcaseBusiness size={18} /></span>
             <span>{translate("Work", language)}</span>
             <small>{runningCount || attentionCount ? runningCount + attentionCount : ""}</small>
@@ -262,6 +282,10 @@ export function App() {
             projects={overview?.projects || []}
             language={language}
             inventoryIncomplete={Boolean(overview?.recent_sessions.truncated || overview?.recent_sessions.scan_truncated)}
+            surface={workSurface}
+            onSurfaceChange={setWorkSurface}
+            onOpenAgent={openAgent}
+            onOpenWindow={openWindow}
             onOpenSession={openSession}
             onLocateSession={locateExactSession}
             onUnauthorized={handleUnauthorized}
@@ -285,12 +309,14 @@ export function App() {
             projects={overview?.projects || []}
             onOpenSession={openSession}
             onUnauthorized={handleUnauthorized}
+            target={runtimeTarget}
+            onTargetConsumed={() => setRuntimeTarget(null)}
           />
         )}
       </section>
 
       <nav className="mobile-primary-nav" aria-label={translate("Workspace views", language)}>
-        <button className={view === "work" ? "active" : ""} type="button" onClick={() => setView("work")}><BriefcaseBusiness size={18} /><span>{translate("Work", language)}</span></button>
+        <button className={view === "work" ? "active" : ""} type="button" onClick={openWork}><BriefcaseBusiness size={18} /><span>{translate("Work", language)}</span></button>
         <button className={view === "projects" ? "active" : ""} type="button" onClick={() => setView("projects")}><FolderKanban size={18} /><span>{translate("Projects", language)}</span></button>
         <button className={view === "runtime" ? "active" : ""} type="button" onClick={() => setView("runtime")}><Server size={18} /><span>{translate("Runtime", language)}</span></button>
       </nav>

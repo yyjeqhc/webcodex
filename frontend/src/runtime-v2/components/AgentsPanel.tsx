@@ -20,9 +20,11 @@ type Props = {
   client: RuntimeV2Client;
   language: RuntimeLanguage;
   onUnauthorized: () => void;
+  selectedAgentId?: string;
+  onSelectedAgentConsumed?: () => void;
 };
 
-export function AgentsPanel({ client, language, onUnauthorized }: Props) {
+export function AgentsPanel({ client, language, onUnauthorized, selectedAgentId, onSelectedAgentConsumed }: Props) {
   const t = (value: string) => translate(value, language);
   const state = useAgentWorkspace(client, true, onUnauthorized);
   const [createHandle, setCreateHandle] = useState("");
@@ -46,6 +48,13 @@ export function AgentsPanel({ client, language, onUnauthorized }: Props) {
     setUpdateDescription(agent?.description || "");
     setUpdateLabels((agent?.specialty_labels || []).join(", "));
   }, [state.selectedAgent?.agent_id, state.selectedAgent?.profile_revision]);
+
+  useEffect(() => {
+    if (selectedAgentId && state.agents.some((agent) => agent.agent_id === selectedAgentId)) {
+      state.selectAgent(selectedAgentId);
+      onSelectedAgentConsumed?.();
+    }
+  }, [onSelectedAgentConsumed, selectedAgentId, state.agents]);
 
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault();

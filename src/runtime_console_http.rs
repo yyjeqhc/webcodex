@@ -22,6 +22,7 @@ use std::sync::Arc;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 mod communication;
+mod goals;
 mod workspace;
 
 use communication::{
@@ -30,6 +31,7 @@ use communication::{
     communication_endpoint_attach, communication_endpoint_detach, communication_endpoint_renew,
     communication_inbox, communication_inbox_consume, communication_message_post,
 };
+use goals::{goal_handler, goals_handler};
 
 // Runtime Console inventories are operator-facing and the underlying stores are
 // already bounded. Avoid arbitrary 10/20/50/100-row presentation cliffs that make
@@ -66,6 +68,8 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindows)).post(windows))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindow)).post(window))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleProjects)).post(projects))
+        .push(Router::with_path(api_path(RouteId::RuntimeConsoleGoals)).post(goals_handler))
+        .push(Router::with_path(api_path(RouteId::RuntimeConsoleGoal)).post(goal_handler))
         .push(
             Router::with_path(api_path(RouteId::RuntimeConsoleExtensions))
                 .post(workspace::extensions),
@@ -3331,12 +3335,16 @@ async fn workflow_session_replace_message(
 mod tests {
     use super::*;
     use crate::auth::AuthKind;
+    use crate::db::{NewGoal, NewGoalStep};
     use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
     use crate::tool_runtime::sessions::{
         CompleteSessionMessageInput, PostSessionMessageInput, SessionCreateOptions, SessionGuards,
         SessionMessageKind, SessionMessagePriority,
     };
-    use crate::tool_runtime::{RecoveryKind, RuntimeInfo, SessionMode, ToolResult};
+    use crate::tool_runtime::{
+        AgentWaitEventSelectorCall, AgentWaitModeCall, RecoveryKind, RuntimeInfo, SessionMode,
+        ToolResult,
+    };
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
     use serde_json::json;
@@ -3425,6 +3433,20 @@ mod tests {
                 Arc::new(RuntimeInfo::default()),
             )
             .with_window_activity_database(db.clone()),
+        );
+        (tmp, db, runtime)
+    }
+
+    fn test_runtime_with_goal_db() -> (tempfile::TempDir, Arc<crate::Database>, Arc<ToolRuntime>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(crate::Database::open(&tmp.path().join("goal-console.db")).unwrap());
+        let runtime = Arc::new(
+            ToolRuntime::new(
+                Arc::new(crate::RunnerRegistry::default()),
+                Arc::new(RuntimeInfo::default()),
+            )
+            .with_window_activity_database(db.clone())
+            .with_communication_database(db.clone()),
         );
         (tmp, db, runtime)
     }
@@ -5451,6 +5473,166 @@ mod tests {
             .all(|event| event.next_call_gap_ms.is_none() && event.cycle_ms.is_none()));
         let serialized = serde_json::to_string(&detail).unwrap();
         assert!(!serialized.contains(project_b));
+    }
+
+    #[tokio::test]
+    async fn goal_workbench_projects_durable_goal_truth_without_new_authority() {
+        let (_tmp, db, runtime) = test_runtime_with_goal_db();
+        let auth = crate::auth::shared_key_context("goal-workbench-owner");
+        let project = "agent:goal-runner:webcodex";
+        register_project(
+            &runtime,
+            "goal-runner",
+            "webcodex",
+            "/private/goal-workbench",
+            Some(&auth),
+        )
+        .await;
+        let session = runtime.sessions.start_session(
+            Some(project.to_string()),
+            Some("Goal workbench Session".to_string()),
+        );
+        let agent = runtime.create_agent_identity(
+            Some(&auth),
+            "goal-controller".into(),
+            "Goal Controller".into(),
+            None,
+            vec!["runtime-v2".into()],
+            "goal-workbench-controller".into(),
+        );
+        assert!(agent.success, "{:?}", agent.output);
+        let agent_id = agent.output["agent"]["agent_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let created = runtime.create_goal_with_plan(
+            Some(&auth),
+            NewGoal {
+                title: "Runtime V2 Goal Workbench".into(),
+                objective: "Expose durable Goal truth read-only".into(),
+                controller_agent_id: Some(agent_id.clone()),
+                completion_conditions: vec!["Dogfood passes".into()],
+                steps: ["survey", "implement", "validate"]
+                    .into_iter()
+                    .map(|id| NewGoalStep {
+                        id: id.into(),
+                        title: id.into(),
+                    })
+                    .collect(),
+                idempotency_key: "goal-workbench-goal".into(),
+            },
+        );
+        assert!(created.success, "{:?}", created.output);
+        let goal_id = created.output["goal"]["summary"]["goal_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let linked = runtime
+            .associate_goal_workflow_session(
+                Some(&auth),
+                goal_id.clone(),
+                session.session_id.clone(),
+                "goal-workbench-session".into(),
+            )
+            .await;
+        assert!(linked.success, "{:?}", linked.output);
+        let task = runtime.create_agent_task(
+            Some(&auth),
+            "Validate workbench".into(),
+            "Run focused UI validation".into(),
+            Some(agent_id.clone()),
+            None,
+            None,
+            Some(project.to_string()),
+            "goal-workbench-task".into(),
+        );
+        assert!(task.success, "{:?}", task.output);
+        let task_id = task.output["task"]["summary"]["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let task_link = runtime.associate_goal_agent_task(
+            Some(&auth),
+            goal_id.clone(),
+            task_id.clone(),
+            "goal-workbench-task-link".into(),
+        );
+        assert!(task_link.success, "{:?}", task_link.output);
+        let endpoint = runtime.attach_agent_endpoint(
+            Some(&auth),
+            agent_id.clone(),
+            "ChatGPT".into(),
+            Some("goal-workbench-test".into()),
+            "goal-workbench-endpoint".into(),
+        );
+        assert!(endpoint.success, "{:?}", endpoint.output);
+        let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let endpoint_generation = endpoint.output["endpoint"]["controller_generation"]
+            .as_i64()
+            .unwrap();
+        let wait = runtime.wait_for_agent_events(
+            Some(&auth),
+            agent_id.clone(),
+            endpoint_id,
+            endpoint_generation,
+            AgentWaitModeCall::All,
+            Some(goal_id.clone()),
+            vec![AgentWaitEventSelectorCall {
+                kind: "agent_task_terminal".into(),
+                task_id: task_id.clone(),
+            }],
+            "goal-workbench-wait".into(),
+        );
+        assert!(wait.success, "{:?}", wait.output);
+        let wait_id = wait.output["agent_wait"]["wait_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let window_key = "goal-workbench-window";
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            window_key,
+            Some(project),
+            Some((&session.session_id, project)),
+            10_000,
+            "read_files",
+            true,
+        );
+
+        let listed = goals::goals_for_auth_test(&runtime, &auth, Some(project))
+            .await
+            .unwrap();
+        let rows = listed["goals"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["goal_id"], goal_id);
+        assert_eq!(rows[0]["project_ids"], json!([project]));
+        assert_eq!(rows[0]["workflow_session_count"], 1);
+        assert_eq!(rows[0]["agent_task_count"], 1);
+
+        let detail = goals::goal_detail_for_auth_test(&runtime, &auth, &goal_id)
+            .await
+            .unwrap();
+        assert_eq!(detail["goal"]["summary"]["goal_id"], goal_id);
+        assert_eq!(detail["goal_plan"]["controller_agent_id"], agent_id);
+        assert_eq!(detail["sessions"][0]["session_id"], session.session_id);
+        assert_eq!(detail["tasks"][0]["summary"]["task_id"], task_id);
+        assert_eq!(detail["agents"][0]["agent_id"], agent_id);
+        assert_eq!(detail["windows"][0]["client_window_key"], window_key);
+        assert_eq!(
+            detail["windows"][0]["session_ids"],
+            json!([session.session_id])
+        );
+        assert_eq!(detail["waits"][0]["wait_id"], wait_id);
+        assert_eq!(detail["waits"][0]["goal_id"], goal_id);
+        assert_eq!(detail["waits"][0]["mode"], "all");
+        assert_eq!(detail["waits"][0]["source_count"], 1);
+        assert_eq!(detail["waits"][0]["match_count"], 0);
+        assert_eq!(detail["waits"][0]["sources"][0]["task_id"], task_id);
+        assert_eq!(detail["waits_truncated"], false);
     }
 
     #[tokio::test]

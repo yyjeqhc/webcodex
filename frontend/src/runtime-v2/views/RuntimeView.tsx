@@ -10,7 +10,7 @@ import {
   Server,
   TerminalSquare,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
@@ -31,6 +31,8 @@ type Props = {
   overviewAvailability: Availability;
   projects: ProjectRow[];
   onOpenSession: (location: SessionLocation) => void;
+  target?: { mode: "windows"; windowKey: string } | { mode: "agents"; agentId: string } | null;
+  onTargetConsumed?: () => void;
   onUnauthorized: () => void;
 };
 
@@ -41,10 +43,14 @@ export function RuntimeView({
   overviewAvailability,
   projects,
   onOpenSession,
+  target,
+  onTargetConsumed,
   onUnauthorized,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const [mode, setMode] = useState<RuntimeMode>("overview");
+  const [requestedWindowKey, setRequestedWindowKey] = useState("");
+  const [requestedAgentId, setRequestedAgentId] = useState("");
   const windows = useWindowWorkspace(client, true, onUnauthorized, {
     refreshMs: mode === "windows" ? 3_000 : 30_000,
     loadDetail: mode === "windows",
@@ -60,6 +66,25 @@ export function RuntimeView({
   const latestSessionLinkAt = windows.detail?.linked_sessions.length
     ? Math.max(...windows.detail.linked_sessions.map((session) => session.last_linked_at_ms))
     : undefined;
+  useEffect(() => {
+    if (!target) return;
+    if (target.mode === "windows") {
+      setRequestedWindowKey(target.windowKey);
+      setMode("windows");
+    } else {
+      setRequestedAgentId(target.agentId);
+      setMode("agents");
+    }
+    onTargetConsumed?.();
+  }, [onTargetConsumed, target]);
+
+  useEffect(() => {
+    if (!requestedWindowKey || mode !== "windows") return;
+    if (windows.windows.some((window) => window.client_window_key === requestedWindowKey)) {
+      windows.select(requestedWindowKey);
+      setRequestedWindowKey("");
+    }
+  }, [mode, requestedWindowKey, windows.windows]);
   const overviewStatus = overviewAvailability === "available"
     ? { className: "good", label: "connected" }
     : overviewAvailability === "stale"
@@ -181,7 +206,7 @@ export function RuntimeView({
           </section>
         </>
       ) : mode === "agents" ? (
-        <AgentsPanel client={client} language={language} onUnauthorized={onUnauthorized} />
+        <AgentsPanel client={client} language={language} onUnauthorized={onUnauthorized} selectedAgentId={requestedAgentId} onSelectedAgentConsumed={() => setRequestedAgentId("")} />
       ) : (
         <div className="windows-workbench" data-testid="window-workbench">
           <aside className="window-list">

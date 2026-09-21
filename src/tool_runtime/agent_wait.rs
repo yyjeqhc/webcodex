@@ -168,6 +168,31 @@ impl ToolRuntime {
         }
     }
 
+    pub(crate) fn list_goal_agent_waits_for_console(
+        &self,
+        auth: Option<&AuthContext>,
+        goal_id: String,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match db.list_agent_waits_for_goal(
+            &principal,
+            &goal_id,
+            crate::db::MAX_GOAL_AGENT_WAIT_LIST_LIMIT,
+        ) {
+            Ok((waits, truncated)) => serialized_success(json!({
+                "waits": waits,
+                "truncated": truncated,
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reobserve),
+        }
+    }
+
     pub(crate) fn cancel_agent_wait(
         &self,
         auth: Option<&AuthContext>,

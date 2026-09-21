@@ -21,6 +21,7 @@ pub const WORKFLOW_SESSION_ID_PREFIX: &str = "wc_sess_";
 const MAX_GOAL_IDEMPOTENCY_KEY_CHARS: usize = 128;
 
 const OP_CREATE_GOAL: &str = "create_goal";
+const OP_PREPARE_GOAL_WORKFLOW: &str = "prepare_goal_workflow";
 const OP_UPDATE_GOAL: &str = "update_goal";
 const OP_CHECKPOINT_GOAL: &str = "checkpoint_goal";
 const OP_ASSOCIATE_GOAL_AGENT_TASK: &str = "associate_goal_agent_task";
@@ -383,6 +384,125 @@ impl Database {
             &transaction,
             principal,
             OP_CREATE_GOAL,
+            &idempotency_key,
+            &request_hash,
+            &goal_id,
+            now,
+        )?;
+        let goal = load_owned_goal(&transaction, principal, &goal_id)?;
+        transaction.commit().map_err(goal_store_error)?;
+        Ok(GoalMutation {
+            goal,
+            created: true,
+            replayed: false,
+            state_changed: true,
+        })
+    }
+
+    /// Atomically admit a new Goal and its exact initial Workflow Session correlation.
+    /// Session existence/authority is intentionally a ToolRuntime concern; the Store
+    /// validates only the canonical identity and never imports Host/Window concepts.
+    pub fn prepare_goal_workflow(
+        &self,
+        principal: &CommunicationPrincipal,
+        session_id: &str,
+        input: NewGoal,
+    ) -> Result<GoalMutation, GoalStoreError> {
+        self.prepare_goal_workflow_at(principal, session_id, input, now_unix_ms())
+    }
+
+    pub(crate) fn prepare_goal_workflow_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        session_id: &str,
+        input: NewGoal,
+        now: i64,
+    ) -> Result<GoalMutation, GoalStoreError> {
+        validate_goal_principal(principal)?;
+        validate_workflow_session_id(session_id).map_err(map_communication_validation_error)?;
+        let title = validate_title(&input.title)?;
+        let objective = validate_objective(&input.objective)?;
+        let controller_agent_id =
+            validate_optional_controller_agent_id(input.controller_agent_id.as_deref())?;
+        let idempotency_key = validate_idempotency_key(&input.idempotency_key)?;
+        let plan = GoalPlan::new(input.completion_conditions, input.steps, now)?;
+        let request_hash = goal_request_hash(&json!({
+            "session_id": session_id,
+            "title": title,
+            "objective": objective,
+            "controller_agent_id": controller_agent_id,
+            "completion_conditions": plan.completion_conditions,
+            "steps": plan.steps.iter().map(|step| json!({"id": step.id, "title": step.title})).collect::<Vec<_>>(),
+        }));
+
+        let mut conn = self.lock_connection(crate::StoreDomain::Goal);
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(goal_store_error)?;
+        if let Some(goal_id) = lookup_idempotent_goal(
+            &transaction,
+            principal,
+            OP_PREPARE_GOAL_WORKFLOW,
+            &idempotency_key,
+            &request_hash,
+        )? {
+            let goal = load_owned_goal(&transaction, principal, &goal_id)?;
+            let exact_session = goal.correlations.iter().any(|correlation| {
+                correlation.kind == GoalCorrelationKind::WorkflowSession
+                    && correlation.reference_id == session_id
+            });
+            if !exact_session {
+                return Err(persisted_goal_state_error());
+            }
+            transaction.commit().map_err(goal_store_error)?;
+            return Ok(GoalMutation {
+                goal,
+                created: false,
+                replayed: true,
+                state_changed: false,
+            });
+        }
+        if let Some(controller_agent_id) = controller_agent_id.as_deref() {
+            require_owned_controller_agent(&transaction, principal, controller_agent_id)?;
+        }
+
+        let goal_id = allocate_identity(
+            &transaction,
+            GOAL_ID_PREFIX,
+            "SELECT EXISTS(SELECT 1 FROM wc_goals WHERE goal_id = ?1)",
+        )
+        .map_err(map_communication_validation_error)?;
+        transaction
+            .execute(
+                "INSERT INTO wc_goals (
+                    goal_id, owner_principal_kind, owner_principal_digest,
+                    title, objective, controller_agent_id, lifecycle, revision, created_at_unix_ms,
+                    updated_at_unix_ms, terminal_at_unix_ms, terminal_reason, plan_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', 1, ?7, ?7, NULL, NULL, ?8)",
+                params![
+                    goal_id,
+                    principal.kind,
+                    principal.digest,
+                    title,
+                    objective,
+                    controller_agent_id,
+                    now,
+                    plan.persisted_json()?,
+                ],
+            )
+            .map_err(goal_store_error)?;
+        transaction
+            .execute(
+                "INSERT INTO wc_goal_correlations (
+                    goal_id, kind, reference_id, created_at_unix_ms
+                 ) VALUES (?1, 'workflow_session', ?2, ?3)",
+                params![goal_id, session_id, now],
+            )
+            .map_err(goal_store_error)?;
+        record_idempotent_goal(
+            &transaction,
+            principal,
+            OP_PREPARE_GOAL_WORKFLOW,
             &idempotency_key,
             &request_hash,
             &goal_id,

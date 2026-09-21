@@ -225,10 +225,12 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .unwrap();
     for phrase in [
-        "substantial multi-step/cross-turn",
-        "create or reuse a durable Goal",
+        "ordinary new substantial multi-step/cross-turn",
+        "prepare_goal_workflow",
+        "exact current Workflow Session",
         "completion_conditions",
-        "current Workflow Session",
+        "Host continuation setup/readiness remains separate",
+        "Low-level create_goal and associate_goal_workflow_session remain available",
         "Tiny one-step",
         "independently of AGENTS.md",
     ] {

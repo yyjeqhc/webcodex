@@ -23,6 +23,44 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         model_spec(
             def(
+                "prepare_goal_workflow",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("lifecycle", "/goal/summary/lifecycle"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::pointer(
+                        "workflow_session_count",
+                        "/goal/summary/workflow_session_count",
+                    ),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Atomically admit one new durable Goal together with one exact independently authorized Workflow Session correlation and an optional explicit owned controller Agent. The Store commits Goal + correlation + keyed replay identity in one transaction at revision 1. This operation is Host-neutral: it never infers identity from a Window, creates/rotates Endpoints, mounts MCP Apps, establishes Host bindings, creates Wakes, or proves continuation readiness. Use present_goal_plan separately; if automatic continuation is desired, independently establish or verify the controller through the agent_continuation_setup flow.",
+        ),
+        GOAL_SESSION_ASSOCIATE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
                 "create_goal",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),

@@ -1,4 +1,4 @@
-# Goal workflow and single-window continuity — G4/G5
+# Goal workflow and single-window continuity — G4/G5/G6
 
 This is the current WebCodex-owned Goal workflow contract, not repository
 `AGENTS.md` policy. Architecture is defined in
@@ -7,20 +7,29 @@ This is the current WebCodex-owned Goal workflow contract, not repository
 
 ## Ordinary single-window flow
 
-Use a new or existing durable Goal for substantial multi-step/cross-turn work.
-Create bounded completion conditions and stable plan steps, explicitly associate
-the current Workflow Session, and present the Goal Plan card. Tiny one-step
-lookups/trivial edits do not require setup. Use `checkpoint_goal` at recoverable
-milestones: exact Goal revision and idempotency key, atomic completed-step ids and
-optional current step, and a bounded recovery summary. Complete all steps and
-freshly verify/review before explicitly completing the Goal. Session closeout
-returns owned correlated active Goal follow-up; it does not complete the Goal.
+For ordinary **new** substantial multi-step/cross-turn work, first establish the
+exact Workflow Session with `work_on_project`, then call `prepare_goal_workflow` with
+that exact `session_id`, bounded completion conditions/stable plan steps, and an
+optional explicit controller Agent. The Store admits the new Goal and initial Session
+correlation atomically at revision 1. Then present the Goal Plan card. Tiny one-step
+lookups/trivial edits do not require setup. Exact known Goals can still use the
+lower-level `create_goal` / `associate_goal_workflow_session` primitives for explicit
+advanced composition; `prepare_goal_workflow` never guesses or reuses a Goal by title,
+Window, Session, or recency.
+
+Use `checkpoint_goal` at recoverable milestones: exact Goal revision and idempotency
+key, atomic completed-step ids and optional current step, and a bounded recovery
+summary. Complete all steps and freshly verify/review before explicitly completing
+the Goal. Session closeout returns owned correlated active Goal follow-up; it does
+not complete the Goal.
 
 Automatic continuation is optional and requires an exact durable controller Agent.
-An Agent already made callable through explicit identity/Endpoint/presentation
-setup should be reused as that controller, with the same Agent Continuation card.
-The Agent may remain another Coordinator's Worker/Task assignee at the same time.
-Do not infer identity from Window co-location or create a second Goal-only Agent.
+An Agent already made callable through explicit identity/Endpoint/presentation setup
+should be reused as that controller. If its carrier is not ready, use the separate
+`agent_continuation_setup` flow. Endpoint rotation, App mount/bind, Host readiness,
+Goal Plan presentation and Wake creation are never part of `prepare_goal_workflow`
+success. The Agent may remain another Coordinator's Worker/Task assignee at the same
+time. Do not infer identity from Window co-location or create a second Goal-only Agent.
 
 The Goal Plan resource is solely `ui://webcodex/goal-plan/v6`, wire version 3. It
 renders step counts, current step, bounded milestones, last checkpoint, activity,
@@ -36,8 +45,12 @@ remains a separate card and the only Host turn-dispatch carrier.
 
 The Store tests cover plan bounds, fixed ids, one current step, atomic validation
 before mutation, revision competition, exact/changed keyed replay, reopen,
-malformed persisted plans and completion/terminal gates. Attention migration tests
-preserve existing Task-terminal facts and Wake identities in the one current schema.
+malformed persisted plans and completion/terminal gates. G6 additionally covers one
+transactional Goal + exact Session admission at revision 1, explicit/omitted owned
+controller, composition replay conflict, invalid Session identity, foreign controller
+existence hiding, and injected correlation/idempotency failures with complete rollback.
+Attention migration tests preserve existing Task-terminal facts and Wake identities in
+the one current schema.
 
 Runtime Goal tests use controlled timestamps rather than sleeping five minutes.
 They cover recent activity; continued live exact-Goal polling; one Event/Wake under

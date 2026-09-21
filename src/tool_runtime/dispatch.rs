@@ -2397,6 +2397,36 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::PrepareGoalWorkflow {
+                session_id,
+                title,
+                objective,
+                controller_agent_id,
+                completion_conditions,
+                steps,
+                idempotency_key,
+            } => {
+                self.prepare_goal_workflow(
+                    auth,
+                    session_id,
+                    crate::db::NewGoal {
+                        title,
+                        objective,
+                        controller_agent_id,
+                        completion_conditions,
+                        idempotency_key,
+                        steps: steps
+                            .into_iter()
+                            .map(|step| crate::db::NewGoalStep {
+                                id: step.id,
+                                title: step.title,
+                            })
+                            .collect(),
+                    },
+                )
+                .await
+            }
+
             ToolCall::CreateGoal {
                 title,
                 objective,

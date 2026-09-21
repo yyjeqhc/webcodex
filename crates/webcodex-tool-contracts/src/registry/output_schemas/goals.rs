@@ -259,7 +259,8 @@ pub(super) fn goal_follow_up_schema() -> Value {
 
 pub fn output_schema_for_tool(name: &str) -> Option<Value> {
     let schema = match name {
-        "create_goal"
+        "prepare_goal_workflow"
+        | "create_goal"
         | "update_goal"
         | "checkpoint_goal"
         | "associate_goal_agent_task"

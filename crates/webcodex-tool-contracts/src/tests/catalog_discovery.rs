@@ -186,6 +186,64 @@ fn agent_continuation_setup_flow_is_focused_and_keeps_resume_tools_separate() {
 }
 
 #[test]
+fn single_window_goal_workflow_prefers_atomic_admission_and_keeps_host_setup_separate() {
+    let flow = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "single_window_goal_workflow")
+        .expect("single_window_goal_workflow recommended flow");
+    assert_eq!(
+        flow.tools,
+        &[
+            "work_on_project",
+            "prepare_goal_workflow",
+            "present_goal_plan",
+            "checkpoint_goal",
+            "finish_coding_task",
+            "update_goal",
+        ]
+    );
+    for host_setup in [
+        "create_agent_identity",
+        "rotate_agent_continuation_endpoint",
+        "present_agent_continuation",
+        "list_agent_identities",
+    ] {
+        assert!(
+            !flow.tools.contains(&host_setup),
+            "ordinary Goal flow duplicated Host continuation setup: {host_setup}"
+        );
+    }
+    let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
+    for phrase in [
+        "prepare_goal_workflow",
+        "durable admission only",
+        "host carrier setup/readiness remains separate",
+        "agent_continuation_setup",
+        "low-level create_goal and associate_goal_workflow_session remain available",
+    ] {
+        assert!(
+            guidance.contains(phrase),
+            "single-window Goal flow should mention {phrase}: {guidance}"
+        );
+    }
+
+    let categories = registered_tool_categories();
+    let goal_tools = categories["goal"].as_array().unwrap();
+    for low_level_or_composed in [
+        "prepare_goal_workflow",
+        "create_goal",
+        "associate_goal_workflow_session",
+    ] {
+        assert!(
+            goal_tools
+                .iter()
+                .any(|tool| tool.as_str() == Some(low_level_or_composed)),
+            "Goal discovery lost {low_level_or_composed}"
+        );
+    }
+}
+
+#[test]
 fn goal_agent_wait_orchestration_flow_registers_before_worker_execution_without_discovery() {
     let flow = TOOL_RECOMMENDED_FLOWS
         .iter()

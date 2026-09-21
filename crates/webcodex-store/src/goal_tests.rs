@@ -417,6 +417,171 @@ fn explicit_controller_is_authorized_revisioned_replayed_and_persisted() {
 }
 
 #[test]
+fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("goal-prepare-workflow.db")).unwrap();
+    let owner = principal('c');
+    let foreign = principal('f');
+    let controller = create_agent(&db, &owner, "prepare-controller");
+    let foreign_controller = create_agent(&db, &foreign, "prepare-foreign-controller");
+    let session_id = format!("wc_sess_{}", "3".repeat(32));
+
+    let mut prepared_input = input("prepare-workflow");
+    prepared_input.controller_agent_id = Some(controller.clone());
+    let prepared = db
+        .prepare_goal_workflow_at(&owner, &session_id, prepared_input.clone(), T0)
+        .unwrap();
+    assert!(prepared.created);
+    assert!(!prepared.replayed);
+    assert!(prepared.state_changed);
+    assert_eq!(prepared.goal.summary.revision, 1);
+    assert_eq!(prepared.goal.summary.workflow_session_count, 1);
+    assert_eq!(prepared.goal.summary.agent_task_count, 0);
+    assert_eq!(
+        prepared.goal.controller_agent_id.as_deref(),
+        Some(controller.as_str())
+    );
+    assert_eq!(prepared.goal.correlations.len(), 1);
+    assert_eq!(
+        prepared.goal.correlations[0].kind,
+        GoalCorrelationKind::WorkflowSession
+    );
+    assert_eq!(prepared.goal.correlations[0].reference_id, session_id);
+
+    let replay = db
+        .prepare_goal_workflow_at(&owner, &session_id, prepared_input.clone(), T0 + 1)
+        .unwrap();
+    assert!(!replay.created);
+    assert!(replay.replayed);
+    assert!(!replay.state_changed);
+    assert_eq!(replay.goal.summary.goal_id, prepared.goal.summary.goal_id);
+    assert_eq!(replay.goal.summary.revision, 1);
+    assert_eq!(replay.goal.summary.workflow_session_count, 1);
+
+    let changed_session = format!("wc_sess_{}", "4".repeat(32));
+    assert_eq!(
+        db.prepare_goal_workflow_at(&owner, &changed_session, prepared_input.clone(), T0 + 2)
+            .unwrap_err()
+            .code(),
+        "goal_idempotency_conflict"
+    );
+    let mut changed_request = prepared_input.clone();
+    changed_request.objective.push_str(" changed");
+    assert_eq!(
+        db.prepare_goal_workflow_at(&owner, &session_id, changed_request, T0 + 3)
+            .unwrap_err()
+            .code(),
+        "goal_idempotency_conflict"
+    );
+
+    let before_failures = db.list_goals(&owner, None, 0, 100).unwrap().total_count;
+    assert!(db
+        .prepare_goal_workflow_at(&owner, "not-a-session", input("invalid-session"), T0 + 4)
+        .is_err());
+    assert_eq!(
+        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        before_failures
+    );
+
+    let mut foreign_input = input("foreign-controller-prepare");
+    foreign_input.controller_agent_id = Some(foreign_controller);
+    let foreign_error = db
+        .prepare_goal_workflow_at(&owner, &session_id, foreign_input, T0 + 5)
+        .unwrap_err();
+    let mut missing_input = input("missing-controller-prepare");
+    missing_input.controller_agent_id = Some("wc_dagent_________________".to_string());
+    let missing_error = db
+        .prepare_goal_workflow_at(&owner, &session_id, missing_input, T0 + 6)
+        .unwrap_err();
+    assert_eq!(foreign_error.code(), "agent_not_found");
+    assert_eq!(missing_error.code(), foreign_error.code());
+    assert_eq!(missing_error.message(), foreign_error.message());
+    assert_eq!(
+        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        before_failures
+    );
+
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_prepare_goal_correlation
+             BEFORE INSERT ON wc_goal_correlations
+             BEGIN SELECT RAISE(ABORT, 'test injected prepare correlation failure'); END;",
+        )
+        .unwrap();
+    }
+    let correlation_failure = db
+        .prepare_goal_workflow_at(
+            &owner,
+            &format!("wc_sess_{}", "5".repeat(32)),
+            input("prepare-correlation-failure"),
+            T0 + 7,
+        )
+        .unwrap_err();
+    assert_eq!(correlation_failure.code(), "goal_store_unavailable");
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch("DROP TRIGGER fail_prepare_goal_correlation;")
+            .unwrap();
+    }
+    assert_eq!(
+        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        before_failures
+    );
+
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_prepare_goal_idempotency
+             BEFORE INSERT ON wc_goal_idempotency
+             WHEN NEW.operation = 'prepare_goal_workflow'
+             BEGIN SELECT RAISE(ABORT, 'test injected prepare idempotency failure'); END;",
+        )
+        .unwrap();
+    }
+    let idempotency_failure = db
+        .prepare_goal_workflow_at(
+            &owner,
+            &format!("wc_sess_{}", "6".repeat(32)),
+            input("prepare-idempotency-failure"),
+            T0 + 8,
+        )
+        .unwrap_err();
+    assert_eq!(idempotency_failure.code(), "goal_store_unavailable");
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch("DROP TRIGGER fail_prepare_goal_idempotency;")
+            .unwrap();
+        let orphan_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM wc_goal_correlations c
+                 LEFT JOIN wc_goals g ON g.goal_id = c.goal_id
+                 WHERE g.goal_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan_count, 0);
+    }
+    assert_eq!(
+        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        before_failures
+    );
+
+    let omitted = db
+        .prepare_goal_workflow_at(
+            &owner,
+            &format!("wc_sess_{}", "7".repeat(32)),
+            input("prepare-no-controller"),
+            T0 + 9,
+        )
+        .unwrap();
+    assert!(omitted.goal.controller_agent_id.is_none());
+    assert_eq!(omitted.goal.summary.revision, 1);
+    assert_eq!(omitted.goal.summary.workflow_session_count, 1);
+}
+
+#[test]
 fn correlations_are_bounded_explicit_identity_only_and_replayed() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("goal-correlations.db")).unwrap();

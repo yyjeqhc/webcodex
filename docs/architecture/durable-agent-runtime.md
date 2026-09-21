@@ -150,7 +150,7 @@ Runtime Console, explicit activation, and push `ContinuationAdapter` behavior re
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.
 
-## Durable Goal workflow — G4
+## Durable Goal workflow — G4/G6
 
 Goal is high-level **durable workflow/progress truth**: fixed bounded completion
 intent and mechanical milestones, an explicit controller routing identity, and an
@@ -160,25 +160,44 @@ TaskAttempt remains the owner of concrete execution. None replaces another.
 
 The workflow is WebCodex-owned, not a repository convention. The startup brief's
 `webcodex.workflow.model_protocol`, canonical tool descriptions, and
-`single_window_goal_workflow` recommended flow direct substantial multi-step or
-cross-turn development, fixes, refactoring, troubleshooting, deployment and
-migration into a new or reused durable Goal. Tiny one-step lookups and trivial
-edits do not mechanically create one. Repository `AGENTS.md` continues to express
-repository-specific rules; it does not decide whether Goal workflow exists.
+`single_window_goal_workflow` recommended flow direct ordinary new substantial
+multi-step or cross-turn development, fixes, refactoring, troubleshooting,
+deployment and migration through one canonical Goal admission. Tiny one-step lookups
+and trivial edits do not mechanically create one. Repository `AGENTS.md` continues
+to express repository-specific rules; it does not decide whether Goal workflow
+exists. Existing exact Goals can still be composed explicitly through the lower-level
+Goal primitives; admission never heuristically selects a recent Goal.
 
 ```text
-substantial work
-  -> create/reuse Goal with completion_conditions and steps
-  -> explicitly associate current Workflow Session
+ordinary new substantial work
+  -> work_on_project -> exact Workflow Session
+  -> prepare_goal_workflow(session_id, completion_conditions, steps, controller_agent_id?)
+       # one durable admission: new Goal + exact Session correlation
   -> present_goal_plan
   -> work; checkpoint at recovery-worthy boundaries
   -> fresh verification/review
   -> complete remaining plan steps; explicitly update_goal(completed)
 
 optional automatic continuation
-  -> reuse exact already-callable durable Agent, or explicitly establish one
-  -> set that Agent as Goal controller; retain its Agent Continuation card
+  -> reuse one exact explicit durable controller Agent
+  -> if its carrier is not ready, use the separate agent_continuation_setup flow
 ```
+
+`prepare_goal_workflow` is deliberately Host-neutral. ToolRuntime first calls the
+existing exact Session authorization path, which rechecks the immutable Session
+creation-authority fingerprint and any bound Project authorization. Only after that
+succeeds does the Store enter one `BEGIN IMMEDIATE` transaction. The transaction
+validates the bounded Goal input and optional exact owned controller, checks the
+composition-specific keyed replay identity, allocates and inserts the Goal at
+`revision = 1`, inserts exactly one `workflow_session` correlation without a synthetic
+revision bump, records the prepare idempotency fact, then commits. Any failure rolls
+back all three durable writes. Exact same-key replay returns that same admitted Goal
+without mutation; changed reuse fails closed.
+
+That transaction contains no MCP, MCP Apps, `ClientWindow`, iframe, Endpoint, Host
+binding, `ui/message`, Wake, or presentation state. `present_goal_plan` and Agent
+Continuation are separate adapters after durable admission; neither App mount nor
+`production_auto_resume_available` is part of prepare success.
 
 A single `wc_dagent_*` can simultaneously be a callable Task assignee and controller
 of one or more Goals. There is no Worker/Goal Agent type, role enum, second identity,

@@ -2722,6 +2722,37 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Atomically admit one new durable Goal with one exact Workflow Session correlation.
+    /// This is Runtime/Store workflow composition only; it does not establish any Host carrier.
+    PrepareGoalWorkflow {
+        /// Exact Workflow Session independently re-authorized before durable admission.
+        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        session_id: String,
+        /// Fixed durable completion intent; the Server does not evaluate natural-language conditions.
+        /// At most 8 conditions, each additionally bounded to 512 UTF-8 bytes.
+        #[serde(default)]
+        #[schemars(schema_with = "goal_conditions_schema")]
+        completion_conditions: Vec<String>,
+        /// Fixed bounded plan. Stable ids are unique; all steps start pending.
+        #[serde(default)]
+        #[schemars(length(max = 32))]
+        steps: Vec<GoalStepInputCall>,
+        /// Bounded human-readable Goal title.
+        #[schemars(length(min = 1, max = 200))]
+        title: String,
+        /// Bounded authoritative high-level objective/instruction.
+        #[schemars(length(min = 1, max = 8192))]
+        objective: String,
+        /// Optional exact owned durable Agent used only as Goal attention-routing identity.
+        #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
+        #[serde(default)]
+        controller_agent_id: Option<String>,
+        /// Caller-generated composition key. Exact replay returns the same admitted Goal;
+        /// changed reuse fails closed.
+        #[schemars(length(min = 1, max = 128))]
+        idempotency_key: String,
+    },
+
     /// Create explicit high-level durable intent/control state without execution authority.
     CreateGoal {
         /// Fixed durable completion intent; the Server does not evaluate natural-language conditions.
@@ -5197,6 +5228,7 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::PrepareGoalWorkflow { .. } => "prepare_goal_workflow",
             Self::CreateGoal { .. } => "create_goal",
             Self::GetGoal { .. } => "get_goal",
             Self::PresentGoalPlan { .. } => "present_goal_plan",

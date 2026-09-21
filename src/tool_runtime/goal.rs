@@ -507,6 +507,34 @@ fn request_visibility_budget_available(
 }
 
 impl ToolRuntime {
+    pub(crate) async fn prepare_goal_workflow(
+        &self,
+        auth: Option<&AuthContext>,
+        session_id: String,
+        input: NewGoal,
+    ) -> ToolResult {
+        // Exact Workflow Session authority is a Runtime concern. Re-authorize its
+        // immutable creation fingerprint and any bound Project before touching Goal
+        // durable state; the Store receives only the validated canonical identity.
+        if let Err(result) = self
+            .authorize_session_target(&session_id, "prepare_goal_workflow", auth)
+            .await
+        {
+            return result;
+        }
+        let principal = match goal_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return goal_store_unavailable();
+        };
+        match db.prepare_goal_workflow(&principal, &session_id, input) {
+            Ok(result) => serialized_goal_success(result),
+            Err(error) => goal_error(error, RecoveryKind::RetrySame),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn create_goal(
         &self,

@@ -165,6 +165,10 @@ SHA-256。Managed installed Skill 还会用 `expected_package_revision` fence im
 只有修改 `roots` 配置列表时才需要按正式流程先执行 `runner_config_check`，再携带当前
 generation 执行 `runner_config_reload`；该字段支持 hot reload，不需要重启 Runner 进程。
 
+## Runner build identity
+
+Runner 连接后，`runtime_status(client_id=...)` 与 `list_runners` 会暴露有界、非敏感的 binary identity：package version、Git commit/dirty 状态、build timestamp、Cargo target triple 与 architecture。旧 Runner 可以缺省这些 optional 字段。该信息用于部署与 source-alignment 诊断，不包含 executable path、environment、token 或 credential；连接前仍可用 `webcodex-runner --version` 做本机 identity 检查。
+
 ## Runner 级 configured instructions
 
 同一台 Runner 可以为其所有 Project bootstrap 投影一份共享 coding guidance。v1 直接在

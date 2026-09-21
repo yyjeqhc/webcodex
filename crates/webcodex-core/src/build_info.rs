@@ -6,6 +6,8 @@ pub struct BuildInfo {
     pub git_commit: Option<&'static str>,
     pub git_dirty: Option<bool>,
     pub built_at: Option<&'static str>,
+    pub target: Option<&'static str>,
+    pub architecture: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -13,6 +15,8 @@ pub struct RuntimeBuildInfo {
     pub git_commit: Option<&'static str>,
     pub git_dirty: Option<bool>,
     pub built_at: Option<&'static str>,
+    pub target: Option<&'static str>,
+    pub architecture: Option<&'static str>,
 }
 
 pub fn current() -> BuildInfo {
@@ -21,6 +25,8 @@ pub fn current() -> BuildInfo {
         git_commit: option_env!("WEBCODEX_BUILD_GIT_COMMIT").and_then(non_empty),
         git_dirty: option_env!("WEBCODEX_BUILD_GIT_DIRTY").and_then(parse_bool),
         built_at: option_env!("WEBCODEX_BUILD_BUILT_AT").and_then(non_empty),
+        target: option_env!("WEBCODEX_BUILD_TARGET").and_then(non_empty),
+        architecture: option_env!("WEBCODEX_BUILD_ARCHITECTURE").and_then(non_empty),
     }
 }
 
@@ -30,6 +36,8 @@ pub fn runtime_build_info() -> RuntimeBuildInfo {
         git_commit: info.git_commit,
         git_dirty: info.git_dirty,
         built_at: info.built_at,
+        target: info.target,
+        architecture: info.architecture,
     }
 }
 
@@ -72,6 +80,10 @@ mod tests {
         let info = current();
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert!(!info.version.trim().is_empty());
+        assert!(info.target.is_some_and(|value| !value.trim().is_empty()));
+        assert!(info
+            .architecture
+            .is_some_and(|value| !value.trim().is_empty()));
     }
 
     #[test]

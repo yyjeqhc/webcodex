@@ -11,6 +11,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_DIRTY");
     println!("cargo:rerun-if-env-changed=WEBCODEX_BUILT_AT");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    println!("cargo:rerun-if-env-changed=TARGET");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
 
     let head_path = git_metadata_path(&repo_root, "HEAD")
         .unwrap_or_else(|| repo_root.join(".git").join("HEAD"));
@@ -62,9 +64,14 @@ fn main() {
         .or_else(|| git_commit_timestamp_from_git(&repo_root))
         .unwrap_or_else(current_unix_timestamp);
 
+    let target = env_value("TARGET").unwrap_or_else(|| "unknown".to_string());
+    let architecture = env_value("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|| "unknown".to_string());
+
     println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_COMMIT={git_commit}");
     println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_DIRTY={git_dirty}");
     println!("cargo:rustc-env=WEBCODEX_BUILD_BUILT_AT={built_at}");
+    println!("cargo:rustc-env=WEBCODEX_BUILD_TARGET={target}");
+    println!("cargo:rustc-env=WEBCODEX_BUILD_ARCHITECTURE={architecture}");
 }
 
 fn env_value(name: &str) -> Option<String> {

@@ -642,6 +642,9 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
                 version: Some(server_version.to_string()),
                 git_commit: Some(different_commit),
                 git_dirty: Some(false),
+                built_at: None,
+                target: None,
+                architecture: None,
             }),
         ))
         .await
@@ -657,6 +660,9 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
                 version: Some("0.0.1".to_string()),
                 git_commit: None,
                 git_dirty: None,
+                built_at: None,
+                target: None,
+                architecture: None,
             }),
         ))
         .await

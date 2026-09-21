@@ -1431,6 +1431,15 @@ pub struct RunnerBuildInfo {
     /// was captured. `None` means exact source alignment is unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_dirty: Option<bool>,
+    /// Stable build timestamp/epoch string emitted by the build identity pipeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built_at: Option<String>,
+    /// Cargo target triple for this Runner binary. Never a filesystem path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Cargo target architecture for this Runner binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
 }
 
 pub const RUNNER_HOST_CONTEXT_ROLE_MAX_BYTES: usize = 64;

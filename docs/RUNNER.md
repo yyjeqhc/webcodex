@@ -184,6 +184,10 @@ configured `roots` list is a hot-reloadable Runner configuration change: edit
 `runner.toml`, run `runner_config_check`, then `runner_config_reload` with the
 current generation. No Runner process restart is required.
 
+## Runner build identity
+
+A connected Runner reports bounded, non-secret binary identity through `runtime_status(client_id=...)` and `list_runners`: package version, Git commit/dirty state, build timestamp, Cargo target triple, and architecture. Older Runners may omit any of these optional fields. This is intended for deployment/source-alignment diagnostics; executable paths, environment, tokens, and credentials are not included. `webcodex-runner --version` remains the local pre-connection identity check.
+
 ## Runner-level configured instructions
 
 A Runner can project the same coding guidance into every Project bootstrap on that

@@ -1665,6 +1665,9 @@ fn runner_build_info() -> runner_protocol::RunnerBuildInfo {
         version: Some(info.version.to_string()),
         git_commit: info.git_commit.map(str::to_string),
         git_dirty: info.git_dirty,
+        built_at: info.built_at.map(str::to_string),
+        target: info.target.map(str::to_string),
+        architecture: info.architecture.map(str::to_string),
     }
 }
 

@@ -156,6 +156,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The retained upstream publisher has no WebPi publication identity/target.
+    # Keep its implementation as a reference, but fail before any external action.
+    print("WebPi: upstream release automation is disabled; use the local WebPi build and deployment guide.", file=sys.stderr)
+    return 2
+
+
+def _retained_upstream_main(argv: list[str] | None = None) -> int:
+    """Reference implementation only; not exposed by the WebPi CLI entry point."""
     args = build_parser().parse_args(argv)
     if args.command == "preflight":
         try:

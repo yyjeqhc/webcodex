@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate native WebCodex release archives and generate publish metadata."""
+"""Validate native WebPi release archives and generate publish metadata."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
-BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+BINARIES = ("webpi", "webpi-server", "webpi-runner")
 
 
 def sha256(path: Path) -> str:
@@ -25,14 +25,14 @@ def sha256(path: Path) -> str:
 
 
 def archive_filename(version: str, platform: str) -> str:
-    return f"webcodex-v{version}-{platform}.tar.gz"
+    return f"webpi-v{version}-{platform}.tar.gz"
 
 
 def desktop_filename(version: str, platform: str) -> str:
     if platform not in DESKTOP_PLATFORMS:
         raise SystemExit(f"unsupported Desktop platform: {platform}")
     suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
-    return f"webcodex-desktop-v{version}-{platform}{suffix}"
+    return f"webpi-desktop-v{version}-{platform}{suffix}"
 
 
 def expected_members(platform: str) -> set[str]:

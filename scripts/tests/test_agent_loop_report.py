@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import json
 import sqlite3
 import tempfile
@@ -115,7 +116,7 @@ class AgentLoopReportTests(unittest.TestCase):
             summary["model_ergonomics"] = telemetry
         if composition is not None:
             summary["code_mode_composition"] = composition
-        with sqlite3.connect(self.audit_db) as connection:
+        with contextlib.closing(sqlite3.connect(self.audit_db)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO action_events (
@@ -487,7 +488,7 @@ class AgentLoopReportTests(unittest.TestCase):
             transition="serial",
             window="hashed-window-a",
         )
-        with sqlite3.connect(self.audit_db) as connection:
+        with contextlib.closing(sqlite3.connect(self.audit_db)) as connection, connection:
             connection.execute(
                 "UPDATE action_events SET summary_json = 'not-json' WHERE event_id = 'other-session'"
             )

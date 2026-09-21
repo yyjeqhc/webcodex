@@ -10,13 +10,13 @@ fi
 PLATFORM="${WEBCODEX_RELEASE_PLATFORM:-linux-x64}"
 BIN_DIR="${WEBCODEX_RELEASE_BIN_DIR:-$ROOT/target/release}"
 OUT_DIR="${1:-$ROOT/dist}"
-ARCHIVE="$OUT_DIR/webcodex-v$VERSION-$PLATFORM.tar.gz"
+ARCHIVE="$OUT_DIR/webpi-v$VERSION-$PLATFORM.tar.gz"
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 mkdir -p "$OUT_DIR" "$TMP/package"
-for name in webcodex webcodex-server webcodex-runner; do
+for name in webpi webpi-server webpi-runner; do
     source="$BIN_DIR/$name"
     if [ ! -f "$source" ] || [ ! -x "$source" ]; then
         echo "missing executable release binary: $source" >&2
@@ -26,7 +26,7 @@ for name in webcodex webcodex-server webcodex-runner; do
 done
 
 identity=""
-for name in webcodex webcodex-server webcodex-runner; do
+for name in webpi webpi-server webpi-runner; do
     output="$($TMP/package/$name --version)"
     case "$output" in
         "$name $VERSION "*|"$name $VERSION") ;;
@@ -39,7 +39,7 @@ for name in webcodex webcodex-server webcodex-runner; do
     fi
 done
 
-tar -czf "$ARCHIVE.tmp" -C "$TMP/package" webcodex webcodex-server webcodex-runner
+tar -czf "$ARCHIVE.tmp" -C "$TMP/package" webpi webpi-server webpi-runner
 mv -f "$ARCHIVE.tmp" "$ARCHIVE"
 if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$ARCHIVE"

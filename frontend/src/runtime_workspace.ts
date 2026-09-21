@@ -76,7 +76,7 @@ export function renderWorkspaceHome(node: HTMLElement | null, options: Workspace
   const tr = (text: string): string => translate(text, options.language);
   const heading = workspaceNode("header", "", "product-page-heading");
   const title = workspaceNode("div"); title.appendChild(workspaceNode("p", tr("Workspace"), "eyebrow"));
-  title.appendChild(workspaceNode("h2", tr(options.overview ? "WebCodex Ready" : "Workspace"))); heading.appendChild(title);
+  title.appendChild(workspaceNode("h2", tr(options.overview ? "WebPi Ready" : "Workspace"))); heading.appendChild(title);
   heading.appendChild(workspaceButton(tr("Add Project"), "workspace-add-project", options.onAddProject || options.onSearch)); node.appendChild(heading);
   const status = workspaceNode("dl", "", "product-status-strip"); status.setAttribute("aria-label", tr("Workspace status"));
   const runners = Array.isArray(options.overview?.runners) ? options.overview.runners : [];

@@ -328,10 +328,10 @@ test("runtimeWindowActivityLabel formats relative time in English and Chinese", 
   assert.equal(runtimeWindowActivityLabel(now - 259_200_000, now, "en"), "3d ago");
   assert.equal(runtimeWindowActivityLabel(now - 259_200_000, now, "zh-CN"), "3 天前");
   // unavailable / non-positive
-  assert.equal(runtimeWindowActivityLabel(null, now, "en"), "No WebCodex activity");
-  assert.equal(runtimeWindowActivityLabel(null, now, "zh-CN"), "无 WebCodex 活动");
-  assert.equal(runtimeWindowActivityLabel(0, now, "en"), "No WebCodex activity");
-  assert.equal(runtimeWindowActivityLabel(0, now, "zh-CN"), "无 WebCodex 活动");
+  assert.equal(runtimeWindowActivityLabel(null, now, "en"), "No WebPi activity");
+  assert.equal(runtimeWindowActivityLabel(null, now, "zh-CN"), "无 WebPi 活动");
+  assert.equal(runtimeWindowActivityLabel(0, now, "en"), "No WebPi activity");
+  assert.equal(runtimeWindowActivityLabel(0, now, "zh-CN"), "无 WebPi 活动");
 });
 
 test("renderSessionWindowCorrelationLinks supports Chinese localization and relative time", () => {
@@ -403,14 +403,14 @@ test("formatWindowDetailFields translates fallbacks and bounded indicators", () 
   assert.equal(enFields.title, "Window 01234567…cdef");
   assert.equal(enFields.activeStatus, "No active request");
   assert.equal(enFields.lastCall, "No completed tools/call activity");
-  assert.equal(enFields.lastMeaningful, "No meaningful WebCodex work recorded");
+  assert.equal(enFields.lastMeaningful, "No meaningful WebPi work recorded");
   assert.equal(enFields.linkedStatus, "3 Sessions · bounded");
   assert.equal(enFields.activityStatus, "50 events · bounded");
 
   const zhFields = formatWindowDetailFields(detail, "", 1000, "zh-CN");
   assert.equal(zhFields.activeStatus, "无活跃请求");
   assert.equal(zhFields.lastCall, "没有已完成的 tools/call 活动");
-  assert.equal(zhFields.lastMeaningful, "未记录到有效 WebCodex 工作");
+  assert.equal(zhFields.lastMeaningful, "未记录到有效 WebPi 工作");
   assert.equal(zhFields.linkedStatus, "3 个会话 · 有界");
   assert.equal(zhFields.activityStatus, "50 个事件 · 有界");
 });
@@ -486,7 +486,7 @@ test("renderWindowActiveRequests renders active request items or localized empty
     const emptyContainer = document.createElement("div");
     renderWindowActiveRequests(emptyContainer, [], { language: "zh-CN" });
     assert.equal(emptyContainer.children.length, 1);
-    assert.equal(emptyContainer.children[0].textContent, "当前没有活跃的 WebCodex 请求。");
+    assert.equal(emptyContainer.children[0].textContent, "当前没有活跃的 WebPi 请求。");
 
     const populatedContainer = document.createElement("div");
     let copied = "";

@@ -210,7 +210,13 @@ async function expectInstallFailure(action, destination, tempRoot, pattern) {
 
 async function main() {
   assert.strictEqual(packageJson.version, "0.4.1");
-  assert.deepStrictEqual(packageJson.bin, { webcodex: "bin/webcodex.js" });
+  assert.deepStrictEqual(packageJson.bin, {});
+  assert.strictEqual(install.UPSTREAM_RUNTIME_DISABLED, true);
+  const disabledInstaller = childProcess.spawnSync(process.execPath, [path.join(__dirname, "..", "install.js")], {
+    encoding: "utf8"
+  });
+  assert.notStrictEqual(disabledInstaller.status, 0);
+  assert.match(disabledInstaller.stderr, /upstream runtime downloader is disabled/);
   assert.deepStrictEqual(install.RUNTIME_BINARIES, ["webcodex", "webcodex-server", "webcodex-runner"]);
   assert.deepStrictEqual(install.SUPPORTED_PLATFORM_KEYS, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]);
   assert.strictEqual(install.MAX_MANIFEST_BYTES, 1024 * 1024);

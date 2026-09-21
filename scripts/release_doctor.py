@@ -93,6 +93,7 @@ def _workflow_contract(root: Path) -> str:
     extended = (root / ".github/workflows/extended-native.yml").read_text(encoding="utf-8")
     readiness_workflow = (root / ".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
     build = (root / ".github/workflows/release-build.yml").read_text(encoding="utf-8")
+    image = (root / ".github/workflows/release-image.yml").read_text(encoding="utf-8")
     required = {
         "ci.yml": (
             ("apps/desktop/package-lock.json", ci),
@@ -136,15 +137,15 @@ def _workflow_contract(root: Path) -> str:
             ("prepare_desktop_bundle_macos.py", build),
             ("desktop_install_macos_smoke.sh", build),
             ("desktop_artifacts", build),
-            ("webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", build),
-            ("webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg", build),
+            ("webpi-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", build),
+            ("webpi-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg", build),
             ('desktop_dist="$GITHUB_WORKSPACE/dist"', build),
             ('$installerPath = Join-Path $desktopDist $installerName', build),
             ("DESKTOP_INSTALLER_PATH=$installerPath", build),
             ('--dmg "${{ steps.desktop_dmg.outputs.path }}"', build),
             ("-Installer $env:DESKTOP_INSTALLER_PATH", build),
-            ("dist/webcodex-desktop-*.dmg", build),
-            ("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", build),
+            ("dist/webpi-desktop-*.dmg", build),
+            ("dist/webpi-desktop-*-${{ matrix.platform }}-setup.exe", build),
             ("signing_mode=adhoc", build),
             ('export APPLE_SIGNING_IDENTITY="-"', build),
         ),
@@ -160,6 +161,14 @@ def _workflow_contract(root: Path) -> str:
     leaked = [token for token in forbidden_daily if token in ci]
     if leaked:
         raise DoctorError(f"ordinary CI regained extended-native lanes: {', '.join(leaked)}")
+    if "if: ${{ false }}" not in build or "if: ${{ false }}" not in image:
+        raise DoctorError("public WebPi release workflows are not fail-closed")
+    if "release-webpi-server-image-${{ github.repository }}" not in image:
+        raise DoctorError("release-image is missing repository-wide publication serialization")
+    if "publish_latest" in image:
+        raise DoctorError("release-image still uses stale early latest-release classification")
+    if 'repos/$GITHUB_REPOSITORY/releases/latest' not in image or 'if [ "$current_latest" = "$TAG" ]; then' not in image:
+        raise DoctorError("release-image does not re-resolve the latest stable release immediately before :latest")
     if "packages: write" in readiness_workflow or "actions/upload-artifact" in readiness_workflow:
         raise DoctorError("release-readiness gained publication/upload authority")
     if "prepare_desktop_bundle.ps1" in readiness_workflow or "tauri" in readiness_workflow.lower():

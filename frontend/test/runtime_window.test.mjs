@@ -152,7 +152,7 @@ test("windowDateTimeLabel formats timestamps or shows unavailable message", () =
 
 test("windowAgeLabel delegates to runtimeWindowActivityLabel", () => {
   const now = 100_000;
-  assert.equal(windowAgeLabel(null, now), "No WebCodex activity");
+  assert.equal(windowAgeLabel(null, now), "No WebPi activity");
   assert.equal(windowAgeLabel(now - 500, now), "just now");
   assert.equal(windowAgeLabel(now - 15000, now), "15s ago");
 });
@@ -275,7 +275,7 @@ test("renderWindowActiveRequests renders active requests or empty placeholder", 
     let copiedTrace = "";
 
     renderWindowActiveRequests(container, [], { now: 10000 });
-    assert.equal(container.textContent, "No WebCodex request is currently active.");
+    assert.equal(container.textContent, "No WebPi request is currently active.");
 
     const requests = [
       {
@@ -365,7 +365,7 @@ test("renderSessionWindowCorrelationLinks renders correlated window cards", () =
     assert.ok(card.className.includes("recorder-gap"));
     assert.match(
       card.querySelector(".muted")?.textContent || "",
-      /cli · last WebCodex activity just now · 2 recorder gap/,
+      /cli · last WebPi activity just now · 2 recorder gap/,
     );
 
     card.click();
@@ -407,7 +407,7 @@ test("formatWindowDetailFields produces populated metrics and fallback texts", (
   assert.ok(emptyFields);
   assert.equal(emptyFields.title, "Window fallback-key");
   assert.equal(emptyFields.lastCall, "No completed tools/call activity");
-  assert.equal(emptyFields.lastMeaningful, "No meaningful WebCodex work recorded");
+  assert.equal(emptyFields.lastMeaningful, "No meaningful WebPi work recorded");
   assert.equal(emptyFields.activeStatus, "No active request");
 });
 
@@ -456,7 +456,7 @@ test("createWindowCard correctly renders 0 linked Sessions, active count, and la
     assert.equal(card.className.includes("selected"), false);
     assert.equal(card.getAttribute("aria-current"), null);
     assert.equal(card.querySelector(".chip")?.textContent, "1 active");
-    assert.match(card.textContent, /Last WebCodex call/);
+    assert.match(card.textContent, /Last WebPi call/);
     assert.match(card.textContent, /Last meaningful work/);
     assert.match(card.textContent, /0 linked Sessions/);
 

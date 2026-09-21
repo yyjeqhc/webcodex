@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
+const UPSTREAM_RUNTIME_DISABLED = true;
+
 const crypto = require("crypto");
 const childProcess = require("child_process");
 const fs = require("fs");
@@ -888,6 +890,7 @@ async function installFromManifest(manifestPathOrUrl, options = {}) {
 }
 
 async function main() {
+  throw new Error("WebPi: this upstream runtime downloader is disabled; use the local WebPi build.");
   if (process.env.WEBCODEX_SKIP_DOWNLOAD === "1") {
     console.log("WEBCODEX_SKIP_DOWNLOAD=1 set; skipping native binary download.");
     return;
@@ -919,6 +922,7 @@ module.exports = {
   PLATFORM_KEYS,
   RUNTIME_BINARIES,
   SUPPORTED_PLATFORM_KEYS,
+  UPSTREAM_RUNTIME_DISABLED,
   VENDOR_BIN,
   copyLocalBinaryDir,
   exeName,

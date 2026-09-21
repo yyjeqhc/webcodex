@@ -6,6 +6,8 @@ import {
   definePlugin,
   defineTool,
   errorResult,
+  imageResult,
+  result,
   schema,
   textResult,
 } from "../dist/index.js";
@@ -132,6 +134,36 @@ test("async calls are strictly serialized without timing assumptions", async () 
   assert.equal(output.read().trimEnd().split("\n").length, 2);
 });
 
+test("servePlugin awaits onClose after all protocol requests finish", async () => {
+  const order = [];
+  const tool = defineTool({
+    name: "close_order",
+    inputSchema: schema.object({}),
+    async execute() {
+      order.push("tool");
+      return textResult("ok");
+    },
+  });
+  const output = captureStream();
+  const error = captureStream();
+  await servePlugin(
+    definePlugin({ tools: [tool] }),
+    {
+      input: Readable.from([callLine(1, "close_order", {})]),
+      output: output.stream,
+      error: error.stream,
+    },
+    {
+      async onClose() {
+        await Promise.resolve();
+        order.push("close");
+      },
+    },
+  );
+  assert.deepEqual(order, ["tool", "close"]);
+  assert.equal(error.read(), "");
+});
+
 test("explicit errorResult is a normal completed application result", async () => {
   const tool = defineTool({
     name: "known_failure",
@@ -183,13 +215,30 @@ test("handler rejection returns no ToolResult and emits only a bounded generic d
   assert.equal(error.read().includes(" at "), false);
 });
 
-test("result helpers use only text content and camelCase v1 result fields", () => {
+test("result helpers support text, image, mixed content and camelCase v1 result fields", () => {
   const ok = textResult("ok", { value: 1 });
   const error = errorResult("bad", { value: 2 });
+  const image = imageResult("iVBORw0KGgo=", "image/png", { value: 3 });
+  const mixed = result(
+    [
+      { type: "text", text: "caption" },
+      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+    ],
+    { value: 4 },
+  );
   assert.deepEqual(Object.keys(ok), ["content", "structuredContent", "isError"]);
   assert.deepEqual(Object.keys(error), ["content", "structuredContent", "isError"]);
   assert.deepEqual(ok.content, [{ type: "text", text: "ok" }]);
   assert.deepEqual(error.content, [{ type: "text", text: "bad" }]);
+  assert.deepEqual(image.content, [
+    { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+  ]);
+  assert.deepEqual(mixed.content, [
+    { type: "text", text: "caption" },
+    { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+  ]);
   assert.equal(ok.isError, false);
   assert.equal(error.isError, true);
+  assert.equal(image.isError, false);
+  assert.equal(mixed.isError, false);
 });

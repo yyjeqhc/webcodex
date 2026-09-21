@@ -1,16 +1,16 @@
-# Windows-native release artifact packaging for WebCodex.
+# Windows-native release artifact packaging for WebPi.
 #
-# Produces `webcodex-v<VERSION>-win32-<ARCH>.tar.gz` from three Windows release
+# Produces `webpi-v<VERSION>-win32-<ARCH>.tar.gz` from three Windows release
 # binaries. This is the Windows release path: it must run on the matching native
 # Windows host with nothing but PowerShell and the built-in Windows tooling. It never
 # requires Git Bash, WSL, or Unix chmod/install/sha256sum.
 #
 # The archive keeps the current three-binary npm contract:
 #
-#   webcodex.exe webcodex-server.exe webcodex-runner.exe
+#   webpi.exe webpi-server.exe webpi-runner.exe
 #
-# webcodex-server.exe is a supported local foreground/share runtime on Windows.
-# The three-binary package supports explicit `webcodex share` with Cloudflare,
+# webpi-server.exe is a supported local foreground/share runtime on Windows.
+# The three-binary package supports explicit `webpi share` with Cloudflare,
 # OpenAI Secure MCP Tunnel, or no tunnel. Managed Windows Server service lifecycle
 # remains unsupported and is not implied by packaging these binaries.
 #
@@ -82,8 +82,8 @@ if ($Platform -notin @("win32-x64", "win32-arm64")) {
 $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 
-$BinaryNames = @("webcodex", "webcodex-server", "webcodex-runner")
-$ArchiveName = "webcodex-v$Version-$Platform.tar.gz"
+$BinaryNames = @("webpi", "webpi-server", "webpi-runner")
+$ArchiveName = "webpi-v$Version-$Platform.tar.gz"
 $Archive = Join-Path $OutDir $ArchiveName
 $ArchiveTmp = "$Archive.tmp"
 if ((Test-Path -LiteralPath $Archive) -and -not $AllowDevelopmentBuild) {

@@ -90,7 +90,7 @@ test("Session liveness stays factual across working recent idle and attention st
   assert.equal(recent.label, "recently active");
   assert.equal(attention.label, "idle · pending attention");
   assert.equal(idle.label, "idle · 5m");
-  assert.equal(idle.tooltip, "WebCodex activity only; host/model state is unknown.");
+  assert.equal(idle.tooltip, "WebPi activity only; host/model state is unknown.");
   for (const view of [workingCall, workingJob, recent, attention, idle]) {
     assert.equal(/stalled|abandoned|model failed|host frozen/i.test(view.label), false);
   }

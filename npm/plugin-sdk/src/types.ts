@@ -94,8 +94,16 @@ export interface TextContent {
   readonly text: string;
 }
 
+export interface ImageContent {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export type ToolContent = TextContent | ImageContent;
+
 export interface ToolResult<TStructured extends object = object, TError extends boolean = boolean> {
-  readonly content: readonly TextContent[];
+  readonly content: readonly ToolContent[];
   readonly structuredContent: TStructured;
   readonly isError: TError;
 }
@@ -207,6 +215,44 @@ export function textResult(
 ): ToolResult<object, false> {
   return {
     content: [{ type: "text", text }],
+    structuredContent,
+    isError: false,
+  };
+}
+
+export function result<const TStructured extends object>(
+  content: readonly ToolContent[],
+  structuredContent: TStructured,
+  isError?: boolean,
+): ToolResult<TStructured, boolean>;
+export function result(
+  content: readonly ToolContent[],
+  structuredContent: object = {},
+  isError = false,
+): ToolResult<object, boolean> {
+  return {
+    content: [...content],
+    structuredContent,
+    isError,
+  };
+}
+
+export function imageResult(
+  data: string,
+  mimeType: string,
+): ToolResult<Record<string, never>, false>;
+export function imageResult<const TStructured extends object>(
+  data: string,
+  mimeType: string,
+  structuredContent: TStructured,
+): ToolResult<TStructured, false>;
+export function imageResult(
+  data: string,
+  mimeType: string,
+  structuredContent: object = {},
+): ToolResult<object, false> {
+  return {
+    content: [{ type: "image", data, mimeType }],
     structuredContent,
     isError: false,
   };

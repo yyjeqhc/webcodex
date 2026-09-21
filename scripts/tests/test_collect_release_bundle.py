@@ -32,9 +32,9 @@ def _archive_bytes(platform: str) -> bytes:
 
 def _write_bundle(root: Path, tag: str, build_kind: str) -> tuple[str, dict[str, str]]:
     stem = (
-        f"webcodex-v{VERSION}"
+        f"webpi-v{VERSION}"
         if build_kind == "release"
-        else f"webcodex-{tag}-{SOURCE_SHA[:12]}-v{VERSION}"
+        else f"webpi-{tag}-{SOURCE_SHA[:12]}-v{VERSION}"
     )
     artifact_hashes: dict[str, str] = {}
     artifact_payload: dict[str, dict[str, str]] = {}
@@ -128,7 +128,7 @@ class ArtifactSelectionTests(unittest.TestCase):
                 {"id": 1, "name": "native-linux", "expired": False},
                 {
                     "id": 2,
-                    "name": "webcodex-v0.3.8-bundle",
+                    "name": "webpi-v0.3.8-bundle",
                     "expired": False,
                     "size_in_bytes": 100,
                     "digest": "sha256:" + "b" * 64,
@@ -183,19 +183,19 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(summary["build_kind"], "release")
             self.assertEqual(
                 summary["desktop_artifacts"]["darwin-x64"]["filename"],
-                f"webcodex-desktop-v{VERSION}-darwin-x64.dmg",
+                f"webpi-desktop-v{VERSION}-darwin-x64.dmg",
             )
             self.assertEqual(
                 summary["desktop_artifacts"]["darwin-arm64"]["filename"],
-                f"webcodex-desktop-v{VERSION}-darwin-arm64.dmg",
+                f"webpi-desktop-v{VERSION}-darwin-arm64.dmg",
             )
             self.assertEqual(
                 summary["desktop_artifacts"]["win32-x64"]["filename"],
-                f"webcodex-desktop-v{VERSION}-win32-x64-setup.exe",
+                f"webpi-desktop-v{VERSION}-win32-x64-setup.exe",
             )
             self.assertEqual(
                 summary["desktop_artifacts"]["win32-arm64"]["filename"],
-                f"webcodex-desktop-v{VERSION}-win32-arm64-setup.exe",
+                f"webpi-desktop-v{VERSION}-win32-arm64-setup.exe",
             )
 
     def test_release_bundle_rejects_missing_desktop(self) -> None:
@@ -289,7 +289,7 @@ class BundleTests(unittest.TestCase):
                     run_id=RUN_ID,
                     expected_source_sha=SOURCE_SHA,
                     expected_tag=f"v{VERSION}",
-                    artifact_name=f"webcodex-v{VERSION}-bundle",
+                    artifact_name=f"webpi-v{VERSION}-bundle",
                 )
 
     def test_bundle_rejects_archive_digest_drift(self) -> None:

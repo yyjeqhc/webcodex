@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect and verify one assembled WebCodex release bundle from GitHub Actions."""
+"""Collect and verify one assembled WebPi release bundle from GitHub Actions."""
 
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ from typing import BinaryIO
 
 DEFAULT_REPO = "yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
-BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+BINARIES = ("webpi", "webpi-server", "webpi-runner")
 DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 RELEASE_WORKFLOW_PATH = ".github/workflows/release-build.yml"
 API_VERSION = "2022-11-28"
-USER_AGENT = "webcodex-release-bundle-collector/1"
+USER_AGENT = "webpi-release-bundle-collector/1"
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_COUNT = 16
 MAX_ARTIFACT_ZIP_BYTES = 384 * 1024 * 1024
@@ -76,9 +76,9 @@ def desktop_artifact_filename(
         raise CollectionError(f"unsupported Desktop platform: {platform!r}")
     suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
     if build_kind == "release":
-        return f"webcodex-desktop-v{version}-{platform}{suffix}"
+        return f"webpi-desktop-v{version}-{platform}{suffix}"
     if build_kind == "verification":
-        return f"webcodex-desktop-{tag}-{source_sha[:12]}-v{version}-{platform}{suffix}"
+        return f"webpi-desktop-{tag}-{source_sha[:12]}-v{version}-{platform}{suffix}"
     raise CollectionError(f"unsupported release build kind: {build_kind!r}")
 
 
@@ -559,9 +559,9 @@ def verify_bundle_directory(
         raise CollectionError("release-build.json build kind does not match the requested tag")
     archive_stem = release_build.get("archive_stem")
     expected_stem = (
-        f"webcodex-v{version}"
+        f"webpi-v{version}"
         if build_kind == "release"
-        else f"webcodex-{expected_tag}-{expected_source_sha[:12]}-v{version}"
+        else f"webpi-{expected_tag}-{expected_source_sha[:12]}-v{version}"
     )
     if archive_stem != expected_stem or artifact_name != f"{expected_stem}-bundle":
         raise CollectionError("assembled bundle artifact name/archive stem mismatch")
@@ -708,7 +708,7 @@ def collect_bundle(
     artifacts_payload = client.fetch_json(f"/actions/runs/{run_id}/artifacts?per_page=100")
     artifact = select_bundle_artifact(artifacts_payload, run_id, source_sha)
 
-    temp_root = Path(tempfile.mkdtemp(prefix=".webcodex-release-collect-", dir=destination.parent))
+    temp_root = Path(tempfile.mkdtemp(prefix=".webpi-release-collect-", dir=destination.parent))
     zip_path = temp_root / "bundle.zip"
     extracted = temp_root / "bundle"
     try:

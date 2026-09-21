@@ -18,7 +18,7 @@ class BuildIdentityTests(unittest.TestCase):
                 root = Path(tmp)
                 env = os.environ.copy()
                 for key in (
-                    "WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT",
+                    "WEBPI_GIT_COMMIT", "WEBPI_GIT_DIRTY", "WEBPI_BUILT_AT",
                     "SOURCE_DATE_EPOCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                 ):
                     env.pop(key, None)
@@ -44,7 +44,7 @@ class BuildIdentityTests(unittest.TestCase):
                 )
                 shutil.copyfile(BUILD_SCRIPT, package / "build.rs")
                 (package / "src/main.rs").write_text(
-                    'fn main() { println!("{}", env!("WEBCODEX_BUILD_GIT_COMMIT")); }\n',
+                    'fn main() { println!("{}", env!("WEBPI_BUILD_GIT_COMMIT")); }\n',
                     encoding="utf-8",
                 )
                 run(repo, "git", "add", ".")
@@ -81,7 +81,7 @@ class BuildIdentityTests(unittest.TestCase):
                 root = Path(tmp)
                 env = os.environ.copy()
                 for key in (
-                    "WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT",
+                    "WEBPI_GIT_COMMIT", "WEBPI_GIT_DIRTY", "WEBPI_BUILT_AT",
                     "SOURCE_DATE_EPOCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                 ):
                     env.pop(key, None)
@@ -108,7 +108,7 @@ class BuildIdentityTests(unittest.TestCase):
                 )
                 shutil.copyfile(BUILD_SCRIPT, package / "build.rs")
                 (package / "src/main.rs").write_text(
-                    'fn main() { println!("{}", env!("WEBCODEX_BUILD_GIT_DIRTY")); }\n',
+                    'fn main() { println!("{}", env!("WEBPI_BUILD_GIT_DIRTY")); }\n',
                     encoding="utf-8",
                 )
                 run(repo, "git", "add", ".")
@@ -149,7 +149,7 @@ class BuildIdentityTests(unittest.TestCase):
                 run(repo, "git", "restore", "tracked.txt")
                 self.assertEqual(build(), "false")
 
-                env["WEBCODEX_GIT_DIRTY"] = "false"
+                env["WEBPI_GIT_DIRTY"] = "false"
                 self.assertEqual(build(), "false")
                 outputs = list((root / "target/debug/build").glob("identity-fixture-*/output"))
                 self.assertEqual(len(outputs), 1)
@@ -165,7 +165,7 @@ class BuildIdentityTests(unittest.TestCase):
                 root = Path(tmp)
                 env = os.environ.copy()
                 for key in (
-                    "WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT",
+                    "WEBPI_GIT_COMMIT", "WEBPI_GIT_DIRTY", "WEBPI_BUILT_AT",
                     "SOURCE_DATE_EPOCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                 ):
                     env.pop(key, None)
@@ -193,7 +193,7 @@ class BuildIdentityTests(unittest.TestCase):
                 )
                 shutil.copyfile(BUILD_SCRIPT, package / "build.rs")
                 (package / "src/main.rs").write_text(
-                    'fn main() { println!("{}", env!("WEBCODEX_BUILD_GIT_DIRTY")); }\n',
+                    'fn main() { println!("{}", env!("WEBPI_BUILD_GIT_DIRTY")); }\n',
                     encoding="utf-8",
                 )
                 run(repo, "git", "add", ".")

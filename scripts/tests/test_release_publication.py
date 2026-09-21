@@ -82,7 +82,7 @@ def _archive_bytes(platform: str) -> bytes:
 
 
 def _write_bundle(root: Path) -> dict:
-    stem = f"webcodex-v{VERSION}"
+    stem = f"webpi-v{VERSION}"
     artifact_payload = {}
     checksum_lines = []
     for platform in collector.PLATFORMS:
@@ -647,12 +647,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('"$($env:DESKTOP_INSTALLER_PATH).sha256"', workflow)
         self.assertIn('-Installer $env:DESKTOP_INSTALLER_PATH', workflow)
 
-        self.assertIn("dist/webcodex-desktop-*.dmg", workflow)
-        self.assertIn("dist/webcodex-desktop-*.dmg.sha256", workflow)
-        self.assertIn("dist/webcodex-desktop-*.dmg.evidence.json", workflow)
-        self.assertIn("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", workflow)
-        self.assertIn("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe.sha256", workflow)
-        self.assertIn("webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", workflow)
+        self.assertIn("dist/webpi-desktop-*.dmg", workflow)
+        self.assertIn("dist/webpi-desktop-*.dmg.sha256", workflow)
+        self.assertIn("dist/webpi-desktop-*.dmg.evidence.json", workflow)
+        self.assertIn("dist/webpi-desktop-*-${{ matrix.platform }}-setup.exe", workflow)
+        self.assertIn("dist/webpi-desktop-*-${{ matrix.platform }}-setup.exe.sha256", workflow)
+        self.assertIn("webpi-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", workflow)
         self.assertIn("-Platform $env:WEBCODEX_RELEASE_PLATFORM", workflow)
 
         self.assertNotIn('desktop="dist/${{ steps.desktop_bundle.outputs.desktop_name }}"', workflow)
@@ -670,32 +670,38 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("platform: linux/arm64", image)
         self.assertIn("runner: ubuntu-24.04-arm", image)
         self.assertIn("push-by-digest=true", image)
-        self.assertIn("webcodex-server-image.json", image)
+        self.assertIn("webpi-server-image.json", image)
         self.assertIn("scripts/prepare_server_deployment_assets.py", image)
         self.assertIn("validate_server_image_release_record", image)
         self.assertIn("ref: ${{ github.workflow_sha }}", image)
         self.assertIn("deployment_source_sha", image)
-        self.assertIn("webcodex-server-bootstrap.sh", image)
-        self.assertIn("webcodex-server-compose.yaml", image)
+        self.assertIn("webpi-server-bootstrap.sh", image)
+        self.assertIn("webpi-server-compose.yaml", image)
         self.assertIn("durable_record_exists=false", image)
         self.assertIn("Existing immutable GitHub Release deployment record reconciled without regeneration.", image)
         self.assertIn("Require anonymous GHCR availability", image)
         self.assertIn('gh release download "$TAG" --repo "$GITHUB_REPOSITORY"', image)
+        self.assertIn("group: release-webpi-server-image-${{ github.repository }}", image)
+        self.assertNotIn("publish_latest", image)
+        self.assertIn('gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name', image)
+        self.assertIn('if [ "$current_latest" = "$TAG" ]; then', image)
+        self.assertIn("if: ${{ false }}", candidate)
+        self.assertIn("if: ${{ false }}", image)
 
     def test_compose_defaults_to_published_image_with_explicit_source_override(self) -> None:
         compose = Path("compose.yaml").read_text(encoding="utf-8")
         source = Path("compose.build.yaml").read_text(encoding="utf-8")
         bootstrap = Path("deploy/docker/bootstrap.sh").read_text(encoding="utf-8")
-        self.assertIn("ghcr.io/yyjeqhc/webcodex-server:latest", compose)
+        self.assertIn("${WEBPI_SERVER_IMAGE:?set an explicit reviewed WebPi image}", compose)
         self.assertIn("pull_policy: always", compose)
         self.assertNotIn("build:\n", compose)
-        self.assertIn("webcodex-server-local", source)
+        self.assertIn("webpi-server-local", source)
         self.assertIn("pull_policy: build", source)
         self.assertIn("build:\n", source)
         self.assertIn("--build-from-source", bootstrap)
         self.assertIn("COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml}", bootstrap)
         self.assertIn("compose_base config --images", bootstrap)
-        self.assertIn("compose_base pull webcodex", bootstrap)
+        self.assertIn("compose_base pull webpi", bootstrap)
         self.assertIn("compose_full up -d --build", bootstrap)
 
 

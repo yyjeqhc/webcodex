@@ -275,7 +275,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("needs.changes.outputs.needs_docker == 'true'", docker)
         self.assertIn("platforms: linux/amd64", docker)
         self.assertIn("docker/build-push-action@v6", docker)
-        self.assertIn("test ! -e /usr/local/bin/webcodex-runner", docker)
+        self.assertIn("test ! -e /usr/local/bin/webpi-runner", docker)
 
         self.assertIn("needs: changes", contract)
         self.assertIn("if: needs.changes.outputs.needs_frontend == 'true'", contract)

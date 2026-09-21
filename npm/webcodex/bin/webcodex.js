@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 "use strict";
 
-const { runNative } = require("./wrapper");
-
-runNative();
+console.error("WebPi: the upstream webcodex wrapper is disabled. Use webpi.cmd or the WebPi native CLI.");
+process.exitCode = 1;

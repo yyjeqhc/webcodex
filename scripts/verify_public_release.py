@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify one published WebCodex GitHub/npm release without executing foreign binaries."""
+"""Verify one published WebPi GitHub release without executing foreign binaries."""
 
 from __future__ import annotations
 
@@ -21,15 +21,15 @@ from typing import BinaryIO
 REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
-BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
+BINARIES = ("webpi", "webpi-server", "webpi-runner")
 LEGACY_DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
 DESKTOP_PLATFORMS = (*LEGACY_DESKTOP_PLATFORMS, "win32-arm64")
 DESKTOP_FIRST_VERSION = "0.4.0"
 WINDOWS_ARM64_DESKTOP_FIRST_VERSION = "0.4.2"
-SERVER_IMAGE = "ghcr.io/yyjeqhc/webcodex-server"
-SERVER_IMAGE_METADATA = "webcodex-server-image.json"
-SERVER_BOOTSTRAP_ASSET = "webcodex-server-bootstrap.sh"
-SERVER_MATERIALIZED_COMPOSE = "webcodex-server-compose.yaml"
+SERVER_IMAGE = "ghcr.io/yyjeqhc/webpi-server"
+SERVER_IMAGE_METADATA = "webpi-server-image.json"
+SERVER_BOOTSTRAP_ASSET = "webpi-server-bootstrap.sh"
+SERVER_MATERIALIZED_COMPOSE = "webpi-server-compose.yaml"
 SERVER_DEPLOYMENT_ASSETS = (SERVER_BOOTSTRAP_ASSET,)
 SERVER_IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
 SERVER_IMAGE_BASE_METADATA_KEYS = frozenset(
@@ -73,7 +73,7 @@ VERSION_RE = re.compile(
     r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-USER_AGENT = "webcodex-public-release-verifier/1"
+USER_AGENT = "webpi-public-release-verifier/1"
 
 
 class VerificationError(RuntimeError):
@@ -88,14 +88,14 @@ def normalize_version(value: str) -> str:
 
 
 def canonical_archive_name(version: str, platform: str) -> str:
-    return f"webcodex-v{version}-{platform}.tar.gz"
+    return f"webpi-v{version}-{platform}.tar.gz"
 
 
 def canonical_desktop_name(version: str, platform: str) -> str:
     if platform not in DESKTOP_PLATFORMS:
         raise VerificationError(f"unsupported Desktop platform: {platform!r}")
     suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
-    return f"webcodex-desktop-v{version}-{platform}{suffix}"
+    return f"webpi-desktop-v{version}-{platform}{suffix}"
 
 
 def expected_artifact_url(version: str, platform: str) -> str:
@@ -725,7 +725,7 @@ def verify_public_release(version: str, timeout: float) -> None:
     release = fetch_json(release_url, timeout)
     assets = validate_github_assets(release, version)
 
-    with tempfile.TemporaryDirectory(prefix=f"webcodex-v{version}-verify-") as temp:
+    with tempfile.TemporaryDirectory(prefix=f"webpi-v{version}-verify-") as temp:
         root = Path(temp)
         npm_tgz = root / "package.tgz"
         download_file(dist["tarball"], npm_tgz, MAX_NPM_TARBALL_BYTES, timeout)

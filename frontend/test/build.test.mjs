@@ -72,7 +72,7 @@ async function assertRequiredAssets(outputDirectory) {
     assert.equal((await stat(resolve(outputDirectory, asset))).isFile(), true);
   }
   const runtimeHtml = await readFile(resolve(outputDirectory, "runtime.html"), "utf8");
-  assert.match(runtimeHtml, /WebCodex — Workspace/);
+  assert.match(runtimeHtml, /WebPi — Workspace/);
   assert.match(runtimeHtml, /runtime-device-select/);
   assert.match(runtimeHtml, /runtime-project-list/);
   assert.equal(runtimeHtml.includes("runtime-project-" + "select"), false);
@@ -93,7 +93,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /data-theme-option="dark"/);
   assert.match(runtimeHtml, /data-language-toggle/);
   assert.match(runtimeHtml, /data-language-toggle-label/);
-  assert.match(runtimeHtml, /webcodex\.runtime\.language\.v1/);
+  assert.match(runtimeHtml, /webpi\.runtime\.language\.v1/);
   assert.match(runtimeHtml, /document\.documentElement\.lang = language/);
   assert.match(runtimeHtml, /runtime-mobile-nav-toggle/);
   assert.match(runtimeHtml, /runtime-mobile-nav-close/);
@@ -160,7 +160,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtime, /APPEARANCE_STORAGE_KEY/);
   assert.match(runtime, /LANGUAGE_STORAGE_KEY/);
   assert.match(runtime, /applyLanguage/);
-  assert.match(runtime, /WebCodex 运行控制台/);
+  assert.match(runtime, /WebPi 运行控制台/);
   assert.match(runtime, /document\.documentElement\.lang = runtimeLanguage/);
   assert.doesNotMatch(runtime, /localStorage\.(?:getItem|setItem)\(RUNTIME_CREDENTIAL_SESSION_KEY/);
   assert.match(runtime, /sessionStorage/);

@@ -1,5 +1,6 @@
 {
   "name": "@yyjeqhc/webcodex-plugin-sdk",
+  "private": true,
   "version": "0.1.0",
   "description": "TypeScript authoring SDK for the WebCodex Native Tool Plugin Protocol v1.",
   "type": "module",

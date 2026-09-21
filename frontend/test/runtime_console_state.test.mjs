@@ -38,13 +38,13 @@ import {
   runtimeWindowActivityLabel,
 } from "../dist/runtime_console_state.js";
 
-test("window activity presentation is hashed-id safe and WebCodex-specific", () => {
+test("window activity presentation is hashed-id safe and WebPi-specific", () => {
   assert.equal(runtimeWindowShortKey("0123456789abcdef0123456789abcdef"), "01234567…cdef");
   assert.equal(runtimeWindowShortKey("short"), "short");
-  assert.equal(runtimeWindowActivityLabel(null, 10_000), "No WebCodex activity");
+  assert.equal(runtimeWindowActivityLabel(null, 10_000), "No WebPi activity");
   assert.equal(runtimeWindowActivityLabel(9_500, 10_000), "just now");
   assert.equal(runtimeWindowActivityLabel(5_000, 10_000), "5s ago");
-  assert.equal(runtimeWindowActivityLabel(0, 10_000), "No WebCodex activity");
+  assert.equal(runtimeWindowActivityLabel(0, 10_000), "No WebPi activity");
 });
 
 test("Workflow Session summary revision changes only for detail-relevant list state", () => {

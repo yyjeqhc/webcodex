@@ -17,10 +17,39 @@ BUILD_COMPOSE = ROOT / "compose.build.yaml"
 DOCKERFILE = ROOT / "Dockerfile"
 DIGEST = "sha256:" + "a" * 64
 PINNED_IMAGE = f"{assets.SERVER_IMAGE}@{DIGEST}"
-PUBLIC_URL = "https://webcodex.example.com"
-RECEIPT = ".webcodex-bootstrap.receipt"
+PUBLIC_URL = "https://webpi.example.com"
+RECEIPT = ".webpi-bootstrap.receipt"
 TOKEN = "b" * 64
 SECOND_TOKEN = "c" * 64
+
+
+def trusted_sh() -> str:
+    found = shutil.which("sh")
+    if found:
+        return found
+    if os.name == "nt":
+        for candidate in (
+            Path(r"C:\Program Files\Git\bin\sh.exe"),
+            Path(r"C:\Program Files\Git\usr\bin\sh.exe"),
+            Path(r"C:\msys64\usr\bin\sh.exe"),
+        ):
+            if candidate.is_file():
+                return str(candidate)
+    raise unittest.SkipTest("trusted POSIX sh is unavailable")
+
+
+def shell_path(path: Path) -> str:
+    shell = trusted_sh()
+    if os.name != "nt":
+        return str(path)
+    result = subprocess.run(
+        [shell, "-lc", 'cygpath -u "$1"', "webpi-test", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout.strip()
 
 
 class DeploymentAssetTests(unittest.TestCase):
@@ -41,14 +70,18 @@ class DeploymentAssetTests(unittest.TestCase):
             self.assertNotIn(f"{assets.SERVER_IMAGE}:latest", generated)
             self.assertIn(f"compose_target={assets.MATERIALIZED_COMPOSE}", generated)
             self.assertIn("cmp -s", generated)
-            self.assertIn("WEBCODEX_RELEASE_BOOTSTRAP=true", generated)
+            self.assertIn("WEBPI_RELEASE_BOOTSTRAP=true", generated)
             self.assertNotIn("release_public_url=", generated)
             self.assertEqual(generated.count("validate_public_url()"), 1)
             self.assertEqual(
                 assets.sha256_bytes(generated_path.read_bytes()),
                 result[assets.BOOTSTRAP_ASSET],
             )
-            subprocess.run(["sh", "-n", generated_path], check=True)
+            subprocess.run(
+                [trusted_sh(), "-n", generated_path.name],
+                cwd=generated_path.parent,
+                check=True,
+            )
 
     def test_asset_preparation_rejects_noncanonical_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -79,15 +112,15 @@ class BootstrapTests(unittest.TestCase):
             'case "$args" in\n'
             '  *" config --images"*) printf "%s\\n" "$FAKE_PINNED_IMAGE"; exit 0 ;;\n'
             '  *" config"*) exit 0 ;;\n'
-            '  *" pull webcodex"*) exit "${FAKE_PULL_EXIT:-0}" ;;\n'
-            '  *" ps -aq webcodex"*|*" ps -q webcodex"*)\n'
+            '  *" pull webpi"*) exit "${FAKE_PULL_EXIT:-0}" ;;\n'
+            '  *" ps -aq webpi"*|*" ps -q webpi"*)\n'
             '    if [ -f "$FAKE_CONTAINER_STATE" ]; then printf "fake-container\\n"; fi; exit 0 ;;\n'
             '  *" up "*)\n'
             '    if [ "${FAKE_UP_LEAVES_CONTAINER:-0}" = 1 ]; then : > "$FAKE_CONTAINER_STATE"; fi\n'
             '    if [ "${FAKE_UP_EXIT:-0}" != 0 ]; then exit "$FAKE_UP_EXIT"; fi\n'
             '    : > "$FAKE_CONTAINER_STATE"; exit 0 ;;\n'
-            '  *" exec -T webcodex curl "*) exit "${FAKE_OPENAPI_EXIT:-0}" ;;\n'
-            '  *" exec -T webcodex sh -lc "*)\n'
+            '  *" exec -T webpi curl "*) exit "${FAKE_OPENAPI_EXIT:-0}" ;;\n'
+            '  *" exec -T webpi sh -lc "*)\n'
             '    if [ "${FAKE_PAIRING_EXIT:-0}" != 0 ]; then exit "$FAKE_PAIRING_EXIT"; fi\n'
             '    printf "wc_pair_test_123\\n"; exit 0 ;;\n'
             '  *" down"*) rm -f "$FAKE_CONTAINER_STATE"; exit "${FAKE_DOWN_EXIT:-0}" ;;\n'
@@ -110,9 +143,9 @@ class BootstrapTests(unittest.TestCase):
             "#!/bin/sh\n"
             'case "${FAKE_SYNC_FAIL_FOR:-}" in\n'
             '  env) case "$*" in *".env."*) exit 31 ;; esac ;;\n'
-            '  receipt) case "$*" in *".webcodex-bootstrap.receipt."*) exit 32 ;; esac ;;\n'
+            '  receipt) case "$*" in *".webpi-bootstrap.receipt."*) exit 32 ;; esac ;;\n'
             '  receipt_after_env)\n'
-            '    case "$*" in *".webcodex-bootstrap.receipt."*) [ -f .env ] && exit 33 ;; esac ;;\n'
+            '    case "$*" in *".webpi-bootstrap.receipt."*) [ -f .env ] && exit 33 ;; esac ;;\n'
             'esac\n'
             "exit 0\n",
             encoding="utf-8",
@@ -139,16 +172,16 @@ class BootstrapTests(unittest.TestCase):
                 "FAKE_CONTAINER_STATE": str(state),
                 "FAKE_PINNED_IMAGE": PINNED_IMAGE,
                 "FAKE_TOKEN_COUNT": str(token_count),
-                "WEBCODEX_BOOTSTRAP_HEALTH_WAIT_SECS": "2",
+                "WEBPI_BOOTSTRAP_HEALTH_WAIT_SECS": "2",
             }
         )
         env.pop("COMPOSE_FILE", None)
-        env.pop("WEBCODEX_SERVER_IMAGE", None)
-        env.pop("WEBCODEX_RELEASE_BOOTSTRAP", None)
+        env.pop("WEBPI_SERVER_IMAGE", None)
+        env.pop("WEBPI_RELEASE_BOOTSTRAP", None)
         return env
 
     def _generated_workspace(self) -> tuple[Path, dict[str, str], str]:
-        root = Path(tempfile.mkdtemp(prefix="webcodex-bootstrap-test-"))
+        root = Path(tempfile.mkdtemp(prefix="webpi-bootstrap-test-"))
         self.addCleanup(shutil.rmtree, root, True)
         generated = root / "generated"
         assets.prepare_assets(
@@ -163,7 +196,7 @@ class BootstrapTests(unittest.TestCase):
     def _source_workspace(
         self, *, include_overlay: bool = True, include_dockerfile: bool = True
     ) -> tuple[Path, dict[str, str], str]:
-        root = Path(tempfile.mkdtemp(prefix="webcodex-bootstrap-source-test-"))
+        root = Path(tempfile.mkdtemp(prefix="webpi-bootstrap-source-test-"))
         self.addCleanup(shutil.rmtree, root, True)
         shutil.copy2(BOOTSTRAP, root / "bootstrap.sh")
         shutil.copy2(COMPOSE, root / "compose.yaml")
@@ -182,8 +215,17 @@ class BootstrapTests(unittest.TestCase):
     ) -> subprocess.CompletedProcess[str]:
         if not args:
             args = (PUBLIC_URL,)
+        fake_bin = shell_path(root / "bin")
         return subprocess.run(
-            ["sh", script, *args],
+            [
+                trusted_sh(),
+                "-lc",
+                'PATH="$1:$PATH"; export PATH; shift; exec sh "$@"',
+                "webpi-test",
+                fake_bin,
+                script,
+                *args,
+            ],
             cwd=root,
             env=env,
             text=True,
@@ -210,29 +252,31 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn(PINNED_IMAGE, compose.read_text(encoding="utf-8"))
         env_file = root / ".env"
         self.assertTrue(env_file.is_file())
-        self.assertEqual(stat.S_IMODE(env_file.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(env_file.stat().st_mode), 0o600)
         text = env_file.read_text(encoding="utf-8")
         self.assertIn(f"COMPOSE_FILE={assets.MATERIALIZED_COMPOSE}\n", text)
-        self.assertIn(f"WEBCODEX_SERVER_IMAGE={PINNED_IMAGE}\n", text)
+        self.assertIn(f"WEBPI_SERVER_IMAGE={PINNED_IMAGE}\n", text)
 
         receipt = self._receipt(root)
         self.assertEqual(receipt["phase"], "PairingReady")
         self.assertEqual(receipt["public_url"], PUBLIC_URL)
         self.assertEqual(receipt["compose_file"], assets.MATERIALIZED_COMPOSE)
         self.assertNotEqual(receipt["env_sha256"], "-")
-        self.assertEqual(stat.S_IMODE((root / RECEIPT).stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE((root / RECEIPT).stat().st_mode), 0o600)
 
         self.assertIn("wc_pair_test_123", result.stdout)
-        self.assertIn("WebCodex server is healthy", result.stdout)
+        self.assertIn("WebPi server is healthy", result.stdout)
         self.assertNotIn("server container started", result.stdout.lower())
-        self.assertIn("webcodex login", result.stdout)
-        self.assertIn("webcodex runner install --scope user", result.stdout)
+        self.assertIn("webpi login", result.stdout)
+        self.assertIn("webpi runner install --scope user", result.stdout)
         self.assertIn("Do not copy", result.stdout)
-        self.assertIn("webcodex connect", result.stdout)
+        self.assertIn("webpi connect", result.stdout)
 
         calls = self._docker_log(root)
         self.assertIn(f"compose -f {assets.MATERIALIZED_COMPOSE} config --images", calls)
-        self.assertIn(f"compose -f {assets.MATERIALIZED_COMPOSE} pull webcodex", calls)
+        self.assertIn(f"compose -f {assets.MATERIALIZED_COMPOSE} pull webpi", calls)
         self.assertIn(
             f"compose -f {assets.MATERIALIZED_COMPOSE} up -d --no-build --pull never", calls
         )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage exact native WebCodex runtime bytes for one macOS Tauri Desktop bundle."""
+"""Stage exact native WebPi runtime bytes for one macOS Tauri Desktop bundle."""
 
 from __future__ import annotations
 

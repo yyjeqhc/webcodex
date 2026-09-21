@@ -1,5 +1,6 @@
 {
-  "name": "@yyjeqhc/webcodex",
+  "name": "@webpi/upstream-wrapper-reference",
+  "private": true,
   "version": "0.4.1",
   "description": "Connect ChatGPT, Claude, and other AI agents to repositories and developer tools on your own machines.",
   "keywords": [
@@ -19,11 +20,9 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "bin": {
-    "webcodex": "bin/webcodex.js"
-  },
+  "bin": {},
   "scripts": {
-    "postinstall": "node install.js",
+    "postinstall": "node -e \"console.error('WebPi: upstream runtime downloader is disabled. Build the local WebPi binaries.'); process.exit(1)\"",
     "test": "node test/self-test.js && node test/release-manifest-check-self-test.js && node --test test/download-cleanup.test.js",
     "pack:release-dry-run": "npm pack --dry-run",
     "prepack": "node test/release-manifest-check.js --quiet",

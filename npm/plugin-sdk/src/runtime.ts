@@ -27,6 +27,10 @@ export interface PluginStreams {
   readonly error: Writable;
 }
 
+export interface PluginLifecycle {
+  readonly onClose?: () => void | Promise<void>;
+}
+
 class PluginHandlerFailure extends Error {
   constructor() {
     super("plugin handler failed");
@@ -117,7 +121,11 @@ async function handleOne(
   await writeResponse(streams.output, rpcError(id, -32601, "method not found"));
 }
 
-export async function servePlugin(plugin: Plugin, streams: PluginStreams): Promise<void> {
+export async function servePlugin(
+  plugin: Plugin,
+  streams: PluginStreams,
+  lifecycle: PluginLifecycle = {},
+): Promise<void> {
   const lines = readline.createInterface({
     input: streams.input,
     crlfDelay: Infinity,
@@ -129,15 +137,20 @@ export async function servePlugin(plugin: Plugin, streams: PluginStreams): Promi
     }
   } finally {
     lines.close();
+    await lifecycle.onClose?.();
   }
 }
 
-export function runPlugin(plugin: Plugin): void {
-  void servePlugin(plugin, {
-    input: process.stdin,
-    output: process.stdout,
-    error: process.stderr,
-  }).catch((error: unknown) => {
+export function runPlugin(plugin: Plugin, lifecycle: PluginLifecycle = {}): void {
+  void servePlugin(
+    plugin,
+    {
+      input: process.stdin,
+      output: process.stdout,
+      error: process.stderr,
+    },
+    lifecycle,
+  ).catch((error: unknown) => {
     if (!(error instanceof PluginHandlerFailure)) {
       writeDiagnostic(process.stderr, RUNTIME_FAILURE_DIAGNOSTIC);
     }

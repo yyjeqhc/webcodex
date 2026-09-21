@@ -7909,12 +7909,12 @@ async fn show_changes_degrades_gracefully_for_non_git_project() {
     assert_reason_list_contains(
         &result.output["verdict"],
         "warning_reasons",
-        "git_unavailable",
+        "non_git_project",
     );
     let actions = result.output["suggested_next_actions"].as_array().unwrap();
     assert!(actions
         .iter()
-        .any(|a| a.as_str().unwrap().contains("unavailable")));
+        .any(|a| a.as_str().unwrap().contains("not applicable")));
     assert_eq!(result.output["status_observation"]["status"], "non_git");
     assert_eq!(
         result.output["head"],

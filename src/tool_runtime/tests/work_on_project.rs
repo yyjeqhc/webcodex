@@ -943,6 +943,10 @@ fn valid_work_on_project_projection_input() -> serde_json::Value {
         },
         "workspace": {
             "status": "clean",
+            "git": {
+                "status": "clean",
+                "reason_code": null,
+            },
             "git_available": true,
             "branch": "main",
             "head": "0123456789abcdef0123456789abcdef01234567",
@@ -1753,6 +1757,8 @@ fn work_on_project_projection_is_sparse_for_defaults_and_keeps_noteworthy_state(
         );
     }
     assert_eq!(default_result.output["workspace"]["status"], "clean");
+    assert_eq!(default_result.output["workspace"]["git"]["status"], "clean");
+    assert!(default_result.output["workspace"]["git"]["reason_code"].is_null());
     assert!(default_result.output["workspace"]["branch"].is_string());
     assert!(default_result.output["workspace"]["head"].is_string());
     for omitted in ["git_available", "clean", "conflicts"] {

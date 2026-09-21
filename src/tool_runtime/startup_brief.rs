@@ -428,10 +428,32 @@ pub(crate) fn startup_brief_from_output(output: &Value) -> Option<&Value> {
 fn workspace_projection(git: &Value) -> Value {
     let counts = git.get("counts").unwrap_or(&Value::Null);
     let git_available = git.get("available").and_then(Value::as_bool);
+    let non_git_project = git
+        .get("non_git_project")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let clean = git.get("clean").and_then(Value::as_bool);
     let conflicts = count(counts, "conflicted");
+    let git_status = if non_git_project {
+        "not_applicable"
+    } else if git_available == Some(false) || clean.is_none() {
+        "unavailable"
+    } else if conflicts > 0 {
+        "conflicted"
+    } else if clean == Some(true) {
+        "clean"
+    } else {
+        "dirty"
+    };
+    let git_reason_code = match git_status {
+        "not_applicable" => Some("non_git_project"),
+        "unavailable" => Some("git_unavailable"),
+        _ => None,
+    };
     let status = if conflicts > 0 {
         "blocked"
+    } else if non_git_project {
+        "available"
     } else if git_available == Some(false) || clean.is_none() {
         "unavailable"
     } else if clean == Some(true) {
@@ -447,6 +469,10 @@ fn workspace_projection(git: &Value) -> Value {
     json!({
         "status": status,
         "git_available": git_available,
+        "git": {
+            "status": git_status,
+            "reason_code": git_reason_code,
+        },
         "branch": git.get("branch").cloned().unwrap_or(Value::Null),
         "head": head,
         "clean": clean,
@@ -1290,7 +1316,9 @@ fn startup_issues(
     if workspace.get("status").and_then(Value::as_str) == Some("dirty") {
         push_unique(&mut warnings, "dirty_worktree");
     }
-    if workspace.get("git_available").and_then(Value::as_bool) == Some(false) {
+    if workspace.get("git_available").and_then(Value::as_bool) == Some(false)
+        && workspace.pointer("/git/status").and_then(Value::as_str) != Some("not_applicable")
+    {
         push_unique(&mut warnings, "git_unavailable");
     }
     if instructions.get("status").and_then(Value::as_str) == Some("unavailable") {

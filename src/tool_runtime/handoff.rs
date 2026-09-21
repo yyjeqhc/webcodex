@@ -776,8 +776,8 @@ fn compact_handoff_output(output: &Value) -> Value {
     let workspace_clean = output
         .get("workspace")
         .and_then(|workspace| workspace.get("clean"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+        .cloned()
+        .unwrap_or(Value::Null);
     let workspace_conflicts = output
         .pointer("/workspace/counts/conflicted")
         .and_then(Value::as_u64)

@@ -18,9 +18,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "clean",
-                schema_type(
+                nullable_schema(
                     "boolean",
-                    "True when git is available and no findings were reported.",
+                    "True when Git is available and no findings were reported; null when Git hygiene is not applicable.",
                 ),
             ),
             (

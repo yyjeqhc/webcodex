@@ -39,6 +39,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(20);
+const STALE_LOOPBACK_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const RUNNER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROJECT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QUICK_SHARE_READY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -1114,10 +1115,7 @@ impl DesktopCore {
 
         let mut server_url = if env_file.is_file() {
             ensure_desktop_server_defaults(&env_file)?;
-            self.adapter
-                .server_status(None, Some(&env_file), None, cancellation)
-                .await?
-                .probe_url
+            desktop_server_url_from_env(&env_file)?
         } else {
             let listen = reserve_loopback_address()?;
             let status = self
@@ -1128,21 +1126,72 @@ impl DesktopCore {
             status.probe_url
         };
         let mut server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
-        let running = self
-            .adapter
-            .server_status_until(
-                Some(&server_url),
-                Some(&env_file),
-                None,
-                cancellation,
-                server_deadline,
-            )
-            .await
-            .is_ok_and(|status| status.http_reachable);
+        let server_owned =
+            process_is_active(self.process_snapshot(ProcessKey::LocalServer).await);
+        let mut stale_loopback_conflict = false;
+        let running = if !server_owned {
+            match loopback_socket_from_server_url(&server_url) {
+                Some(address) => match TcpListener::bind(address) {
+                    Ok(listener) => {
+                        drop(listener);
+                        false
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                        ) =>
+                    {
+                        stale_loopback_conflict = true;
+                        self.adapter
+                            .server_status_until(
+                                Some(&server_url),
+                                Some(&env_file),
+                                None,
+                                cancellation,
+                                Deadline::after(STALE_LOOPBACK_PROBE_TIMEOUT),
+                            )
+                            .await
+                            .is_ok_and(|status| status.http_reachable)
+                    }
+                    Err(_) => self
+                        .adapter
+                        .server_status_until(
+                            Some(&server_url),
+                            Some(&env_file),
+                            None,
+                            cancellation,
+                            server_deadline,
+                        )
+                        .await
+                        .is_ok_and(|status| status.http_reachable),
+                },
+                None => self
+                    .adapter
+                    .server_status_until(
+                        Some(&server_url),
+                        Some(&env_file),
+                        None,
+                        cancellation,
+                        server_deadline,
+                    )
+                    .await
+                    .is_ok_and(|status| status.http_reachable),
+            }
+        } else {
+            self.adapter
+                .server_status_until(
+                    Some(&server_url),
+                    Some(&env_file),
+                    None,
+                    cancellation,
+                    server_deadline,
+                )
+                .await
+                .is_ok_and(|status| status.http_reachable)
+        };
         cancellation.check()?;
-        if !running
-            && !process_is_active(self.process_snapshot(ProcessKey::LocalServer).await)
-        {
+        if !running && !server_owned && stale_loopback_conflict {
             if let Some(recovered_url) =
                 recover_stale_desktop_loopback_address(&env_file, &server_url)?
             {
@@ -2634,16 +2683,110 @@ fn desktop_state_unavailable(message: &'static str) -> DesktopError {
 
 fn loopback_socket_from_server_url(server_url: &str) -> Option<SocketAddr> {
     let url = url::Url::parse(server_url).ok()?;
-    if url.scheme() != "http" || url.path() != "/" || url.query().is_some() || url.fragment().is_some()
+    if url.scheme() != "http"
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
     {
         return None;
     }
     let port = url.port()?;
     match url.host()? {
-        url::Host::Ipv4(address) if address.is_loopback() => Some(SocketAddr::new(address.into(), port)),
-        url::Host::Ipv6(address) if address.is_loopback() => Some(SocketAddr::new(address.into(), port)),
+        url::Host::Ipv4(address) if address.is_loopback() => {
+            Some(SocketAddr::new(address.into(), port))
+        }
+        url::Host::Ipv6(address) if address.is_loopback() => {
+            Some(SocketAddr::new(address.into(), port))
+        }
+        url::Host::Domain(domain) if domain.eq_ignore_ascii_case("localhost") => {
+            Some(SocketAddr::from(([127, 0, 0, 1], port)))
+        }
         _ => None,
     }
+}
+
+fn read_desktop_server_env(env_file: &Path) -> DesktopResult<String> {
+    let metadata = std::fs::symlink_metadata(env_file).map_err(|error| {
+        DesktopError::new(
+            "desktop_state_unavailable",
+            "Desktop could not inspect its local Server environment",
+            "Check local app-data permissions and retry.",
+        )
+        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    if !metadata.is_file() || metadata.len() > DESKTOP_SERVER_ENV_MAX_BYTES {
+        return Err(DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment is not a bounded regular file",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        ));
+    }
+    let bytes = std::fs::read(env_file).map_err(|error| {
+        DesktopError::new(
+            "desktop_state_unavailable",
+            "Desktop could not read its local Server environment",
+            "Check local app-data permissions and retry.",
+        )
+        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment is not valid UTF-8",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        )
+    })
+}
+
+fn desktop_server_listen_from_env(env_file: &Path) -> DesktopResult<String> {
+    let content = read_desktop_server_env(env_file)?;
+    let mut listen = None;
+    for line in content.lines() {
+        let candidate = line.trim_start();
+        let candidate = candidate.strip_prefix("export ").unwrap_or(candidate).trim_start();
+        let Some((key, value)) = candidate.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "WEBCODEX_ADDR" {
+            continue;
+        }
+        if listen.is_some() {
+            return Err(DesktopError::new(
+                "desktop_state_invalid",
+                "Desktop local Server environment contains duplicate WEBCODEX_ADDR entries",
+                "Restore the Desktop-owned local Server configuration and retry.",
+            ));
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(DesktopError::new(
+                "desktop_state_invalid",
+                "Desktop local Server address is empty",
+                "Restore the Desktop-owned local Server configuration and retry.",
+            ));
+        }
+        listen = Some(value.to_string());
+    }
+    listen.ok_or_else(|| {
+        DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server environment does not contain WEBCODEX_ADDR",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        )
+    })
+}
+
+fn desktop_server_url_from_env(env_file: &Path) -> DesktopResult<String> {
+    let listen = desktop_server_listen_from_env(env_file)?;
+    let server_url = format!("http://{listen}");
+    if loopback_socket_from_server_url(&server_url).is_none() {
+        return Err(DesktopError::new(
+            "desktop_state_invalid",
+            "Desktop local Server address is not a valid loopback endpoint",
+            "Restore the Desktop-owned local Server configuration and retry.",
+        ));
+    }
+    Ok(server_url)
 }
 
 fn recover_stale_desktop_loopback_address(
@@ -2673,36 +2816,7 @@ fn recover_stale_desktop_loopback_address(
 }
 
 fn rewrite_desktop_server_address(env_file: &Path, listen: &str) -> DesktopResult<()> {
-    let metadata = std::fs::symlink_metadata(env_file).map_err(|error| {
-        DesktopError::new(
-            "desktop_state_unavailable",
-            "Desktop could not inspect its local Server environment",
-            "Check local app-data permissions and retry.",
-        )
-        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-    })?;
-    if !metadata.is_file() || metadata.len() > DESKTOP_SERVER_ENV_MAX_BYTES {
-        return Err(DesktopError::new(
-            "desktop_state_invalid",
-            "Desktop local Server environment is not a bounded regular file",
-            "Restore the Desktop-owned local Server configuration and retry.",
-        ));
-    }
-    let bytes = std::fs::read(env_file).map_err(|error| {
-        DesktopError::new(
-            "desktop_state_unavailable",
-            "Desktop could not read its local Server environment",
-            "Check local app-data permissions and retry.",
-        )
-        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-    })?;
-    let content = std::str::from_utf8(&bytes).map_err(|_| {
-        DesktopError::new(
-            "desktop_state_invalid",
-            "Desktop local Server environment is not valid UTF-8",
-            "Restore the Desktop-owned local Server configuration and retry.",
-        )
-    })?;
+    let content = read_desktop_server_env(env_file)?;
 
     let mut replaced = 0usize;
     let mut updated = String::with_capacity(content.len().saturating_add(listen.len()));

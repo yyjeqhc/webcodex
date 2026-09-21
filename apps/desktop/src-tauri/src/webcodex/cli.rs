@@ -1071,7 +1071,7 @@ mod tests {
         let reason = safe_reason_code(b"login_failed: Bearer super-secret-value");
         let error = with_command_diagnostics(
             DesktopError::new("webcodex_command_failed", "failed", "retry"),
-            Path::new(r"C:\Program Files\WebCodex\webcodex.exe"),
+            Path::new("webcodex.exe"),
             context,
             Some(7),
             Some(&reason),

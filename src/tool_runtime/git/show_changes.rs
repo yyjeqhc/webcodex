@@ -275,7 +275,7 @@ fn non_git_show_changes_payload_with_observation(
         "git_error": "not a git repository; git-backed diff unavailable",
         "branch": null,
         "upstream_status": "unobserved",
-        "upstream_reason_code": "git_unavailable",
+        "upstream_reason_code": "non_git_project",
         "upstream": null,
         "ahead": null,
         "behind": null,

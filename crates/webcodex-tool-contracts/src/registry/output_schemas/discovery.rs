@@ -229,23 +229,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "route",
-                json!({
-                    "type": "object",
-                    "description": "Canonical Adaptive Runtime invocation route only. This never grants scope, project authority, feature availability, or permission.",
-                    "additionalProperties": false,
-                    "properties": {
-                        "mode": {
-                            "type": "string",
-                            "enum": ["direct", "gateway", "unavailable"]
-                        },
-                        "via": {
-                            "type": "string",
-                            "const": "call_runtime_tool",
-                            "description": "Gateway entry point, present only when mode=gateway."
-                        }
-                    },
-                    "required": ["mode"]
-                }),
+                tool_manifest_invocation_route_schema(),
+            ),
+            (
+                "routing_note",
+                schema_type(
+                    "string",
+                    "Model-facing routing guidance. tool_manifest discovery never dynamically registers a new Host tool.",
+                ),
             ),
             (
                 "input_schema",
@@ -477,6 +468,78 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn tool_manifest_invocation_route_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Parser-ready Adaptive Runtime invocation routing. Discovery never registers a Host tool and never grants authority.",
+        "additionalProperties": false,
+        "properties": {
+            "primary": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["direct", "gateway", "unavailable"]
+                    },
+                    "tool": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "null"}
+                        ]
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Canonical runtime target when primary execution uses the gateway or the tool is unavailable."
+                    }
+                },
+                "required": ["mode", "tool"]
+            },
+            "fallback": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "mode": {"type": "string", "const": "gateway"},
+                            "tool": {"type": "string", "const": "call_runtime_tool"},
+                            "target": {"type": "string"},
+                            "when": {
+                                "type": "string",
+                                "const": "direct_callable_unavailable"
+                            },
+                            "blocked_when_mcp_apps_enabled": {"type": "boolean"}
+                        },
+                        "required": [
+                            "mode",
+                            "tool",
+                            "target",
+                            "when",
+                            "blocked_when_mcp_apps_enabled"
+                        ]
+                    },
+                    {"type": "null"}
+                ],
+                "description": "Gateway fallback for an ordinary direct tool when the Host direct callable is absent; null when no fallback applies."
+            },
+            "tool_manifest_registers_host_tool": {
+                "type": "boolean",
+                "const": false
+            },
+            "discovery_effect": {
+                "type": "string",
+                "const": "none"
+            }
+        },
+        "required": [
+            "primary",
+            "fallback",
+            "tool_manifest_registers_host_tool",
+            "discovery_effect"
+        ]
+    })
 }
 
 fn execution_selection_schema() -> Value {

@@ -24,7 +24,14 @@ async fn stop_job_manifest_remains_one_direct_canonical_mutation() {
     assert!(result.success, "{:?}", result.error);
     crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
     assert_eq!(result.output["name"], "stop_job");
-    assert_eq!(result.output["route"]["mode"], "direct");
+    assert_eq!(result.output["route"]["primary"]["mode"], "direct");
+    assert_eq!(result.output["route"]["primary"]["tool"], "stop_job");
+    assert_eq!(result.output["route"]["fallback"]["mode"], "gateway");
+    assert_eq!(
+        result.output["route"]["fallback"]["tool"],
+        "call_runtime_tool"
+    );
+    assert_eq!(result.output["route"]["fallback"]["target"], "stop_job");
     assert_eq!(result.output["effect"], "mutate");
     assert_eq!(result.output["idempotency"], "desired_state");
     assert_eq!(

@@ -8159,11 +8159,11 @@ fn non_git_show_changes_preserves_unobserved_state() {
     assert_eq!(output["clean"], Value::Null);
     assert_eq!(output["counts"]["conflicted"], Value::Null);
     assert_eq!(output["upstream_status"], "unobserved");
-    assert_eq!(output["upstream_reason_code"], "git_unavailable");
+    assert_eq!(output["upstream_reason_code"], "non_git_project");
     assert_eq!(output["upstream"], Value::Null);
     assert_eq!(output["ahead"], Value::Null);
     assert_eq!(output["behind"], Value::Null);
-    assert_reason_list_contains(&output["verdict"], "warning_reasons", "git_unavailable");
+    assert_reason_list_contains(&output["verdict"], "warning_reasons", "non_git_project");
 }
 
 #[test]

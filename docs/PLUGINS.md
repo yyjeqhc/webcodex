@@ -360,8 +360,9 @@ external dependency contract. That prerequisite is now satisfied:
 adds the local scaffold using that exact compatibility pin. A generated project
 therefore works independently of a WebCodex source checkout. Repository first-party
 dogfood such as `plugins/safe-delete`, [`plugins/repo-info`](../plugins/repo-info/README.md),
-and [`plugins/campus-application`](../plugins/campus-application/README.md) intentionally
-continues to use the local SDK source so it tests the checkout under development;
+[`plugins/campus-application`](../plugins/campus-application/README.md), and
+[`plugins/agent-browser`](../plugins/agent-browser/README.md) intentionally continues
+to use the local SDK source so it tests the checkout under development;
 external projects created by `plugin init` use the published package.
 
 ## TypeScript Plugin SDK
@@ -476,10 +477,13 @@ project-root-fenced Plugin that moves one file or directory to the operating sys
 Trash/Recycle Bin without adding permanent deletion to WebCodex's built-in tool
 surface; [`plugins/repo-info`](../plugins/repo-info/README.md) is a read-only authoring
 example whose single `git_summary` tool observes only the provider's configured
-repository `cwd`; and [`plugins/campus-application`](../plugins/campus-application/README.md)
+repository `cwd`; [`plugins/campus-application`](../plugins/campus-application/README.md)
 turns bounded Browser semantic snapshots into structured resume-form plans, supports
 repeated and multi-step application flows, and deliberately stops before final
-submission.
+submission; and [`plugins/agent-browser`](../plugins/agent-browser/README.md) uses an
+operator-installed local Agent Browser to inherit native profiles/configuration or
+attach to an explicitly authorized running Chrome while keeping opaque page/snapshot
+identities, tab ownership, and uncertain-effect handling inside the Plugin boundary.
 
 ## Calling and failure semantics
 

@@ -1,0 +1,24 @@
+{
+  "name": "@yyjeqhc/webcodex-agent-browser-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "First-party WebCodex Native Tool Plugin for local Agent Browser profiles and authorized current-Chrome control.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build --silent && node --test tests/*.test.mjs",
+    "test:live": "npm run build --silent && node scripts/live-smoke.mjs",
+    "test:native": "npm run build --silent && node scripts/native-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@yyjeqhc/webcodex-plugin-sdk": "file:../../npm/plugin-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "typescript": "^5.4.0"
+  }
+}

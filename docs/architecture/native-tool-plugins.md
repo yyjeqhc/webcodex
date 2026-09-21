@@ -65,6 +65,11 @@ baseline rather than redesigned by the next authoring work:
   bounded semantic snapshots, maps them to a Runner-local structured resume profile,
   and emits bounded fill/section/step plans while leaving Browser authority and final
   submission outside the Plugin.
+- `plugins/agent-browser` is a Browser-control dogfood Plugin that delegates to an
+  operator-installed local Agent Browser. It can inherit native profile/configuration
+  or attach to an explicitly authorized running Chrome while keeping opaque page and
+  snapshot identities, owned-tab cleanup, bounded results, and uncertain-effect
+  handling inside the Plugin/Runner boundary.
 
 This produces one important ownership rule:
 

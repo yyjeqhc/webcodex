@@ -1,0 +1,4 @@
+{
+  "executable": "agent-browser",
+  "connection": "native"
+}

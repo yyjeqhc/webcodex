@@ -282,12 +282,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("if: needs.changes.outputs.needs_desktop_frontend == 'true'", contract)
         self.assertIn("needs.changes.outputs.needs_plugin_sdk == 'true'", contract)
         self.assertIn("npm/plugin-sdk/package-lock.json", contract)
+        self.assertIn("plugins/agent-browser/package-lock.json", contract)
         for command in (
             "npm ci --prefix npm/plugin-sdk",
             "npm --prefix npm/plugin-sdk run typecheck",
             "npm --prefix npm/plugin-sdk run build",
             "npm --prefix npm/plugin-sdk test",
             "npm --prefix npm/plugin-sdk run pack:dry-run",
+            "npm ci --prefix plugins/agent-browser",
+            "npm --prefix plugins/agent-browser run typecheck",
+            "npm --prefix plugins/agent-browser test",
         ):
             self.assertIn(command, contract)
         self.assertIn("github.event.before", changes)

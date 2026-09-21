@@ -1,0 +1,6 @@
+{
+  "restoreSave": "never",
+  "pinTab": true,
+  "noAutoDialog": true,
+  "idleTimeout": "10m"
+}

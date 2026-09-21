@@ -78,7 +78,7 @@ fn stateless_advertised_operator_extension_specs_for_auth(
 fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     ToolSpec {
         name: ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
-        description: "Call one runtime tool admitted by Adaptive Runtime through the generic gateway. A tool with availability=direct should still be invoked through its direct callable when available, but call_runtime_tool is an allowed fallback when that callable is unavailable or not loaded. Directness changes preferred model exposure only: canonical runtime argument validation, OAuth scope, Project authority, permission gates, Runner capability, Session/context policy, host-file-import trust, protocol capability admission, and tool effects remain unchanged.".to_string(),
+        description: "Call one runtime tool admitted by Adaptive Runtime through the generic gateway. A tool with availability=direct should still be invoked through its direct callable when available; ordinary direct tools may fall back here when that callable is unavailable or not loaded. Explicit MCP App presentation tools are the exception: when MCP Apps are enabled they must use their direct callable because only that tool descriptor carries the Host App resource metadata. Directness otherwise changes preferred model exposure only: canonical runtime argument validation, OAuth scope, Project authority, permission gates, Runner capability, Session/context policy, host-file-import trust, protocol capability admission, and tool effects remain unchanged.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -86,7 +86,7 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
-                    "description": "Exact runtime tool name admitted by Adaptive Runtime. availability=direct is the preferred route, but the same admitted target may use this gateway as a fallback when the direct callable is unavailable or not loaded."
+                    "description": "Exact runtime tool name admitted by Adaptive Runtime. availability=direct is normally preferred with gateway fallback when unavailable; explicit MCP App presentation tools remain direct-only while MCP Apps are enabled."
                 },
                 "arguments": {
                     "type": "object",
@@ -1504,6 +1504,19 @@ pub(super) async fn handle_call(
         match mcp_adaptive_runtime_gateway_target_route(&target, stateless_2026) {
             crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
             | crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Direct => {
+                if app_enabled && presentation::tool_requires_direct_app_presentation(&target) {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("direct_presentation_required");
+                        lc.dispatch_finished(false, Some(false), "direct_presentation_required");
+                    }
+                    return McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!(
+                            "call_runtime_tool cannot invoke MCP App presentation tool '{target}' when MCP Apps are enabled; call '{target}' directly so the Host receives the required App resource metadata"
+                        ),
+                    ));
+                }
                 params.name = target;
                 params.arguments = arguments;
             }

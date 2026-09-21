@@ -265,3 +265,47 @@ async fn call_runtime_tool_cannot_target_itself() {
         .unwrap()
         .contains("cannot target itself"));
 }
+
+#[tokio::test]
+async fn call_runtime_tool_rejects_direct_app_presentation_targets_when_apps_are_enabled() {
+    let runtime = test_runtime();
+    for (index, target) in [
+        "present_work_result",
+        "present_goal_plan",
+        "present_agent_continuation",
+        "present_job_terminal_continuation",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let request = rpc(
+            "tools/call",
+            Some(json!(70 + index)),
+            mcp_2026_ui_params(adaptive_runtime_gateway_params(target, json!({}))),
+        );
+        let protocol_era = super::super::inferred_protocol_era(&request);
+        let outcome = super::super::handle_mcp_request_with_lifecycle(
+            &runtime,
+            request,
+            None,
+            protocol_era,
+            super::super::HostFileImportTrust::Untrusted,
+            None,
+            None,
+            None,
+            crate::model_surface::effective_mcp_compact_schemas(
+                crate::config::mcp_compact_schemas_override(),
+            ),
+            true,
+            None,
+        )
+        .await;
+        let McpOutcome::BadRequest(value) = outcome else {
+            panic!("{target} must require its direct MCP App presentation route");
+        };
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(message.contains("call_runtime_tool cannot invoke MCP App presentation tool"));
+        assert!(message.contains(target));
+        assert!(message.contains("directly"));
+    }
+}

@@ -47,6 +47,20 @@ pub(super) fn tool_supports_job_terminal_continuation_app(tool_name: &str) -> bo
     tool_name == "present_job_terminal_continuation"
 }
 
+/// Explicit presentation entries rely on their own MCP tool descriptor carrying
+/// Host App resource metadata. Routing one through the generic Adaptive Runtime
+/// gateway preserves ToolRuntime semantics, but the Host sees only the gateway
+/// descriptor and therefore cannot create the requested App card.
+pub(super) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "present_work_result"
+            | "present_goal_plan"
+            | "present_agent_continuation"
+            | "present_job_terminal_continuation"
+    )
+}
+
 /// Bounded presentation projections retained for current milestone cards and for
 /// already-cached older tool descriptors. Projection support does not itself bind
 /// a new App card in tools/list.

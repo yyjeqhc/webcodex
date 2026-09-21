@@ -297,12 +297,12 @@ async fn stateless_full_trace_preserves_raw_context_request_and_records_clean_ef
 ) {
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
     env.set(
-        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        "WEBPI_TOOL_REQUEST_TRACE_DIR",
         trace_root.path().to_string_lossy().as_ref(),
     );
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+    env.set("WEBPI_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
 
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
@@ -374,12 +374,12 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
 
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set("WEBPI_TOOL_REQUEST_TRACE", "full");
     env.set(
-        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        "WEBPI_TOOL_REQUEST_TRACE_DIR",
         trace_root.path().to_string_lossy().as_ref(),
     );
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+    env.set("WEBPI_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
 
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
@@ -992,7 +992,7 @@ async fn http_mcp_accepts_loopback_authorities_without_requiring_origin() {
 #[tokio::test]
 async fn http_mcp_accepts_configured_public_authority_and_matching_origin() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_PUBLIC_URL", "https://mcp.example.test");
+    env.set("WEBPI_PUBLIC_URL", "https://mcp.example.test");
     let config = test_config(None);
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
@@ -1078,7 +1078,7 @@ async fn http_mcp_initialize_success() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["jsonrpc"], "2.0");
     assert_eq!(body["id"], 1);
-    assert_eq!(body["result"]["serverInfo"]["name"], "webcodex");
+    assert_eq!(body["result"]["serverInfo"]["name"], "webpi");
     assert!(body["result"]["protocolVersion"].is_string());
     assert_eq!(
         body["result"]["capabilities"]["tools"]["listChanged"],
@@ -3058,7 +3058,7 @@ async fn http_mcp_get_discovery_returns_metadata() {
         .await;
     assert_eq!(effective_status(&resp), StatusCode::OK);
     let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["name"], "webcodex");
+    assert_eq!(body["name"], "webpi");
     assert!(body["version"].is_string());
     assert_eq!(body["protocol"], "mcp");
     assert!(body["protocolVersion"].is_string());

@@ -1070,7 +1070,7 @@ async fn http_mcp_artifact_export_resources_read_streams_valid_json_blob() {
     assert_eq!(decoded, bytes);
     assert_eq!(
         body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-        "webcodex"
+        "webpi"
     );
 }
 

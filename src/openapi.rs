@@ -17,11 +17,11 @@ const GPT_ACTION_OPENAPI_IMPORT_BUDGET_BYTES: usize = 800_000;
 const GPT_ACTION_PATH_PREFIX: &str = "/api/actions/";
 
 pub(crate) fn public_url() -> String {
-    std::env::var("WEBCODEX_PUBLIC_URL")
+    std::env::var("WEBPI_PUBLIC_URL")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "http://localhost:8080".to_string())
+        .unwrap_or_else(|| "http://127.0.0.1:56542".to_string())
 }
 
 #[handler]
@@ -62,18 +62,23 @@ pub(crate) fn build_openapi_spec() -> Value {
     let spec = json!({
         "openapi": "3.1.0",
         "info": {
-            "title": "WebCodex GPT Actions",
+            "title": "WebPi GPT Actions",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Custom GPT OpenAPI compatibility surface for the canonical WebCodex Adaptive Runtime. Adaptive direct tools are direct operations; supported long-tail tools use call_runtime_tool. MCP remains the primary ChatGPT integration."
+            "description": "Custom GPT OpenAPI compatibility surface for the canonical WebPi Adaptive Runtime. Adaptive direct tools are direct operations; supported long-tail tools use call_runtime_tool. MCP remains the primary ChatGPT integration."
         },
-        "servers": [{"url": public_url(), "description": "WebCodex Server"}],
+        "servers": [{"url": public_url(), "description": "WebPi Server"}],
         "paths": Value::Object(paths),
         "components": {
+            // ChatGPT Actions' importer expects components.schemas to be an
+            // object when components is present, even when this document uses
+            // only inline schemas. Keep the explicit empty map for parser
+            // compatibility instead of relying on OpenAPI's optional field.
+            "schemas": {},
             "securitySchemes": {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "WebCodex Bearer credential. Authorization, Project authority, permission gates, Runner capability checks, and destructive policy remain enforced by the canonical ToolRuntime kernel."
+                    "description": "WebPi Bearer credential. Authorization, Project authority, permission gates, Runner capability checks, and destructive policy remain enforced by the canonical ToolRuntime kernel."
                 }
             }
         },
@@ -121,9 +126,8 @@ fn gateway_operation() -> Value {
                 "description": "Exact supported long-tail runtime tool name. Direct GPT Action tools must use their direct operation instead."
             },
             "arguments": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "Canonical arguments for the selected runtime tool. Discover the tool contract first when it is not already known."
+                "type": "string",
+                "description": "Canonical arguments for the selected runtime tool encoded as a JSON object string, for example {\"project\":\"agent:webpi-local:webpi-core\"}. Discover the tool contract first when it is not already known."
             }
         },
         "required": ["tool", "arguments"]
@@ -476,7 +480,8 @@ mod tests {
         for path in spec["paths"].as_object().unwrap().keys() {
             assert!(path.starts_with(GPT_ACTION_PATH_PREFIX));
         }
-        assert!(spec.get("components").unwrap().get("schemas").is_none());
+        assert_eq!(spec["components"]["schemas"], json!({}));
+        assert!(spec["components"]["schemas"].is_object());
         assert_all_descriptions_bounded(&spec);
     }
 
@@ -672,6 +677,21 @@ mod tests {
     }
 
     #[test]
+    fn list_projects_is_gateway_only_to_preserve_direct_surface_budget() {
+        let spec = build_openapi_spec();
+        let direct_path = format!("{GPT_ACTION_PATH_PREFIX}list_projects");
+        assert!(spec["paths"].get(&direct_path).is_none());
+        let gateway_schema = &spec["paths"]
+            [format!("{GPT_ACTION_PATH_PREFIX}{ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME}")]["post"]
+            ["requestBody"]["content"]["application/json"]["schema"];
+        let targets = gateway_schema["properties"]["tool"]["enum"]
+            .as_array()
+            .unwrap();
+        assert!(targets.contains(&json!("list_projects")));
+        assert!(operation_ids(&spec).len() < GPT_ACTION_OPERATION_LIMIT);
+    }
+
+    #[test]
     fn gateway_schema_is_exact_tool_arguments_without_flattened_business_fields() {
         let spec = build_openapi_spec();
         let schema = &spec["paths"]
@@ -683,6 +703,11 @@ mod tests {
         assert_eq!(properties.len(), 2);
         assert!(properties.contains_key("tool"));
         assert!(properties.contains_key("arguments"));
+        assert_eq!(properties["arguments"]["type"], "string");
+        assert!(properties["arguments"]["description"]
+            .as_str()
+            .unwrap_or("")
+            .contains("JSON object"));
         for retired in [
             "params", "project", "path", "query", "line", "column", "changes",
         ] {

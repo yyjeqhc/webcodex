@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::Instant;
 
-const CONFORMANCE_URL_FILE_ENV: &str = "WEBCODEX_MCP_CONFORMANCE_URL_FILE";
-const CONFORMANCE_STOP_FILE_ENV: &str = "WEBCODEX_MCP_CONFORMANCE_STOP_FILE";
+const CONFORMANCE_URL_FILE_ENV: &str = "WEBPI_MCP_CONFORMANCE_URL_FILE";
+const CONFORMANCE_STOP_FILE_ENV: &str = "WEBPI_MCP_CONFORMANCE_STOP_FILE";
 const CONFORMANCE_FIXTURE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
 /// External MCP conformance uses a real loopback socket, but the endpoint is
@@ -17,11 +17,11 @@ const CONFORMANCE_FIXTURE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 async fn mcp_conformance_fixture_server() {
     let url_file = PathBuf::from(
         std::env::var_os(CONFORMANCE_URL_FILE_ENV)
-            .expect("conformance fixture requires WEBCODEX_MCP_CONFORMANCE_URL_FILE"),
+            .expect("conformance fixture requires WEBPI_MCP_CONFORMANCE_URL_FILE"),
     );
     let stop_file = PathBuf::from(
         std::env::var_os(CONFORMANCE_STOP_FILE_ENV)
-            .expect("conformance fixture requires WEBCODEX_MCP_CONFORMANCE_STOP_FILE"),
+            .expect("conformance fixture requires WEBPI_MCP_CONFORMANCE_STOP_FILE"),
     );
 
     let config = test_config(None);

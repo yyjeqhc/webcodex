@@ -956,7 +956,7 @@ pub(super) fn default_state_base_from(
     // commonly lack HOME, so LOCALAPPDATA is the compatibility fallback rather
     // than a migration of existing profiles.
     if let Some(path) = home.filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(path).join(".local/state/webcodex/projects"));
+        return Ok(PathBuf::from(path).join(".local/state/webpi/projects"));
     }
     if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(path).join("WebCodex/state/projects"));

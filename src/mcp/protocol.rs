@@ -96,7 +96,7 @@ pub(super) fn server_discover_payload(capabilities: Value) -> Value {
         "capabilities": capabilities,
         "_meta": {
             "io.modelcontextprotocol/serverInfo": {
-                "name": "webcodex",
+                "name": "webpi",
                 "version": env!("CARGO_PKG_VERSION")
             }
         }
@@ -112,7 +112,7 @@ pub(super) fn legacy_initialize_payload(params: &Value) -> Value {
             }
         },
         "serverInfo": {
-            "name": "webcodex",
+            "name": "webpi",
             "version": env!("CARGO_PKG_VERSION")
         }
     })

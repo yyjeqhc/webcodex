@@ -11,7 +11,7 @@ use super::*;
 #[tokio::test]
 async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux_flags() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "false");
     let runtime = test_runtime();
     let outcome = handle_mcp_request(
         &runtime,
@@ -224,7 +224,7 @@ async fn mcp_tools_call_runtime_status_returns_content() {
     assert!(value["result"]["structuredContent"].is_object());
     assert_eq!(value["result"]["structuredContent"]["success"], true);
     let out = &value["result"]["structuredContent"]["output"];
-    assert_eq!(out["service"], "webcodex");
+    assert_eq!(out["service"], "webpi");
     assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
     assert!(!value["result"]["content"][0]["text"]
         .as_str()

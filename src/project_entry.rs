@@ -51,7 +51,7 @@ const NPM_WRAPPER_NETWORK_ENV_KEYS: [&str; 8] = [
     "npm_config_cafile",
     "npm_config_ca",
     "npm_config_strict_ssl",
-    "WEBCODEX_NPM_WRAPPER",
+    "WEBPI_NPM_WRAPPER",
 ];
 
 fn remove_npm_wrapper_network_environment(command: &mut Command) {
@@ -61,7 +61,7 @@ fn remove_npm_wrapper_network_environment(command: &mut Command) {
 }
 
 fn remove_runner_parent_credentials(command: &mut Command) {
-    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT", "WEBCODEX_AGENT_TOKEN"] {
+    for key in ["WEBPI_TOKEN", "WEBPI_PAT", "WEBPI_AGENT_TOKEN"] {
         command.env_remove(key);
     }
 }
@@ -779,10 +779,10 @@ pub(super) async fn start_local_runtime(
     let project_credential = read_project_credential(&credential_file)?;
     let _agent_token = read_project_agent_token(&paths.agent_token)?;
     validate_agent_authentication(&config, &paths)?;
-    let server_binary = locate_companion_binary("webcodex-server").ok_or_else(|| {
+    let server_binary = locate_companion_binary("webpi-server").ok_or_else(|| {
         ProductError::new(
             "required_capability_unavailable",
-            "the WebCodex Server executable is unavailable",
+            "the WebPi Server executable is unavailable in this installation",
             Some("Install all WebCodex binaries, then run webcodex doctor."),
         )
     })?;
@@ -799,27 +799,27 @@ pub(super) async fn start_local_runtime(
     }
     server_command
         .current_dir(&paths.state)
-        .env_remove("WEBCODEX_ENV_FILE")
-        .env("WEBCODEX_ADDR", format!("127.0.0.1:{}", config.port))
-        .env("WEBCODEX_DATA", &paths.data)
-        .env("WEBCODEX_TOKEN", bootstrap)
-        .env("WEBCODEX_SHARED_KEY_ENABLED", "false")
-        .env("WEBCODEX_ALLOW_ANONYMOUS", "false")
-        .env("WEBCODEX_PUBLIC_URL", &public_url)
-        .env("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "false")
-        .env("WEBCODEX_OAUTH2_REQUIRE_PKCE", "true")
-        .env("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "3600")
-        .env("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "2592000")
-        .env("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "300")
-        .env("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS", "")
-        .env("WEBCODEX_QUIC_ENABLED", "false")
+        .env_remove("WEBPI_ENV_FILE")
+        .env("WEBPI_ADDR", format!("127.0.0.1:{}", config.port))
+        .env("WEBPI_DATA", &paths.data)
+        .env("WEBPI_TOKEN", bootstrap)
+        .env("WEBPI_SHARED_KEY_ENABLED", "false")
+        .env("WEBPI_ALLOW_ANONYMOUS", "false")
+        .env("WEBPI_PUBLIC_URL", &public_url)
+        .env("WEBPI_OAUTH2_SHARED_KEY_BRIDGE", "false")
+        .env("WEBPI_OAUTH2_REQUIRE_PKCE", "true")
+        .env("WEBPI_OAUTH2_ACCESS_TOKEN_TTL_SECS", "3600")
+        .env("WEBPI_OAUTH2_REFRESH_TOKEN_TTL_SECS", "2592000")
+        .env("WEBPI_OAUTH2_AUTH_CODE_TTL_SECS", "300")
+        .env("WEBPI_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS", "")
+        .env("WEBPI_QUIC_ENABLED", "false")
         .env(
             crate::auth::PROJECT_GRANT_ID_ENV,
             config.project_grant_id(&paths),
         )
         .env(crate::auth::PROJECT_CREDENTIAL_FILE_ENV, &credential_file)
         .env(
-            "WEBCODEX_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED",
+            "WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED",
             if mcp_query_token_auth {
                 "true"
             } else {
@@ -839,19 +839,19 @@ pub(super) async fn start_local_runtime(
         .kill_on_drop(true);
     if let Some(oauth) = project_share_oauth {
         server_command
-            .env("WEBCODEX_OAUTH2_ENABLED", "true")
-            .env("WEBCODEX_OAUTH2_ISSUER", &public_url)
+            .env("WEBPI_OAUTH2_ENABLED", "true")
+            .env("WEBPI_OAUTH2_ISSUER", &public_url)
             .env(
-                "WEBCODEX_OAUTH2_PROJECT_SHARE_GRANT_ID",
+                "WEBPI_OAUTH2_PROJECT_SHARE_GRANT_ID",
                 oauth.project_grant_id,
             )
-            .env("WEBCODEX_OAUTH2_PROJECT_SHARE_SESSION_ID", oauth.session_id);
+            .env("WEBPI_OAUTH2_PROJECT_SHARE_SESSION_ID", oauth.session_id);
     } else {
         server_command
-            .env("WEBCODEX_OAUTH2_ENABLED", "false")
-            .env_remove("WEBCODEX_OAUTH2_ISSUER")
-            .env_remove("WEBCODEX_OAUTH2_PROJECT_SHARE_GRANT_ID")
-            .env_remove("WEBCODEX_OAUTH2_PROJECT_SHARE_SESSION_ID");
+            .env("WEBPI_OAUTH2_ENABLED", "false")
+            .env_remove("WEBPI_OAUTH2_ISSUER")
+            .env_remove("WEBPI_OAUTH2_PROJECT_SHARE_GRANT_ID")
+            .env_remove("WEBPI_OAUTH2_PROJECT_SHARE_SESSION_ID");
     }
     configure_console_assets_environment(&mut server_command, console_assets_dir.as_deref());
     let mut server = server_command.spawn().map_err(|_| {
@@ -995,32 +995,21 @@ fn configure_console_assets_environment(command: &mut Command, directory: Option
 }
 
 fn locate_runner_binary() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("WEBCODEX_AGENT_BIN").map(PathBuf::from) {
-        if path.is_file() {
-            return Some(path);
-        }
+    if let Some(path) = std::env::var_os("WEBPI_AGENT_BIN").map(PathBuf::from) {
+        // Explicit operator selection must be absolute and fail closed when invalid.
+        return (path.is_absolute() && path.is_file()).then_some(path);
     }
-    locate_companion_binary("webcodex-runner")
+    locate_companion_binary("webpi-runner")
 }
 
 fn locate_companion_binary(name: &str) -> Option<PathBuf> {
-    let current = std::env::current_exe().ok()?;
-    let parent = current.parent()?;
-    for candidate in [
-        parent.join(executable_name(name)),
-        parent
-            .parent()
-            .map(|path| path.join(executable_name(name)))
-            .unwrap_or_default(),
-    ] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join(executable_name(name)))
-        .find(|candidate| candidate.is_file())
+    companion_binary_beside(&std::env::current_exe().ok()?, name)
+}
+
+fn companion_binary_beside(current: &Path, name: &str) -> Option<PathBuf> {
+    // Neither a parent directory nor PATH substitutes for the selected installation.
+    let candidate = current.parent()?.join(executable_name(name));
+    candidate.is_file().then_some(candidate)
 }
 
 pub(super) fn executable_name(name: &str) -> String {
@@ -1173,6 +1162,10 @@ async fn wait_for_ready(
 #[cfg(all(test, windows))]
 #[path = "project_entry_windows_migration_tests.rs"]
 mod windows_migration_tests;
+
+#[cfg(test)]
+#[path = "project_entry_identity_tests.rs"]
+mod identity_tests;
 
 #[cfg(test)]
 #[path = "project_entry_tests.rs"]

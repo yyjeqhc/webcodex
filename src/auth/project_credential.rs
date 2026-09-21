@@ -33,10 +33,10 @@ pub(crate) struct ProjectAuthState {
     agent_token: Option<ProjectAgentTokenVerifier>,
 }
 
-pub(crate) const PROJECT_GRANT_ID_ENV: &str = "WEBCODEX_PROJECT_GRANT_ID";
-pub(crate) const PROJECT_CREDENTIAL_FILE_ENV: &str = "WEBCODEX_PROJECT_CREDENTIAL_FILE";
-pub(crate) const PROJECT_AGENT_TOKEN_FILE_ENV: &str = "WEBCODEX_PROJECT_AGENT_TOKEN_FILE";
-pub(crate) const PROJECT_RUNNER_CLIENT_ID_ENV: &str = "WEBCODEX_PROJECT_RUNNER_CLIENT_ID";
+pub(crate) const PROJECT_GRANT_ID_ENV: &str = "WEBPI_PROJECT_GRANT_ID";
+pub(crate) const PROJECT_CREDENTIAL_FILE_ENV: &str = "WEBPI_PROJECT_CREDENTIAL_FILE";
+pub(crate) const PROJECT_AGENT_TOKEN_FILE_ENV: &str = "WEBPI_PROJECT_AGENT_TOKEN_FILE";
+pub(crate) const PROJECT_RUNNER_CLIENT_ID_ENV: &str = "WEBPI_PROJECT_RUNNER_CLIENT_ID";
 
 impl ProjectAuthState {
     pub(crate) fn from_env() -> Result<Self, String> {

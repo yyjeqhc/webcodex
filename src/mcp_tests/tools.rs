@@ -26,7 +26,7 @@ async fn wait_for_mcp_agent_request(
     }
 }
 
-// The compact switch is read per tools/list request, so `WEBCODEX_MCP_COMPACT_SCHEMAS`
+// The compact switch is read per tools/list request, so `WEBPI_MCP_COMPACT_SCHEMAS`
 // must stay stable (and serialized against other env-mutating tests) for the whole
 // async body below. Adaptive Runtime is fixed; only schema projection varies.
 #[allow(clippy::await_holding_lock)]
@@ -36,7 +36,7 @@ async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
     let runtime = test_runtime();
     for compact in [false, true] {
         env.set(
-            "WEBCODEX_MCP_COMPACT_SCHEMAS",
+            "WEBPI_MCP_COMPACT_SCHEMAS",
             if compact { "true" } else { "false" },
         );
         let outcome = handle_mcp_request(
@@ -1754,13 +1754,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
 }
 
 // The compact switch is the tested product behavior: `tools/call` must be
-// unaffected while `WEBCODEX_MCP_COMPACT_SCHEMAS` is set, so the env must stay
+// unaffected while `WEBPI_MCP_COMPACT_SCHEMAS` is set, so the env must stay
 // stable (and serialized against other env-mutating tests) for the whole call.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "true");
     let runtime = test_runtime();
     let outcome = handle_mcp_request(
         &runtime,

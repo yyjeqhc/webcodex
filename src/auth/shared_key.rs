@@ -15,7 +15,7 @@ use super::scopes::{
 /// open group. Default false — the server never offers anonymous service unless
 /// the operator explicitly opts in.
 pub(crate) fn allow_anonymous_enabled() -> bool {
-    crate::config::env_flag("WEBCODEX_ALLOW_ANONYMOUS").unwrap_or(false)
+    crate::config::env_flag("WEBPI_ALLOW_ANONYMOUS").unwrap_or(false)
 }
 
 /// Read the shared-key quick-start flag from the environment. When true,
@@ -24,7 +24,7 @@ pub(crate) fn allow_anonymous_enabled() -> bool {
 /// Default false — the server rejects unknown tokens unless the operator
 /// explicitly enables quick-start mode (e.g. via `server init`).
 pub(crate) fn shared_key_enabled() -> bool {
-    crate::config::env_flag("WEBCODEX_SHARED_KEY_ENABLED").unwrap_or(false)
+    crate::config::env_flag("WEBPI_SHARED_KEY_ENABLED").unwrap_or(false)
 }
 
 /// True when `token` uses a WebCodex managed-credential prefix. Tokens with

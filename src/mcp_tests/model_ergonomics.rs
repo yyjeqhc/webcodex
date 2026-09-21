@@ -9,7 +9,7 @@ use super::*;
 #[tokio::test]
 async fn http_mcp_tools_list_explicit_full_projection_audits_effective_policy() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "false");
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
@@ -89,7 +89,7 @@ async fn http_mcp_tools_list_explicit_full_projection_audits_effective_policy() 
 #[tokio::test]
 async fn http_adaptive_tools_list_unset_defaults_to_compact_and_reports_effective_policy() {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    env.remove("WEBPI_MCP_COMPACT_SCHEMAS");
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
@@ -135,7 +135,7 @@ async fn http_adaptive_tools_list_unset_defaults_to_compact_and_reports_effectiv
 async fn http_mcp_tools_list_stateless_audit_measures_final_compact_result_and_skips_notifications()
 {
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
+    env.set("WEBPI_MCP_COMPACT_SCHEMAS", "1");
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());

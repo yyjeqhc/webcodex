@@ -14,7 +14,7 @@ async fn mcp_initialize_returns_protocol_and_server_info() {
             assert_eq!(value["jsonrpc"], "2.0");
             assert_eq!(value["id"], 1);
             assert_eq!(value["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
-            assert_eq!(value["result"]["serverInfo"]["name"], "webcodex");
+            assert_eq!(value["result"]["serverInfo"]["name"], "webpi");
             assert!(value["result"]["serverInfo"]["version"].is_string());
             assert_eq!(
                 value["result"]["capabilities"]["tools"]["listChanged"],
@@ -141,7 +141,7 @@ async fn mcp_server_discover_advertises_modern_and_legacy_protocols() {
             assert_eq!(value["result"]["cacheScope"], "private");
             assert_eq!(
                 value["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-                "webcodex"
+                "webpi"
             );
         }
         other => panic!("expected Ok for server/discover, got {:?}", other),
@@ -210,7 +210,7 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             assert_eq!(value["result"]["cacheScope"], "private");
             assert_eq!(
                 value["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-                "webcodex"
+                "webpi"
             );
             let read_files = value["result"]["tools"]
                 .as_array()

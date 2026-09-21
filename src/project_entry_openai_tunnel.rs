@@ -18,9 +18,9 @@ use tokio::process::{Child, Command};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const TUNNEL_CLIENT_VERSION: &str = "0.0.12";
+const TUNNEL_CLIENT_VERSION: &str = "0.0.14";
 const TUNNEL_CLIENT_RELEASE_BASE: &str =
-    "https://github.com/openai/tunnel-client/releases/download/v0.0.12";
+    "https://github.com/openai/tunnel-client/releases/download/v0.0.14";
 const TUNNEL_CLIENT_MAX_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 const TUNNEL_CLIENT_MAX_BINARY_BYTES: u64 = 64 * 1024 * 1024;
 const TUNNEL_CLIENT_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,7 +28,7 @@ const TUNNEL_CLIENT_DOCTOR_TIMEOUT: Duration = Duration::from_secs(30);
 const TUNNEL_CLIENT_CONTROL_PLANE_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const TUNNEL_CLIENT_READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const TUNNEL_CLIENT_HEALTH_URL_BYTES: usize = 512;
-const TUNNEL_CLIENT_OVERRIDE: &str = "WEBCODEX_TUNNEL_CLIENT_BIN";
+const TUNNEL_CLIENT_OVERRIDE: &str = "WEBPI_TUNNEL_CLIENT_BIN";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -67,7 +67,7 @@ impl OpenAiTunnel {
         Err(ProductError::new(
             "tunnel_unavailable",
             format!("OpenAI Secure MCP Tunnel stopped unexpectedly ({status})"),
-            Some("Check the OpenAI tunnel-client and network connectivity, then retry webcodex share --tunnel openai."),
+            Some("Check the OpenAI tunnel-client and network connectivity, then retry the WebPi OpenAI Tunnel."),
         ))
     }
 
@@ -155,7 +155,7 @@ fn configure_runtime_command(
         // The local Server bootstrap key may be a process-environment override.
         // The daemon receives only the generated Authorization file, never the
         // bootstrap credential as inherited environment state.
-        .env_remove("WEBCODEX_TOKEN")
+        .env_remove("WEBPI_TOKEN")
         .arg("--mcp.server-url")
         .arg(format!("url={mcp_url},channel=main"))
         .arg("--mcp.extra-headers")
@@ -295,7 +295,7 @@ async fn wait_until_ready(
         .no_proxy()
         .build()
         .map_err(|_| {
-            tunnel_runtime_error("WebCodex could not initialize the local tunnel readiness probe")
+            tunnel_runtime_error("WebPi could not initialize the local tunnel readiness probe")
         })?;
     let mut health_base = None;
 
@@ -307,7 +307,7 @@ async fn wait_until_ready(
             return Err(ProductError::new(
                 "tunnel_unavailable",
                 format!("OpenAI tunnel-client exited before becoming ready ({status})"),
-                Some("Check the Tunnel ID, runtime API key permissions, local WebCodex authentication, and network access, then retry."),
+                Some("Check the Tunnel ID, runtime API key permissions, local WebPi authentication, and network access, then retry."),
             ));
         }
 
@@ -421,8 +421,8 @@ async fn resolve_tunnel_client() -> Result<PathBuf, ProductError> {
         if !binary.is_file() {
             return Err(ProductError::new(
                 "tunnel_unavailable",
-                "WEBCODEX_TUNNEL_CLIENT_BIN does not point to a tunnel-client file",
-                Some("Fix or unset WEBCODEX_TUNNEL_CLIENT_BIN, then retry webcodex share --tunnel openai."),
+                "WEBPI_TUNNEL_CLIENT_BIN does not point to a tunnel-client file",
+                Some("Fix or unset WEBPI_TUNNEL_CLIENT_BIN, then retry the WebPi OpenAI Tunnel."),
             ));
         }
         verify_tunnel_client_version(binary).await?;
@@ -447,51 +447,51 @@ fn tunnel_client_asset_for(os: &str, arch: &str) -> Result<TunnelClientAsset, Pr
     let asset = match (os, arch) {
         ("linux", "x86_64") => TunnelClientAsset {
             target: "linux-amd64",
-            file_name: "tunnel-client-v0.0.12-linux-amd64.zip",
-            archive_sha256: "2bb693bd7b5cd28da7ce09cd9e309529dbb33b7cc9dc0058e62a064688f92c81",
-            binary_sha256: "ee9d4a75bc0b42f36f345aa96231e0db1ab00488122f34ebc99d6db055b6603e",
+            file_name: "tunnel-client-v0.0.14-linux-amd64.zip",
+            archive_sha256: "15bd17e805cad39d412199115bb9e10a978dd35258a114cdf25dd2ae6681c7d3",
+            binary_sha256: "472eb9dd9dd625b4e6023c3b4a5736b3a2e5a1b6dbe9338e001887a64ec992a6",
             member_name: "tunnel-client",
         },
         ("linux", "aarch64") => TunnelClientAsset {
             target: "linux-arm64",
-            file_name: "tunnel-client-v0.0.12-linux-arm64.zip",
-            archive_sha256: "6813878a3edb82ebebb32fe5a859bc6327a81cce5bc7b635a2313174d26365d6",
-            binary_sha256: "0a48e6696de0df5951c013e40be81ce775e6644e209758c48795a0ecbda06406",
+            file_name: "tunnel-client-v0.0.14-linux-arm64.zip",
+            archive_sha256: "2de3fb879a18edb847e0313592c912f1983685488290a7fdba7ac403e6a4fb0a",
+            binary_sha256: "ab6c05258f15dc43a8e23f39460beb69892a8ced03e4c345a6f1aef0dd009b0f",
             member_name: "tunnel-client",
         },
         ("macos", "x86_64") => TunnelClientAsset {
             target: "darwin-amd64",
-            file_name: "tunnel-client-v0.0.12-darwin-amd64.zip",
-            archive_sha256: "33de53aec680faafedc795f8f8268d6861577bddb871cb2d49529c91f88c2009",
-            binary_sha256: "4133dab2575223252732a998210c34b7ed96a51765cf5ea835a8e24cf2be1272",
+            file_name: "tunnel-client-v0.0.14-darwin-amd64.zip",
+            archive_sha256: "75e10be774184fb42189e347b16eb6bc9fb0780135d8af714d34e30ce068dc53",
+            binary_sha256: "89478d1d58350818275b852169745e1af0e18c02ff9b5b46d50df22018c95be9",
             member_name: "tunnel-client",
         },
         ("macos", "aarch64") => TunnelClientAsset {
             target: "darwin-arm64",
-            file_name: "tunnel-client-v0.0.12-darwin-arm64.zip",
-            archive_sha256: "42fb3138dc9c081d5777cb7e8bd1e041cc48b67c4978dbab3c5167ca1aabca02",
-            binary_sha256: "b1757220cf4722cec9085ee4a908cf0ee4c1a499a33bd99979b9a9c7669e29b1",
+            file_name: "tunnel-client-v0.0.14-darwin-arm64.zip",
+            archive_sha256: "b540493c5bdbcdbb755700c8e2e16597e28b1569e425007e0f73111047bd6a64",
+            binary_sha256: "309fd85da5a8c2ca8dae920deea8ac10a4d7934ed18ac46e7df0c200139cc9c5",
             member_name: "tunnel-client",
         },
         ("windows", "x86_64") => TunnelClientAsset {
             target: "windows-amd64",
-            file_name: "tunnel-client-v0.0.12-windows-amd64.zip",
-            archive_sha256: "2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356",
-            binary_sha256: "6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8",
+            file_name: "tunnel-client-v0.0.14-windows-amd64.zip",
+            archive_sha256: "784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5",
+            binary_sha256: "fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b",
             member_name: "tunnel-client.exe",
         },
         ("windows", "aarch64") => TunnelClientAsset {
             target: "windows-arm64",
-            file_name: "tunnel-client-v0.0.12-windows-arm64.zip",
-            archive_sha256: "65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d",
-            binary_sha256: "480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656",
+            file_name: "tunnel-client-v0.0.14-windows-arm64.zip",
+            archive_sha256: "fa775db8897df543dd4ba66404f69492a2acfbc6a291f10df27aced064a16568",
+            binary_sha256: "7260ec886a7efd34202c6506bd35b068e94723a5402ea6f76af5a3af3dbd0a0b",
             member_name: "tunnel-client.exe",
         },
         _ => {
             return Err(ProductError::new(
                 "tunnel_unavailable",
                 format!("automatic OpenAI tunnel-client installation is unsupported on {os}/{arch}"),
-                Some("Install the pinned OpenAI tunnel-client and set WEBCODEX_TUNNEL_CLIENT_BIN, or use another WebCodex tunnel provider."),
+                Some("Install the pinned OpenAI tunnel-client and set WEBPI_TUNNEL_CLIENT_BIN, or use another WebPi tunnel provider."),
             ))
         }
     };
@@ -519,26 +519,26 @@ fn managed_tunnel_client_root_from(
         if !path.is_absolute() {
             return Err(managed_user_root_error("XDG_STATE_HOME"));
         }
-        return Ok(path.join("webcodex/tools/tunnel-client"));
+        return Ok(path.join("webpi/tools/tunnel-client"));
     }
     if let Some(path) = home.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
         if !path.is_absolute() {
             return Err(managed_user_root_error("HOME"));
         }
-        return Ok(path.join(".local/state/webcodex/tools/tunnel-client"));
+        return Ok(path.join(".local/state/webpi/tools/tunnel-client"));
     }
     if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
         if !path.is_absolute() {
             return Err(managed_user_root_error("LOCALAPPDATA"));
         }
-        return Ok(path.join("WebCodex/tools/tunnel-client"));
+        return Ok(path.join("WebPi/tools/tunnel-client"));
     }
     Err(ProductError::new(
         "tunnel_unavailable",
-        "WebCodex cannot choose a private user directory for managed OpenAI tunnel-client",
-        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBCODEX_TUNNEL_CLIENT_BIN, or use another WebCodex tunnel provider."),
+        "WebPi cannot choose a private user directory for managed OpenAI tunnel-client",
+        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, configure the WebPi tunnel-client override, or use another WebPi tunnel provider."),
     ))
 }
 
@@ -560,7 +560,7 @@ async fn ensure_managed_tunnel_client_at(
     }
 
     eprintln!(
-        "WebCodex: tunnel-client was not found; downloading verified OpenAI tunnel-client {TUNNEL_CLIENT_VERSION}..."
+        "WebPi: tunnel-client was not found; downloading verified OpenAI tunnel-client {TUNNEL_CLIENT_VERSION}..."
     );
     let temporary = install_dir.join(format!(".install-{}", uuid::Uuid::new_v4().simple()));
     create_private_tool_dir(&temporary)?;
@@ -568,17 +568,27 @@ async fn ensure_managed_tunnel_client_at(
         let archive = temporary.join(asset.file_name);
         let url = format!("{TUNNEL_CLIENT_RELEASE_BASE}/{}", asset.file_name);
         download_tunnel_client_asset(&url, &archive).await?;
-        verify_sha256(&archive, asset.archive_sha256, "downloaded tunnel-client archive")?;
+        verify_sha256(
+            &archive,
+            asset.archive_sha256,
+            "downloaded tunnel-client archive",
+        )?;
         let candidate = temporary.join(executable_name("tunnel-client"));
         extract_tunnel_client(&archive, &candidate, asset.member_name)?;
-        verify_sha256(&candidate, asset.binary_sha256, "downloaded tunnel-client binary")?;
+        verify_sha256(
+            &candidate,
+            asset.binary_sha256,
+            "downloaded tunnel-client binary",
+        )?;
         make_private_executable(&candidate)?;
         verify_tunnel_client_version(&candidate).await?;
         fs::rename(&candidate, &destination).map_err(|_| {
             ProductError::new(
                 "tunnel_unavailable",
-                "WebCodex could not install its managed OpenAI tunnel-client atomically",
-                Some("Check user-state filesystem permissions, then retry webcodex share --tunnel openai."),
+                "WebPi could not install its managed OpenAI tunnel-client atomically",
+                Some(
+                    "Check user-state filesystem permissions, then retry the WebPi OpenAI Tunnel.",
+                ),
             )
         })?;
         if !managed_binary_is_valid(&destination, asset).await {
@@ -756,7 +766,7 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
         return Err(ProductError::new(
             "tunnel_unavailable",
             format!("{label} failed SHA-256 verification"),
-            Some("Retry webcodex share --tunnel openai; if the failure persists, set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
+            Some("Retry the WebPi OpenAI Tunnel; if the failure persists, set WEBPI_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
         ));
     }
     Ok(())
@@ -800,31 +810,31 @@ fn managed_user_root_error(name: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("{name} must be an absolute path for managed OpenAI tunnel-client"),
-        Some("Fix the user-state environment, set WEBCODEX_TUNNEL_CLIENT_BIN, or use another WebCodex tunnel provider."),
+        Some("Fix the user-state environment, set WEBPI_TUNNEL_CLIENT_BIN, or use another WebPi tunnel provider."),
     )
 }
 
 fn managed_tool_path_error() -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
-        "WebCodex could not create or protect its managed OpenAI tunnel-client files",
-        Some("Check user-state filesystem permissions, then retry webcodex share --tunnel openai."),
+        "WebPi could not create or protect its managed OpenAI tunnel-client files",
+        Some("Check user-state filesystem permissions, then retry the WebPi OpenAI Tunnel."),
     )
 }
 
 fn download_error(detail: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
-        format!("WebCodex could not download verified OpenAI tunnel-client: {detail}"),
-        Some("Check network/proxy connectivity and retry, or set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
+        format!("WebPi could not download verified OpenAI tunnel-client: {detail}"),
+        Some("Check network/proxy connectivity and retry, or set WEBPI_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
     )
 }
 
 fn extraction_error(detail: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
-        format!("WebCodex could not unpack verified OpenAI tunnel-client: {detail}"),
-        Some("Retry webcodex share --tunnel openai or set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
+        format!("WebPi could not unpack verified OpenAI tunnel-client: {detail}"),
+        Some("Retry the WebPi OpenAI Tunnel or set WEBPI_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
     )
 }
 
@@ -832,7 +842,7 @@ fn verification_error() -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("OpenAI tunnel-client failed pinned {TUNNEL_CLIENT_VERSION} verification"),
-        Some("Remove the managed tunnel-client file and retry, or set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
+        Some("Remove the managed tunnel-client file and retry, or set WEBPI_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
     )
 }
 
@@ -840,7 +850,7 @@ fn tunnel_runtime_error(message: &'static str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         message,
-        Some("Check the OpenAI tunnel-client configuration and retry webcodex share --tunnel openai."),
+        Some("Check the OpenAI tunnel-client configuration and retry the WebPi OpenAI Tunnel."),
     )
 }
 

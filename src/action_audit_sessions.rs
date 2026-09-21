@@ -634,11 +634,11 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use webcodex_core::sensitive_text::WEBCODEX_SECRET_PREFIXES;
+    use webcodex_core::sensitive_text::WEBPI_SECRET_PREFIXES;
 
     #[test]
     fn audit_sanitize_value_redacts_webcodex_token_prefixes_in_strings() {
-        for prefix in WEBCODEX_SECRET_PREFIXES {
+        for prefix in WEBPI_SECRET_PREFIXES {
             let value = format!("failed with token {}EXAMPLE", prefix.to_ascii_uppercase());
             assert_eq!(sanitize_value(&json!(value)), json!("[redacted]"));
         }

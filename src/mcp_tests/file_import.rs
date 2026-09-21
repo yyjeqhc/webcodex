@@ -10,10 +10,10 @@ struct McpImportStartupEnvGuard {
 impl McpImportStartupEnvGuard {
     fn new() -> Self {
         const NAMES: &[&str] = &[
-            "WEBCODEX_ENV_FILE",
-            "WEBCODEX_TOKEN",
-            "WEBCODEX_OAUTH2_ENABLED",
-            "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
+            "WEBPI_ENV_FILE",
+            "WEBPI_TOKEN",
+            "WEBPI_OAUTH2_ENABLED",
+            "WEBPI_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
         ];
         let env_lock = crate::admin_cli::TEST_ENV_LOCK
             .lock()
@@ -50,11 +50,11 @@ fn mcp_import_config_from_startup_env(
 ) -> Arc<crate::Config> {
     let guard = McpImportStartupEnvGuard::new();
     let dir = tempfile::tempdir().unwrap();
-    let env_file = dir.path().join("webcodex.env");
+    let env_file = dir.path().join("webpi.env");
     std::fs::write(
         &env_file,
         format!(
-            "WEBCODEX_OAUTH2_ENABLED=false\nWEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS={env_file_client_id}\n"
+            "WEBPI_OAUTH2_ENABLED=false\nWEBPI_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS={env_file_client_id}\n"
         ),
     )
     .unwrap();
@@ -62,11 +62,11 @@ fn mcp_import_config_from_startup_env(
     // Production startup loads env files first, but an already-present process
     // environment is authoritative and load_env_file deliberately does not
     // replace it. This matches the live deployment shape being debugged.
-    guard.set("WEBCODEX_ENV_FILE", &env_file);
-    guard.set("WEBCODEX_TOKEN", "startup-env-bootstrap-token");
-    guard.set("WEBCODEX_OAUTH2_ENABLED", "true");
+    guard.set("WEBPI_ENV_FILE", &env_file);
+    guard.set("WEBPI_TOKEN", "startup-env-bootstrap-token");
+    guard.set("WEBPI_OAUTH2_ENABLED", "true");
     guard.set(
-        "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
+        "WEBPI_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
         trusted_client_id,
     );
     let loads = crate::config::load_startup_env_files().unwrap();

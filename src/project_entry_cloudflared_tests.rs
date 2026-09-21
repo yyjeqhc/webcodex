@@ -129,7 +129,7 @@ fn explicit_override_is_authoritative_then_path_is_used() {
     let missing = temp.path().join("missing");
     let error = existing_cloudflared_from(Some(&missing), Some(&path)).unwrap_err();
     assert_eq!(error.code, "tunnel_unavailable");
-    assert!(error.message.contains("WEBCODEX_CLOUDFLARED_BIN"));
+    assert!(error.message.contains("WEBPI_CLOUDFLARED_BIN"));
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
     assert_eq!(
         managed_cloudflared_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
             .unwrap(),
-        home.join(".local/state/webcodex/tools/cloudflared")
+        home.join(".local/state/webpi/tools/cloudflared")
     );
     assert_eq!(
         managed_cloudflared_root_from(None, None, Some(local.as_os_str())).unwrap(),

@@ -68,7 +68,7 @@ mod tests {
                 "annotations": {"readOnlyHint": true}
             }],
             "resultType": "complete",
-            "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "webcodex"}}
+            "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "webpi"}}
         });
         assert_exact_len(&tools_list);
     }

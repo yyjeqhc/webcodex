@@ -268,7 +268,7 @@ pub async fn mcp_info(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     }
     let auth_required = config.is_auth_enabled();
     res.render(Json(json!({
-        "name": "webcodex",
+        "name": "webpi",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "mcp",
         "protocolVersion": MCP_PROTOCOL_VERSION,

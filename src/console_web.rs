@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub(crate) const CONSOLE_ASSETS_DIR_ENV: &str = "WEBCODEX_CONSOLE_ASSETS_DIR";
+pub(crate) const CONSOLE_ASSETS_DIR_ENV: &str = "WEBPI_CONSOLE_ASSETS_DIR";
 
 const ASSET_MODE_HEADER: HeaderName = HeaderName::from_static("x-webcodex-console-assets");
 const EMBEDDED_CACHE_CONTROL: &str = "no-cache, must-revalidate";
@@ -271,7 +271,7 @@ fn validate_loopback_addr(bind_addr: &str) -> Result<(), ConsoleAssetConfigError
         Ok(())
     } else {
         Err(ConsoleAssetConfigError::new(format!(
-            "{CONSOLE_ASSETS_DIR_ENV} requires WEBCODEX_ADDR to use a loopback address"
+            "{CONSOLE_ASSETS_DIR_ENV} requires WEBPI_ADDR to use a loopback address"
         )))
     }
 }
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn embedded_bundle_contains_runtime_and_admin_only() {
-        assert!(RUNTIME_HTML.contains("WebCodex — Workspace"));
+        assert!(RUNTIME_HTML.contains("WebPi — Workspace"));
         assert!(RUNTIME_HTML.contains("/runtime/app.js"));
         assert!(RUNTIME_HTML.contains("/runtime/styles.css"));
         assert!(RUNTIME_APP_JS.contains("/api/runtime-console/"));

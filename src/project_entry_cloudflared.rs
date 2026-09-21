@@ -25,7 +25,7 @@ const CLOUDFLARED_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOUDFLARED_MAX_CA_FILE_BYTES: usize = 4 * 1024 * 1024;
 const NPM_CONFIG_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 const NPM_CONFIG_MAX_VALUE_BYTES: usize = 4 * 1024 * 1024;
-const NPM_WRAPPER_MARKER: &str = "WEBCODEX_NPM_WRAPPER";
+const NPM_WRAPPER_MARKER: &str = "WEBPI_NPM_WRAPPER";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CloudflaredAsset {
@@ -310,7 +310,7 @@ pub(super) fn build_managed_download_client(
 }
 
 pub(super) async fn resolve_cloudflared() -> Result<PathBuf, ProductError> {
-    let override_bin = std::env::var_os("WEBCODEX_CLOUDFLARED_BIN").map(PathBuf::from);
+    let override_bin = std::env::var_os("WEBPI_CLOUDFLARED_BIN").map(PathBuf::from);
     if let Some(binary) =
         existing_cloudflared_from(override_bin.as_deref(), std::env::var_os("PATH").as_deref())?
     {
@@ -333,8 +333,8 @@ fn existing_cloudflared_from(
         }
         return Err(ProductError::new(
             "tunnel_unavailable",
-            "WEBCODEX_CLOUDFLARED_BIN does not point to a cloudflared file",
-            Some("Fix or unset WEBCODEX_CLOUDFLARED_BIN, then retry webcodex share."),
+            "WEBPI_CLOUDFLARED_BIN does not point to a cloudflared file",
+            Some("Fix or unset WEBPI_CLOUDFLARED_BIN, then retry webcodex share."),
         ));
     }
     let Some(path) = path else {
@@ -386,14 +386,14 @@ fn cloudflared_asset_for(os: &str, arch: &str) -> Result<CloudflaredAsset, Produ
             return Err(ProductError::new(
                 "tunnel_unavailable",
                 format!("automatic cloudflared installation is unavailable on {os}/{arch}: Cloudflare {CLOUDFLARED_VERSION} publishes no Windows ARM64 artifact"),
-                Some("Set WEBCODEX_CLOUDFLARED_BIN to a trusted compatible cloudflared binary, or use webcodex share --tunnel openai / --tunnel none."),
+                Some("Set WEBPI_CLOUDFLARED_BIN to a trusted compatible cloudflared binary, or use webcodex share --tunnel openai / --tunnel none."),
             ))
         }
         _ => {
             return Err(ProductError::new(
                 "tunnel_unavailable",
                 format!("automatic cloudflared installation is unsupported on {os}/{arch}"),
-                Some("Install cloudflared and set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
+                Some("Install cloudflared and set WEBPI_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
             ))
         }
     };
@@ -428,7 +428,7 @@ fn managed_cloudflared_root_from(
         if !path.is_absolute() {
             return Err(managed_user_root_error("HOME"));
         }
-        return Ok(path.join(".local/state/webcodex/tools/cloudflared"));
+        return Ok(path.join(".local/state/webpi/tools/cloudflared"));
     }
     if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
@@ -440,7 +440,7 @@ fn managed_cloudflared_root_from(
     Err(ProductError::new(
         "tunnel_unavailable",
         "WebCodex cannot choose a private user directory for managed cloudflared",
-        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
+        Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, set WEBPI_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
     ))
 }
 
@@ -496,7 +496,7 @@ async fn ensure_managed_cloudflared_at(
             return Err(ProductError::new(
                 "tunnel_unavailable",
                 "the installed cloudflared binary failed post-install verification",
-                Some("Remove the managed cloudflared file and retry webcodex share, or set WEBCODEX_CLOUDFLARED_BIN."),
+                Some("Remove the managed cloudflared file and retry webcodex share, or set WEBPI_CLOUDFLARED_BIN."),
             ));
         }
         Ok(destination.clone())
@@ -686,7 +686,7 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
         return Err(ProductError::new(
             "tunnel_unavailable",
             format!("{label} failed SHA-256 verification"),
-            Some("Retry webcodex share; if the failure persists, set WEBCODEX_CLOUDFLARED_BIN to a trusted cloudflared binary."),
+            Some("Retry webcodex share; if the failure persists, set WEBPI_CLOUDFLARED_BIN to a trusted cloudflared binary."),
         ));
     }
     Ok(())
@@ -732,7 +732,7 @@ fn managed_user_root_error(name: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("{name} must be an absolute path for managed cloudflared"),
-        Some("Fix the user-state environment, set WEBCODEX_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
+        Some("Fix the user-state environment, set WEBPI_CLOUDFLARED_BIN, or use webcodex share --tunnel none."),
     )
 }
 
@@ -740,7 +740,7 @@ fn managed_tool_path_error() -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         "WebCodex could not resolve its managed cloudflared path",
-        Some("Set WEBCODEX_CLOUDFLARED_BIN or use webcodex share --tunnel none."),
+        Some("Set WEBPI_CLOUDFLARED_BIN or use webcodex share --tunnel none."),
     )
 }
 
@@ -758,7 +758,7 @@ fn network_config_error(detail: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("WebCodex could not apply network settings for managed cloudflared: {detail}"),
-        Some("Check npm/system proxy and CA configuration, then retry webcodex share; or set WEBCODEX_CLOUDFLARED_BIN / use --tunnel none."),
+        Some("Check npm/system proxy and CA configuration, then retry webcodex share; or set WEBPI_CLOUDFLARED_BIN / use --tunnel none."),
     )
 }
 
@@ -766,7 +766,7 @@ fn download_error(detail: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("WebCodex could not download verified cloudflared: {detail}"),
-        Some("Check network/proxy connectivity and retry webcodex share, set WEBCODEX_CLOUDFLARED_BIN, or use --tunnel none."),
+        Some("Check network/proxy connectivity and retry webcodex share, set WEBPI_CLOUDFLARED_BIN, or use --tunnel none."),
     )
 }
 
@@ -774,7 +774,7 @@ fn extraction_error(detail: &str) -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         format!("WebCodex could not unpack verified cloudflared: {detail}"),
-        Some("Ensure the system tar command is available, then retry webcodex share; or set WEBCODEX_CLOUDFLARED_BIN."),
+        Some("Ensure the system tar command is available, then retry webcodex share; or set WEBPI_CLOUDFLARED_BIN."),
     )
 }
 
@@ -782,7 +782,7 @@ fn verification_error() -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         "managed cloudflared failed integrity or version verification",
-        Some("Retry webcodex share, or set WEBCODEX_CLOUDFLARED_BIN to a trusted cloudflared binary."),
+        Some("Retry webcodex share, or set WEBPI_CLOUDFLARED_BIN to a trusted cloudflared binary."),
     )
 }
 

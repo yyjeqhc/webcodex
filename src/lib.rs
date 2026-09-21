@@ -17,6 +17,7 @@ mod admin_project_lifecycle;
 #[cfg(test)]
 mod agent_continuation_tests;
 mod agent_wake;
+mod artifact_download_http;
 mod audit_http;
 mod auth;
 mod client_window;
@@ -38,6 +39,9 @@ mod pairing_http;
 mod plugin_gateway;
 mod project_entry;
 mod projects;
+mod public_http_security;
+#[cfg(test)]
+mod public_http_security_tests;
 mod route_metadata;
 mod runner_http;
 mod runner_quic;
@@ -122,19 +126,19 @@ where
         },
         [arg] if matches!(arg.as_str(), "--help" | "-h") => ServerBinaryAction::Exit {
             code: 0,
-            stdout: "Usage: webcodex-server [OPTIONS]\n\nRun the WebCodex server runtime.\n\nOptions:\n      --stop-on-stdin-eof  Stop when the invoking parent closes stdin\n  -h, --help               Print help and exit\n  -V, --version            Print version and exit\n".to_string(),
+            stdout: "Usage: webpi-server [OPTIONS]\n\nRun the WebPi server runtime.\n\nOptions:\n      --stop-on-stdin-eof  Stop when the invoking parent closes stdin\n  -h, --help               Print help and exit\n  -V, --version            Print version and exit\n".to_string(),
             stderr: String::new(),
         },
         [arg] if matches!(arg.as_str(), "--version" | "-V") => ServerBinaryAction::Exit {
             code: 0,
-            stdout: build_info::version_output("webcodex-server"),
+            stdout: build_info::version_output("webpi-server"),
             stderr: String::new(),
         },
         _ => ServerBinaryAction::Exit {
             code: 2,
             stdout: String::new(),
             stderr: format!(
-                "unknown argument(s): {}\nRun `webcodex-server --help` for usage.\n",
+                "unknown argument(s): {}\nRun `webpi-server --help` for usage.\n",
                 args.join(" ")
             ),
         },
@@ -207,23 +211,24 @@ pub async fn run_server_with_parent_liveness(
         );
     }
     let config = Config::from_env();
+    // Fail closed before opening the product HTTP listener.
+    if !config.is_auth_enabled()
+        || auth::shared_key_enabled()
+        || auth::allow_anonymous_enabled()
+        || config.oauth2.shared_key_bridge_enabled
+        || config::env_flag("WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED").unwrap_or(false)
+    {
+        return Err("WebPi requires a non-empty bootstrap credential and disabled anonymous/shared-key/query-token modes".into());
+    }
     let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)
         .await
         .map_err(std::io::Error::other)?;
     let console_asset_source = Arc::new(
         console_web::ConsoleAssetSource::from_env(&config.addr).map_err(std::io::Error::other)?,
     );
-    if !config.is_auth_enabled() {
-        tracing::warn!(
-            "WEBCODEX_TOKEN is not set! Running in development mode without authentication. \
-Use `webcodex server init` to generate a bootstrap/admin key, or set WEBCODEX_ALLOW_ANONYMOUS=true \
-only for local/trusted-network demos."
-        );
-        tracing::warn!("Anonymous API access is rejected by default in production mode.");
-    }
     let build_info = build_info::current();
     tracing::info!(
-        "Starting WebCodex v{} (commit {})",
+        "Starting WebPi v{} (commit {})",
         build_info.version,
         build_info.git_commit.unwrap_or("unknown")
     );
@@ -308,7 +313,7 @@ only for local/trusted-network demos."
     );
 
     // Custom QUIC Runner transport. Default disabled;
-    // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
+    // only starts when WEBPI_QUIC_ENABLED=true. Runs a separate quinn UDP
     // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
     // the GPT Actions / Nginx path are completely unaffected. This is NOT
     // HTTP/3 and Nginx does not terminate QUIC.
@@ -321,7 +326,7 @@ only for local/trusted-network demos."
                     .mark_error(&e);
             }
             tracing::error!(
-                "QUIC listener disabled due to config error: {}; check WEBCODEX_QUIC_LISTEN/CERT/KEY/ALPN",
+                "QUIC listener disabled due to config error: {}; check WEBPI_QUIC_LISTEN/CERT/KEY/ALPN",
                 e
             );
         } else {
@@ -640,6 +645,7 @@ only for local/trusted-network demos."
         .hoop(server_shutdown::DrainAdmission::new(
             shutdown_coordinator.clone(),
         ))
+        .hoop(public_http_security::PublicHttpSecurity)
         // Whole-service backstop: no handler may hold an HTTP request open
         // forever. Sized well above every legitimate request — sync agent
         // waits are <= ~122s and MCP dispatch is hard-bounded at 150s — so it
@@ -660,6 +666,10 @@ only for local/trusted-network demos."
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::ArtifactDownload))
+                .get(artifact_download_http::download),
+        )
         .push(runtime_console_router)
         .push(admin_router)
         // OAuth2 token, revocation, and discovery endpoints — public, no
@@ -821,10 +831,10 @@ mod tests {
 
     #[test]
     fn test_parse_env_file_line_basic() {
-        let parsed = parse_env_file_line("WEBCODEX_ADDR=127.0.0.1:8080")
+        let parsed = parse_env_file_line("WEBPI_ADDR=127.0.0.1:8080")
             .unwrap()
             .unwrap();
-        assert_eq!(parsed.0, "WEBCODEX_ADDR");
+        assert_eq!(parsed.0, "WEBPI_ADDR");
         assert_eq!(parsed.1, "127.0.0.1:8080");
     }
 
@@ -868,13 +878,13 @@ mod tests {
     fn test_config_from_env_defaults() {
         let mut env = crate::test_support::TestEnvGuard::new();
         // Clear env vars to test defaults; Drop restores the process environment.
-        env.remove("WEBCODEX_ADDR");
-        env.remove("WEBCODEX_DATA");
-        env.remove("WEBCODEX_TOKEN");
+        env.remove("WEBPI_ADDR");
+        env.remove("WEBPI_DATA");
+        env.remove("WEBPI_TOKEN");
 
         let config = Config::from_env();
-        assert_eq!(config.addr, "0.0.0.0:8080");
-        assert_eq!(config.data_dir, PathBuf::from("./data"));
+        assert_eq!(config.addr, "127.0.0.1:56542");
+        assert_eq!(config.data_dir, PathBuf::from("./webpi-data"));
         assert_eq!(config.token, None);
         assert!(!config.is_auth_enabled());
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);

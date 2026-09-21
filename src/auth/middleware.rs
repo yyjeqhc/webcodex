@@ -33,7 +33,7 @@ pub(crate) fn bearer_token(req: &Request) -> Option<String> {
         .map(|v| v.to_string())
 }
 
-const PROJECT_SHARE_MCP_QUERY_TOKEN_ENV: &str = "WEBCODEX_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED";
+const PROJECT_SHARE_MCP_QUERY_TOKEN_ENV: &str = "WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED";
 
 fn allow_project_share_mcp_query_token(path: &str, project_mode: bool, enabled: bool) -> bool {
     project_mode && enabled && path == "/mcp"
@@ -254,6 +254,26 @@ fn reject(res: &mut Response, ctrl: &mut FlowCtrl, status: StatusCode, message: 
     ctrl.skip_rest();
 }
 
+fn reject_unauthorized(
+    req: &Request,
+    config: &Config,
+    res: &mut Response,
+    ctrl: &mut FlowCtrl,
+    message: &str,
+) {
+    if crate::public_http_security::render_invalid_auth_rate_limit_if_needed(req, res, ctrl) {
+        return;
+    }
+    res.status_code(StatusCode::UNAUTHORIZED);
+    if let Some(challenge) = oauth2_bearer_challenge(config) {
+        if let Ok(value) = salvo::http::HeaderValue::from_str(&challenge) {
+            res.headers_mut().insert("www-authenticate", value);
+        }
+    }
+    res.render(Json(serde_json::json!({"error": message})));
+    ctrl.skip_rest();
+}
+
 // ---------------------------------------------------------------------------
 // AuthMiddleware — the Salvo handler
 // ---------------------------------------------------------------------------
@@ -287,7 +307,7 @@ impl Handler for AuthMiddleware {
 
         // When no token is present and auth is enabled, reject immediately
         // unless the server was explicitly started with `--open`
-        // (WEBCODEX_ALLOW_ANONYMOUS=true), in which case the anonymous caller
+        // (WEBPI_ALLOW_ANONYMOUS=true), in which case the anonymous caller
         // is granted a non-admin open-group context.
         // When auth is disabled, the verifier chain handles the bootstrap
         // fallback — we still call authenticate with a dummy token so the
@@ -320,14 +340,7 @@ impl Handler for AuthMiddleware {
                     ctrl.call_next(req, depot, res).await;
                     return;
                 }
-                res.status_code(StatusCode::UNAUTHORIZED);
-                if let Some(challenge) = oauth2_bearer_challenge(&config) {
-                    if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
-                        res.headers_mut().insert("www-authenticate", val);
-                    }
-                }
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
+                reject_unauthorized(req, &config, res, ctrl, "Unauthorized");
                 return;
             }
         };
@@ -356,10 +369,11 @@ impl Handler for AuthMiddleware {
                 // Query auth is a share-only transport convenience for the exact
                 // temporary project credential. It must never fall through to an
                 // Agent Token, PAT, OAuth token, or shared key.
-                reject(
+                reject_unauthorized(
+                    req,
+                    &config,
                     res,
                     ctrl,
-                    StatusCode::UNAUTHORIZED,
                     "invalid project share query credential",
                 );
                 return;
@@ -444,32 +458,17 @@ impl Handler for AuthMiddleware {
                     return;
                 }
                 // Unknown or managed-prefix-invalid token: reject.
-                res.status_code(StatusCode::UNAUTHORIZED);
-                if let Some(challenge) = oauth2_bearer_challenge(&config) {
-                    if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
-                        res.headers_mut().insert("www-authenticate", val);
-                    }
-                }
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
+                reject_unauthorized(req, &config, res, ctrl, "Unauthorized");
             }
             Err(e) => {
                 // Token recognized but invalid (disabled user, expired token,
                 // etc.). Map to the appropriate HTTP status without leaking
                 // internal details.
-                let status = match e {
-                    AuthError::InvalidToken => StatusCode::UNAUTHORIZED,
-                };
-                res.status_code(status);
-                if status == StatusCode::UNAUTHORIZED {
-                    if let Some(challenge) = oauth2_bearer_challenge(&config) {
-                        if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
-                            res.headers_mut().insert("www-authenticate", val);
-                        }
+                match e {
+                    AuthError::InvalidToken => {
+                        reject_unauthorized(req, &config, res, ctrl, "Unauthorized");
                     }
                 }
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
             }
         }
     }
@@ -599,7 +598,7 @@ fn is_unspecified_host(host: &str) -> bool {
 }
 
 fn configured_public_origin() -> Option<HttpOrigin> {
-    let value = std::env::var("WEBCODEX_PUBLIC_URL").ok()?;
+    let value = std::env::var("WEBPI_PUBLIC_URL").ok()?;
     let value = value.trim();
     if value.is_empty() {
         return None;

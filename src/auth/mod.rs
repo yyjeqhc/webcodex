@@ -148,9 +148,9 @@ impl AuthEnvGuard {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         Self {
             _env_lock: env_lock,
-            shared_key_enabled: std::env::var_os("WEBCODEX_SHARED_KEY_ENABLED"),
-            allow_anonymous: std::env::var_os("WEBCODEX_ALLOW_ANONYMOUS"),
-            oauth2_shared_key_bridge: std::env::var_os("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE"),
+            shared_key_enabled: std::env::var_os("WEBPI_SHARED_KEY_ENABLED"),
+            allow_anonymous: std::env::var_os("WEBPI_ALLOW_ANONYMOUS"),
+            oauth2_shared_key_bridge: std::env::var_os("WEBPI_OAUTH2_SHARED_KEY_BRIDGE"),
         }
     }
 
@@ -163,37 +163,37 @@ impl AuthEnvGuard {
     }
 
     pub(crate) fn enable_direct_shared_key(&self) {
-        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
+        std::env::set_var("WEBPI_SHARED_KEY_ENABLED", "true");
     }
 
     pub(crate) fn disable_direct_shared_key(&self) {
-        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
+        std::env::remove_var("WEBPI_SHARED_KEY_ENABLED");
     }
 
     pub(crate) fn enable_open_anonymous(&self) {
-        std::env::set_var("WEBCODEX_ALLOW_ANONYMOUS", "true");
+        std::env::set_var("WEBPI_ALLOW_ANONYMOUS", "true");
     }
 
     pub(crate) fn disable_open_anonymous(&self) {
-        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
+        std::env::remove_var("WEBPI_ALLOW_ANONYMOUS");
     }
 
     pub(crate) fn enable_oauth2_shared_key_bridge(&self) {
-        std::env::set_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
+        std::env::set_var("WEBPI_OAUTH2_SHARED_KEY_BRIDGE", "true");
     }
 
     pub(crate) fn disable_oauth2_shared_key_bridge(&self) {
-        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
+        std::env::remove_var("WEBPI_OAUTH2_SHARED_KEY_BRIDGE");
     }
 }
 
 #[cfg(test)]
 impl Drop for AuthEnvGuard {
     fn drop(&mut self) {
-        restore_test_env("WEBCODEX_SHARED_KEY_ENABLED", &self.shared_key_enabled);
-        restore_test_env("WEBCODEX_ALLOW_ANONYMOUS", &self.allow_anonymous);
+        restore_test_env("WEBPI_SHARED_KEY_ENABLED", &self.shared_key_enabled);
+        restore_test_env("WEBPI_ALLOW_ANONYMOUS", &self.allow_anonymous);
         restore_test_env(
-            "WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE",
+            "WEBPI_OAUTH2_SHARED_KEY_BRIDGE",
             &self.oauth2_shared_key_bridge,
         );
     }
@@ -292,7 +292,7 @@ pub(crate) async fn authenticate_bearer(
 }
 
 /// Build the bootstrap `AuthContext` used when auth is disabled or the
-/// server-wide `WEBCODEX_TOKEN` is presented. Kept private to `auth`; the only
+/// server-wide `WEBPI_TOKEN` is presented. Kept private to `auth`; the only
 /// callers are `AuthMiddleware` (inline) and `authenticate_bearer`.
 fn bootstrap_context() -> AuthContext {
     AuthContext {

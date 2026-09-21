@@ -1267,7 +1267,7 @@ pub(super) fn mcp_artifact_export_stream_suffix() -> Result<Vec<u8>, McpArtifact
             .map_err(|_| McpArtifactExportReadError::Unsafe)?,
     );
     output.extend_from_slice(
-        b",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"webcodex\",\"version\":",
+        b",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"webpi\",\"version\":",
     );
     output.extend_from_slice(
         &serde_json::to_vec(env!("CARGO_PKG_VERSION"))

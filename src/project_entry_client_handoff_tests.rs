@@ -89,7 +89,7 @@ fn helper_children_remove_npm_wrapper_network_environment() {
         "npm_config_cafile",
         "npm_config_ca",
         "npm_config_strict_ssl",
-        "WEBCODEX_NPM_WRAPPER",
+        "WEBPI_NPM_WRAPPER",
     ] {
         assert!(
             envs.iter()

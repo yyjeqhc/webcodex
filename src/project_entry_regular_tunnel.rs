@@ -67,7 +67,7 @@ pub(crate) async fn run_regular_server_tunnel(
 
     // Managed profiles use explicit Copy ID controls; concurrent starts must not
     // race over the user's clipboard. Keep CLI handoff for an unmanaged invocation.
-    let managed = std::env::var("WEBCODEX_TUNNEL_PROFILE_ID").is_ok();
+    let managed = std::env::var("WEBPI_TUNNEL_PROFILE_ID").is_ok();
     let clipboard = copy_text_to_clipboard(&prerequisites.tunnel_id, !managed).await;
     let mut ready = machine_regular_tunnel_ready_event(clipboard);
     ready["runtime"] = json!({
@@ -154,7 +154,7 @@ async fn probe_local_mcp(client: &reqwest::Client, local_mcp_url: &str, bootstra
         }
     }
     serde_json::from_slice::<Value>(&body).is_ok_and(|value| {
-        value["name"] == "webcodex" && value["protocol"] == "mcp" && value["endpoint"] == "/mcp"
+        value["name"] == "webpi" && value["protocol"] == "mcp" && value["endpoint"] == "/mcp"
     })
 }
 

@@ -15,7 +15,7 @@ fn runtime_command_inherits_only_tunnel_authority_not_server_bootstrap_or_openai
     );
 
     let env = command.as_std().get_envs().collect::<Vec<_>>();
-    for key in ["WEBCODEX_TOKEN", "OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
+    for key in ["WEBPI_TOKEN", "OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
         assert!(env
             .iter()
             .any(|(name, value)| { name.to_str() == Some(key) && value.is_none() }));
@@ -45,59 +45,82 @@ fn tunnel_ids_are_strict_and_runtime_key_never_part_of_the_id_contract() {
 
 #[test]
 fn official_release_assets_and_extracted_binaries_are_pinned_per_supported_platform() {
-    let linux_amd64 = tunnel_client_asset_for("linux", "x86_64").unwrap();
+    assert_eq!(TUNNEL_CLIENT_VERSION, "0.0.14");
     assert_eq!(
-        linux_amd64.file_name,
-        "tunnel-client-v0.0.12-linux-amd64.zip"
-    );
-    assert_eq!(
-        linux_amd64.archive_sha256,
-        "2bb693bd7b5cd28da7ce09cd9e309529dbb33b7cc9dc0058e62a064688f92c81"
-    );
-    assert_eq!(
-        linux_amd64.binary_sha256,
-        "ee9d4a75bc0b42f36f345aa96231e0db1ab00488122f34ebc99d6db055b6603e"
+        TUNNEL_CLIENT_RELEASE_BASE,
+        "https://github.com/openai/tunnel-client/releases/download/v0.0.14"
     );
 
-    let linux_arm64 = tunnel_client_asset_for("linux", "aarch64").unwrap();
-    assert_eq!(
-        linux_arm64.binary_sha256,
-        "0a48e6696de0df5951c013e40be81ce775e6644e209758c48795a0ecbda06406"
-    );
-    let darwin_amd64 = tunnel_client_asset_for("macos", "x86_64").unwrap();
-    assert_eq!(
-        darwin_amd64.binary_sha256,
-        "4133dab2575223252732a998210c34b7ed96a51765cf5ea835a8e24cf2be1272"
-    );
-    let darwin_arm64 = tunnel_client_asset_for("macos", "aarch64").unwrap();
-    assert_eq!(
-        darwin_arm64.binary_sha256,
-        "b1757220cf4722cec9085ee4a908cf0ee4c1a499a33bd99979b9a9c7669e29b1"
-    );
-    assert_eq!(darwin_arm64.target, "darwin-arm64");
+    let cases = [
+        (
+            "linux",
+            "x86_64",
+            "linux-amd64",
+            "tunnel-client-v0.0.14-linux-amd64.zip",
+            "15bd17e805cad39d412199115bb9e10a978dd35258a114cdf25dd2ae6681c7d3",
+            "472eb9dd9dd625b4e6023c3b4a5736b3a2e5a1b6dbe9338e001887a64ec992a6",
+            "tunnel-client",
+        ),
+        (
+            "linux",
+            "aarch64",
+            "linux-arm64",
+            "tunnel-client-v0.0.14-linux-arm64.zip",
+            "2de3fb879a18edb847e0313592c912f1983685488290a7fdba7ac403e6a4fb0a",
+            "ab6c05258f15dc43a8e23f39460beb69892a8ced03e4c345a6f1aef0dd009b0f",
+            "tunnel-client",
+        ),
+        (
+            "macos",
+            "x86_64",
+            "darwin-amd64",
+            "tunnel-client-v0.0.14-darwin-amd64.zip",
+            "75e10be774184fb42189e347b16eb6bc9fb0780135d8af714d34e30ce068dc53",
+            "89478d1d58350818275b852169745e1af0e18c02ff9b5b46d50df22018c95be9",
+            "tunnel-client",
+        ),
+        (
+            "macos",
+            "aarch64",
+            "darwin-arm64",
+            "tunnel-client-v0.0.14-darwin-arm64.zip",
+            "b540493c5bdbcdbb755700c8e2e16597e28b1569e425007e0f73111047bd6a64",
+            "309fd85da5a8c2ca8dae920deea8ac10a4d7934ed18ac46e7df0c200139cc9c5",
+            "tunnel-client",
+        ),
+        (
+            "windows",
+            "x86_64",
+            "windows-amd64",
+            "tunnel-client-v0.0.14-windows-amd64.zip",
+            "784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5",
+            "fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b",
+            "tunnel-client.exe",
+        ),
+        (
+            "windows",
+            "aarch64",
+            "windows-arm64",
+            "tunnel-client-v0.0.14-windows-arm64.zip",
+            "fa775db8897df543dd4ba66404f69492a2acfbc6a291f10df27aced064a16568",
+            "7260ec886a7efd34202c6506bd35b068e94723a5402ea6f76af5a3af3dbd0a0b",
+            "tunnel-client.exe",
+        ),
+    ];
 
-    let windows_amd64 = tunnel_client_asset_for("windows", "x86_64").unwrap();
-    assert_eq!(windows_amd64.target, "windows-amd64");
-    assert_eq!(windows_amd64.member_name, "tunnel-client.exe");
-    assert_eq!(
-        windows_amd64.archive_sha256,
-        "2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356"
-    );
-    assert_eq!(
-        windows_amd64.binary_sha256,
-        "6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8"
-    );
-    let windows_arm64 = tunnel_client_asset_for("windows", "aarch64").unwrap();
-    assert_eq!(windows_arm64.target, "windows-arm64");
-    assert_eq!(windows_arm64.member_name, "tunnel-client.exe");
-    assert_eq!(
-        windows_arm64.archive_sha256,
-        "65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d"
-    );
-    assert_eq!(
-        windows_arm64.binary_sha256,
-        "480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656"
-    );
+    for (os, arch, target, file_name, archive_sha256, binary_sha256, member_name) in cases {
+        let asset = tunnel_client_asset_for(os, arch).unwrap();
+        assert_eq!(asset.target, target);
+        assert_eq!(asset.file_name, file_name);
+        assert_eq!(asset.archive_sha256, archive_sha256);
+        assert_eq!(asset.binary_sha256, binary_sha256);
+        assert_eq!(asset.member_name, member_name);
+    }
+}
+
+#[test]
+fn webpi_uses_its_own_tunnel_client_override_name() {
+    assert_eq!(TUNNEL_CLIENT_OVERRIDE, "WEBPI_TUNNEL_CLIENT_BIN");
 }
 
 #[test]
@@ -113,16 +136,16 @@ fn managed_root_prefers_private_xdg_then_home() {
             Some(local.as_os_str()),
         )
         .unwrap(),
-        state.join("webcodex/tools/tunnel-client")
+        state.join("webpi/tools/tunnel-client")
     );
     assert_eq!(
         managed_tunnel_client_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
             .unwrap(),
-        home.join(".local/state/webcodex/tools/tunnel-client")
+        home.join(".local/state/webpi/tools/tunnel-client")
     );
     assert_eq!(
         managed_tunnel_client_root_from(None, None, Some(local.as_os_str())).unwrap(),
-        local.join("WebCodex/tools/tunnel-client")
+        local.join("WebPi/tools/tunnel-client")
     );
     assert!(managed_tunnel_client_root_from(None, None, None).is_err());
     assert!(managed_tunnel_client_root_from(
@@ -210,12 +233,12 @@ async fn version_verification_requires_the_pinned_client_line() {
 
     let temp = tempfile::tempdir().unwrap();
     let good = temp.path().join("good");
-    fs::write(&good, "#!/bin/sh\necho '0.0.12+test (git sha: abc)'\n").unwrap();
+    fs::write(&good, "#!/bin/sh\necho '0.0.14+test (git sha: abc)'\n").unwrap();
     fs::set_permissions(&good, fs::Permissions::from_mode(0o700)).unwrap();
     verify_tunnel_client_version(&good).await.unwrap();
 
     let wrong = temp.path().join("wrong");
-    fs::write(&wrong, "#!/bin/sh\necho '0.0.13'\n").unwrap();
+    fs::write(&wrong, "#!/bin/sh\necho '0.0.12'\n").unwrap();
     fs::set_permissions(&wrong, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(verify_tunnel_client_version(&wrong).await.is_err());
 }

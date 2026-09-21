@@ -35,7 +35,7 @@ pub(super) fn mcp_stateless_result(result: Value, cacheable: bool) -> Value {
             .entry("io.modelcontextprotocol/serverInfo".to_string())
             .or_insert_with(|| {
                 json!({
-                    "name": "webcodex",
+                    "name": "webpi",
                     "version": env!("CARGO_PKG_VERSION")
                 })
             });

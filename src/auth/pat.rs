@@ -24,7 +24,7 @@ pub(crate) const MAX_TOKEN_NAME_LEN: usize = 128;
 /// reveal the secret. We do not currently use a keyed/HMAC hash (no server
 /// secret is configured for hashing); this is acceptable for self-hosted use
 /// and keeps the dependency surface small. Upgrading to a keyed hash is a
-/// drop-in change here if a `WEBCODEX_TOKEN_HASH_KEY` is added later.
+/// drop-in change here if a `WEBPI_TOKEN_HASH_KEY` is added later.
 pub(crate) fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());

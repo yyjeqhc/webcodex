@@ -28,6 +28,7 @@ fn build_server_runtime() -> std::io::Result<tokio::runtime::Runtime> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    webcodex_runner_config::isolate_webpi_process_environment();
     match server_binary_action(std::env::args().skip(1)) {
         ServerBinaryAction::Run { stop_on_stdin_eof } => {
             webcodex::prepare_server_process_environment().map_err(std::io::Error::other)?;

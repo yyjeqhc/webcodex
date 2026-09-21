@@ -476,6 +476,12 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
 #[cfg(unix)]
 #[test]
 fn runner_service_scope_rejects_invalid_and_conflicting_flags() {
+    let _guard = env_test_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let tmp_path = tmp.path().to_str().unwrap();
+    let _env = EnvGuard::new()
+        .set("HOME", tmp_path)
+        .set("XDG_CONFIG_HOME", tmp_path);
     let bin = "/opt/webcodex/bin/webcodex-runner";
     let invalid = parse_runner_install_service_with_identity(
         &args(&["--scope", "session", "--bin", bin]),

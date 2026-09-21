@@ -1,4 +1,4 @@
-# Goal workflow and single-window continuity — G4/G5/G6
+# Goal workflow and single-window continuity — G4/G5/G6/G7
 
 This is the current WebCodex-owned Goal workflow contract, not repository
 `AGENTS.md` policy. Architecture is defined in
@@ -16,6 +16,16 @@ lookups/trivial edits do not require setup. Exact known Goals can still use the
 lower-level `create_goal` / `associate_goal_workflow_session` primitives for explicit
 advanced composition; `prepare_goal_workflow` never guesses or reuses a Goal by title,
 Window, Session, or recency.
+
+For ordinary continuation of an exact existing Workflow Session, `work_on_project`
+also projects sparse `goal_context` when caller-owned active Goals are explicitly
+correlated to that Session. One returned Goal may be explicitly reused with
+`get_goal` / `present_goal_plan`; multiple returned Goals remain a bounded choice
+and are never auto-selected. No Goal is inferred from Project, Window, title, or
+recency, and the Session correlation grants no Goal authority. An unavailable
+projection is not evidence that the Session has no active Goal. This normal re-entry
+path prevents a new model turn from creating a duplicate Goal merely because it lost
+the earlier Goal identity.
 
 Use `checkpoint_goal` at recoverable milestones: exact Goal revision and idempotency
 key, atomic completed-step ids and optional current step, and a bounded recovery

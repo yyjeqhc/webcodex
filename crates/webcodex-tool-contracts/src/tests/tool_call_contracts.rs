@@ -1893,9 +1893,11 @@ fn guidance_profile_defaults_and_schema_follow_compiled_availability() {
     }
     assert_eq!(property["enum"], json!(profiles));
     let output_schema = output_schema_for_tool("work_on_project");
-    assert!(output_schema["properties"]["output"]["properties"]
+    let output_properties = output_schema["properties"]["output"]["properties"]
         .as_object()
-        .is_some_and(|properties| !properties.contains_key("workflow")));
+        .unwrap();
+    assert!(!output_properties.contains_key("workflow"));
+    assert!(output_properties.contains_key("goal_context"));
     for profile in profiles {
         let mut args = base.clone();
         args["guidance_profile"] = json!(profile);

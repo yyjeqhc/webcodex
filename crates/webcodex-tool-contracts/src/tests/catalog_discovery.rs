@@ -195,6 +195,7 @@ fn single_window_goal_workflow_prefers_atomic_admission_and_keeps_host_setup_sep
         flow.tools,
         &[
             "work_on_project",
+            "get_goal",
             "prepare_goal_workflow",
             "present_goal_plan",
             "checkpoint_goal",
@@ -215,6 +216,10 @@ fn single_window_goal_workflow_prefers_atomic_admission_and_keeps_host_setup_sep
     }
     let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
     for phrase in [
+        "goal_context",
+        "reuse one exact candidate",
+        "explicitly choose among multiple candidates",
+        "get_goal",
         "prepare_goal_workflow",
         "durable admission only",
         "host carrier setup/readiness remains separate",

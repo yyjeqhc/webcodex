@@ -7,6 +7,7 @@
 
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
+use crate::db::{NewGoal, NewGoalStep};
 use crate::lsp_bridge::{RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
 use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload, RunnerResultRequest};
 use crate::tool_runtime::kernel::{
@@ -3382,8 +3383,12 @@ async fn path_source_respects_restricted_authority_before_runner_enqueue() {
 #[tokio::test]
 async fn work_on_project_continues_exact_session_and_appends_instruction() {
     let root = tempfile::tempdir().unwrap();
+    let goal_store = tempfile::tempdir().unwrap();
     init_git_repo(root.path());
-    let runtime = ToolRuntime::new_for_tests();
+    let goal_db = std::sync::Arc::new(
+        crate::db::Database::open(&goal_store.path().join("goals.db")).unwrap(),
+    );
+    let runtime = ToolRuntime::new_for_tests().with_communication_database(goal_db);
     let project =
         register_runner_project_at_path(&runtime, "wop-continue", "demo", root.path()).await;
     let auth = auth_context(None, true);
@@ -3398,8 +3403,59 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     .await;
     assert!(first.success, "{:?}", first.error);
     let session_id = first.output["session_id"].as_str().unwrap().to_string();
+    assert!(
+        first.output.get("goal_context").is_none(),
+        "fresh Session must not fabricate active Goal context"
+    );
     let before = instruction_events(&runtime, &session_id);
     assert_eq!(before.len(), 1);
+
+    let created = runtime.create_goal_with_plan(
+        Some(&auth),
+        NewGoal {
+            title: "Continue exact Goal".into(),
+            objective: "Reuse this Goal on normal Workflow Session re-entry.".into(),
+            controller_agent_id: None,
+            completion_conditions: vec!["Normal re-entry reuses exact Goal identity".into()],
+            steps: vec![
+                NewGoalStep {
+                    id: "inspect".into(),
+                    title: "Inspect".into(),
+                },
+                NewGoalStep {
+                    id: "verify".into(),
+                    title: "Verify".into(),
+                },
+            ],
+            idempotency_key: "wop-goal-create".into(),
+        },
+    );
+    assert!(created.success, "{:?}", created.output);
+    let goal_id = created.output["goal"]["summary"]["goal_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let associated = runtime
+        .associate_goal_workflow_session(
+            Some(&auth),
+            goal_id.clone(),
+            session_id.clone(),
+            "wop-goal-link".into(),
+        )
+        .await;
+    assert!(associated.success, "{:?}", associated.output);
+    let checkpoint = runtime.checkpoint_goal(
+        Some(&auth),
+        goal_id.clone(),
+        2,
+        crate::db::GoalCheckpoint {
+            completed_step_ids: vec!["inspect".into()],
+            current_step_id: Some("verify".into()),
+            summary: "Inspect complete; verify next.".into(),
+        },
+        "wop-goal-checkpoint".into(),
+    );
+    assert!(checkpoint.success, "{:?}", checkpoint.output);
 
     let continued = dispatch_coding_call_in_window(
         &runtime,
@@ -3412,8 +3468,72 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     assert!(continued.success, "{:?}", continued.error);
     assert_eq!(continued.output["session_id"], session_id);
     assert_eq!(continued.output["continuation"], "resumed_explicitly");
+    assert_eq!(continued.output["goal_context"]["available"], true);
+    assert_eq!(continued.output["goal_context"]["truncated"], false);
+    assert_eq!(
+        continued.output["goal_context"]["goals"],
+        json!([{
+            "goal_id": goal_id,
+            "revision": 3,
+            "incomplete_step_count": 1,
+            "current_step": {"id": "verify", "title": "Verify"},
+            "next_action": "checkpoint_goal"
+        }])
+    );
     assert!(first.output.get("workflow").is_none());
     assert!(continued.output.get("workflow").is_none());
+
+    let second = runtime.create_goal(
+        Some(&auth),
+        "Second active Goal".into(),
+        "Remain explicit when multiple active Goals share one Session.".into(),
+        "wop-second-goal-create".into(),
+    );
+    assert!(second.success, "{:?}", second.output);
+    let second_goal_id = second.output["goal"]["summary"]["goal_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let second_link = runtime
+        .associate_goal_workflow_session(
+            Some(&auth),
+            second_goal_id.clone(),
+            session_id.clone(),
+            "wop-second-goal-link".into(),
+        )
+        .await;
+    assert!(second_link.success, "{:?}", second_link.output);
+    let continued_with_multiple = dispatch_coding_call_in_window(
+        &runtime,
+        "wop-continue",
+        work_on_project_call(&project, "choose explicit active Goal", Some(&session_id)),
+        Some(&auth),
+        "wop-continue-window",
+    )
+    .await;
+    assert!(
+        continued_with_multiple.success,
+        "{:?}",
+        continued_with_multiple.error
+    );
+    let goals = continued_with_multiple.output["goal_context"]["goals"]
+        .as_array()
+        .unwrap();
+    assert_eq!(goals.len(), 2);
+    let mut returned_ids = goals
+        .iter()
+        .map(|goal| goal["goal_id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    returned_ids.sort();
+    let mut expected_ids = vec![goal_id, second_goal_id];
+    expected_ids.sort();
+    assert_eq!(returned_ids, expected_ids);
+    assert!(
+        continued_with_multiple.output["goal_context"]
+            .get("selected_goal_id")
+            .is_none(),
+        "startup Goal context must never auto-select among active Goals"
+    );
 
     // Explicit resume reuses exactly one Session and appends one instruction.
     assert_eq!(
@@ -3425,11 +3545,15 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
 
     // Follow-up instruction appended; root title preserved.
     let events = instruction_events(&runtime, &session_id);
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 3);
     assert_eq!(events[0].instruction.as_deref(), Some("root objective"));
     assert_eq!(
         events[1].instruction.as_deref(),
         Some("follow-up instruction")
+    );
+    assert_eq!(
+        events[2].instruction.as_deref(),
+        Some("choose explicit active Goal")
     );
     let summary = runtime.sessions.summary(&session_id, Some(50)).unwrap();
     assert_eq!(summary.title.as_deref(), Some("root objective"));
@@ -3441,6 +3565,47 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
             .unwrap()
             .contains("webcodex.coding_workflow"),
         "workflow projection must not become Session state"
+    );
+}
+
+#[tokio::test]
+async fn work_on_project_exact_resume_omits_goal_context_without_active_goal() {
+    let root = tempfile::tempdir().unwrap();
+    let goal_store = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let goal_db = std::sync::Arc::new(
+        crate::db::Database::open(&goal_store.path().join("goals.db")).unwrap(),
+    );
+    let runtime = ToolRuntime::new_for_tests().with_communication_database(goal_db);
+    let project =
+        register_runner_project_at_path(&runtime, "wop-no-goal", "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let first = dispatch_coding_call_in_window(
+        &runtime,
+        "wop-no-goal",
+        work_on_project_call(&project, "root objective", None),
+        Some(&auth),
+        "wop-no-goal-window",
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    let session_id = first.output["session_id"].as_str().unwrap().to_string();
+
+    let resumed = dispatch_coding_call_in_window(
+        &runtime,
+        "wop-no-goal",
+        work_on_project_call(&project, "ordinary continuation", Some(&session_id)),
+        Some(&auth),
+        "wop-no-goal-window",
+    )
+    .await;
+    assert!(resumed.success, "{:?}", resumed.error);
+    assert_eq!(resumed.output["session_id"], session_id);
+    assert_eq!(resumed.output["continuation"], "resumed_explicitly");
+    assert!(
+        resumed.output.get("goal_context").is_none(),
+        "exact Session re-entry with zero active Goals must keep startup sparse"
     );
 }
 

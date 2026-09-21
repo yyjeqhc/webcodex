@@ -1458,12 +1458,28 @@ impl ToolRuntime {
         } else {
             project
         };
-        project_work_on_project_output_inner(
+        // Fresh work always starts with Goal admission still undecided. Only an
+        // explicit exact Session re-entry projects previously correlated active
+        // Goals, avoiding an unnecessary Goal-store read (and any surprising
+        // concurrent correlation observation) for a newly created Session.
+        let goal_context = session_id.as_ref().and_then(|_| {
+            startup_brief_from_output(&result.output)
+                .and_then(|brief| brief.pointer("/session/session_id"))
+                .and_then(Value::as_str)
+                .and_then(|session_id| self.active_goal_context_for_session(auth, session_id))
+        });
+        let mut projected = project_work_on_project_output_inner(
             projected_project,
             result.output,
             guidance_profile,
             Some(correlation),
-        )
+        );
+        if projected.success {
+            if let Some(goal_context) = goal_context {
+                projected.output["goal_context"] = goal_context;
+            }
+        }
+        projected
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1778,7 +1794,7 @@ impl ToolRuntime {
             existing_suggested_actions: output.get("suggested_next_actions"),
             session_changed_during_snapshot: false,
         });
-        if let Some(follow_up) = self.goal_follow_up_for_session(auth, &session_id) {
+        if let Some(follow_up) = self.active_goal_context_for_session(auth, &session_id) {
             output["goal_follow_up"] = follow_up;
         }
         let decision = finish_decision_output(&output);

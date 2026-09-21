@@ -150,7 +150,7 @@ Runtime Console, explicit activation, and push `ContinuationAdapter` behavior re
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.
 
-## Durable Goal workflow — G4/G6
+## Durable Goal workflow — G4/G6/G7
 
 Goal is high-level **durable workflow/progress truth**: fixed bounded completion
 intent and mechanical milestones, an explicit controller routing identity, and an
@@ -160,13 +160,21 @@ TaskAttempt remains the owner of concrete execution. None replaces another.
 
 The workflow is WebCodex-owned, not a repository convention. The startup brief's
 `webcodex.workflow.model_protocol`, canonical tool descriptions, and
-`single_window_goal_workflow` recommended flow direct ordinary new substantial
+`single_window_goal_workflow` recommended flow direct ordinary substantial
 multi-step or cross-turn development, fixes, refactoring, troubleshooting,
-deployment and migration through one canonical Goal admission. Tiny one-step lookups
-and trivial edits do not mechanically create one. Repository `AGENTS.md` continues
-to express repository-specific rules; it does not decide whether Goal workflow
-exists. Existing exact Goals can still be composed explicitly through the lower-level
-Goal primitives; admission never heuristically selects a recent Goal.
+deployment and migration through one canonical Goal lifecycle. On explicit exact
+Workflow Session re-entry, `work_on_project` may return owner-scoped sparse
+`goal_context` for active Goals already correlated to that Session. One candidate
+can be explicitly re-read/reused; multiple candidates remain a bounded explicit
+choice. The projection never auto-selects, binds, or completes a Goal and never
+infers identity from Project, Window, title, recency, or Session correlation itself.
+Unavailable evidence is not proof of zero active Goals. With no reusable active Goal
+context, ordinary new substantial work uses the canonical atomic Goal admission.
+Tiny one-step lookups and trivial edits do not mechanically create one. Repository
+`AGENTS.md` continues to express repository-specific rules; it does not decide
+whether Goal workflow exists. Existing exact Goals can still be composed explicitly
+through the lower-level Goal primitives; admission never heuristically selects a
+recent Goal.
 
 ```text
 ordinary new substantial work
@@ -177,6 +185,12 @@ ordinary new substantial work
   -> work; checkpoint at recovery-worthy boundaries
   -> fresh verification/review
   -> complete remaining plan steps; explicitly update_goal(completed)
+
+normal exact-Session continuation
+  -> work_on_project(session_id=exact)
+  -> optional sparse goal_context
+       # 1 active Goal: explicitly get_goal / present_goal_plan and reuse it
+       # >1 active Goals: explicitly choose; no latest/Window/Project inference
 
 optional automatic continuation
   -> reuse one exact explicit durable controller Agent

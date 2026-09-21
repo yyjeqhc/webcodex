@@ -225,6 +225,10 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .unwrap();
     for phrase in [
+        "work_on_project.goal_context",
+        "get_goal/present_goal_plan",
+        "choose explicitly among multiple candidates",
+        "never infer from Project/Window/title/recency",
         "ordinary new substantial multi-step/cross-turn",
         "prepare_goal_workflow",
         "exact current Workflow Session",

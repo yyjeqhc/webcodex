@@ -230,10 +230,10 @@ fn goal_mutation_schema() -> Value {
     ])
 }
 
-pub(super) fn goal_follow_up_schema() -> Value {
+pub(super) fn active_goal_context_schema() -> Value {
     json!({
         "type": "object", "additionalProperties": false,
-        "description": "Owned active Goals explicitly correlated to the authorized Workflow Session. Progress follow-up only; no automatic completion. When incomplete, checkpoint_goal with this exact revision; otherwise freshly verify/review completion intent and explicitly update_goal to completed. Missing authority omits this field; unavailable evidence never implies no active Goal.",
+        "description": "Owned active Goals explicitly correlated to the exact authorized Workflow Session. Identity/reuse projection only: it never selects, binds, or completes a Goal, and Session/Project/Window state never becomes Goal authority. One result may be reused explicitly; multiple results require explicit selection. When incomplete, checkpoint_goal with the exact revision; otherwise freshly verify/review completion intent and explicitly update_goal to completed. Missing authority omits this field; unavailable evidence never implies no active Goal.",
         "properties": {
             "available": {"type": "boolean"},
             "truncated": {"type": "boolean"},

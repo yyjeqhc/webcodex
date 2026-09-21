@@ -1795,7 +1795,7 @@ async fn goal_workflow_checkpoint_card_and_closeout_are_sparse_canonical_and_own
     assert!(!plan.to_string().contains("PRIVATE_OBJECTIVE"));
     let follow_up = fixture
         .runtime
-        .goal_follow_up_for_session(Some(&fixture.auth), &fixture.session_id)
+        .active_goal_context_for_session(Some(&fixture.auth), &fixture.session_id)
         .unwrap();
     assert_eq!(
         follow_up["goals"],
@@ -1809,7 +1809,7 @@ async fn goal_workflow_checkpoint_card_and_closeout_are_sparse_canonical_and_own
     assert!(follow_up.to_string().len() < 512);
     assert!(fixture
         .runtime
-        .goal_follow_up_for_session(
+        .active_goal_context_for_session(
             Some(&goal_activity_auth("foreign-closeout")),
             &fixture.session_id
         )
@@ -1822,7 +1822,7 @@ async fn goal_workflow_checkpoint_card_and_closeout_are_sparse_canonical_and_own
     );
     assert!(fixture
         .runtime
-        .goal_follow_up_for_session(Some(&fixture.auth), &other.session_id)
+        .active_goal_context_for_session(Some(&fixture.auth), &other.session_id)
         .is_none());
     let goal = fixture
         .db

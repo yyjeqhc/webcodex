@@ -838,10 +838,11 @@ impl ToolRuntime {
         }
     }
 
-    /// Sparse Goal follow-up for an independently authorized exact Workflow
-    /// Session. This does not complete Goals or reuse Session authority as Goal
-    /// authority. Inaccessible Goal metadata is never exposed through closeout.
-    pub(crate) fn goal_follow_up_for_session(
+    /// Sparse active Goal context for an independently authorized exact Workflow
+    /// Session. Callers must authorize the Session separately; this projection
+    /// never turns Session correlation into Goal authority, chooses one Goal,
+    /// or completes Goals. Inaccessible Goal metadata is never exposed.
+    pub(crate) fn active_goal_context_for_session(
         &self,
         auth: Option<&AuthContext>,
         session_id: &str,

@@ -37,7 +37,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "work_on_project" => Some(work_on_project_output_schema()),
         "finish_coding_task" => Some(wrapped_output_schema(vec![
-            ("goal_follow_up", super::goals::goal_follow_up_schema()),
+            ("goal_follow_up", super::goals::active_goal_context_schema()),
             (
                 "summary_only",
                 schema_type("boolean", "True only for compact summary_only output."),
@@ -1266,6 +1266,10 @@ fn work_on_project_output_schema() -> Value {
         (
             "continuation",
             schema_type("string", "created, continued, or resumed_explicitly."),
+        ),
+        (
+            "goal_context",
+            super::goals::active_goal_context_schema(),
         ),
         (
             "execution_context",

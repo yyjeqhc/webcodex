@@ -16,6 +16,50 @@ const BROWSER_WAIT_SECS: u64 = 30;
 const MAX_BROWSER_TARGETS: usize = 64;
 const MAX_BROWSER_PAGES: usize = 32;
 
+fn browser_snapshot_payload(
+    browser_id: &str,
+    page_id: &str,
+    mode: &str,
+    max_nodes: Option<usize>,
+    max_depth: Option<u32>,
+) -> Value {
+    let mut payload = json!({
+        "browser_id": browser_id,
+        "page_id": page_id,
+    });
+    if mode != "auto" {
+        payload["mode"] = json!(mode);
+    }
+    if let Some(max_nodes) = max_nodes {
+        payload["max_nodes"] = json!(max_nodes);
+    }
+    if let Some(max_depth) = max_depth {
+        payload["max_depth"] = json!(max_depth);
+    }
+    payload
+}
+
+fn browser_diagnostics_payload(
+    browser_id: &str,
+    page_id: &str,
+    include_all_console: bool,
+    include_all_network: bool,
+    since_cursor: Option<u64>,
+) -> Value {
+    let mut payload = json!({
+        "browser_id": browser_id,
+        "page_id": page_id,
+        "include_all_console": include_all_console,
+        "include_all_network": include_all_network,
+    });
+    if let Some(since_cursor) = since_cursor {
+        payload["since_cursor"] = json!(since_cursor);
+    }
+    payload
+}
+
+
+
 fn browser_observe_policy(call: &BrowserObserveToolCall) -> SpecializedOperationPolicy {
     SpecializedOperationPolicy::read(
         SpecializedSource::Browser,
@@ -172,11 +216,20 @@ impl ToolRuntime {
                 client_id,
                 browser_id,
                 page_id,
+                mode,
+                max_nodes,
+                max_depth,
             }) => {
                 self.dispatch_browser_request(
                     &client_id,
                     "browser_snapshot",
-                    json!({"browser_id": browser_id, "page_id": page_id}),
+                    browser_snapshot_payload(
+                        &browser_id,
+                        &page_id,
+                        mode.as_str(),
+                        max_nodes,
+                        max_depth,
+                    ),
                     auth,
                     false,
                     BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
@@ -214,14 +267,28 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::BrowserObserve(BrowserObserveToolCall::Diagnostics {
-                client_id, browser_id, page_id, include_all_console, include_all_network,
+                client_id,
+                browser_id,
+                page_id,
+                include_all_console,
+                include_all_network,
+                since_cursor,
             }) => {
                 self.dispatch_browser_request(
-                    &client_id, "browser_diagnostics",
-                    json!({"browser_id": browser_id, "page_id": page_id,
-                        "include_all_console": include_all_console, "include_all_network": include_all_network}),
-                    auth, false, BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
-                ).await
+                    &client_id,
+                    "browser_diagnostics",
+                    browser_diagnostics_payload(
+                        &browser_id,
+                        &page_id,
+                        include_all_console,
+                        include_all_network,
+                        since_cursor,
+                    ),
+                    auth,
+                    false,
+                    BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
+                )
+                .await
             }
             ToolCall::BrowserObserve(BrowserObserveToolCall::Screenshot {
                 client_id,
@@ -280,13 +347,19 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::BrowserAct(BrowserActToolCall::Reload {
-                client_id, browser_id, page_id,
+                client_id,
+                browser_id,
+                page_id,
             }) => {
                 self.dispatch_browser_request(
-                    &client_id, "browser_reload",
+                    &client_id,
+                    "browser_reload",
                     json!({"browser_id": browser_id, "page_id": page_id}),
-                    auth, true, BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
-                ).await
+                    auth,
+                    true,
+                    BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
+                )
+                .await
             }
             ToolCall::BrowserAct(BrowserActToolCall::Click {
                 client_id,
@@ -440,13 +513,19 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::BrowserAct(BrowserActToolCall::ClearDiagnostics {
-                client_id, browser_id, page_id,
+                client_id,
+                browser_id,
+                page_id,
             }) => {
                 self.dispatch_browser_request(
-                    &client_id, "browser_clear_diagnostics",
+                    &client_id,
+                    "browser_clear_diagnostics",
                     json!({"browser_id": browser_id, "page_id": page_id}),
-                    auth, true, BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
-                ).await
+                    auth,
+                    true,
+                    BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
+                )
+                .await
             }
             ToolCall::BrowserAct(BrowserActToolCall::ClosePage {
                 client_id,
@@ -952,6 +1031,50 @@ fn browser_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enhanced_browser_payloads_preserve_legacy_default_wire_shape() {
+        let snapshot = browser_snapshot_payload(
+            "browser_abcdefghijklmnop",
+            "page_abcdefghijklmnop",
+            "auto",
+            None,
+            None,
+        );
+        assert_eq!(snapshot["browser_id"], "browser_abcdefghijklmnop");
+        assert_eq!(snapshot["page_id"], "page_abcdefghijklmnop");
+        assert!(snapshot.get("mode").is_none());
+        assert!(snapshot.get("max_nodes").is_none());
+        assert!(snapshot.get("max_depth").is_none());
+
+        let enhanced = browser_snapshot_payload(
+            "browser_abcdefghijklmnop",
+            "page_abcdefghijklmnop",
+            "interactive",
+            Some(48),
+            Some(10),
+        );
+        assert_eq!(enhanced["mode"], "interactive");
+        assert_eq!(enhanced["max_nodes"], 48);
+        assert_eq!(enhanced["max_depth"], 10);
+
+        let diagnostics = browser_diagnostics_payload(
+            "browser_abcdefghijklmnop",
+            "page_abcdefghijklmnop",
+            false,
+            false,
+            None,
+        );
+        assert!(diagnostics.get("since_cursor").is_none());
+        let delta = browser_diagnostics_payload(
+            "browser_abcdefghijklmnop",
+            "page_abcdefghijklmnop",
+            false,
+            false,
+            Some(42),
+        );
+        assert_eq!(delta["since_cursor"], 42);
+    }
 
     #[test]
     fn browser_policy_matrix_is_action_sensitive_and_never_shell_like() {

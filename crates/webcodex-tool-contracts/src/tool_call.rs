@@ -550,6 +550,25 @@ impl HostFileImportProvenance {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSnapshotModeCall {
+    #[default]
+    Auto,
+    Full,
+    Interactive,
+}
+
+impl BrowserSnapshotModeCall {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Full => "full",
+            Self::Interactive => "interactive",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserObserveToolCall {
@@ -577,6 +596,14 @@ pub enum BrowserObserveToolCall {
         #[schemars(length(min = 1, max = 128))]
         #[schemars(regex(pattern = "^page_[A-Za-z0-9_-]{16,64}$"))]
         page_id: String,
+        #[serde(default)]
+        mode: BrowserSnapshotModeCall,
+        #[schemars(range(min = 1, max = 256))]
+        #[serde(default)]
+        max_nodes: Option<usize>,
+        #[schemars(range(min = 1, max = 32))]
+        #[serde(default)]
+        max_depth: Option<u32>,
     },
     Console {
         #[schemars(length(min = 1, max = 128))]
@@ -611,6 +638,8 @@ pub enum BrowserObserveToolCall {
         include_all_console: bool,
         #[serde(default)]
         include_all_network: bool,
+        #[serde(default)]
+        since_cursor: Option<u64>,
     },
     Screenshot {
         #[schemars(length(min = 1, max = 128))]

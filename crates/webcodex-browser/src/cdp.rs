@@ -1,9 +1,10 @@
 use crate::types::{
-    clip_bytes, BrowserError, BrowserKey, BrowserResult, LAUNCH_TIMEOUT, MAX_NODE_TEXT_BYTES,
-    MAX_PAGES_PER_BROWSER, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_NODES, REQUEST_TIMEOUT,
+    clip_bytes, BrowserError, BrowserKey, BrowserResult, BrowserStability, LAUNCH_TIMEOUT,
+    MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_NODES,
+    REQUEST_TIMEOUT,
 };
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ pub(crate) trait BackendFactory: Send + Sync {
 pub(crate) trait BrowserBackend: Send {
     fn pages(&mut self) -> BrowserResult<Vec<BackendPage>>;
     fn new_page(&mut self) -> BrowserResult<String>;
-    fn snapshot(&mut self, target_id: &str) -> BrowserResult<BackendSnapshot>;
+    fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot>;
     fn screenshot(&mut self, target_id: &str) -> BrowserResult<BackendScreenshot>;
     fn console(
         &mut self,
@@ -35,6 +36,7 @@ pub(crate) trait BrowserBackend: Send {
         &mut self,
         target_id: &str,
     ) -> BrowserResult<BackendEventSnapshot<BackendNetworkEntry>>;
+    fn diagnostics(&mut self, target_id: &str) -> BrowserResult<BackendDiagnosticsSnapshot>;
     fn clear_diagnostics(&mut self, target_id: &str) -> BrowserResult<()>;
     fn navigate(&mut self, target_id: &str, url: &str) -> BrowserResult<()>;
     fn reload(&mut self, target_id: &str) -> BrowserResult<()>;
@@ -64,6 +66,11 @@ pub(crate) trait BrowserBackend: Send {
         path: &Path,
     ) -> BrowserResult<()>;
     fn key(&mut self, target_id: &str, key: BrowserKey) -> BrowserResult<()>;
+    fn wait_for_stable(
+        &mut self,
+        target_id: &str,
+        timeout: Duration,
+    ) -> BrowserResult<BrowserStability>;
     fn close_page(&mut self, target_id: &str) -> BrowserResult<()>;
     fn shutdown(&mut self, timeout: Duration) -> BrowserResult<()>;
 }
@@ -76,7 +83,7 @@ pub(crate) struct BackendPage {
     pub(crate) document_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct BackendNode {
     pub(crate) role: String,
     pub(crate) name: Option<String>,
@@ -110,6 +117,7 @@ pub(crate) struct BackendScreenshot {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BackendConsoleEntry {
+    pub(crate) sequence: u64,
     pub(crate) level: String,
     pub(crate) text: String,
     pub(crate) source: Option<String>,
@@ -118,6 +126,7 @@ pub(crate) struct BackendConsoleEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BackendNetworkEntry {
+    pub(crate) sequence: u64,
     pub(crate) method: String,
     pub(crate) url: String,
     pub(crate) resource_type: Option<String>,
@@ -130,6 +139,15 @@ pub(crate) struct BackendNetworkEntry {
 pub(crate) struct BackendEventSnapshot<T> {
     pub(crate) entries: Vec<T>,
     pub(crate) truncated: bool,
+    pub(crate) cursor: u64,
+    pub(crate) oldest_sequence: Option<u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct BackendDiagnosticsSnapshot {
+    pub(crate) console: BackendEventSnapshot<BackendConsoleEntry>,
+    pub(crate) network: BackendEventSnapshot<BackendNetworkEntry>,
+    pub(crate) cursor: u64,
 }
 
 #[derive(Default)]
@@ -139,10 +157,18 @@ struct CdpEventBuffer {
     network: HashMap<String, BackendNetworkEntry>,
     network_order: VecDeque<String>,
     network_truncated: bool,
+    pending_network: HashSet<String>,
+    next_sequence: u64,
 }
 
 impl CdpEventBuffer {
-    fn push_console(&mut self, entry: BackendConsoleEntry) {
+    fn next_sequence(&mut self) -> u64 {
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.next_sequence
+    }
+
+    fn push_console(&mut self, mut entry: BackendConsoleEntry) {
+        entry.sequence = self.next_sequence();
         if self.console.len() >= crate::types::MAX_CONSOLE_ENTRIES {
             self.console.pop_front();
             self.console_truncated = true;
@@ -150,7 +176,9 @@ impl CdpEventBuffer {
         self.console.push_back(entry);
     }
 
-    fn insert_network(&mut self, request_id: String, entry: BackendNetworkEntry) {
+    fn insert_network(&mut self, request_id: String, mut entry: BackendNetworkEntry) {
+        entry.sequence = self.next_sequence();
+        self.pending_network.insert(request_id.clone());
         if self.network.contains_key(&request_id) {
             self.network_order
                 .retain(|existing| existing != &request_id);
@@ -164,12 +192,45 @@ impl CdpEventBuffer {
         self.network_order.push_back(request_id);
     }
 
+    fn update_network<F>(&mut self, request_id: &str, update: F)
+    where
+        F: FnOnce(&mut BackendNetworkEntry),
+    {
+        let sequence = self.next_sequence();
+        if let Some(entry) = self.network.get_mut(request_id) {
+            update(entry);
+            entry.sequence = sequence;
+        }
+    }
+
+    fn finish_network(&mut self, request_id: &str) {
+        self.pending_network.remove(request_id);
+        self.update_network(request_id, |_| {});
+    }
+
     fn clear(&mut self) {
         self.console.clear();
         self.console_truncated = false;
         self.network.clear();
         self.network_order.clear();
         self.network_truncated = false;
+        self.pending_network.clear();
+    }
+
+    fn cursor(&self) -> u64 {
+        self.next_sequence
+    }
+
+    fn pending_count(&self) -> usize {
+        self.pending_network.len()
+    }
+
+    fn console_oldest_sequence(&self) -> Option<u64> {
+        self.console.front().map(|entry| entry.sequence)
+    }
+
+    fn network_oldest_sequence(&self) -> Option<u64> {
+        self.network.values().map(|entry| entry.sequence).min()
     }
 }
 
@@ -677,7 +738,7 @@ impl BrowserBackend for CdpBackend {
             })
     }
 
-    fn snapshot(&mut self, target_id: &str) -> BrowserResult<BackendSnapshot> {
+    fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         let frame_tree =
             self.page_call_until(target_id, "Page.getFrameTree", json!({}), false, deadline)?;
@@ -689,7 +750,7 @@ impl BrowserBackend for CdpBackend {
         let accessibility = self.page_call_until(
             target_id,
             "Accessibility.getFullAXTree",
-            json!({ "depth": 32 }),
+            json!({ "depth": max_depth.clamp(1, 32) }),
             false,
             deadline,
         )?;
@@ -816,6 +877,8 @@ impl BrowserBackend for CdpBackend {
         Ok(BackendEventSnapshot {
             entries: collector.events.console.iter().cloned().collect(),
             truncated: collector.events.console_truncated,
+            cursor: collector.events.cursor(),
+            oldest_sequence: collector.events.console_oldest_sequence(),
         })
     }
 
@@ -843,6 +906,40 @@ impl BrowserBackend for CdpBackend {
         Ok(BackendEventSnapshot {
             entries: values,
             truncated: collector.events.network_truncated,
+            cursor: collector.events.cursor(),
+            oldest_sequence: collector.events.network_oldest_sequence(),
+        })
+    }
+
+    fn diagnostics(&mut self, target_id: &str) -> BrowserResult<BackendDiagnosticsSnapshot> {
+        self.ensure_event_collector(target_id)?;
+        self.drain_target_collector(target_id)?;
+        let collector = self
+            .collectors
+            .get(target_id)
+            .expect("collector survives successful drain");
+        let cursor = collector.events.cursor();
+        let mut network = collector
+            .events
+            .network
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        network.sort_by_key(|entry| entry.sequence);
+        Ok(BackendDiagnosticsSnapshot {
+            console: BackendEventSnapshot {
+                entries: collector.events.console.iter().cloned().collect(),
+                truncated: collector.events.console_truncated,
+                cursor,
+                oldest_sequence: collector.events.console_oldest_sequence(),
+            },
+            network: BackendEventSnapshot {
+                entries: network,
+                truncated: collector.events.network_truncated,
+                cursor,
+                oldest_sequence: collector.events.network_oldest_sequence(),
+            },
+            cursor,
         })
     }
 
@@ -877,6 +974,7 @@ impl BrowserBackend for CdpBackend {
     }
 
     fn click(&mut self, target_id: &str, backend_node_id: i64) -> BrowserResult<()> {
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         // CDP mouse coordinates are viewport-relative. Ensure off-screen
         // controls are visible before deriving the box-model click point.
@@ -951,6 +1049,7 @@ impl BrowserBackend for CdpBackend {
         backend_node_id: i64,
         text: &str,
     ) -> BrowserResult<()> {
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.page_call_until(
             target_id,
@@ -1006,6 +1105,7 @@ impl BrowserBackend for CdpBackend {
             }
             return { ok: true };
         }"#;
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.call_element_function_until(
             target_id,
@@ -1058,6 +1158,7 @@ impl BrowserBackend for CdpBackend {
             }
             return { ok: true };
         }"#;
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.call_element_function_until(target_id, backend_node_id, SET_VALUE, value, deadline)
     }
@@ -1074,6 +1175,7 @@ impl BrowserBackend for CdpBackend {
                 "Browser upload path is not representable as a CDP UTF-8 path",
             )
         })?;
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.page_call_until(
             target_id,
@@ -1090,6 +1192,7 @@ impl BrowserBackend for CdpBackend {
     }
 
     fn key(&mut self, target_id: &str, key: BrowserKey) -> BrowserResult<()> {
+        self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         let (key_name, code, text) = key.cdp();
         self.page_call_until(
@@ -1117,6 +1220,130 @@ impl BrowserBackend for CdpBackend {
         )
         .map(|_| ())
         .map_err(|error| post_effect_error(error, "snapshot"))
+    }
+
+    fn wait_for_stable(
+        &mut self,
+        target_id: &str,
+        timeout: Duration,
+    ) -> BrowserResult<BrowserStability> {
+        const QUIET_PERIOD: Duration = Duration::from_millis(250);
+        const LONG_LIVED_NETWORK_QUIET_PERIOD: Duration = Duration::from_millis(750);
+        const POLL_INTERVAL: Duration = Duration::from_millis(75);
+        const STABILITY_EXPRESSION: &str = r#"JSON.stringify({
+            ready: document.readyState,
+            href: location.href,
+            elements: document.getElementsByTagName("*").length,
+            text: document.body ? document.body.innerText.length : 0
+        })"#;
+
+        let started = Instant::now();
+        let deadline = started + timeout;
+        let mut last_signature: Option<String> = None;
+        let mut last_event_cursor: Option<u64> = None;
+        let mut quiet_since: Option<Instant> = None;
+        let mut last_reason = "deadline".to_string();
+
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(BrowserStability {
+                    stable: false,
+                    waited_ms: started.elapsed().as_millis() as u64,
+                    reason: last_reason,
+                });
+            }
+
+            if self.ensure_event_collector(target_id).is_err()
+                || self.drain_target_collector(target_id).is_err()
+            {
+                last_reason = "collector_recovering".to_string();
+                std::thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(now)));
+                continue;
+            }
+
+            let (pending, event_cursor) = self
+                .collectors
+                .get(target_id)
+                .map(|collector| (collector.events.pending_count(), collector.events.cursor()))
+                .unwrap_or((0, 0));
+            let observed = self.page_call_until(
+                target_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": STABILITY_EXPRESSION,
+                    "returnByValue": true,
+                    "awaitPromise": false
+                }),
+                false,
+                deadline,
+            );
+
+            let Ok(observed) = observed else {
+                last_reason = "document_recovering".to_string();
+                std::thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(now)));
+                continue;
+            };
+            let Some(signature) = observed
+                .pointer("/result/value")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                last_reason = "document_unavailable".to_string();
+                std::thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(now)));
+                continue;
+            };
+            let ready = serde_json::from_str::<Value>(&signature)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("ready")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .is_some_and(|state| state != "loading");
+
+            let dom_unchanged = last_signature.as_deref() == Some(signature.as_str());
+            let network_unchanged = last_event_cursor == Some(event_cursor);
+            if ready && dom_unchanged && network_unchanged {
+                let since = quiet_since.get_or_insert(now);
+                let required_quiet = if pending == 0 {
+                    QUIET_PERIOD
+                } else {
+                    LONG_LIVED_NETWORK_QUIET_PERIOD
+                };
+                if since.elapsed() >= required_quiet {
+                    return Ok(BrowserStability {
+                        stable: true,
+                        waited_ms: started.elapsed().as_millis() as u64,
+                        reason: if pending == 0 {
+                            "dom_and_network_quiet".to_string()
+                        } else {
+                            "dom_quiet_with_long_lived_network".to_string()
+                        },
+                    });
+                }
+                last_reason = if pending == 0 {
+                    "quiet_period".to_string()
+                } else {
+                    "long_lived_network_quiet_period".to_string()
+                };
+            } else {
+                quiet_since = ready.then_some(now);
+                last_reason = if !ready {
+                    "document_loading".to_string()
+                } else if !dom_unchanged {
+                    "dom_changed".to_string()
+                } else {
+                    "network_changed".to_string()
+                };
+            }
+            last_signature = Some(signature);
+            last_event_cursor = Some(event_cursor);
+            std::thread::sleep(
+                POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
     }
 
     fn close_page(&mut self, target_id: &str) -> BrowserResult<()> {
@@ -1497,6 +1724,7 @@ fn record_cdp_event(buffer: &mut CdpEventBuffer, value: &Value) {
                 })
                 .unwrap_or_default();
             buffer.push_console(BackendConsoleEntry {
+                sequence: 0,
                 level: clip_bytes(level, 64),
                 text: clip_bytes(&text, crate::types::MAX_DIAGNOSTIC_TEXT_BYTES),
                 source: None,
@@ -1506,6 +1734,7 @@ fn record_cdp_event(buffer: &mut CdpEventBuffer, value: &Value) {
         Some("Runtime.exceptionThrown") => {
             let details = params.get("exceptionDetails").cloned().unwrap_or_default();
             buffer.push_console(BackendConsoleEntry {
+                sequence: 0,
                 level: "exception".to_string(),
                 text: clip_bytes(
                     details
@@ -1524,6 +1753,7 @@ fn record_cdp_event(buffer: &mut CdpEventBuffer, value: &Value) {
         Some("Log.entryAdded") => {
             let entry = value.pointer("/params/entry").cloned().unwrap_or_default();
             buffer.push_console(BackendConsoleEntry {
+                sequence: 0,
                 level: clip_bytes(
                     entry.get("level").and_then(Value::as_str).unwrap_or("info"),
                     64,
@@ -1550,6 +1780,7 @@ fn record_cdp_event(buffer: &mut CdpEventBuffer, value: &Value) {
             buffer.insert_network(
                 request_id.to_string(),
                 BackendNetworkEntry {
+                    sequence: 0,
                     method: clip_bytes(
                         request
                             .get("method")
@@ -1579,23 +1810,28 @@ fn record_cdp_event(buffer: &mut CdpEventBuffer, value: &Value) {
                 return;
             };
             let response = params.get("response").cloned().unwrap_or_default();
-            if let Some(entry) = buffer.network.get_mut(request_id) {
-                entry.status = response
-                    .get("status")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as u16);
-            }
+            let status = response
+                .get("status")
+                .and_then(Value::as_f64)
+                .map(|value| value as u16);
+            buffer.update_network(request_id, |entry| entry.status = status);
         }
         Some("Network.loadingFailed") => {
             let Some(request_id) = params.get("requestId").and_then(Value::as_str) else {
                 return;
             };
-            if let Some(entry) = buffer.network.get_mut(request_id) {
-                entry.failed_reason = params
-                    .get("errorText")
-                    .and_then(Value::as_str)
-                    .map(|s| clip_bytes(s, 512));
-            }
+            let failed_reason = params
+                .get("errorText")
+                .and_then(Value::as_str)
+                .map(|value| clip_bytes(value, 512));
+            buffer.update_network(request_id, |entry| entry.failed_reason = failed_reason);
+            buffer.finish_network(request_id);
+        }
+        Some("Network.loadingFinished") => {
+            let Some(request_id) = params.get("requestId").and_then(Value::as_str) else {
+                return;
+            };
+            buffer.finish_network(request_id);
         }
         _ => {}
     }
@@ -2114,6 +2350,7 @@ Connection: close
             events: CdpEventBuffer::default(),
         };
         collector.events.push_console(BackendConsoleEntry {
+            sequence: 0,
             level: "error".into(),
             text: "stale-buffer".into(),
             source: None,
@@ -2221,6 +2458,7 @@ Connection: close
             events: CdpEventBuffer::default(),
         };
         collector.events.push_console(BackendConsoleEntry {
+            sequence: 0,
             level: "error".into(),
             text: "buffered-before-clear".into(),
             source: None,
@@ -2261,6 +2499,7 @@ Connection: close
             events: CdpEventBuffer::default(),
         };
         collector.events.push_console(BackendConsoleEntry {
+            sequence: 0,
             level: "error".into(),
             text: "must-survive-failed-clear".into(),
             source: None,

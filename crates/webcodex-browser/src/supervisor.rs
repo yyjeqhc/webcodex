@@ -3,19 +3,18 @@ use crate::cdp::{
 };
 use crate::types::{
     clip_bytes, clip_chars, validate_navigation_url, BrowserError, BrowserKey, BrowserResult,
-    BrowserShutdownReport, BrowserSummary, PageSummary, Screenshot, SemanticNode, SemanticSnapshot,
-    BROWSER_IDLE_TIMEOUT, MAX_BROWSERS, MAX_BROWSER_LIFETIME, MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION,
-    MAX_INPUT_TEXT_BYTES, MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_PAGE_SUMMARIES,
-    MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_NODES, SHUTDOWN_TIMEOUT,
+    BrowserShutdownReport, BrowserStability, BrowserSummary, PageSummary, Screenshot, SemanticNode,
+    SemanticSnapshot, SnapshotMode, BROWSER_IDLE_TIMEOUT, MAX_BROWSERS, MAX_BROWSER_LIFETIME,
+    MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION, MAX_INPUT_TEXT_BYTES, MAX_NODE_TEXT_BYTES,
+    MAX_PAGES_PER_BROWSER, MAX_PAGE_SUMMARIES, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_NODES,
+    SHUTDOWN_TIMEOUT,
 };
 use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 // Keep non-image Browser observations below the Server's ordinary 256 KiB
@@ -25,6 +24,9 @@ const BROWSER_OBSERVATION_ENVELOPE_RESERVE_BYTES: usize = 8 * 1024;
 const BROWSER_OBSERVATION_ENTRIES_BYTES: usize =
     MAX_BROWSER_OBSERVATION_RESULT_BYTES - BROWSER_OBSERVATION_ENVELOPE_RESERVE_BYTES;
 const DIAGNOSTIC_SECTION_ENTRIES_BYTES: usize = BROWSER_OBSERVATION_ENTRIES_BYTES / 2;
+const AUTO_SNAPSHOT_COMPACT_NODES: usize = 128;
+const DEFAULT_SNAPSHOT_DEPTH: u32 = 32;
+const ACTION_STABILITY_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Clone)]
 pub struct BrowserSupervisor {
@@ -238,15 +240,32 @@ impl BrowserSupervisor {
         })
     }
 
-    pub fn snapshot(&self, browser_id: &str, page_id: &str) -> BrowserResult<SemanticSnapshot> {
+    pub fn snapshot(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        mode: SnapshotMode,
+        max_nodes: usize,
+        max_depth: u32,
+    ) -> BrowserResult<SemanticSnapshot> {
         self.touch_current(browser_id)?;
+        let max_nodes = max_nodes.clamp(1, MAX_SNAPSHOT_NODES);
+        let max_depth = max_depth.clamp(1, DEFAULT_SNAPSHOT_DEPTH);
         let mut state = self.operation_state()?;
         let runtime = state
             .browsers
             .get_mut(browser_id)
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
-        let snapshot = runtime.backend.snapshot(&target_id)?;
+        let snapshot = runtime.backend.snapshot(&target_id, max_depth)?;
+        let auto_compacted = mode == SnapshotMode::Auto
+            && should_auto_compact_snapshot(&snapshot.nodes, snapshot.truncated, max_nodes);
+        let effective_mode = match mode {
+            SnapshotMode::Auto if auto_compacted => SnapshotMode::Interactive,
+            SnapshotMode::Auto => SnapshotMode::Full,
+            other => other,
+        };
+
         runtime.generation = runtime.generation.saturating_add(1);
         let generation = runtime.generation;
         runtime.elements.clear();
@@ -254,12 +273,18 @@ impl BrowserSupervisor {
             page.document_id = snapshot.document_id.clone();
             page.snapshot_generation = generation;
         }
+
+        let source_nodes = snapshot
+            .nodes
+            .into_iter()
+            .filter(|node| effective_mode != SnapshotMode::Interactive || node.actionable)
+            .collect::<Vec<_>>();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = snapshot.truncated;
+        let mut truncated = snapshot.truncated || source_nodes.len() > max_nodes;
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
-        for node in snapshot.nodes.into_iter().take(MAX_SNAPSHOT_NODES) {
+        for node in source_nodes.into_iter().take(max_nodes) {
             let group_id = node.group_key.as_ref().map(|key| {
                 group_ids
                     .entry(key.clone())
@@ -286,6 +311,10 @@ impl BrowserSupervisor {
             browser_id: browser_id.to_string(),
             page_id: page_id.to_string(),
             snapshot_generation: generation,
+            snapshot_mode: effective_mode.as_str().to_string(),
+            auto_compacted,
+            max_nodes,
+            max_depth,
             node_count: nodes.len(),
             truncated,
             nodes,
@@ -324,6 +353,7 @@ impl BrowserSupervisor {
         let (entries, projection_truncated) =
             bounded_recent_json_entries(entries, BROWSER_OBSERVATION_ENTRIES_BYTES);
         Ok(serde_json::json!({
+            "cursor": snapshot.cursor,
             "retained_count": retained_count,
             "count": entries.len(),
             "truncated": snapshot.truncated || projection_truncated,
@@ -352,6 +382,7 @@ impl BrowserSupervisor {
         let (entries, projection_truncated) =
             bounded_recent_json_entries(entries, BROWSER_OBSERVATION_ENTRIES_BYTES);
         Ok(serde_json::json!({
+            "cursor": snapshot.cursor,
             "retained_count": retained_count,
             "count": entries.len(),
             "truncated": snapshot.truncated || projection_truncated,
@@ -365,6 +396,7 @@ impl BrowserSupervisor {
         page_id: &str,
         include_all_console: bool,
         include_all_network: bool,
+        since_cursor: Option<u64>,
     ) -> BrowserResult<serde_json::Value> {
         self.touch_current(browser_id)?;
         let mut state = self.operation_state()?;
@@ -373,12 +405,68 @@ impl BrowserSupervisor {
             .get_mut(browser_id)
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
-        let console_snapshot = runtime.backend.console(&target_id)?;
-        let network_snapshot = runtime.backend.network(&target_id)?;
-        let console_retained = console_snapshot.entries.len();
-        let network_retained = network_snapshot.entries.len();
-        let console = console_snapshot
+        let snapshot = runtime.backend.diagnostics(&target_id)?;
+        let since_cursor = since_cursor.unwrap_or(0);
+        if since_cursor > snapshot.cursor {
+            return Err(BrowserError::not_started(
+                "invalid_diagnostics_cursor",
+                "diagnostics cursor is newer than the current page event stream",
+            ));
+        }
+
+        let console_retained = snapshot.console.entries.len();
+        let network_retained = snapshot.network.entries.len();
+        let delta_truncated = since_cursor > 0
+            && ((snapshot.console.truncated
+                && snapshot
+                    .console
+                    .oldest_sequence
+                    .is_some_and(|oldest| since_cursor.saturating_add(1) < oldest))
+                || (snapshot.network.truncated
+                    && snapshot
+                        .network
+                        .oldest_sequence
+                        .is_some_and(|oldest| since_cursor.saturating_add(1) < oldest)));
+
+        let new_console_entries = snapshot
+            .console
             .entries
+            .into_iter()
+            .filter(|entry| entry.sequence > since_cursor)
+            .collect::<Vec<_>>();
+        let new_network_entries = snapshot
+            .network
+            .entries
+            .into_iter()
+            .filter(|entry| entry.sequence > since_cursor)
+            .collect::<Vec<_>>();
+
+        let new_console_errors = new_console_entries
+            .iter()
+            .filter(|entry| matches!(entry.level.as_str(), "error" | "exception"))
+            .count();
+        let new_console_warnings = new_console_entries
+            .iter()
+            .filter(|entry| matches!(entry.level.as_str(), "warning" | "warn"))
+            .count();
+        let new_failed_requests = new_network_entries
+            .iter()
+            .filter(|entry| entry.failed_reason.is_some())
+            .count();
+        let new_4xx = new_network_entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .status
+                    .is_some_and(|status| (400..500).contains(&status))
+            })
+            .count();
+        let new_5xx = new_network_entries
+            .iter()
+            .filter(|entry| entry.status.is_some_and(|status| status >= 500))
+            .count();
+
+        let console = new_console_entries
             .into_iter()
             .filter(|entry| {
                 include_all_console
@@ -391,8 +479,7 @@ impl BrowserSupervisor {
                 "level": entry.level, "text": entry.text, "source": entry.source, "timestamp": entry.timestamp
             }))
             .collect::<Vec<_>>();
-        let network = network_snapshot
-            .entries
+        let network = new_network_entries
             .into_iter()
             .filter(|entry| {
                 include_all_network
@@ -410,13 +497,21 @@ impl BrowserSupervisor {
         let (network, network_truncated) =
             bounded_recent_json_entries(network, DIAGNOSTIC_SECTION_ENTRIES_BYTES);
         Ok(serde_json::json!({
+            "cursor": snapshot.cursor,
+            "since_cursor": since_cursor,
+            "delta_truncated": delta_truncated,
+            "new_console_errors": new_console_errors,
+            "new_console_warnings": new_console_warnings,
+            "new_failed_requests": new_failed_requests,
+            "new_4xx": new_4xx,
+            "new_5xx": new_5xx,
             "console_retained": console_retained,
             "console_count": console.len(),
-            "console_truncated": console_snapshot.truncated || console_truncated,
+            "console_truncated": snapshot.console.truncated || console_truncated,
             "console": console,
             "network_retained": network_retained,
             "network_count": network.len(),
-            "network_truncated": network_snapshot.truncated || network_truncated,
+            "network_truncated": snapshot.network.truncated || network_truncated,
             "network": network,
         }))
     }
@@ -432,7 +527,12 @@ impl BrowserSupervisor {
         runtime.backend.clear_diagnostics(&target_id)
     }
 
-    pub fn navigate(&self, browser_id: &str, page_id: &str, url: &str) -> BrowserResult<()> {
+    pub fn navigate(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        url: &str,
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         validate_navigation_url(url)?;
         let mut state = self.operation_state()?;
@@ -444,10 +544,11 @@ impl BrowserSupervisor {
         // Navigation can replace the document. Fence prior element authority before
         // dispatch; uncertain outcomes remain stale rather than silently retargeting.
         runtime.invalidate_elements_for_page(page_id);
-        runtime.backend.navigate(&target_id, url)
+        runtime.backend.navigate(&target_id, url)?;
+        Ok(runtime.wait_after_effect(&target_id))
     }
 
-    pub fn reload(&self, browser_id: &str, page_id: &str) -> BrowserResult<()> {
+    pub fn reload(&self, browser_id: &str, page_id: &str) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         let mut state = self.operation_state()?;
         let runtime = state
@@ -456,10 +557,16 @@ impl BrowserSupervisor {
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
         runtime.invalidate_elements_for_page(page_id);
-        runtime.backend.reload(&target_id)
+        runtime.backend.reload(&target_id)?;
+        Ok(runtime.wait_after_effect(&target_id))
     }
 
-    pub fn click(&self, browser_id: &str, page_id: &str, element_id: &str) -> BrowserResult<()> {
+    pub fn click(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        element_id: &str,
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         self.element_effect(browser_id, page_id, element_id, |backend, target, node| {
             backend.click(target, node)
@@ -472,7 +579,7 @@ impl BrowserSupervisor {
         page_id: &str,
         element_id: &str,
         text: &str,
-    ) -> BrowserResult<()> {
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         if text.is_empty() || text.contains('\0') || text.len() > MAX_INPUT_TEXT_BYTES {
             return Err(BrowserError::not_started(
@@ -491,7 +598,7 @@ impl BrowserSupervisor {
         page_id: &str,
         element_id: &str,
         option: &str,
-    ) -> BrowserResult<()> {
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         if option.is_empty() || option.contains('\0') || option.len() > MAX_INPUT_TEXT_BYTES {
             return Err(BrowserError::not_started(
@@ -510,7 +617,7 @@ impl BrowserSupervisor {
         page_id: &str,
         element_id: &str,
         value: &str,
-    ) -> BrowserResult<()> {
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         if value.is_empty() || value.contains('\0') || value.len() > MAX_INPUT_TEXT_BYTES {
             return Err(BrowserError::not_started(
@@ -529,14 +636,19 @@ impl BrowserSupervisor {
         page_id: &str,
         element_id: &str,
         path: &std::path::Path,
-    ) -> BrowserResult<()> {
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         self.element_effect(browser_id, page_id, element_id, |backend, target, node| {
             backend.upload_file(target, node, path)
         })
     }
 
-    pub fn key(&self, browser_id: &str, page_id: &str, key: BrowserKey) -> BrowserResult<()> {
+    pub fn key(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        key: BrowserKey,
+    ) -> BrowserResult<BrowserStability> {
         self.touch_current(browser_id)?;
         let mut state = self.operation_state()?;
         let runtime = state
@@ -545,7 +657,8 @@ impl BrowserSupervisor {
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
         runtime.refresh_document_fence(page_id, &target_id)?;
-        runtime.backend.key(&target_id, key)
+        runtime.backend.key(&target_id, key)?;
+        Ok(runtime.wait_after_effect(&target_id))
     }
 
     pub fn close_page(&self, browser_id: &str, page_id: &str) -> BrowserResult<()> {
@@ -655,7 +768,7 @@ impl BrowserSupervisor {
         page_id: &str,
         element_id: &str,
         effect: F,
-    ) -> BrowserResult<()>
+    ) -> BrowserResult<BrowserStability>
     where
         F: FnOnce(&mut dyn BrowserBackend, &str, i64) -> BrowserResult<()>,
     {
@@ -686,7 +799,8 @@ impl BrowserSupervisor {
             runtime.backend.as_mut(),
             &target_id,
             element.backend_node_id,
-        )
+        )?;
+        Ok(runtime.wait_after_effect(&target_id))
     }
 
     fn reject_if_shutting_down(&self) -> BrowserResult<()> {
@@ -737,6 +851,16 @@ impl BrowserRuntime {
 
     fn page_count(&self) -> usize {
         self.pages.len().max(self.page_count_floor)
+    }
+
+    fn wait_after_effect(&mut self, target_id: &str) -> BrowserStability {
+        self.backend
+            .wait_for_stable(target_id, ACTION_STABILITY_TIMEOUT)
+            .unwrap_or_else(|_| BrowserStability {
+                stable: false,
+                waited_ms: 0,
+                reason: "observation_failed".to_string(),
+            })
     }
 
     fn expired(&self, now: Instant) -> bool {
@@ -877,6 +1001,26 @@ impl BrowserRuntime {
     }
 }
 
+fn should_auto_compact_snapshot(
+    nodes: &[BackendNode],
+    backend_truncated: bool,
+    max_nodes: usize,
+) -> bool {
+    if backend_truncated || nodes.len() > max_nodes || nodes.len() > AUTO_SNAPSHOT_COMPACT_NODES {
+        return true;
+    }
+    let estimated = nodes.iter().fold(0usize, |total, node| {
+        total
+            .saturating_add(node.role.len())
+            .saturating_add(node.name.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(node.description.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(node.value.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(node.group_label.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(160)
+    });
+    estimated > (MAX_SNAPSHOT_BYTES * 3 / 4)
+}
+
 fn screenshot_result(
     browser_id: &str,
     page_id: &str,
@@ -981,8 +1125,8 @@ fn opaque_id(prefix: &str) -> String {
 mod tests {
     use super::*;
     use crate::cdp::{
-        BackendConsoleEntry, BackendEventSnapshot, BackendFactory, BackendNetworkEntry,
-        BackendSnapshot, BrowserBackend,
+        BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
+        BackendNetworkEntry, BackendSnapshot, BrowserBackend,
     };
     use crate::types::ExecutionState;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1007,6 +1151,9 @@ mod tests {
         pages: Vec<BackendPage>,
         document_generation: u64,
         snapshot_node_count: usize,
+        mixed_snapshot: bool,
+        diagnostic_calls: usize,
+        wait_fails: bool,
         fail_pages_after_create: bool,
         page_created: bool,
     }
@@ -1026,6 +1173,9 @@ mod tests {
                 }],
                 document_generation: 1,
                 snapshot_node_count,
+                mixed_snapshot: false,
+                diagnostic_calls: 0,
+                wait_fails: false,
                 fail_pages_after_create: false,
                 page_created: false,
             }
@@ -1034,6 +1184,18 @@ mod tests {
         fn with_new_page_reconcile_failure() -> Self {
             let mut backend = Self::new();
             backend.fail_pages_after_create = true;
+            backend
+        }
+
+        fn with_mixed_snapshot() -> Self {
+            let mut backend = Self::with_snapshot_nodes(6);
+            backend.mixed_snapshot = true;
+            backend
+        }
+
+        fn with_wait_failure() -> Self {
+            let mut backend = Self::new();
+            backend.wait_fails = true;
             backend
         }
     }
@@ -1060,23 +1222,34 @@ mod tests {
             self.page_created = true;
             Ok(target_id)
         }
-        fn snapshot(&mut self, _target_id: &str) -> BrowserResult<BackendSnapshot> {
+        fn snapshot(
+            &mut self,
+            _target_id: &str,
+            _max_depth: u32,
+        ) -> BrowserResult<BackendSnapshot> {
             let nodes = (0..self.snapshot_node_count)
-                .map(|index| BackendNode {
-                    role: "button".to_string(),
-                    name: Some(format!("Go {index}")),
-                    description: None,
-                    value: Some("x".repeat(MAX_NODE_TEXT_BYTES * 2)),
-                    group_key: None,
-                    group_role: None,
-                    group_label: None,
-                    checked: None,
-                    selected: None,
-                    required: None,
-                    disabled: None,
-                    read_only: None,
-                    backend_node_id: Some(index as i64 + 7),
-                    actionable: true,
+                .map(|index| {
+                    let actionable = !self.mixed_snapshot || index % 2 == 0;
+                    BackendNode {
+                        role: if actionable { "button" } else { "paragraph" }.to_string(),
+                        name: Some(if actionable {
+                            format!("Go {index}")
+                        } else {
+                            format!("Static {index}")
+                        }),
+                        description: None,
+                        value: Some("x".repeat(MAX_NODE_TEXT_BYTES * 2)),
+                        group_key: None,
+                        group_role: None,
+                        group_label: None,
+                        checked: None,
+                        selected: None,
+                        required: None,
+                        disabled: None,
+                        read_only: None,
+                        backend_node_id: actionable.then_some(index as i64 + 7),
+                        actionable,
+                    }
                 })
                 .collect::<Vec<_>>();
             Ok(BackendSnapshot {
@@ -1099,6 +1272,8 @@ mod tests {
             Ok(BackendEventSnapshot {
                 entries: Vec::new(),
                 truncated: false,
+                cursor: 0,
+                oldest_sequence: None,
             })
         }
         fn network(
@@ -1108,6 +1283,72 @@ mod tests {
             Ok(BackendEventSnapshot {
                 entries: Vec::new(),
                 truncated: false,
+                cursor: 0,
+                oldest_sequence: None,
+            })
+        }
+        fn diagnostics(&mut self, _target_id: &str) -> BrowserResult<BackendDiagnosticsSnapshot> {
+            self.diagnostic_calls += 1;
+            let cursor = if self.diagnostic_calls == 1 { 3 } else { 5 };
+            let mut console = vec![BackendConsoleEntry {
+                sequence: 1,
+                level: "warning".into(),
+                text: "first warning".into(),
+                source: None,
+                timestamp: Some(1.0),
+            }];
+            let mut network = vec![
+                BackendNetworkEntry {
+                    sequence: 2,
+                    method: "GET".into(),
+                    url: "https://example.test/api/first".into(),
+                    resource_type: Some("Fetch".into()),
+                    status: Some(200),
+                    failed_reason: None,
+                    timestamp: Some(2.0),
+                },
+                BackendNetworkEntry {
+                    sequence: 3,
+                    method: "GET".into(),
+                    url: "https://example.test/api/fail".into(),
+                    resource_type: Some("XHR".into()),
+                    status: Some(500),
+                    failed_reason: None,
+                    timestamp: Some(3.0),
+                },
+            ];
+            if self.diagnostic_calls > 1 {
+                console.push(BackendConsoleEntry {
+                    sequence: 4,
+                    level: "error".into(),
+                    text: "new error".into(),
+                    source: None,
+                    timestamp: Some(4.0),
+                });
+                network.push(BackendNetworkEntry {
+                    sequence: 5,
+                    method: "POST".into(),
+                    url: "https://example.test/api/new".into(),
+                    resource_type: Some("Fetch".into()),
+                    status: Some(404),
+                    failed_reason: None,
+                    timestamp: Some(5.0),
+                });
+            }
+            Ok(BackendDiagnosticsSnapshot {
+                console: BackendEventSnapshot {
+                    entries: console,
+                    truncated: false,
+                    cursor,
+                    oldest_sequence: Some(1),
+                },
+                network: BackendEventSnapshot {
+                    entries: network,
+                    truncated: false,
+                    cursor,
+                    oldest_sequence: Some(2),
+                },
+                cursor,
             })
         }
         fn clear_diagnostics(&mut self, _target_id: &str) -> BrowserResult<()> {
@@ -1165,6 +1406,24 @@ mod tests {
         fn key(&mut self, _target_id: &str, _key: BrowserKey) -> BrowserResult<()> {
             Ok(())
         }
+        fn wait_for_stable(
+            &mut self,
+            _target_id: &str,
+            _timeout: Duration,
+        ) -> BrowserResult<BrowserStability> {
+            if self.wait_fails {
+                return Err(BrowserError::observed(
+                    "fixture_wait_failed",
+                    "fixture stability observation failed",
+                    None,
+                ));
+            }
+            Ok(BrowserStability {
+                stable: true,
+                waited_ms: 0,
+                reason: "fixture_stable".to_string(),
+            })
+        }
         fn close_page(&mut self, target_id: &str) -> BrowserResult<()> {
             self.pages.retain(|page| page.target_id != target_id);
             Ok(())
@@ -1183,6 +1442,26 @@ mod tests {
             Ok(Box::new(FakeBackend::with_snapshot_nodes(
                 MAX_SNAPSHOT_NODES + 64,
             )))
+        }
+    }
+
+    struct MixedSnapshotFactory;
+    impl BackendFactory for MixedSnapshotFactory {
+        fn available(&self) -> bool {
+            true
+        }
+        fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+            Ok(Box::new(FakeBackend::with_mixed_snapshot()))
+        }
+    }
+
+    struct WaitFailureFactory;
+    impl BackendFactory for WaitFailureFactory {
+        fn available(&self) -> bool {
+            true
+        }
+        fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+            Ok(Box::new(FakeBackend::with_wait_failure()))
         }
     }
 
@@ -1222,7 +1501,13 @@ mod tests {
         assert!(page.page_id.starts_with("page_"));
         assert!(!page.page_id.contains("private-target"));
         let snapshot = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap();
         let element = snapshot.nodes[0].element_id.as_ref().unwrap();
         assert!(element.starts_with("element_"));
@@ -1234,7 +1519,13 @@ mod tests {
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let element = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap()
             .nodes[0]
             .element_id
@@ -1261,7 +1552,13 @@ mod tests {
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let element = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap()
             .nodes[0]
             .element_id
@@ -1284,14 +1581,26 @@ mod tests {
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let element = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap()
             .nodes[0]
             .element_id
             .clone()
             .unwrap();
         supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap();
         assert_eq!(
             supervisor
@@ -1352,12 +1661,127 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_snapshot_compacts_large_pages_and_respects_explicit_modes() {
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(ManyNodesFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let snapshot = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Auto,
+                64,
+                12,
+            )
+            .unwrap();
+        assert_eq!(snapshot.snapshot_mode, "interactive");
+        assert!(snapshot.auto_compacted);
+        assert_eq!(snapshot.max_nodes, 64);
+        assert_eq!(snapshot.max_depth, 12);
+        assert!(snapshot.node_count <= 64);
+
+        let mixed = BrowserSupervisor::with_factory(Arc::new(MixedSnapshotFactory));
+        let browser = mixed.launch().unwrap();
+        let page = mixed.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let full = mixed
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                4,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        assert_eq!(full.snapshot_mode, "full");
+        assert!(!full.auto_compacted);
+        assert_eq!(full.node_count, 4);
+        assert!(full.truncated);
+        assert!(full.nodes.iter().any(|node| !node.actionable));
+
+        let interactive = mixed
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Interactive,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        assert_eq!(interactive.snapshot_mode, "interactive");
+        assert_eq!(interactive.node_count, 3);
+        assert!(interactive.nodes.iter().all(|node| node.actionable));
+    }
+
+    #[test]
+    fn diagnostics_cursor_returns_only_new_events_and_summary() {
+        let supervisor = fixture();
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+
+        let first = supervisor
+            .diagnostics(&browser.browser_id, &page.page_id, false, false, None)
+            .unwrap();
+        assert_eq!(first["cursor"], 3);
+        assert_eq!(first["new_console_warnings"], 1);
+        assert_eq!(first["new_5xx"], 1);
+
+        let second = supervisor
+            .diagnostics(&browser.browser_id, &page.page_id, false, false, Some(3))
+            .unwrap();
+        assert_eq!(second["cursor"], 5);
+        assert_eq!(second["since_cursor"], 3);
+        assert_eq!(second["new_console_errors"], 1);
+        assert_eq!(second["new_4xx"], 1);
+        assert_eq!(second["console_count"], 1);
+        assert_eq!(second["network_count"], 1);
+        assert_eq!(second["delta_truncated"], false);
+
+        let error = supervisor
+            .diagnostics(&browser.browser_id, &page.page_id, false, false, Some(99))
+            .unwrap_err();
+        assert_eq!(error.kind, "invalid_diagnostics_cursor");
+        assert_eq!(error.execution_state, ExecutionState::NotStarted);
+    }
+
+    #[test]
+    fn post_effect_stability_observation_never_changes_effect_certainty() {
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(WaitFailureFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let element = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap()
+            .nodes[0]
+            .element_id
+            .clone()
+            .unwrap();
+
+        let stability = supervisor
+            .click(&browser.browser_id, &page.page_id, &element)
+            .unwrap();
+        assert!(!stability.stable);
+        assert_eq!(stability.reason, "observation_failed");
+    }
+
+    #[test]
     fn semantic_snapshot_and_text_are_bounded() {
         let supervisor = BrowserSupervisor::with_factory(Arc::new(ManyNodesFactory));
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let snapshot = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap();
         assert!(snapshot.truncated);
         assert!(snapshot.node_count <= MAX_SNAPSHOT_NODES);
@@ -1376,7 +1800,13 @@ mod tests {
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let element = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap()
             .nodes[0]
             .element_id
@@ -1407,7 +1837,13 @@ mod tests {
         let browser = supervisor.launch().unwrap();
         let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
         let element = supervisor
-            .snapshot(&browser.browser_id, &page.page_id)
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
             .unwrap()
             .nodes[0]
             .element_id

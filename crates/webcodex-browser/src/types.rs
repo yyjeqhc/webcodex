@@ -131,11 +131,41 @@ pub struct SemanticNode {
     pub actionable: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotMode {
+    #[default]
+    Auto,
+    Full,
+    Interactive,
+}
+
+impl SnapshotMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Full => "full",
+            Self::Interactive => "interactive",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BrowserStability {
+    pub stable: bool,
+    pub waited_ms: u64,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SemanticSnapshot {
     pub browser_id: String,
     pub page_id: String,
     pub snapshot_generation: u64,
+    pub snapshot_mode: String,
+    pub auto_compacted: bool,
+    pub max_nodes: usize,
+    pub max_depth: u32,
     pub node_count: usize,
     pub truncated: bool,
     pub nodes: Vec<SemanticNode>,

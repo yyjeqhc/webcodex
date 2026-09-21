@@ -5536,6 +5536,19 @@ mod tests {
             )
             .await;
         assert!(linked.success, "{:?}", linked.output);
+        let second_session = runtime.sessions.start_session(
+            Some(project.to_string()),
+            Some("Goal workbench validation Session".to_string()),
+        );
+        let second_link = runtime
+            .associate_goal_workflow_session(
+                Some(&auth),
+                goal_id.clone(),
+                second_session.session_id.clone(),
+                "goal-workbench-session-2".into(),
+            )
+            .await;
+        assert!(second_link.success, "{:?}", second_link.output);
         let task = runtime.create_agent_task(
             Some(&auth),
             "Validate workbench".into(),
@@ -5602,6 +5615,16 @@ mod tests {
             "read_files",
             true,
         );
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            window_key,
+            Some(project),
+            Some((&second_session.session_id, project)),
+            20_000,
+            "run_shell",
+            true,
+        );
 
         let listed = goals::goals_for_auth_test(&runtime, &auth, Some(project))
             .await
@@ -5610,7 +5633,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["goal_id"], goal_id);
         assert_eq!(rows[0]["project_ids"], json!([project]));
-        assert_eq!(rows[0]["workflow_session_count"], 1);
+        assert_eq!(rows[0]["workflow_session_count"], 2);
         assert_eq!(rows[0]["agent_task_count"], 1);
 
         let detail = goals::goal_detail_for_auth_test(&runtime, &auth, &goal_id)
@@ -5618,14 +5641,29 @@ mod tests {
             .unwrap();
         assert_eq!(detail["goal"]["summary"]["goal_id"], goal_id);
         assert_eq!(detail["goal_plan"]["controller_agent_id"], agent_id);
-        assert_eq!(detail["sessions"][0]["session_id"], session.session_id);
+        assert_eq!(detail["sessions"].as_array().unwrap().len(), 2);
+        assert!(detail["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["session_id"] == session.session_id));
+        assert!(detail["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["session_id"] == second_session.session_id));
         assert_eq!(detail["tasks"][0]["summary"]["task_id"], task_id);
         assert_eq!(detail["agents"][0]["agent_id"], agent_id);
         assert_eq!(detail["windows"][0]["client_window_key"], window_key);
-        assert_eq!(
-            detail["windows"][0]["session_ids"],
-            json!([session.session_id])
-        );
+        assert_eq!(detail["windows"][0]["last_seen_at_ms"], 20_001);
+        let window_sessions = detail["windows"][0]["session_ids"].as_array().unwrap();
+        assert_eq!(window_sessions.len(), 2);
+        assert!(window_sessions
+            .iter()
+            .any(|value| value == &json!(session.session_id)));
+        assert!(window_sessions
+            .iter()
+            .any(|value| value == &json!(second_session.session_id)));
         assert_eq!(detail["waits"][0]["wait_id"], wait_id);
         assert_eq!(detail["waits"][0]["goal_id"], goal_id);
         assert_eq!(detail["waits"][0]["mode"], "all");

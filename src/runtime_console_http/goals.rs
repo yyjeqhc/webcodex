@@ -290,6 +290,23 @@ async fn goal_detail_for_auth(
                             "active_count": window.active_count,
                             "session_ids": [],
                         }));
+                        if let Some(existing) = entry.get("last_seen_at_ms").and_then(Value::as_i64)
+                        {
+                            entry["last_seen_at_ms"] = json!(existing.max(window.last_seen_at_ms));
+                        }
+                        let latest_meaningful = entry
+                            .get("last_meaningful_activity_at_ms")
+                            .and_then(Value::as_i64)
+                            .into_iter()
+                            .chain(window.last_meaningful_activity_at_ms)
+                            .max();
+                        entry["last_meaningful_activity_at_ms"] = json!(latest_meaningful);
+                        let active = entry
+                            .get("active_count")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            .max(window.active_count as u64);
+                        entry["active_count"] = json!(active);
                         if let Some(ids) =
                             entry.get_mut("session_ids").and_then(Value::as_array_mut)
                         {
@@ -315,24 +332,17 @@ async fn goal_detail_for_auth(
         }
     }
 
-    let waits_result = runtime.list_goal_agent_waits_for_console(Some(auth), goal_id.to_string());
-    let (waits, waits_truncated) = if waits_result.success {
-        (
-            waits_result
-                .output
-                .get("waits")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            waits_result
-                .output
-                .get("truncated")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        )
-    } else {
-        (Vec::new(), true)
-    };
+    let waits_output =
+        tool_output(runtime.list_goal_agent_waits_for_console(Some(auth), goal_id.to_string()))?;
+    let waits = waits_output
+        .get("waits")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or(RuntimeConsoleError::Internal)?;
+    let waits_truncated = waits_output
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .ok_or(RuntimeConsoleError::Internal)?;
 
     for wait in &waits {
         if let Some(agent_id) = wait.get("target_agent_id").and_then(Value::as_str) {

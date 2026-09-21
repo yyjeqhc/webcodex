@@ -48,6 +48,7 @@ const SHUTDOWN_OPERATION_WAIT: Duration = Duration::from_secs(5);
 const DESKTOP_STATE_MAX_BYTES: u64 = 256 * 1024;
 const DESKTOP_SERVER_ENV_MAX_BYTES: u64 = 256 * 1024;
 const DESKTOP_MCP_COMPACT_SCHEMAS: &str = "true";
+const DESKTOP_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT: &str = "true";
 static NEXT_STATE_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 type SharedSupervisor = Arc<Mutex<ProcessSupervisor>>;
@@ -2246,6 +2247,11 @@ fn ensure_desktop_server_defaults(path: &Path) -> DesktopResult<()> {
             "WEBCODEX_MCP_COMPACT_SCHEMAS={DESKTOP_MCP_COMPACT_SCHEMAS}"
         ));
     }
+    if !has_key("WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT") {
+        additions.push(format!(
+            "WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT={DESKTOP_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT}"
+        ));
+    }
     if additions.is_empty() {
         return Ok(());
     }
@@ -2813,7 +2819,7 @@ mod tests {
         let env_file = dir.join("webcodex.env");
         std::fs::write(
             &env_file,
-            "WEBCODEX_TOKEN=secret\nWEBCODEX_MCP_COMPACT_SCHEMAS=false\n",
+            "WEBCODEX_TOKEN=secret\nWEBCODEX_MCP_COMPACT_SCHEMAS=false\nWEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=false\n",
         )
         .unwrap();
 
@@ -2822,6 +2828,12 @@ mod tests {
         assert!(once.contains("WEBCODEX_TOKEN=secret\n"));
         assert!(once.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=false\n"));
         assert_eq!(once.matches("WEBCODEX_MCP_COMPACT_SCHEMAS=").count(), 1);
+        assert!(once.contains("WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=false\n"));
+        assert_eq!(
+            once.matches("WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=")
+                .count(),
+            1
+        );
 
         ensure_desktop_server_defaults(&env_file).unwrap();
         assert_eq!(std::fs::read_to_string(&env_file).unwrap(), once);
@@ -2839,6 +2851,9 @@ mod tests {
         let content = std::fs::read_to_string(&env_file).unwrap();
         assert!(content.starts_with("WEBCODEX_ADDR=127.0.0.1:12345\n"));
         assert!(content.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=true\n"));
+        assert!(content.contains(
+            "WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true\n"
+        ));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

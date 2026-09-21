@@ -54,10 +54,12 @@ share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query au
 Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
 OpenAI `tunnel-client` 注入。
 
-对于通过 OpenAI Secure Tunnel 访问的长期 **loopback-only** Server，operator 可以显式设置
+对于通过 OpenAI Secure Tunnel 访问的长期 **loopback-only** Server，可以设置
 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`，从而信任由本机 user API token
-认证的 ChatGPT host-file rewrite。该例外仅在 `WEBCODEX_ADDR` 解析为 loopback 且当前 credential
-是普通 user API token 时生效。默认关闭；network-accessible Server 不应使用它替代 OAuth。
+认证的 ChatGPT host-file rewrite。WebCodex Desktop 自 v0.4.2 起会为它自己管理的本机
+loopback Server 默认写入该值；已有显式配置不会被覆盖。该例外仅在 `WEBCODEX_ADDR` 解析为
+loopback 且当前 credential 是普通 user API token 时生效。独立/network-accessible Server
+仍默认关闭，不应使用它替代 OAuth。
 
 如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 

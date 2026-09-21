@@ -2173,9 +2173,10 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 } else {
                     0
                 };
-                // G4 adds one selector-only hidden Goal detector. Account for
-                // that exact App-only tool without increasing the byte budget.
-                let count_budget = max_tools + if app_enabled { 17 } else { 0 } + feature_tools;
+                // Goal Plan exposes one App-only sync primitive. The G4
+                // recheck tool was retired when state + recheck converged into
+                // goal_plan_sync, returning the App-only inventory delta to 16.
+                let count_budget = max_tools + if app_enabled { 16 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 18_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {

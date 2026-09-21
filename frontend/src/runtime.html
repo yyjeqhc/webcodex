@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#0b0d12" />
   <script>
     (() => {
-      const key = "webcodex.runtime.appearance.v1";
-      const languageKey = "webcodex.runtime.language.v1";
+      const key = "webpi.runtime.appearance.v1";
+      const languageKey = "webpi.runtime.language.v1";
       let preference = "system";
       let language = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
       try {
@@ -27,7 +27,7 @@
       document.querySelector('meta[name="theme-color"]')?.setAttribute("content", resolved === "light" ? "#f4f4f1" : "#090a0d");
     })();
   </script>
-  <title>WebCodex — Workspace</title>
+  <title>WebPi — Workspace</title>
   <link rel="stylesheet" href="/runtime/styles.css" />
 </head>
 <body>
@@ -36,7 +36,7 @@
       <div class="brand-lockup">
         <span class="brand-mark" aria-hidden="true">W</span>
         <div>
-          <h1>WebCodex</h1>
+          <h1>WebPi</h1>
           <p class="muted">Your projects and work, in one place.</p>
         </div>
       </div>
@@ -82,7 +82,7 @@
         <header class="sidebar-brand">
           <div class="sidebar-brand-lockup">
             <span class="sidebar-logo" aria-hidden="true">W</span>
-            <strong>WebCodex</strong>
+            <strong>WebPi</strong>
           </div>
           <div class="sidebar-brand-tools">
             <span class="sidebar-runtime-status"><i aria-hidden="true"></i><span>Local</span></span>
@@ -184,13 +184,13 @@
           <div id="runtime-navigation-windows" class="sidebar-view-panel" hidden>
             <section class="sidebar-section runtime-window-navigation-section">
               <div class="sidebar-section-head">
-                <h2>WebCodex Window activity</h2>
+                <h2>WebPi Window activity</h2>
                 <span id="runtime-window-list-count" class="count-badge">0</span>
               </div>
               <p class="operations-navigation-copy muted small">Client calls, separate from work Sessions. Observation does not mean the host is online.</p>
               <span id="runtime-window-list-status" class="muted small" role="status">Window activity has not been loaded yet.</span>
-              <div id="runtime-window-list" class="runtime-window-list" role="group" aria-label="WebCodex Window activity"></div>
-              <p id="runtime-window-list-empty" class="muted small empty-copy" hidden>No WebCodex activity is available.</p>
+              <div id="runtime-window-list" class="runtime-window-list" role="group" aria-label="WebPi Window activity"></div>
+              <p id="runtime-window-list-empty" class="muted small empty-copy" hidden>No WebPi activity is available.</p>
             </section>
           </div>
         </div>
@@ -379,7 +379,7 @@
               <section class="product-section"><header class="product-section-heading"><h3>Recent Activity</h3></header><div id="runtime-window-product-activity" class="product-window-timeline"></div></section>
               <details class="product-auth-advanced"><summary>Advanced</summary>
                 <section class="operations-card window-overview-card"><div class="operations-card-head"><h3>Window Details</h3><button data-testid="runtime-window-copy-key" id="runtime-window-copy-key" class="btn subtle" type="button">Copy hashed key</button></div><code id="runtime-window-key" class="communication-id">—</code>
-                  <div class="metric-grid window-metrics"><div class="metric"><span class="metric-label">Source</span><strong id="runtime-window-source">—</strong></div><div class="metric"><span class="metric-label">Active requests</span><strong id="runtime-window-active-count">0</strong></div><div class="metric"><span class="metric-label">Last WebCodex call</span><strong id="runtime-window-last-call">—</strong></div></div>
+                  <div class="metric-grid window-metrics"><div class="metric"><span class="metric-label">Source</span><strong id="runtime-window-source">—</strong></div><div class="metric"><span class="metric-label">Active requests</span><strong id="runtime-window-active-count">0</strong></div><div class="metric"><span class="metric-label">Last WebPi call</span><strong id="runtime-window-last-call">—</strong></div></div>
                 </section>
                 <section class="operations-card"><div class="operations-card-head"><h3>Active requests</h3><span id="runtime-window-active-status" class="muted small">—</span></div><div id="runtime-window-active-requests" class="window-request-list"></div></section>
                 <section class="operations-card"><div class="operations-card-head"><h3>Tool diagnostics</h3><span id="runtime-window-activity-status" class="muted small">—</span></div><div id="runtime-window-activity" class="window-activity-list"></div></section>

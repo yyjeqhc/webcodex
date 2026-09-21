@@ -52,7 +52,7 @@ export function renderWorkspaceHome(node, options) {
     const heading = workspaceNode("header", "", "product-page-heading");
     const title = workspaceNode("div");
     title.appendChild(workspaceNode("p", tr("Workspace"), "eyebrow"));
-    title.appendChild(workspaceNode("h2", tr(options.overview ? "WebCodex Ready" : "Workspace")));
+    title.appendChild(workspaceNode("h2", tr(options.overview ? "WebPi Ready" : "Workspace")));
     heading.appendChild(title);
     heading.appendChild(workspaceButton(tr("Add Project"), "workspace-add-project", options.onAddProject || options.onSearch));
     node.appendChild(heading);

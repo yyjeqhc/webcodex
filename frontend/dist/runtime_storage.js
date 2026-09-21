@@ -1,8 +1,8 @@
-export const RUNTIME_CREDENTIAL_SESSION_KEY = "webcodex.runtime.credential.v1";
-export const APPEARANCE_STORAGE_KEY = "webcodex.runtime.appearance.v1";
-export const WORKSPACE_VIEW_STORAGE_KEY = "webcodex.runtime.workspace-view.v1";
-export const DRAFT_STORAGE_PREFIX = "webcodex.runtime.draft.v1.";
-export const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webcodex.runtime.runner-open.v1.";
+export const RUNTIME_CREDENTIAL_SESSION_KEY = "webpi.runtime.credential.v1";
+export const APPEARANCE_STORAGE_KEY = "webpi.runtime.appearance.v1";
+export const WORKSPACE_VIEW_STORAGE_KEY = "webpi.runtime.workspace-view.v1";
+export const DRAFT_STORAGE_PREFIX = "webpi.runtime.draft.v1.";
+export const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webpi.runtime.runner-open.v1.";
 export const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
 export function appearancePreference(value) {
     return value === "light" || value === "dark" || value === "system" ? value : "system";

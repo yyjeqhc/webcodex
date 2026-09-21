@@ -315,7 +315,7 @@ export function runtimeWindowActivityLabel(
 ): string {
   const value = Number(timestampMs);
   if (!Number.isFinite(value) || value <= 0) {
-    return language === "zh-CN" ? "无 WebCodex 活动" : "No WebCodex activity";
+    return language === "zh-CN" ? "无 WebPi 活动" : "No WebPi activity";
   }
   const elapsed = Math.max(0, nowMs - value);
   if (elapsed < 1000) return language === "zh-CN" ? "刚刚" : "just now";

@@ -146,7 +146,7 @@ export function renderProjectSelectorTree(deviceSelect, projectList, sessionsPan
         for (const project of deviceProjects) {
             const workspace = document.createElement("details");
             workspace.className = "workspace-group";
-            const disclosureKey = "webcodex.runtime.workspace-disclosure.v1." + encodeURIComponent(JSON.stringify([clientId, project.id]));
+            const disclosureKey = "webpi.runtime.workspace-disclosure.v1." + encodeURIComponent(JSON.stringify([clientId, project.id]));
             workspace.open = project.id === options.selectedProject;
             try {
                 workspace.open = workspace.open && window.localStorage.getItem(disclosureKey) !== "closed";

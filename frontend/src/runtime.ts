@@ -393,7 +393,7 @@ function applyLanguage(language: RuntimeLanguage, persist = true, rerender = tru
   runtimeLanguage = languagePreference(language);
   document.documentElement.lang = runtimeLanguage;
   document.documentElement.dataset.language = runtimeLanguage;
-  document.title = tr("WebCodex — Workspace");
+  document.title = tr("WebPi — Workspace");
   for (const source of staticTextSources) source.node.nodeValue = translatedStaticNodeValue(source.source);
   for (const source of staticAttributeSources) source.node.setAttribute(source.name, tr(source.source));
   const nextLanguageLabel = runtimeLanguage === "zh-CN" ? "EN" : "中";

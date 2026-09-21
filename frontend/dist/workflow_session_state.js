@@ -159,7 +159,7 @@ function idleAgeLabel(ageSeconds) {
 export function workflowSessionLivenessPresentation(session, nowSeconds = Date.now() / 1000) {
     const runningCall = !!session?.running_call;
     const runningJobs = typeof session?.running_jobs === "number" ? Math.max(0, session.running_jobs) : 0;
-    const tooltip = "WebCodex activity only; host/model state is unknown.";
+    const tooltip = "WebPi activity only; host/model state is unknown.";
     if (runningCall || runningJobs > 0) {
         return { state: "working", label: "working", tooltip };
     }

@@ -159,7 +159,7 @@ function idleAgeLabel(ageSeconds) {
 function workflowSessionLivenessPresentation(session, nowSeconds = Date.now() / 1000) {
     const runningCall = !!session?.running_call;
     const runningJobs = typeof session?.running_jobs === "number" ? Math.max(0, session.running_jobs) : 0;
-    const tooltip = "WebCodex activity only; host/model state is unknown.";
+    const tooltip = "WebPi activity only; host/model state is unknown.";
     if (runningCall || runningJobs > 0) {
         return { state: "working", label: "working", tooltip };
     }
@@ -815,7 +815,7 @@ function runtimeWindowShortKey(value) {
 function runtimeWindowActivityLabel(timestampMs, nowMs, language) {
     const value = Number(timestampMs);
     if (!Number.isFinite(value) || value <= 0) {
-        return language === "zh-CN" ? "无 WebCodex 活动" : "No WebCodex activity";
+        return language === "zh-CN" ? "无 WebPi 活动" : "No WebPi activity";
     }
     const elapsed = Math.max(0, nowMs - value);
     if (elapsed < 1000)
@@ -829,7 +829,7 @@ function runtimeWindowActivityLabel(timestampMs, nowMs, language) {
     return language === "zh-CN" ? Math.floor(elapsed / 86400000) + " 天前" : Math.floor(elapsed / 86400000) + "d ago";
 }
 
-const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
+const LANGUAGE_STORAGE_KEY = "webpi.runtime.language.v1";
 const RUNTIME_ZH_TEXT = {
     "Updates automatically": "自动更新",
     "Open a Window to see its project and Workflow Sessions.": "打开窗口，查看关联项目与工作会话。",
@@ -838,10 +838,10 @@ const RUNTIME_ZH_TEXT = {
     "Observed": "已观察到",
     "In progress": "进行中",
     "Last activity": "最近活动",
-    "WebCodex — Workspace": "WebCodex — 工作区",
+    "WebPi — Workspace": "WebPi — 工作区",
     "Your projects and work, in one place.": "项目与工作，尽在此处。",
     "Workspace": "工作区",
-    "WebCodex Ready": "WebCodex 已就绪",
+    "WebPi Ready": "WebPi 已就绪",
     "Home": "首页",
     "Access key": "访问密钥",
     "Use your access key to open this workspace.": "输入访问密钥，打开工作区。",
@@ -946,8 +946,8 @@ const RUNTIME_ZH_TEXT = {
     "Find a project": "查找项目",
     "Find a project…": "查找项目…",
     "Runtime overview": "运行概览",
-    "WebCodex — Runtime Console": "WebCodex — 运行控制台",
-    "WebCodex Runtime Console": "WebCodex 运行控制台",
+    "WebPi — Runtime Console": "WebPi — 运行控制台",
+    "WebPi Runtime Console": "WebPi 运行控制台",
     "A local workspace for Projects, Sessions, and collaboration": "用于管理项目、会话与协作的本地工作空间",
     "Appearance": "外观",
     "Choose appearance": "选择外观",
@@ -1150,7 +1150,7 @@ const RUNTIME_ZH_TEXT = {
     "recently active": "最近活跃",
     "idle · pending attention": "空闲 · 有待处理项",
     "idle": "空闲",
-    "WebCodex activity only; host/model state is unknown.": "仅反映 WebCodex 活动；主机与模型状态未知。",
+    "WebPi activity only; host/model state is unknown.": "仅反映 WebPi 活动；主机与模型状态未知。",
     "Now": "当前",
     "Last": "上次",
     "Reconnecting": "正在重连",
@@ -1290,11 +1290,11 @@ const RUNTIME_ZH_TEXT = {
     "runtime:read required": "需要 runtime:read 权限",
     "Window Activity": "窗口活动",
     "Host Window Activity": "主机窗口活动",
-    "WebCodex host windows": "WebCodex 主机窗口",
-    "WebCodex Windows": "WebCodex 窗口活动",
-    "WebCodex windows": "WebCodex 窗口活动",
-    "WebCodex Window activity": "WebCodex 窗口活动",
-    "WebCodex window activity": "WebCodex 窗口活动",
+    "WebPi host windows": "WebPi 主机窗口",
+    "WebPi Windows": "WebPi 窗口活动",
+    "WebPi windows": "WebPi 窗口活动",
+    "WebPi Window activity": "WebPi 窗口活动",
+    "WebPi window activity": "WebPi 窗口活动",
     "Client Windows": "客户端窗口",
     "Window activity has not been loaded yet.": "尚未加载窗口活动。",
     "No Window activity is visible.": "当前没有可见的窗口活动。",
@@ -1306,7 +1306,7 @@ const RUNTIME_ZH_TEXT = {
     "refresh failed, showing previous data": "刷新失败，正在显示之前的数据",
     "No Window activity has been observed for this Project.": "此项目尚未观察到窗口活动。",
     "No Window activity observed for this project.": "此项目尚未观察到窗口活动。",
-    "No WebCodex activity is available.": "没有可用的 WebCodex 活动。",
+    "No WebPi activity is available.": "没有可用的 WebPi 活动。",
     "meaningful": "有效工作",
     "recorder gap": "记录断层",
     "streaming timing unavailable": "流式传输耗时不可用",
@@ -1316,15 +1316,15 @@ const RUNTIME_ZH_TEXT = {
     "Active request": "活跃请求",
     "No active request": "无活跃请求",
     "No active requests": "无活跃请求",
-    "No WebCodex request is currently active.": "当前没有活跃的 WebCodex 请求。",
+    "No WebPi request is currently active.": "当前没有活跃的 WebPi 请求。",
     "No authorized Workflow Session links.": "没有已授权的工作流会话关联。",
     "No linked Window evidence.": "没有关联的窗口证据。",
     "No completed tools/call activity": "没有已完成的 tools/call 活动",
-    "No meaningful WebCodex work recorded": "未记录到有效 WebCodex 工作",
-    "Last WebCodex call": "最后 WebCodex 调用",
-    "Last WebCodex call ": "最后 WebCodex 调用 ",
-    "Last WebCodex activity": "最后 WebCodex 活动",
-    "Last WebCodex activity ": "最后 WebCodex 活动 ",
+    "No meaningful WebPi work recorded": "未记录到有效 WebPi 工作",
+    "Last WebPi call": "最后 WebPi 调用",
+    "Last WebPi call ": "最后 WebPi 调用 ",
+    "Last WebPi activity": "最后 WebPi 活动",
+    "Last WebPi activity ": "最后 WebPi 活动 ",
     "Last meaningful work": "最后有效工作",
     "Last meaningful work ": "最后有效工作 ",
     "Open Window Activity inspector": "打开窗口活动检查器",
@@ -1335,7 +1335,7 @@ const RUNTIME_ZH_TEXT = {
     "Select a Window": "选择一个窗口",
     "Window axis": "窗口维度",
     "Choose a hashed Window identity from the sidebar to inspect active requests, linked Workflow Sessions, and bounded recent activity.": "从侧边栏选择哈希窗口标识，以检查活跃请求、关联的工作流会话及有界近期活动。",
-    "Shows WebCodex calls and correlations only. It cannot observe model reasoning or determine whether the ChatGPT frontend is frozen.": "仅反映 WebCodex 调用与关联关系。它无法观察模型推理，也无法判断 ChatGPT 前端是否卡顿。",
+    "Shows WebPi calls and correlations only. It cannot observe model reasoning or determine whether the ChatGPT frontend is frozen.": "仅反映 WebPi 调用与关联关系。它无法观察模型推理，也无法判断 ChatGPT 前端是否卡顿。",
     "3s activity refresh": "3秒活动刷新",
     "3s window refresh": "3秒窗口刷新",
     "Host Window liveness and correlation evidence. Window identity never grants execution or Session authority.": "主机窗口活跃度与关联证据。窗口标识绝不授予执行或会话权限。",
@@ -1769,7 +1769,7 @@ function renderWindowActivityRows(node, activities, options = {}) {
         const head = document.createElement("div");
         head.className = "window-activity-head";
         const title = document.createElement("strong");
-        title.textContent = String(activity?.tool_name || activity?.method || "WebCodex call");
+        title.textContent = String(activity?.tool_name || activity?.method || "WebPi call");
         const time = document.createElement("span");
         time.className = "muted small";
         time.textContent = windowDateTimeLabel(activity?.started_at_ms, language);
@@ -1874,14 +1874,14 @@ function createWindowCard(row, selectedWindowKey, onSelect, now = Date.now(), la
     const call = document.createElement("span");
     call.className = "muted small";
     call.textContent = row?.last_tool_call_at_ms
-        ? (language === "zh-CN" ? "最后调用 " : "Last WebCodex call ") + windowAgeLabel(row.last_tool_call_at_ms, now, language)
-        : (language === "zh-CN" ? "最后活动 " : "Last WebCodex activity ") + windowAgeLabel(row?.last_seen_at_ms, now, language);
+        ? (language === "zh-CN" ? "最后调用 " : "Last WebPi call ") + windowAgeLabel(row.last_tool_call_at_ms, now, language)
+        : (language === "zh-CN" ? "最后活动 " : "Last WebPi activity ") + windowAgeLabel(row?.last_seen_at_ms, now, language);
     button.appendChild(call);
     const meaningful = document.createElement("span");
     meaningful.className = "muted small";
     meaningful.textContent = row?.last_meaningful_activity_at_ms
         ? (language === "zh-CN" ? "最后有效工作 " : "Last meaningful work ") + windowAgeLabel(row.last_meaningful_activity_at_ms, now, language)
-        : (language === "zh-CN" ? "未记录到有效 WebCodex 工作" : "No meaningful WebCodex work recorded");
+        : (language === "zh-CN" ? "未记录到有效 WebPi 工作" : "No meaningful WebPi work recorded");
     button.appendChild(meaningful);
     const links = document.createElement("span");
     links.className = "muted small";
@@ -1901,7 +1901,7 @@ function renderWindowActiveRequests(activeNode, activeRequests, options = {}) {
     if (!activeRequests.length) {
         const empty = document.createElement("p");
         empty.className = "muted small";
-        empty.textContent = translate("No WebCodex request is currently active.", language);
+        empty.textContent = translate("No WebPi request is currently active.", language);
         activeNode.appendChild(empty);
         return;
     }
@@ -1909,7 +1909,7 @@ function renderWindowActiveRequests(activeNode, activeRequests, options = {}) {
         const item = document.createElement("article");
         item.className = "window-request-item";
         const title = document.createElement("strong");
-        title.textContent = String(request?.tool_name || request?.method || "WebCodex request");
+        title.textContent = String(request?.tool_name || request?.method || "WebPi request");
         item.appendChild(title);
         const meta = document.createElement("div");
         meta.className = "muted small";
@@ -1984,7 +1984,7 @@ function renderSessionWindowCorrelationLinks(linkedNode, links, onSelectWindow, 
         meta.className = "muted small";
         meta.textContent = [
             link?.source,
-            link?.last_seen_at_ms ? (language === "zh-CN" ? "最后活动 " : "last WebCodex activity ") + windowAgeLabel(link.last_seen_at_ms, now, language) : null,
+            link?.last_seen_at_ms ? (language === "zh-CN" ? "最后活动 " : "last WebPi activity ") + windowAgeLabel(link.last_seen_at_ms, now, language) : null,
             Number(link?.recorder_gap_count || 0) ? String(link.recorder_gap_count) + (language === "zh-CN" ? " 个记录断层" : " recorder gap") : null,
         ].filter(Boolean).map(String).join(" · ");
         button.appendChild(title);
@@ -2013,7 +2013,7 @@ function formatWindowDetailFields(detail, fallbackKey = "", now = Date.now(), la
             : translate("No completed tools/call activity", language),
         lastMeaningful: detail.last_meaningful_activity_at_ms
             ? windowAgeLabel(detail.last_meaningful_activity_at_ms, now, language)
-            : translate("No meaningful WebCodex work recorded", language),
+            : translate("No meaningful WebPi work recorded", language),
         activeStatus: translate(Number(detail.active_count || 0) ? "Active request" : "No active request", language),
         linkedStatus: localizedCountLabel(Number(detail.sessions_returned || 0), "Session", "Sessions", language) +
             (detail.sessions_truncated ? " · " + translate("bounded", language) : ""),
@@ -2440,11 +2440,11 @@ function renderTimelineEvents(container, activities, language) {
     }
 }
 
-const RUNTIME_CREDENTIAL_SESSION_KEY = "webcodex.runtime.credential.v1";
-const APPEARANCE_STORAGE_KEY = "webcodex.runtime.appearance.v1";
-const WORKSPACE_VIEW_STORAGE_KEY = "webcodex.runtime.workspace-view.v1";
-const DRAFT_STORAGE_PREFIX = "webcodex.runtime.draft.v1.";
-const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webcodex.runtime.runner-open.v1.";
+const RUNTIME_CREDENTIAL_SESSION_KEY = "webpi.runtime.credential.v1";
+const APPEARANCE_STORAGE_KEY = "webpi.runtime.appearance.v1";
+const WORKSPACE_VIEW_STORAGE_KEY = "webpi.runtime.workspace-view.v1";
+const DRAFT_STORAGE_PREFIX = "webpi.runtime.draft.v1.";
+const DEVICE_DISCLOSURE_STORAGE_PREFIX = "webpi.runtime.runner-open.v1.";
 const APPEARANCE_MEDIA_QUERY = "(prefers-color-scheme: light)";
 function appearancePreference(value) {
     return value === "light" || value === "dark" || value === "system" ? value : "system";
@@ -3024,7 +3024,7 @@ function renderProjectSelectorTree(deviceSelect, projectList, sessionsPanel, opt
         for (const project of deviceProjects) {
             const workspace = document.createElement("details");
             workspace.className = "workspace-group";
-            const disclosureKey = "webcodex.runtime.workspace-disclosure.v1." + encodeURIComponent(JSON.stringify([clientId, project.id]));
+            const disclosureKey = "webpi.runtime.workspace-disclosure.v1." + encodeURIComponent(JSON.stringify([clientId, project.id]));
             workspace.open = project.id === options.selectedProject;
             try {
                 workspace.open = workspace.open && window.localStorage.getItem(disclosureKey) !== "closed";
@@ -4188,7 +4188,7 @@ function renderWorkspaceHome(node, options) {
     const heading = workspaceNode("header", "", "product-page-heading");
     const title = workspaceNode("div");
     title.appendChild(workspaceNode("p", tr("Workspace"), "eyebrow"));
-    title.appendChild(workspaceNode("h2", tr(options.overview ? "WebCodex Ready" : "Workspace")));
+    title.appendChild(workspaceNode("h2", tr(options.overview ? "WebPi Ready" : "Workspace")));
     heading.appendChild(title);
     heading.appendChild(workspaceButton(tr("Add Project"), "workspace-add-project", options.onAddProject || options.onSearch));
     node.appendChild(heading);
@@ -4571,7 +4571,7 @@ function applyLanguage(language, persist = true, rerender = true) {
     runtimeLanguage = languagePreference(language);
     document.documentElement.lang = runtimeLanguage;
     document.documentElement.dataset.language = runtimeLanguage;
-    document.title = tr("WebCodex — Workspace");
+    document.title = tr("WebPi — Workspace");
     for (const source of staticTextSources)
         source.node.nodeValue = translatedStaticNodeValue(source.source);
     for (const source of staticAttributeSources)

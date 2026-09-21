@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$SourceSha,
     [Parameter(Mandatory = $true)][Int64]$BuiltAt,
-    [Parameter(Mandatory = $true)][ValidateSet("win32-x64", "win32-arm64")][string]$Platform
+    [Parameter(Mandatory = $true)][ValidateSet("win32-x64", "win32-arm64")][string]$Platform,
+    [string]$InstallDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,13 @@ if ($SourceSha -notmatch '^[0-9A-Fa-f]{40}$') {
 }
 if ($BuiltAt -le 0) {
     throw "BuiltAt must be a positive Unix timestamp"
+}
+$requestedInstallDir = $null
+if ($InstallDir) {
+    $requestedInstallDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    if (Test-Path -LiteralPath $requestedInstallDir) {
+        throw "refusing custom-directory smoke because the requested install directory already exists: $requestedInstallDir"
+    }
 }
 
 function Get-WebCodexUninstallEntry {
@@ -124,7 +132,14 @@ $installedDir = $null
 $uninstaller = $null
 $installed = $false
 try {
-    $installProcess = Start-Process -FilePath $Installer -ArgumentList "/S" -Wait -PassThru
+    # NSIS requires /D= to be the final argument. Its value intentionally consumes
+    # the remainder of the command line, so a path containing spaces is passed
+    # literally without shell-style quoting or escaping.
+    $installArguments = @("/S")
+    if ($requestedInstallDir) {
+        $installArguments += "/D=$requestedInstallDir"
+    }
+    $installProcess = Start-Process -FilePath $Installer -ArgumentList $installArguments -Wait -PassThru
     if ($installProcess.ExitCode -ne 0) {
         throw "Desktop silent install failed with exit code $($installProcess.ExitCode)"
     }
@@ -140,6 +155,12 @@ try {
         Resolve-RegistryPath ([string]$entry.InstallLocation) "InstallLocation"
     } else {
         Split-Path -Parent ([System.IO.Path]::GetFullPath($uninstaller))
+    }
+    if ($requestedInstallDir) {
+        $actualInstallDir = $installedDir.TrimEnd('\')
+        if (-not [string]::Equals($actualInstallDir, $requestedInstallDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "custom Desktop InstallLocation mismatch: expected '$requestedInstallDir', got '$installedDir'"
+        }
     }
 
     $desktopExe = Join-Path $installedDir "WebCodex.exe"

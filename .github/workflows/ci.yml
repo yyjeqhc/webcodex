@@ -745,6 +745,17 @@ jobs:
             -SourceSha "${{ steps.runtime.outputs.source }}" `
             -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
             -Platform win32-x64
+          if ($LASTEXITCODE -ne 0) { throw "default-directory Desktop install smoke failed" }
+
+          $customInstallDir = Join-Path $env:RUNNER_TEMP "WebCodex Custom Install"
+          & .\scripts\desktop_install_windows_smoke.ps1 `
+            -Installer $env:DESKTOP_CI_INSTALLER `
+            -Version "${{ steps.runtime.outputs.version }}" `
+            -SourceSha "${{ steps.runtime.outputs.source }}" `
+            -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
+            -Platform win32-x64 `
+            -InstallDir $customInstallDir
+          if ($LASTEXITCODE -ne 0) { throw "relocated Desktop install smoke failed" }
 
   test-windows:
     needs: [contract, changes, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop]

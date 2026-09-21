@@ -233,6 +233,7 @@ fn assert_builtin_workflow(output: &Value) {
         "prepare_goal_workflow",
         "exact current Workflow Session",
         "completion_conditions",
+        "optional explicit controller Agent",
         "Host continuation setup/readiness remains separate",
         "Low-level create_goal and associate_goal_workflow_session remain available",
         "Tiny one-step",

@@ -218,7 +218,8 @@ fn single_window_goal_workflow_prefers_atomic_admission_and_keeps_host_setup_sep
     for phrase in [
         "goal_context",
         "reuse one exact candidate",
-        "explicitly choose among multiple candidates",
+        "with multiple candidates, read candidate details through exact get_goal calls",
+        "explicitly choose one before present_goal_plan",
         "get_goal",
         "prepare_goal_workflow",
         "durable admission only",

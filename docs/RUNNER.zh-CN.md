@@ -111,11 +111,15 @@ runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Run
 
 `skill_list` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：
 
+**自 v0.4.2 起可用：** configured live Runner Skill roots 与 Managed Runner Skill Store 会共同参与这个统一 catalog。v0.4.1 的 `skill_list` 不会隐式扫描 `~/.codex/skills`；如果希望该目录参与 v0.4.2+ discovery，必须在 `[skills].roots` 中显式配置。
+
 | 来源 | 位置 / owner | Trust | 版本语义 |
 | --- | --- | --- | --- |
 | Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Project live content；没有 package revision。 |
 | Configured live Runner Skill roots | Runner 主机上由 operator 配置的绝对目录 | `operator_configured_guidance` | WebCodex 不修改的 live filesystem content；受支持脚本可通过 `run_skill_resource` 执行；没有 install、activation、rollback 或 package revision。 |
 | Managed Runner Skill Store | Runner state 下的 `runner-skills-v1` | `operator_installed_guidance` | immutable package revision，并保留 install、activation、remove 与 rollback-oriented Store 语义。 |
+
+`skill_list.sources` 固定报告这三类逻辑 source，并提供有界的 `status`、计数、truncation 与安全 reason code。source 为 available 且 `skill_count=0` 表示 discovery 成功但没有发现 Skill，不代表索引损坏。只有 Project source 会暴露逻辑 root hint `.agents/skills`；Runner 上真实 configured root 路径保持私有。
 
 Configured live roots 默认不存在，需要在 Runner 的 `runner.toml` 中显式配置：
 

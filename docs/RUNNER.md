@@ -124,11 +124,15 @@ Runner's `allowed_roots` policy.
 `skill_list` presents one catalog while preserving three distinct ownership and
 lifecycle models:
 
+**Available since v0.4.2:** configured live Runner Skill roots and the Managed Runner Skill Store participate in this unified catalog. WebCodex v0.4.1 `skill_list` did not implicitly scan `~/.codex/skills`; configure `[skills].roots` explicitly on v0.4.2+ when that directory should participate.
+
 | Source | Location / owner | Trust | Version semantics |
 | --- | --- | --- | --- |
 | Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Live project content; no package revision. |
 | Configured live Runner Skill roots | Operator-selected absolute directories on the Runner host | `operator_configured_guidance` | Live filesystem content that WebCodex does not modify; supported scripts may execute through `run_skill_resource`; no install, activation, rollback, or package revision. |
 | Managed Runner Skill Store | Runner state under `runner-skills-v1` | `operator_installed_guidance` | Immutable package revisions with install, activation, removal, and rollback-oriented Store semantics. |
+
+`skill_list.sources` always reports these three logical sources with bounded `status`, counts, truncation, and safe reason codes. An available source with `skill_count=0` means discovery succeeded and found no Skills; it is not an index failure. Only the Project source exposes the logical root hint `.agents/skills`; native configured Runner paths remain private.
 
 Configured live roots are optional and have no implicit defaults. Each configured
 root contains normal Agent Skill packages directly:

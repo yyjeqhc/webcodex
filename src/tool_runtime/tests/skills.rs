@@ -865,6 +865,17 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
     .await;
     assert!(listed.success, "{:?}", listed.error);
     assert_eq!(listed.output["total_count"], 3);
+    let source_summary = listed.output["sources"].as_array().unwrap();
+    assert_eq!(source_summary.len(), 3);
+    assert_eq!(source_summary[0]["kind"], "project");
+    assert_eq!(source_summary[0]["status"], "available");
+    assert_eq!(source_summary[0]["skill_count"], 1);
+    assert_eq!(source_summary[1]["kind"], "configured_runner_roots");
+    assert_eq!(source_summary[1]["status"], "available");
+    assert_eq!(source_summary[1]["skill_count"], 1);
+    assert_eq!(source_summary[2]["kind"], "managed_runner_store");
+    assert_eq!(source_summary[2]["status"], "available");
+    assert_eq!(source_summary[2]["skill_count"], 1);
     let skills = listed.output["skills"].as_array().unwrap();
     assert!(skills.iter().all(|skill| skill["name_conflict"] == true));
     let configured = skills
@@ -1313,6 +1324,21 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     .await;
     assert!(empty.success, "{:?}", empty.error);
     assert_eq!(empty.output["total_count"], 0);
+    let empty_sources = empty.output["sources"].as_array().unwrap();
+    assert_eq!(empty_sources.len(), 3);
+    assert_eq!(empty_sources[0]["kind"], "project");
+    assert_eq!(empty_sources[0]["status"], "available");
+    assert_eq!(empty_sources[0]["root_hint"], ".agents/skills");
+    assert_eq!(empty_sources[0]["skill_count"], 0);
+    for runner_source in &empty_sources[1..] {
+        assert_eq!(runner_source["status"], "unavailable");
+        assert_eq!(
+            runner_source["reason_code"],
+            "runner_skill_sources_unavailable"
+        );
+        assert_eq!(runner_source["skill_count"], 0);
+        assert!(runner_source.get("root_hint").is_none());
+    }
     assert_eq!(kinds, vec!["file_skill_list_packages"]);
 
     write_skill(

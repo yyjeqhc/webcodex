@@ -325,14 +325,14 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
     assert!(output.contains("npm install"), "{output}");
     assert!(output.contains("npm run build"), "{output}");
     assert!(
-        output.contains("webcodex runner status --profile <profile>"),
+        output.contains("webpi runner status --profile <profile>"),
         "{output}"
     );
     assert!(
         output.contains("--token-file /path/to/plugin-authoring-pat"),
         "{output}"
     );
-    assert!(output.contains("WEBCODEX_PAT"), "{output}");
+    assert!(output.contains("WEBPI_PAT"), "{output}");
     let snippet = output
         .split_once(
             "Runner provider block (copy into the target Runner's startup-bound runner.toml):\n",
@@ -418,7 +418,7 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
     assert!(readme.contains("webcodex plugin check --runner <runner> --plugin echo-plugin"));
     assert!(readme.contains("--tool echo"));
     assert!(readme.contains("--token-file /path/to/plugin-authoring-pat"));
-    assert!(readme.contains("WEBCODEX_PAT"));
+    assert!(readme.contains("WEBPI_PAT"));
     assert!(!readme.contains(destination.to_string_lossy().as_ref()));
     assert!(!destination.join("node_modules").exists());
     assert!(!destination.join("package-lock.json").exists());
@@ -430,7 +430,7 @@ fn plugin_init_provider_snippet_uses_toml_escaping_for_cross_platform_paths() {
     for entrypoint in [
         "/opt/Web Codex/plugins/example/dist/plugin.js",
         "/tmp/plugin-\"quoted\"-#1/dist/plugin.js",
-        r#"C:\Program Files\WebCodex\plugin "quoted"\dist\plugin.js"#,
+        r#"C:\Program Files\WebPi\plugin "quoted"\dist\plugin.js"#,
     ] {
         let snippet = render_provider_configuration("example-plugin", entrypoint).unwrap();
         assert!(snippet.starts_with("[[plugins.providers]]\n"));
@@ -577,8 +577,8 @@ fn plugin_command_help_documents_exact_identity_and_reload_scope() {
     }
     let credential_help = cli_exit(["plugin", "check", "--help"]).unwrap();
     for needle in [
-        "WEBCODEX_TOKEN",
-        "WEBCODEX_PAT",
+        "WEBPI_TOKEN",
+        "WEBPI_PAT",
         "Credential precedence",
         "--token-file /path/to/plugin-authoring-pat",
     ] {

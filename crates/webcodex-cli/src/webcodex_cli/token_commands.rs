@@ -35,14 +35,14 @@ pub(crate) fn resolve_account_credential(
         }
         return Ok(value);
     }
-    let value = std::env::var("WEBCODEX_ACCOUNT_CREDENTIAL")
+    let value = std::env::var("WEBPI_ACCOUNT_CREDENTIAL")
         .map_err(|_| {
-            "--credential, --credential-env, or WEBCODEX_ACCOUNT_CREDENTIAL is required".to_string()
+            "--credential, --credential-env, or WEBPI_ACCOUNT_CREDENTIAL is required".to_string()
         })?
         .trim()
         .to_string();
     if value.is_empty() {
-        return Err("WEBCODEX_ACCOUNT_CREDENTIAL cannot be empty".to_string());
+        return Err("WEBPI_ACCOUNT_CREDENTIAL cannot be empty".to_string());
     }
     Ok(value)
 }
@@ -119,7 +119,7 @@ pub(crate) async fn run_runner_token_create_local(
     let req = build_admin_request(&cmd)?;
     post_json_with_bearer(&req).await?;
     Ok(format!(
-        "Runner transport token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-runner config or WEBCODEX_AGENT_TOKEN.\nThis token will not be shown again.\n",
+        "Runner transport token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-runner config or WEBPI_AGENT_TOKEN.\nThis token will not be shown again.\n",
         opts.client_id, token
     ))
 }

@@ -12,7 +12,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "--help"],
             &[
-                "Usage: webcodex ops <COMMAND>",
+                "Usage: webpi ops <COMMAND>",
                 "status",
                 "runners",
                 "projects",
@@ -25,7 +25,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "status", "--help"],
             &[
-                "Usage: webcodex ops status",
+                "Usage: webpi ops status",
                 "--server-url URL",
                 "--env-file PATH",
                 "--token-file PATH",
@@ -37,7 +37,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "runners", "--help"],
             &[
-                "Usage: webcodex ops runners",
+                "Usage: webpi ops runners",
                 "--server-url URL",
                 "--env-file PATH",
                 "--token-file PATH",
@@ -49,7 +49,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "runner", "--help"],
             &[
-                "Usage: webcodex ops runner",
+                "Usage: webpi ops runner",
                 "--client-id CLIENT_ID",
                 "--request-timeout-ms MS",
                 "--server-url URL",
@@ -61,7 +61,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "projects", "--help"],
             &[
-                "Usage: webcodex ops projects",
+                "Usage: webpi ops projects",
                 "--server-url URL",
                 "--env-file PATH",
                 "--token-file PATH",
@@ -73,7 +73,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "windows", "--help"],
             &[
-                "Usage: webcodex ops windows",
+                "Usage: webpi ops windows",
                 "--project PROJECT_ID",
                 "--limit COUNT",
                 "--server-url URL",
@@ -85,7 +85,7 @@ fn ops_help_entrypoints_print_usage() {
         (
             &["ops", "smoke-preflight", "--help"],
             &[
-                "Usage: webcodex ops smoke-preflight",
+                "Usage: webpi ops smoke-preflight",
                 "--project PROJECT_ID",
                 "--server-url URL",
                 "--env-file PATH",
@@ -159,7 +159,7 @@ fn ops_common_flags_parse_without_printing_token() {
         "--server-url",
         "http://runtime.example",
         "--env-file",
-        "/tmp/webcodex.env",
+        "/tmp/webpi.env",
         "--token-file",
         "/tmp/token",
         "--token",
@@ -169,10 +169,7 @@ fn ops_common_flags_parse_without_printing_token() {
     ]) {
         CliAction::Ops(OpsCommand::Status(opts)) => {
             assert_eq!(opts.server_url, "http://runtime.example");
-            assert_eq!(
-                opts.env_file.as_deref(),
-                Some(Path::new("/tmp/webcodex.env"))
-            );
+            assert_eq!(opts.env_file.as_deref(), Some(Path::new("/tmp/webpi.env")));
             assert_eq!(opts.token_file.as_deref(), Some(Path::new("/tmp/token")));
             assert_eq!(opts.token.as_deref(), Some("secret-token-value"));
             assert!(opts.json);
@@ -299,19 +296,19 @@ fn ops_parser_errors_do_not_leak_token_value() {
 #[tokio::test]
 async fn ops_rejects_agent_token_from_env_file_without_leaking_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     let secret = "wc_agent_do_not_echo_ops_env_file_0123456789";
-    std::fs::write(&env_file, format!("WEBCODEX_TOKEN={secret}\n")).unwrap();
+    std::fs::write(&env_file, format!("WEBPI_TOKEN={secret}\n")).unwrap();
     let mut opts = ops_common_opts("http://127.0.0.1:1".to_string());
     opts.env_file = Some(env_file);
 
     let error = run_ops_command(OpsCommand::Status(opts)).await.unwrap_err();
     assert!(error.contains("Runner transport token"), "{error}");
-    assert!(error.contains("webcodex-user-token"), "{error}");
+    assert!(error.contains("webpi-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
 
-// `WEBCODEX_TOKEN` from the process env is the tested product behavior: it
+// `WEBPI_TOKEN` from the process env is the tested product behavior: it
 // must stay set (and serialized against other env-mutating tests) for the
 // whole async operation, so the env lock is held across the awaits by contract.
 #[allow(clippy::await_holding_lock)]
@@ -319,11 +316,11 @@ async fn ops_rejects_agent_token_from_env_file_without_leaking_it() {
 async fn ops_rejects_agent_token_from_process_env_without_leaking_it() {
     let _guard = env_test_guard();
     let secret = "wc_agent_do_not_echo_ops_process_env_0123456789";
-    let _env = EnvGuard::new().set("WEBCODEX_TOKEN", secret);
+    let _env = EnvGuard::new().set("WEBPI_TOKEN", secret);
     let opts = ops_common_opts("http://127.0.0.1:1".to_string());
     let error = run_ops_command(OpsCommand::Status(opts)).await.unwrap_err();
     assert!(error.contains("Runner transport token"), "{error}");
-    assert!(error.contains("webcodex-user-token"), "{error}");
+    assert!(error.contains("webpi-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
 
@@ -460,7 +457,7 @@ async fn ops_http_error_output_does_not_leak_token_value() {
 
 fn runtime_status_fixture() -> Value {
     json!({
-        "service": "webcodex",
+        "service": "webpi",
         "version": "0.2.0",
         "build": {
             "git_commit": "15138884e3a8ddcf294cae98183ecaac37af7230",
@@ -503,7 +500,7 @@ fn runtime_status_fixture() -> Value {
 
 fn runner_runtime_status_fixture() -> Value {
     json!({
-        "service": "webcodex",
+        "service": "webpi",
         "build": {
             "git_commit": "server123456",
             "git_dirty": false
@@ -675,9 +672,7 @@ async fn run_ops_with_routes(
     routes: Vec<(&'static str, OpsHttpResponse)>,
 ) -> String {
     let _env_guard = env_test_guard();
-    let _env = EnvGuard::new()
-        .remove("WEBCODEX_TOKEN")
-        .remove("WEBCODEX_PAT");
+    let _env = EnvGuard::new().remove("WEBPI_TOKEN").remove("WEBPI_PAT");
     let (server_url, stop_tx, handle) = spawn_ops_route_server(routes);
     let command = match command {
         OpsCommand::Status(mut opts) => {
@@ -1219,9 +1214,9 @@ fn ops_json_and_human_outputs_do_not_contain_secret_values() {
     let json_output = render_ops_status(&report, true).unwrap();
     let human_output = render_ops_status(&report, false).unwrap();
     assert!(!json_output.contains(secret));
-    assert!(!json_output.contains("WEBCODEX_TOKEN="));
+    assert!(!json_output.contains("WEBPI_TOKEN="));
     assert!(!human_output.contains(secret));
-    assert!(!human_output.contains("WEBCODEX_TOKEN="));
+    assert!(!human_output.contains("WEBPI_TOKEN="));
     assert!(human_output.contains("online/stale: 1/0"), "{human_output}");
     assert!(!human_output.contains("online/offline/stale"));
     assert!(!json_output.contains("offline_count"));

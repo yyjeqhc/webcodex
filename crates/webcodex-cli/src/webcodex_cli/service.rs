@@ -6,10 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::system::discover_named_binary_absolute;
 use crate::ServiceScope;
 
-pub(crate) const SERVER_SERVICE_FILE: &str = "/etc/systemd/system/webcodex.service";
-pub(crate) const SERVER_SERVICE_UNIT: &str = "webcodex.service";
-pub(crate) const SERVER_SOCKET_UNIT: &str = "webcodex.socket";
-pub(crate) const RUNNER_SERVICE_UNIT: &str = "webcodex-runner.service";
+pub(crate) const SERVER_SERVICE_FILE: &str = "/etc/systemd/system/webpi.service";
+pub(crate) const SERVER_SERVICE_UNIT: &str = "webpi.service";
+pub(crate) const SERVER_SOCKET_UNIT: &str = "webpi.socket";
+pub(crate) const RUNNER_SERVICE_UNIT: &str = "webpi-runner.service";
 pub(crate) const DEFAULT_LOG_LINES: u32 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1191,7 +1191,7 @@ pub(crate) fn install_server_unit_pair_with_executor<E: ProcessExecutor>(
         && matches!(socket_snapshot.existing_kind, ExistingUnitKind::Absent)
     {
         return Err(format!(
-            "cannot migrate an active legacy {service_unit} directly to socket activation: stop the legacy Server first, then rerun `webcodex server install --overwrite`; this one-time migration boundary is intentionally fail-closed"
+            "cannot migrate an active legacy {service_unit} directly to socket activation: stop the legacy Server first, then rerun `webpi server install --overwrite`; this one-time migration boundary is intentionally fail-closed"
         ));
     }
 
@@ -1855,7 +1855,7 @@ mod tests {
         );
 
         let mut legacy_stop =
-            FakeExecutor::with_outputs(vec![failed("Unit webcodex.socket not found."), ok()]);
+            FakeExecutor::with_outputs(vec![failed("Unit webpi.socket not found."), ok()]);
         control_server_unit_pair_with_executor(
             &mut legacy_stop,
             systemctl,
@@ -1890,8 +1890,8 @@ mod tests {
     #[test]
     fn server_pair_second_file_write_failure_restores_first_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "old service").unwrap();
         std::fs::write(&socket_file, "old socket").unwrap();
 
@@ -1924,8 +1924,8 @@ mod tests {
     #[test]
     fn server_pair_second_file_write_failure_reports_restore_failure() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "old service").unwrap();
         std::fs::write(&socket_file, "old socket").unwrap();
 
@@ -1963,8 +1963,8 @@ mod tests {
     #[test]
     fn server_pair_no_start_enables_both_without_starting() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             absent_discovery(),
@@ -2017,8 +2017,8 @@ mod tests {
     #[test]
     fn server_pair_install_failure_rolls_back_both_unit_files() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             absent_discovery(),
@@ -2060,8 +2060,8 @@ mod tests {
     #[test]
     fn active_legacy_server_migration_fails_before_pair_mutation() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "legacy unit").unwrap();
         let mut executor = FakeExecutor::with_outputs(vec![
             discovery("loaded", service_file.to_str().unwrap()),
@@ -2096,8 +2096,8 @@ mod tests {
     #[test]
     fn server_pair_uninstall_stops_socket_before_service_and_removes_both() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "service").unwrap();
         std::fs::write(&socket_file, "socket").unwrap();
         let mut executor = FakeExecutor::with_outputs(vec![
@@ -2134,8 +2134,8 @@ mod tests {
     #[test]
     fn server_pair_uninstall_control_failure_restores_prior_pair_state() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "service").unwrap();
         std::fs::write(&socket_file, "socket").unwrap();
         let mut executor = FakeExecutor::with_outputs(vec![
@@ -2181,8 +2181,8 @@ mod tests {
     #[test]
     fn server_pair_uninstall_reload_failure_restores_files_and_prior_pair_state() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&service_file, "service").unwrap();
         std::fs::write(&socket_file, "socket").unwrap();
         let mut executor = FakeExecutor::with_outputs(vec![
@@ -2233,8 +2233,8 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("real.service");
-        let service_file = tmp.path().join("webcodex.service");
-        let socket_file = tmp.path().join("webcodex.socket");
+        let service_file = tmp.path().join("webpi.service");
+        let socket_file = tmp.path().join("webpi.socket");
         std::fs::write(&target, "service").unwrap();
         symlink(&target, &service_file).unwrap();
         std::fs::write(&socket_file, "socket").unwrap();
@@ -2302,7 +2302,7 @@ mod tests {
     #[test]
     fn system_scope_never_adds_user_manager_flags() {
         let systemctl = Path::new("/usr/bin/systemctl");
-        let unit = "webcodex-runner.service";
+        let unit = "webpi-runner.service";
         for invocation in plan_install_for_scope(ServiceScope::System, systemctl, unit, false)
             .into_iter()
             .chain(plan_control_for_scope(
@@ -2429,7 +2429,7 @@ mod tests {
     #[test]
     fn new_install_daemon_reload_failure_removes_unit_and_reloads_again() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             status("inactive"),
@@ -2450,7 +2450,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(error.contains("installation failed for webcodex.service"));
+        assert!(error.contains("installation failed for webpi.service"));
         assert!(!service_file.exists());
         assert_eq!(
             executor.calls[0],
@@ -2472,7 +2472,7 @@ mod tests {
     #[test]
     fn new_install_verification_failure_stops_disables_and_removes_unit() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             status("inactive"),
@@ -2504,7 +2504,7 @@ mod tests {
     #[test]
     fn no_start_verification_failure_disables_without_starting() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             status("inactive"),
@@ -2541,7 +2541,7 @@ mod tests {
     #[test]
     fn overwrite_failure_restores_unit_and_prior_active_enabled_state() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         std::fs::write(&service_file, "old unit").unwrap();
         let mut executor = FakeExecutor::with_outputs(vec![
             discovery("loaded", service_file.to_str().unwrap()),
@@ -2575,7 +2575,7 @@ mod tests {
     #[test]
     fn rollback_failures_are_bounded_and_do_not_replace_install_error() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         let long = "x".repeat(500);
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
@@ -2624,7 +2624,7 @@ mod tests {
         for value in ["bad\nvalue", "bad\rvalue", "bad\0value", "bad\tvalue"] {
             assert!(encode_exec_argument("ExecStart argument", value).is_err());
         }
-        for value in ["webcodex", "web_codex-1.service", "group.name"] {
+        for value in ["webpi", "web_codex-1.service", "group.name"] {
             validate_systemd_identity("User", value).unwrap();
         }
         for value in [
@@ -2642,7 +2642,7 @@ mod tests {
     #[test]
     fn user_unit_parent_is_created_without_touching_systemd() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("xdg/systemd/user/webcodex-runner.service");
+        let service_file = tmp.path().join("xdg/systemd/user/webpi-runner.service");
         ensure_service_file_parent(&service_file).unwrap();
         assert!(service_file.parent().unwrap().is_dir());
         assert!(!service_file.exists());
@@ -2658,8 +2658,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         let linked = tmp.path().join("user");
         symlink(&target, &linked).unwrap();
-        let error =
-            ensure_service_file_parent(&linked.join("webcodex-runner.service")).unwrap_err();
+        let error = ensure_service_file_parent(&linked.join("webpi-runner.service")).unwrap_err();
         assert!(
             error.contains("symlinked service unit directory"),
             "{error}"
@@ -2727,7 +2726,7 @@ mod tests {
     fn overwrite_rejects_transitional_or_unknown_active_states_before_writing() {
         for state in ["activating", "deactivating", "reloading", "unknown"] {
             let tmp = tempfile::tempdir().unwrap();
-            let service_file = tmp.path().join("webcodex.service");
+            let service_file = tmp.path().join("webpi.service");
             std::fs::write(&service_file, "old unit").unwrap();
             let mut executor = FakeExecutor::with_outputs(vec![
                 discovery("loaded", service_file.to_str().unwrap()),
@@ -2765,7 +2764,7 @@ mod tests {
             "unknown",
         ] {
             let tmp = tempfile::tempdir().unwrap();
-            let service_file = tmp.path().join("webcodex.service");
+            let service_file = tmp.path().join("webpi.service");
             std::fs::write(&service_file, "old unit").unwrap();
             let mut executor = FakeExecutor::with_outputs(vec![
                 discovery("loaded", service_file.to_str().unwrap()),
@@ -2794,7 +2793,7 @@ mod tests {
     #[test]
     fn genuinely_absent_unit_installs_after_explicit_not_found_discovery() {
         let tmp = tempfile::tempdir().unwrap();
-        let service_file = tmp.path().join("webcodex.service");
+        let service_file = tmp.path().join("webpi.service");
         let mut executor = FakeExecutor::with_outputs(vec![
             absent_discovery(),
             status("inactive"),
@@ -2821,13 +2820,13 @@ mod tests {
     #[test]
     fn external_vendor_runtime_and_generated_units_are_rejected_before_side_effects() {
         for (load_state, fragment) in [
-            ("loaded", "/usr/lib/systemd/system/webcodex.service"),
-            ("loaded", "/run/systemd/system/webcodex.service"),
-            ("loaded", "/run/systemd/generator/webcodex.service"),
-            ("generated", "/run/systemd/generator.late/webcodex.service"),
+            ("loaded", "/usr/lib/systemd/system/webpi.service"),
+            ("loaded", "/run/systemd/system/webpi.service"),
+            ("loaded", "/run/systemd/generator/webpi.service"),
+            ("generated", "/run/systemd/generator.late/webpi.service"),
         ] {
             let tmp = tempfile::tempdir().unwrap();
-            let service_file = tmp.path().join("webcodex.service");
+            let service_file = tmp.path().join("webpi.service");
             let mut executor = FakeExecutor::with_outputs(vec![discovery(load_state, fragment)]);
             let error = install_unit_with_executor(
                 &mut executor,
@@ -2866,7 +2865,7 @@ mod tests {
         ];
         for discovery_output in cases {
             let tmp = tempfile::tempdir().unwrap();
-            let service_file = tmp.path().join("webcodex.service");
+            let service_file = tmp.path().join("webpi.service");
             let mut executor = FakeExecutor::with_outputs(vec![discovery_output]);
             let error = install_unit_with_executor(
                 &mut executor,

@@ -5,6 +5,7 @@
 //! exact Runner gateway, while these types describe the native Runner protocol
 //! and the closed Server <-> Runner gateway.
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,6 +22,7 @@ pub const PLUGIN_MAX_SCHEMA_BYTES: usize = 64 * 1024;
 pub const PLUGIN_MAX_ARGUMENT_BYTES: usize = 64 * 1024;
 pub const PLUGIN_MAX_STRUCTURED_CONTENT_BYTES: usize = 512 * 1024;
 pub const PLUGIN_MAX_TEXT_CONTENT_BYTES: usize = 512 * 1024;
+pub const PLUGIN_MAX_IMAGE_CONTENT_BYTES: usize = 320 * 1024;
 pub const PLUGIN_MAX_RESULT_BYTES: usize = 512 * 1024;
 pub const PLUGIN_MAX_CONTENT_ITEMS: usize = 32;
 pub const PLUGIN_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -166,7 +168,14 @@ impl PluginCatalog {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum PluginContent {
-    Text { text: String },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1165,14 +1174,32 @@ pub fn validate_tool_result(result: &PluginToolResult) -> Result<(), String> {
     if result.content.len() > PLUGIN_MAX_CONTENT_ITEMS {
         return Err("tool result content item count exceeds bound".to_string());
     }
-    let mut text_bytes = 0usize;
+    let mut content_bytes = 0usize;
     for content in &result.content {
-        let PluginContent::Text { text } = content;
-        if text.len() > PLUGIN_MAX_TEXT_CONTENT_BYTES {
-            return Err("tool result text exceeds bound".to_string());
+        match content {
+            PluginContent::Text { text } => {
+                if text.len() > PLUGIN_MAX_TEXT_CONTENT_BYTES {
+                    return Err("tool result text exceeds bound".to_string());
+                }
+                validate_text_controls(text, "tool result text")?;
+                content_bytes = content_bytes.saturating_add(text.len());
+            }
+            PluginContent::Image { data, mime_type } => {
+                if !matches!(
+                    mime_type.as_str(),
+                    "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+                ) {
+                    return Err("tool result image mimeType is unsupported".to_string());
+                }
+                let decoded = BASE64_STANDARD
+                    .decode(data)
+                    .map_err(|_| "tool result image data is not valid base64".to_string())?;
+                if decoded.len() > PLUGIN_MAX_IMAGE_CONTENT_BYTES {
+                    return Err("tool result image exceeds bound".to_string());
+                }
+                content_bytes = content_bytes.saturating_add(decoded.len());
+            }
         }
-        validate_text_controls(text, "tool result text")?;
-        text_bytes = text_bytes.saturating_add(text.len());
     }
     if let Some(structured) = result.structured_content.as_ref() {
         if !structured.is_object() {
@@ -1186,7 +1213,7 @@ pub fn validate_tool_result(result: &PluginToolResult) -> Result<(), String> {
     }
     let encoded = serde_json::to_vec(result)
         .map_err(|_| "tool result could not be serialized".to_string())?;
-    if encoded.len() > PLUGIN_MAX_RESULT_BYTES || text_bytes > PLUGIN_MAX_RESULT_BYTES {
+    if encoded.len() > PLUGIN_MAX_RESULT_BYTES || content_bytes > PLUGIN_MAX_RESULT_BYTES {
         return Err("tool result exceeds aggregate bound".to_string());
     }
     Ok(())
@@ -1510,9 +1537,28 @@ mod tests {
     }
 
     #[test]
-    fn result_rejects_unsupported_content_at_deserialize_boundary() {
-        let value = json!({"content":[{"type":"image","data":"x"}],"isError":false});
-        assert!(serde_json::from_value::<PluginToolResult>(value).is_err());
+    fn result_accepts_bounded_raster_image_content_and_rejects_invalid_images() {
+        let png = json!({
+            "content": [{
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png"
+            }],
+            "isError": false
+        });
+        let result = serde_json::from_value::<PluginToolResult>(png).unwrap();
+        validate_tool_result(&result).unwrap();
+
+        for invalid in [
+            json!({"content":[{"type":"image","data":"%%%","mimeType":"image/png"}],"isError":false}),
+            json!({"content":[{"type":"image","data":"AA==","mimeType":"image/svg+xml"}],"isError":false}),
+            json!({"content":[{"type":"image","data":"AA=="}],"isError":false}),
+        ] {
+            match serde_json::from_value::<PluginToolResult>(invalid) {
+                Ok(result) => assert!(validate_tool_result(&result).is_err()),
+                Err(_) => {}
+            }
+        }
     }
 
     #[test]
@@ -1687,6 +1733,20 @@ mod tests {
             is_error: false,
         };
         assert!(validate_tool_result(&oversized_text).is_err());
+
+        let oversized_image = PluginToolResult {
+            content: vec![PluginContent::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(vec![
+                    0u8;
+                    PLUGIN_MAX_IMAGE_CONTENT_BYTES
+                        + 1
+                ]),
+                mime_type: "image/png".to_string(),
+            }],
+            structured_content: None,
+            is_error: false,
+        };
+        assert!(validate_tool_result(&oversized_image).is_err());
 
         let oversized_structured = PluginToolResult {
             content: vec![],

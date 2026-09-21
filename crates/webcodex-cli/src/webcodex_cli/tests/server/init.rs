@@ -115,7 +115,7 @@ fn runner_init_token_file_and_env_fallback() {
     assert!(content.contains("agent_fake_file_token"));
 
     let _guard = env_test_guard();
-    let _env = EnvGuard::new().set("WEBCODEX_AGENT_TOKEN", "agent_fake_env_token");
+    let _env = EnvGuard::new().set("WEBPI_AGENT_TOKEN", "agent_fake_env_token");
     let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://v4.example.test",
@@ -182,15 +182,43 @@ fn runner_init_allows_empty_allowed_roots_with_home_default() {
 }
 
 #[test]
+fn webpi_rejects_anonymous_deployment_flag() {
+    assert!(parse_server_init(&args(&["--open"])).is_err());
+}
+
+#[test]
+fn webpi_init_overwrite_never_replaces_legacy_configuration_or_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("webpi.env");
+    let data = tmp.path().join("not-created");
+    let original = "WEBCODEX_TOKEN=synthetic-preserve-me\nWEBCODEX_DATA=original\n";
+    std::fs::write(&file, original).unwrap();
+    let opts = parse_server_init(&args(&[
+        "--env-file",
+        file.to_str().unwrap(),
+        "--data-dir",
+        data.to_str().unwrap(),
+        "--overwrite",
+        "--json",
+    ]))
+    .unwrap();
+    let error = run_server_init(opts).unwrap_err();
+    assert!(error.contains("explicitly migrated"));
+    assert!(!error.contains("synthetic-preserve-me"));
+    assert_eq!(std::fs::read_to_string(file).unwrap(), original);
+    assert!(!data.exists());
+}
+
+#[test]
 fn server_init_parse_defaults() {
     let opts = parse_server_init(&args(&[])).unwrap();
-    assert_eq!(opts.listen, "127.0.0.1:8080");
+    assert_eq!(opts.listen, "127.0.0.1:56542");
     if is_effective_root() {
-        assert_eq!(opts.data_dir, PathBuf::from("/var/lib/webcodex"));
-        assert_eq!(opts.env_file, PathBuf::from("/etc/webcodex/webcodex.env"));
+        assert_eq!(opts.data_dir, PathBuf::from("/var/lib/webpi"));
+        assert_eq!(opts.env_file, PathBuf::from("/etc/webpi/webpi.env"));
     } else {
-        assert!(opts.data_dir.ends_with(".local/share/webcodex"));
-        assert!(opts.env_file.ends_with(".config/webcodex/webcodex.env"));
+        assert!(opts.data_dir.ends_with(".local/share/webpi"));
+        assert!(opts.env_file.ends_with(".config/webpi/webpi.env"));
     }
     assert!(!opts.overwrite);
     assert!(!opts.json);
@@ -199,7 +227,7 @@ fn server_init_parse_defaults() {
 #[test]
 fn server_init_writes_env_file_and_0600_permissions() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("etc/webcodex.env");
+    let env_file = tmp.path().join("etc/webpi.env");
     let data_dir = tmp.path().join("data");
     let opts = parse_server_init(&args(&[
         "--listen",
@@ -213,12 +241,12 @@ fn server_init_writes_env_file_and_0600_permissions() {
     ]))
     .unwrap();
     let output = run_server_init(opts).unwrap();
-    assert!(data_dir.is_dir(), "server init must create WEBCODEX_DATA");
-    assert!(output.contains("WebCodex Server configured."), "{output}");
+    assert!(data_dir.is_dir(), "server init must create WEBPI_DATA");
+    assert!(output.contains("WebPi Server configured."), "{output}");
     assert!(output.contains("Data:"), "{output}");
     assert!(output.contains("Next:"), "{output}");
     let foreground = crate::webcodex_cli::shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "server".to_string(),
         "run".to_string(),
         "--env-file".to_string(),
@@ -227,7 +255,7 @@ fn server_init_writes_env_file_and_0600_permissions() {
     assert!(output.contains(&foreground), "{output}");
     if cfg!(target_os = "linux") && is_effective_root() {
         let install = crate::webcodex_cli::shell_command(&[
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "server".to_string(),
             "install".to_string(),
             "--env-file".to_string(),
@@ -237,18 +265,19 @@ fn server_init_writes_env_file_and_0600_permissions() {
         ]);
         assert!(output.contains(&install), "{output}");
     } else {
-        assert!(!output.contains("webcodex server install"), "{output}");
+        assert!(!output.contains("webpi server install"), "{output}");
     }
     let content = std::fs::read_to_string(&env_file).unwrap();
-    assert!(content.contains("WEBCODEX_ADDR=127.0.0.1:9090\n"));
-    assert!(content.contains(&format!("WEBCODEX_DATA={}\n", data_dir.display())));
-    assert!(content.contains("WEBCODEX_TOKEN=wc_boot_"));
-    assert!(content.contains("WEBCODEX_PUBLIC_URL=https://example.test\n"));
-    assert!(content.contains("WEBCODEX_OAUTH2_ENABLED=true\n"));
-    assert!(content.contains("WEBCODEX_OAUTH2_ISSUER=https://example.test\n"));
-    assert!(content.contains("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true\n"));
-    assert!(content.contains("WEBCODEX_SHARED_KEY_ENABLED=true\n"));
-    let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+    assert!(content.contains("WEBPI_ADDR=127.0.0.1:9090\n"));
+    assert!(content.contains(&format!("WEBPI_DATA={}\n", data_dir.display())));
+    assert!(content.contains("WEBPI_TOKEN=wc_boot_"));
+    assert!(content.contains("WEBPI_PUBLIC_URL=https://example.test\n"));
+    assert!(content.contains("WEBPI_OAUTH2_ENABLED=true\n"));
+    assert!(content.contains("WEBPI_OAUTH2_ISSUER=https://example.test\n"));
+    assert!(content.contains("WEBPI_OAUTH2_SHARED_KEY_BRIDGE=false\n"));
+    assert!(content.contains("WEBPI_SHARED_KEY_ENABLED=false\n"));
+    assert!(content.contains("WEBPI_ALLOW_ANONYMOUS=false\n"));
+    let token = parse_env_content_value(&content, "WEBPI_TOKEN").unwrap();
     assert!(!output.contains(&token));
     assert!(!output.contains("token prefix:"), "{output}");
     assert!(!output.contains("shared key:"), "{output}");
@@ -263,8 +292,8 @@ fn server_init_writes_env_file_and_0600_permissions() {
 #[test]
 fn server_init_refuses_overwrite_unless_requested() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
-    std::fs::write(&env_file, "WEBCODEX_TOKEN=old\n").unwrap();
+    let env_file = tmp.path().join("webpi.env");
+    std::fs::write(&env_file, "WEBPI_TOKEN=old\n").unwrap();
     let mut opts = parse_server_init(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -277,17 +306,17 @@ fn server_init_refuses_overwrite_unless_requested() {
     opts.overwrite = true;
     run_server_init(opts).unwrap();
     let content = std::fs::read_to_string(&env_file).unwrap();
-    assert!(content.contains("WEBCODEX_ADDR="));
-    assert!(content.contains("WEBCODEX_TOKEN=old"));
-    assert!(content.contains("WEBCODEX_SHARED_KEY_ENABLED=true"));
-    assert!(!content.contains("WEBCODEX_OAUTH2_ENABLED=true"));
-    assert!(!content.contains("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true"));
+    assert!(content.contains("WEBPI_ADDR="));
+    assert!(content.contains("WEBPI_TOKEN=old"));
+    assert!(content.contains("WEBPI_SHARED_KEY_ENABLED=false"));
+    assert!(!content.contains("WEBPI_OAUTH2_ENABLED=true"));
+    assert!(!content.contains("WEBPI_OAUTH2_SHARED_KEY_BRIDGE=true"));
 }
 
 #[test]
 fn server_init_json_output_does_not_include_full_token() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     let opts = parse_server_init(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -298,7 +327,7 @@ fn server_init_json_output_does_not_include_full_token() {
     .unwrap();
     let output = run_server_init(opts).unwrap();
     let content = std::fs::read_to_string(&env_file).unwrap();
-    let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+    let token = parse_env_content_value(&content, "WEBPI_TOKEN").unwrap();
     assert!(!output.contains(&token));
     let json: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(json["wrote_env_file"], true);
@@ -313,7 +342,7 @@ fn server_init_json_output_does_not_include_full_token() {
 #[test]
 fn server_init_secret_env_file_has_protected_windows_dacl() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("config/webcodex.env");
+    let env_file = tmp.path().join("config/webpi.env");
     let data_dir = tmp.path().join("data");
     let opts = parse_server_init(&args(&[
         "--listen",
@@ -327,7 +356,7 @@ fn server_init_secret_env_file_has_protected_windows_dacl() {
     .unwrap();
     let output = run_server_init(opts).unwrap();
     let content = std::fs::read_to_string(&env_file).unwrap();
-    let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+    let token = parse_env_content_value(&content, "WEBPI_TOKEN").unwrap();
     assert!(!output.contains(&token));
     let json: Value = serde_json::from_str(&output).unwrap();
     let next_steps = json["next_steps"]
@@ -366,5 +395,5 @@ fn server_init_secret_env_file_has_protected_windows_dacl() {
 fn server_init_rejects_legacy_full_token_stdout_mode() {
     let result = parse_server_init(&args(&["--output", "-"]));
     assert_eq!(result.unwrap_err(), "unknown server init flag: --output");
-    assert!(!server_init_usage().contains("full WEBCODEX_TOKEN"));
+    assert!(!server_init_usage().contains("full WEBPI_TOKEN"));
 }

@@ -47,9 +47,9 @@ pub(crate) fn render_token_generate(opts: TokenGenerateOptions) -> String {
     let hash = hash_local_token(&token);
     format!(
         "Token:\n{}\n\nHash:\nsha256:{}\n\nPrefix:\n{}\n\n\
-This token was generated offline and is not registered with a WebCodex server.\n\
+This token was generated offline and is not registered with a WebPi server.\n\
 It cannot authenticate until registered through the managed credential flow.\n\
-For the hosted shared-key flow, use `webcodex connect`.\n",
+For the hosted shared-key flow, use `webpi connect`.\n",
         token,
         hash,
         local_token_prefix(&token)

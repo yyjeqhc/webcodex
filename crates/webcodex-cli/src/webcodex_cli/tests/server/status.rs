@@ -109,7 +109,7 @@ fn server_status_accepts_custom_service_file() {
 #[test]
 fn server_status_url_defaults_from_env_and_maps_wildcards_to_loopback() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     for (listen, expected) in [
         ("127.0.0.1:9090", "http://127.0.0.1:9090"),
         ("0.0.0.0:9091", "http://127.0.0.1:9091"),
@@ -118,7 +118,7 @@ fn server_status_url_defaults_from_env_and_maps_wildcards_to_loopback() {
     ] {
         std::fs::write(
             &env_file,
-            format!("WEBCODEX_ADDR={listen}\nWEBCODEX_TOKEN=hidden\n"),
+            format!("WEBPI_ADDR={listen}\nWEBPI_TOKEN=hidden\n"),
         )
         .unwrap();
         let opts = parse_server_status(&args(&["--env-file", env_file.to_str().unwrap()])).unwrap();
@@ -133,12 +133,8 @@ fn server_status_url_defaults_from_env_and_maps_wildcards_to_loopback() {
 #[test]
 fn server_status_explicit_url_wins_over_env_address() {
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
-    std::fs::write(
-        &env_file,
-        "WEBCODEX_ADDR=not-a-socket\nWEBCODEX_TOKEN=hidden\n",
-    )
-    .unwrap();
+    let env_file = tmp.path().join("webpi.env");
+    std::fs::write(&env_file, "WEBPI_ADDR=not-a-socket\nWEBPI_TOKEN=hidden\n").unwrap();
     let opts = parse_server_status(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -164,7 +160,7 @@ async fn server_status_parses_env_token_posts_and_does_not_print_token() {
         let n = stream.read(&mut buf).unwrap();
         let request = String::from_utf8_lossy(&buf[..n]).to_string();
         tx.send(request.clone()).unwrap();
-        let body = r#"{"success":true,"output":{"service":"webcodex","auth_enabled":true,"configured_public_url":"https://example.test","tools":{"count":12},"agents":{"online_count":2}}}"#;
+        let body = r#"{"success":true,"output":{"service":"webpi","auth_enabled":true,"configured_public_url":"https://example.test","tools":{"count":12},"agents":{"online_count":2}}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -174,9 +170,9 @@ async fn server_status_parses_env_token_posts_and_does_not_print_token() {
         .unwrap();
     });
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     let token = "secret-status-token";
-    std::fs::write(&env_file, format!("WEBCODEX_TOKEN={}\n", token)).unwrap();
+    std::fs::write(&env_file, format!("WEBPI_TOKEN={}\n", token)).unwrap();
     let opts = parse_server_status(&args(&[
         "--url",
         &format!("http://{}", addr),
@@ -224,9 +220,9 @@ async fn server_status_token_file_takes_priority_over_env_file() {
         .unwrap();
     });
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     let token_file = tmp.path().join("token");
-    std::fs::write(&env_file, "WEBCODEX_TOKEN=env-token\n").unwrap();
+    std::fs::write(&env_file, "WEBPI_TOKEN=env-token\n").unwrap();
     std::fs::write(&token_file, "file-token\n").unwrap();
     let opts = parse_server_status(&args(&[
         "--url",
@@ -257,9 +253,9 @@ async fn server_status_connection_failure_reports_unreachable_without_token() {
     let (addr, handle) = spawn_connection_drop_server();
 
     let tmp = tempfile::tempdir().unwrap();
-    let env_file = tmp.path().join("webcodex.env");
+    let env_file = tmp.path().join("webpi.env");
     let token = "connection-failure-token";
-    std::fs::write(&env_file, format!("WEBCODEX_TOKEN={}\n", token)).unwrap();
+    std::fs::write(&env_file, format!("WEBPI_TOKEN={}\n", token)).unwrap();
     let opts = parse_server_status(&args(&[
         "--url",
         &format!("http://{}", addr),
@@ -272,10 +268,7 @@ async fn server_status_connection_failure_reports_unreachable_without_token() {
     handle.join().unwrap();
     assert!(output.contains("HTTP reachable:        no"));
     assert!(output.contains("Server: unreachable"), "{output}");
-    assert!(
-        output.contains("webcodex server run --env-file"),
-        "{output}"
-    );
+    assert!(output.contains("webpi server run --env-file"), "{output}");
     assert!(output.contains("HTTP error:"));
     assert!(!output.contains(token));
 }

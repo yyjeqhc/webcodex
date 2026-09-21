@@ -7,9 +7,9 @@ fn main() {
     // target/ may be shared across linked worktrees, so make the worktree path
     // an explicit build-script input instead of reusing another worktree's Git identity.
     println!("cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR");
-    println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_COMMIT");
-    println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_DIRTY");
-    println!("cargo:rerun-if-env-changed=WEBCODEX_BUILT_AT");
+    println!("cargo:rerun-if-env-changed=WEBPI_GIT_COMMIT");
+    println!("cargo:rerun-if-env-changed=WEBPI_GIT_DIRTY");
+    println!("cargo:rerun-if-env-changed=WEBPI_BUILT_AT");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     let head_path = git_metadata_path(&repo_root, "HEAD")
@@ -40,9 +40,9 @@ fn main() {
     // Git metadata does not change for ordinary unstaged worktree edits. When
     // dirty state is derived locally, make those tracked files explicit Cargo
     // inputs so a same-HEAD rebuild cannot reuse stale build-script output.
-    // CI/release callers that pin WEBCODEX_GIT_DIRTY intentionally skip these
+    // CI/release callers that pin WEBPI_GIT_DIRTY intentionally skip these
     // worktree dependencies and keep their deterministic identity contract.
-    let git_dirty_override = env_value("WEBCODEX_GIT_DIRTY");
+    let git_dirty_override = env_value("WEBPI_GIT_DIRTY");
     let git_dirty = git_dirty_override
         .clone()
         .unwrap_or_else(|| git_dirty_from_git(&repo_root));
@@ -51,20 +51,20 @@ fn main() {
     }
 
     let git_commit =
-        env_value("WEBCODEX_GIT_COMMIT").unwrap_or_else(|| git_commit_from_git(&repo_root));
-    // Release workflows pin WEBCODEX_BUILT_AT explicitly. For ordinary Git
+        env_value("WEBPI_GIT_COMMIT").unwrap_or_else(|| git_commit_from_git(&repo_root));
+    // Release workflows pin WEBPI_BUILT_AT explicitly. For ordinary Git
     // worktrees, prefer stable inputs so the same commit does not invalidate
     // compiler caches merely because it was built at a different wall-clock
     // time. SOURCE_DATE_EPOCH remains an explicit reproducible-build override;
     // non-Git source trees retain the historical current-time fallback.
-    let built_at = env_value("WEBCODEX_BUILT_AT")
+    let built_at = env_value("WEBPI_BUILT_AT")
         .or_else(|| env_value("SOURCE_DATE_EPOCH"))
         .or_else(|| git_commit_timestamp_from_git(&repo_root))
         .unwrap_or_else(current_unix_timestamp);
 
-    println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_COMMIT={git_commit}");
-    println!("cargo:rustc-env=WEBCODEX_BUILD_GIT_DIRTY={git_dirty}");
-    println!("cargo:rustc-env=WEBCODEX_BUILD_BUILT_AT={built_at}");
+    println!("cargo:rustc-env=WEBPI_BUILD_GIT_COMMIT={git_commit}");
+    println!("cargo:rustc-env=WEBPI_BUILD_GIT_DIRTY={git_dirty}");
+    println!("cargo:rustc-env=WEBPI_BUILD_BUILT_AT={built_at}");
 }
 
 fn env_value(name: &str) -> Option<String> {

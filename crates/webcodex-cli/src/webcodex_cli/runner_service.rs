@@ -55,7 +55,7 @@ pub(crate) fn render_runner_systemd_unit(
         );
     }
     unit.push_str("[Unit]\n");
-    unit.push_str("Description=WebCodex Runner\n");
+    unit.push_str("Description=WebPi Runner\n");
     if opts.scope == ServiceScope::System {
         unit.push_str("After=network-online.target\n");
         unit.push_str("Wants=network-online.target\n");
@@ -138,7 +138,7 @@ pub(crate) fn run_runner_install_service(
         ""
     };
     let status_command = shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "runner".to_string(),
         "status".to_string(),
         "--scope".to_string(),
@@ -184,7 +184,7 @@ pub(crate) fn run_runner_service(opts: ServiceActionOptions) -> Result<String, S
                     *follow,
                 ),
                 ServiceActionKind::Uninstall { .. } => Err(
-                    "hosted connect profiles are not system services; use `webcodex runner stop --profile <name>` and remove local profile files explicitly if desired"
+                    "hosted connect profiles are not system services; use `webpi runner stop --profile <name>` and remove local profile files explicitly if desired"
                         .to_string(),
                 ),
             };
@@ -389,7 +389,7 @@ fn render_runner_readiness_summary(
         let command = format!(
             "{} /path/to/project",
             shell_command(&[
-                "webcodex".to_string(),
+                "webpi".to_string(),
                 "project".to_string(),
                 "register".to_string(),
                 "--config".to_string(),
@@ -403,7 +403,7 @@ fn render_runner_readiness_summary(
     if client_online == Some(true) {
         match (loaded_project_count, configured_project_count) {
             (Some(loaded), Some(configured)) if loaded == configured && loaded > 0 => {
-                out.push_str("\nWebCodex is ready to use registered projects.\n");
+                out.push_str("\nWebPi is ready to use registered projects.\n");
             }
             (Some(0), Some(0)) => {
                 out.push_str("\nRunner connected, but no project has been added.\n");
@@ -414,7 +414,7 @@ fn render_runner_readiness_summary(
                     "\nRunner connected, but configured project changes are not fully loaded.\n",
                 );
                 out.push_str("\nRunner restart required.\n");
-                out.push_str("\nNext:\n  Restart the existing Runner, then check `webcodex runner status` again.\n");
+                out.push_str("\nNext:\n  Restart the existing Runner, then check `webpi runner status` again.\n");
             }
             (_, Some(0)) => {
                 out.push_str("\nNo project is configured locally.\n");
@@ -707,7 +707,7 @@ mod tests {
         assert!(ready.contains("Runner: connected"), "{ready}");
         assert!(ready.contains("Projects: 1"), "{ready}");
         assert!(
-            ready.contains("WebCodex is ready to use registered projects."),
+            ready.contains("WebPi is ready to use registered projects."),
             "{ready}"
         );
 
@@ -718,7 +718,7 @@ mod tests {
         );
         assert!(
             zero.contains(
-                "webcodex project register --config /tmp/webcodex/runner.toml /path/to/project"
+                "webpi project register --config /tmp/webcodex/runner.toml /path/to/project"
             ),
             "{zero}"
         );
@@ -858,7 +858,7 @@ mod tests {
         );
         assert_eq!(
             service_unit_name(
-                Path::new("/etc/systemd/system/webcodex-runner.service"),
+                Path::new("/etc/systemd/system/webpi-runner.service"),
                 RUNNER_SERVICE_UNIT,
             ),
             RUNNER_SERVICE_UNIT

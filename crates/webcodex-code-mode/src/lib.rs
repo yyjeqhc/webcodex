@@ -19,7 +19,7 @@ pub const MAX_CONCURRENT_TOOL_CALLS: usize = 8;
 /// server-process environment override without changing the safe default.
 pub const DEFAULT_MAX_CONCURRENT_EXECUTIONS: usize = 2;
 pub const MAX_CONFIGURED_CONCURRENT_EXECUTIONS: usize = 64;
-pub const MAX_CONCURRENT_EXECUTIONS_ENV: &str = "WEBCODEX_CODE_MODE_MAX_CONCURRENT_EXECUTIONS";
+pub const MAX_CONCURRENT_EXECUTIONS_ENV: &str = "WEBPI_CODE_MODE_MAX_CONCURRENT_EXECUTIONS";
 
 pub fn normalized_max_concurrent_executions(raw: Option<&str>) -> usize {
     raw.and_then(|value| value.trim().parse::<usize>().ok())

@@ -345,7 +345,7 @@ pub(crate) async fn run_plugin_command(
     };
 
     if status == 401 {
-        return Err("plugin request was rejected with HTTP 401; provide a user/API bearer credential accepted by this WebCodex Server".to_string());
+        return Err("plugin request was rejected with HTTP 401; provide a user/API bearer credential accepted by this WebPi Server".to_string());
     }
     if status == 403 {
         let scope = if matches!(command, PluginCommand::List(_) | PluginCommand::Describe(_)) {

@@ -21,8 +21,8 @@ pub(crate) fn user_config_home() -> Result<PathBuf, String> {
 
 pub(crate) fn client_base_dir_for_scope(scope: ServiceScope) -> Result<PathBuf, String> {
     match scope {
-        ServiceScope::User => Ok(user_config_home()?.join("webcodex")),
-        ServiceScope::System => Ok(PathBuf::from("/etc/webcodex")),
+        ServiceScope::User => Ok(user_config_home()?.join("webpi")),
+        ServiceScope::System => Ok(PathBuf::from("/etc/webpi")),
     }
 }
 
@@ -44,7 +44,7 @@ pub(crate) fn client_profile_user_token_file_for_scope(
 ) -> Result<PathBuf, String> {
     Ok(
         client_output_dir_for_profile(&client_base_dir_for_scope(scope)?, profile)
-            .join("webcodex-user-token"),
+            .join("webpi-user-token"),
     )
 }
 
@@ -54,7 +54,7 @@ pub(crate) fn client_profile_runner_token_file_for_scope(
 ) -> Result<PathBuf, String> {
     Ok(
         client_output_dir_for_profile(&client_base_dir_for_scope(scope)?, profile)
-            .join("webcodex-runner-token"),
+            .join("webpi-runner-token"),
     )
 }
 
@@ -67,8 +67,8 @@ pub(crate) fn runner_service_file_for_scope(
     profile: Option<&str>,
 ) -> Result<PathBuf, String> {
     let name = match profile {
-        Some(profile) => format!("webcodex-runner-{profile}.service"),
-        None => "webcodex-runner.service".to_string(),
+        Some(profile) => format!("webpi-runner-{profile}.service"),
+        None => "webpi-runner.service".to_string(),
     };
     let directory = match scope {
         ServiceScope::User => user_systemd_unit_dir()?,
@@ -168,9 +168,9 @@ pub(crate) fn client_profile_project_registry_dir(profile: &str) -> Result<PathB
 }
 
 pub(crate) fn client_profile_user_token_file(profile: &str) -> Result<PathBuf, String> {
-    Ok(client_profile_dir(profile)?.join("webcodex-user-token"))
+    Ok(client_profile_dir(profile)?.join("webpi-user-token"))
 }
 
 pub(crate) fn client_profile_runner_token_file(profile: &str) -> Result<PathBuf, String> {
-    Ok(client_profile_dir(profile)?.join("webcodex-runner-token"))
+    Ok(client_profile_dir(profile)?.join("webpi-runner-token"))
 }

@@ -997,7 +997,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
         .map_err(|error| error.to_string());
     }
     let runner_command = shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "runner".to_string(),
         "run".to_string(),
         "--config".to_string(),
@@ -1011,7 +1011,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     }
     let restart_guidance = if cfg!(target_os = "linux") {
         format!(
-            "Next:\n  If the Runner is in the foreground, stop it with Ctrl-C, then run:\n    {runner_command}\n  If it is installed as a service, use the matching `webcodex runner restart` command instead.\n"
+            "Next:\n  If the Runner is in the foreground, stop it with Ctrl-C, then run:\n    {runner_command}\n  If it is installed as a service, use the matching `webpi runner restart` command instead.\n"
         )
     } else {
         format!(
@@ -1593,7 +1593,7 @@ mod tests {
             "{first}"
         );
         assert!(first.contains("Runner restart required."), "{first}");
-        assert!(first.contains("webcodex runner run --config"), "{first}");
+        assert!(first.contains("webpi runner run --config"), "{first}");
         assert_eq!(
             first.contains("installed as a service"),
             cfg!(target_os = "linux"),

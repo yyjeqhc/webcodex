@@ -78,7 +78,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         server_name: "rust-analyzer",
         extensions: &[("rs", "rust")],
         manifest_markers: &["Cargo.toml"],
-        env_override: "WEBCODEX_RUST_ANALYZER",
+        env_override: "WEBPI_RUST_ANALYZER",
         executable: "rust-analyzer",
         // rust-analyzer speaks LSP over stdio with no arguments.
         default_args: &[],
@@ -101,7 +101,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
             "Pipfile",
             "pyrightconfig.json",
         ],
-        env_override: "WEBCODEX_PYRIGHT",
+        env_override: "WEBPI_PYRIGHT",
         // The `pyright` npm package ships `pyright-langserver`, which speaks
         // LSP only under `--stdio`.
         executable: "pyright-langserver",
@@ -130,7 +130,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
             ("jsx", "javascriptreact"),
         ],
         manifest_markers: &["tsconfig.json", "jsconfig.json", "package.json"],
-        env_override: "WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER",
+        env_override: "WEBPI_TYPESCRIPT_LANGUAGE_SERVER",
         executable: "typescript-language-server",
         default_args: &["--stdio"],
         initialization_options: typescript_read_only_initialization_options,
@@ -145,7 +145,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         server_name: "gopls",
         extensions: &[("go", "go")],
         manifest_markers: &["go.mod", "go.work"],
-        env_override: "WEBCODEX_GOPLS",
+        env_override: "WEBPI_GOPLS",
         // gopls speaks LSP over stdio when launched without a subcommand.
         executable: "gopls",
         default_args: &[],
@@ -316,7 +316,7 @@ fn pyright_read_only_initialization_options() -> Value {
 /// `lsp_initialize_uses_constrained_typescript_profile` in lockstep.
 fn typescript_read_only_initialization_options() -> Value {
     json!({
-        "hostInfo": "webcodex-runner",
+        "hostInfo": "webpi-runner",
         "disableAutomaticTypingAcquisition": true,
         "preferences": {
             "includePackageJsonAutoImports": "off"

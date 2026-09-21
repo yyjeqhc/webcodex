@@ -18,9 +18,9 @@ pub struct RuntimeBuildInfo {
 pub fn current() -> BuildInfo {
     BuildInfo {
         version: env!("CARGO_PKG_VERSION"),
-        git_commit: option_env!("WEBCODEX_BUILD_GIT_COMMIT").and_then(non_empty),
-        git_dirty: option_env!("WEBCODEX_BUILD_GIT_DIRTY").and_then(parse_bool),
-        built_at: option_env!("WEBCODEX_BUILD_BUILT_AT").and_then(non_empty),
+        git_commit: option_env!("WEBPI_BUILD_GIT_COMMIT").and_then(non_empty),
+        git_dirty: option_env!("WEBPI_BUILD_GIT_DIRTY").and_then(parse_bool),
+        built_at: option_env!("WEBPI_BUILD_BUILT_AT").and_then(non_empty),
     }
 }
 

@@ -361,7 +361,9 @@ pub(crate) fn windows_dacl_sddl(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn discover_internal_binary(name: &str) -> Option<PathBuf> {
-    discover_sibling_binary(name).or_else(|| discover_named_binary_absolute(name))
+    // Internal product binaries must come from this installation, never PATH.
+    // Commands with explicit --bin retain that separate operator-selected path.
+    discover_sibling_binary(name)
 }
 
 fn discover_sibling_binary(name: &str) -> Option<PathBuf> {
@@ -595,7 +597,7 @@ pub(crate) fn read_optional_token(
 pub(crate) fn validate_user_api_token(token: &str) -> Result<(), String> {
     if token.trim().starts_with("wc_agent_") {
         return Err(
-            "This is a Runner transport token and cannot be used for project/runtime APIs. Use the generated webcodex-user-token instead."
+            "This is a Runner transport token and cannot be used for project/runtime APIs. Use the generated webpi-user-token instead."
                 .to_string(),
         );
     }
@@ -620,7 +622,7 @@ pub(crate) fn resolve_user_api_token(
         return Ok(Some(token));
     }
     if let Some(path) = env_file {
-        for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT"] {
+        for key in ["WEBPI_TOKEN", "WEBPI_PAT"] {
             if let Some(token) = read_env_file_value(path, key)? {
                 let token = token.trim().to_string();
                 if !token.is_empty() {
@@ -630,7 +632,7 @@ pub(crate) fn resolve_user_api_token(
             }
         }
     }
-    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT"] {
+    for key in ["WEBPI_TOKEN", "WEBPI_PAT"] {
         if let Ok(token) = std::env::var(key) {
             let token = token.trim().to_string();
             if !token.is_empty() {
@@ -662,7 +664,7 @@ mod tests {
         let token = "wc_agent_do_not_echo_0123456789";
         let error = validate_user_api_token(token).unwrap_err();
         assert!(error.contains("Runner transport token"));
-        assert!(error.contains("webcodex-user-token"));
+        assert!(error.contains("webpi-user-token"));
         assert!(!error.contains(token));
     }
 
@@ -678,17 +680,13 @@ mod tests {
 
         let _guard = env_test_guard();
         let _env = EnvGuard::new()
-            .set("WEBCODEX_TOKEN", "process-token")
-            .set("WEBCODEX_PAT", "process-pat");
+            .set("WEBPI_TOKEN", "process-token")
+            .set("WEBPI_PAT", "process-pat");
         let temp = tempfile::tempdir().unwrap();
         let token_file = temp.path().join("user-token");
-        let env_file = temp.path().join("webcodex.env");
+        let env_file = temp.path().join("webpi.env");
         std::fs::write(&token_file, "file-token\n").unwrap();
-        std::fs::write(
-            &env_file,
-            "WEBCODEX_TOKEN=env-token\nWEBCODEX_PAT=env-pat\n",
-        )
-        .unwrap();
+        std::fs::write(&env_file, "WEBPI_TOKEN=env-token\nWEBPI_PAT=env-pat\n").unwrap();
 
         let explicit = Some("explicit-token".to_string());
         let selected = resolve_user_api_token(
@@ -709,26 +707,22 @@ mod tests {
 
         let _guard = env_test_guard();
         let _env = EnvGuard::new()
-            .set("WEBCODEX_TOKEN", "process-token")
-            .set("WEBCODEX_PAT", "process-pat");
+            .set("WEBPI_TOKEN", "process-token")
+            .set("WEBPI_PAT", "process-pat");
         let temp = tempfile::tempdir().unwrap();
-        let env_file = temp.path().join("webcodex.env");
+        let env_file = temp.path().join("webpi.env");
 
-        std::fs::write(
-            &env_file,
-            "WEBCODEX_TOKEN=env-token\nWEBCODEX_PAT=env-pat\n",
-        )
-        .unwrap();
+        std::fs::write(&env_file, "WEBPI_TOKEN=env-token\nWEBPI_PAT=env-pat\n").unwrap();
         let selected = resolve_user_api_token(&None, &None, &Some(env_file.clone())).unwrap();
         assert!(selected.as_deref() == Some("env-token"));
 
-        std::fs::write(&env_file, "WEBCODEX_PAT=env-pat\n").unwrap();
+        std::fs::write(&env_file, "WEBPI_PAT=env-pat\n").unwrap();
         let selected = resolve_user_api_token(&None, &None, &Some(env_file)).unwrap();
         assert!(selected.as_deref() == Some("env-pat"));
 
         let selected = resolve_user_api_token(&None, &None, &None).unwrap();
         assert!(selected.as_deref() == Some("process-token"));
-        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("WEBPI_TOKEN");
         let selected = resolve_user_api_token(&None, &None, &None).unwrap();
         assert!(selected.as_deref() == Some("process-pat"));
     }
@@ -738,13 +732,11 @@ mod tests {
         use super::super::test_support::{env_test_guard, EnvGuard};
 
         let _guard = env_test_guard();
-        let _env = EnvGuard::new()
-            .remove("WEBCODEX_TOKEN")
-            .remove("WEBCODEX_PAT");
+        let _env = EnvGuard::new().remove("WEBPI_TOKEN").remove("WEBPI_PAT");
         let temp = tempfile::tempdir().unwrap();
-        let env_file = temp.path().join("webcodex.env");
+        let env_file = temp.path().join("webpi.env");
         let secret = "wc_agent_pat_alias_must_not_echo_0123456789";
-        std::fs::write(&env_file, format!("WEBCODEX_PAT={secret}\n")).unwrap();
+        std::fs::write(&env_file, format!("WEBPI_PAT={secret}\n")).unwrap();
 
         let error = resolve_user_api_token(&None, &None, &Some(env_file)).unwrap_err();
         assert!(error.contains("Runner transport token"));

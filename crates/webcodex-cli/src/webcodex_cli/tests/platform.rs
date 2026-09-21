@@ -29,7 +29,7 @@ mod windows_guard {
                 "{command:?}: {message}"
             );
             assert!(
-                message.contains("webcodex server run"),
+                message.contains("webpi server run"),
                 "{command:?}: {message}"
             );
             assert!(
@@ -52,7 +52,7 @@ mod windows_guard {
                 "{command:?}: {message}"
             );
             assert!(
-                message.contains("webcodex runner start --profile"),
+                message.contains("webpi runner start --profile"),
                 "{command:?}: {message}"
             );
         }
@@ -78,7 +78,7 @@ mod windows_guard {
         for command in [
             vec!["server", "init"],
             vec!["server", "run"],
-            vec!["server", "run", "--env-file", "C:\\temp\\webcodex.env"],
+            vec!["server", "run", "--env-file", "C:\\temp\\webpi.env"],
             vec!["server", "status"],
             vec!["share"],
             vec!["share", "--tunnel", "cloudflare"],

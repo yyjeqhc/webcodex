@@ -63,7 +63,7 @@ fn token_generate_api_prints_token_hash_and_prefix() {
             assert!(out.contains("\nHash:\nsha256:"));
             assert!(out.contains("\nPrefix:\nwc_pat_"));
             assert!(out.contains("generated offline and is not registered"));
-            assert!(out.contains("use `webcodex connect`"));
+            assert!(out.contains("use `webpi connect`"));
         }
         other => panic!("expected TokenGenerate, got {other:?}"),
     }
@@ -79,7 +79,7 @@ fn token_generate_runner_prints_legacy_compatible_token_prefix() {
             assert!(out.contains("\nHash:\nsha256:"));
             assert!(out.contains("\nPrefix:\nwc_agent_"));
             assert!(out.contains("generated offline and is not registered"));
-            assert!(out.contains("use `webcodex connect`"));
+            assert!(out.contains("use `webpi connect`"));
         }
         other => panic!("expected TokenGenerate, got {other:?}"),
     }
@@ -103,7 +103,7 @@ fn token_generate_agent_kind_is_rejected() {
 fn credential_resolution_priority_is_explicit_then_env_name_then_default_env() {
     let _guard = env_test_guard();
     let _env = EnvGuard::new()
-        .set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default")
+        .set("WEBPI_ACCOUNT_CREDENTIAL", "wc_acct_default")
         .set("CUSTOM_ACCT", "wc_acct_custom");
     assert_eq!(
         resolve_account_credential(&Some("wc_acct_explicit".to_string()), &None).unwrap(),
@@ -360,14 +360,14 @@ async fn runner_token_create_local_does_not_send_plaintext_token_to_server() {
     handle.join().unwrap();
 }
 
-// `WEBCODEX_ACCOUNT_CREDENTIAL` is the tested product behavior: it must stay
+// `WEBPI_ACCOUNT_CREDENTIAL` is the tested product behavior: it must stay
 // set (and serialized against other env-mutating tests) for the whole async
 // operation, so the env lock is held across the awaits by contract.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "current_thread")]
 async fn runner_token_create_local_prefers_admin_token_over_default_account_credential() {
     let _guard = env_test_guard();
-    let _env = EnvGuard::new().set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    let _env = EnvGuard::new().set("WEBPI_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
@@ -405,14 +405,14 @@ async fn runner_token_create_local_prefers_admin_token_over_default_account_cred
     handle.join().unwrap();
 }
 
-// `WEBCODEX_ACCOUNT_CREDENTIAL` is the tested product behavior: it must stay
+// `WEBPI_ACCOUNT_CREDENTIAL` is the tested product behavior: it must stay
 // set (and serialized against other env-mutating tests) for the whole async
 // operation, so the env lock is held across the awaits by contract.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "current_thread")]
 async fn runner_token_create_local_uses_default_account_credential() {
     let _guard = env_test_guard();
-    let _env = EnvGuard::new().set("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+    let _env = EnvGuard::new().set("WEBPI_ACCOUNT_CREDENTIAL", "wc_acct_default");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {

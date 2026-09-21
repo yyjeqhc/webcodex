@@ -258,7 +258,7 @@ fn connect_rejects_conflicting_key_sources_and_unsafe_profile() {
 #[test]
 fn connect_help_is_a_top_level_quick_start() {
     let help = cli_exit(["connect", "--help"]).unwrap();
-    assert!(help.contains("Usage: webcodex connect <SERVER_URL>"));
+    assert!(help.contains("Usage: webpi connect <SERVER_URL>"));
     assert!(help.contains("--key-file"));
     assert!(help.contains("--auth bearer|oauth"));
     assert!(help.contains("--oauth-redirect-uri"));
@@ -290,7 +290,7 @@ fn disconnect_parses_defaults_profile_and_help() {
     assert_eq!(explicit.profile.as_deref(), Some("workstation"));
 
     let help = cli_exit(["disconnect", "--help"]).unwrap();
-    assert!(help.contains("Usage: webcodex disconnect [OPTIONS]"));
+    assert!(help.contains("Usage: webpi disconnect [OPTIONS]"));
     assert!(help.contains("never removed or modified"));
     let top = cli_exit(["--help"]).unwrap();
     assert!(top.contains("disconnect"));

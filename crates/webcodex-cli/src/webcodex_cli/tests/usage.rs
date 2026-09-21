@@ -44,16 +44,16 @@ fn cli_help_and_version_exit_before_dispatch() {
     match cli_action(["--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
-            assert!(stdout.contains("Usage: webcodex"));
+            assert!(stdout.contains("Usage: webpi"));
         }
         other => panic!("expected help exit, got {other:?}"),
     }
     match cli_action(["--version"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
-            assert!(stdout.starts_with(&format!("webcodex {} (commit ", env!("CARGO_PKG_VERSION"))));
+            assert!(stdout.starts_with(&format!("webpi {} (commit ", env!("CARGO_PKG_VERSION"))));
             assert!(stdout.trim_end().ends_with(')'));
-            assert_ne!(stdout, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
+            assert_ne!(stdout, format!("webpi {}\n", env!("CARGO_PKG_VERSION")));
         }
         other => panic!("expected version exit, got {other:?}"),
     }
@@ -69,7 +69,7 @@ fn cli_version_output_includes_build_metadata() {
         } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("commit "));
-            assert!(stdout.starts_with("webcodex "));
+            assert!(stdout.starts_with("webpi "));
             assert!(stderr.is_empty());
         }
         other => panic!("expected version exit, got {other:?}"),
@@ -139,8 +139,8 @@ fn webcodex_cli_help_presents_primary_mental_model() {
     ] {
         assert!(stdout.contains(command), "help missing {command}: {stdout}");
     }
-    assert!(stdout.contains("webcodex server --help"));
-    assert!(stdout.contains("webcodex runner --help"));
+    assert!(stdout.contains("webpi server --help"));
+    assert!(stdout.contains("webpi runner --help"));
     assert!(!stdout.contains("setup single-user"));
     assert!(!stdout.contains("client enroll"));
     assert!(!stdout.contains("server init|install|run|start|stop|restart|status|logs|uninstall"));
@@ -199,13 +199,13 @@ fn project_registration_activation_and_login_help_prioritize_user_language() {
 #[test]
 fn foreground_run_banner_describes_lifetime_without_false_readiness() {
     let server = foreground_run_banner("Server");
-    assert!(server.contains("Starting WebCodex Server in the foreground."));
+    assert!(server.contains("Starting WebPi Server in the foreground."));
     assert!(server.contains("Keep this terminal open."));
     assert!(server.contains("Ctrl-C stops the Server."));
     assert!(!server.contains("Server is running"));
 
     let runner = foreground_run_banner("Runner");
-    assert!(runner.contains("Starting WebCodex Runner in the foreground."));
+    assert!(runner.contains("Starting WebPi Runner in the foreground."));
     assert!(runner.contains("Ctrl-C stops the Runner."));
     assert!(!runner.contains("Runner connected"));
 }
@@ -216,7 +216,7 @@ fn common_help_entrypoints_smoke() {
         (
             &["--help"],
             &[
-                "Usage: webcodex [COMMAND]",
+                "Usage: webpi [COMMAND]",
                 "Quick trial:",
                 "Daily self-hosted setup:",
                 "Existing Server:",
@@ -227,7 +227,7 @@ fn common_help_entrypoints_smoke() {
         (
             &["server", "--help"],
             &[
-                "Usage: webcodex server <COMMAND>",
+                "Usage: webpi server <COMMAND>",
                 "Commands:",
                 "init",
                 "install",
@@ -238,7 +238,7 @@ fn common_help_entrypoints_smoke() {
         (
             &["runner", "--help"],
             &[
-                "Usage: webcodex runner <COMMAND>",
+                "Usage: webpi runner <COMMAND>",
                 "Linux systemd Runner service",
                 "foreground (all supported platforms)",
                 "Linux systemd service commands",
@@ -310,9 +310,48 @@ fn unified_project_and_auth_commands_dispatch() {
     match cli_action(["auth", "status", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
-            assert!(stdout.contains("Usage: webcodex auth status"));
+            assert!(stdout.contains("Usage: webpi auth status"));
         }
         other => panic!("expected auth status help, got {other:?}"),
+    }
+}
+
+#[test]
+fn webpi_help_uses_product_binaries_and_config_paths() {
+    let cases: &[(&[&str], &str, &str)] = &[
+        (
+            &["server", "--help"],
+            "Run webpi-server directly",
+            "Run webcodex-server",
+        ),
+        (
+            &["plugin", "--help"],
+            "webpi plugin <COMMAND> --help",
+            "webcodex plugin",
+        ),
+        (
+            &["runner", "install", "--help"],
+            "The unit runs webpi-runner --config",
+            "The unit runs webcodex-runner",
+        ),
+        (
+            &["runner", "status", "--help"],
+            "$XDG_CONFIG_HOME/webpi",
+            "$XDG_CONFIG_HOME/webcodex",
+        ),
+    ];
+    for (args, expected, forbidden) in cases {
+        match cli_action(args.iter().copied()) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0, "help failed for {args:?}");
+                assert!(stdout.contains(expected), "missing {expected} for {args:?}");
+                assert!(
+                    !stdout.contains(forbidden),
+                    "foreign product hint for {args:?}"
+                );
+            }
+            other => panic!("expected help exit for {args:?}, got {other:?}"),
+        }
     }
 }
 
@@ -337,14 +376,15 @@ fn webcodex_cli_runner_help_mentions_lifecycle_subcommands() {
                     "runner help missing {command}: {stdout}"
                 );
             }
-            assert!(stdout.contains("webcodex run"));
+            assert!(stdout.contains("webpi run"));
+            assert!(!stdout.contains("webcodex run"));
         }
         other => panic!("expected help exit, got {other:?}"),
     }
     match cli_action(["runner", "init", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
-            assert!(stdout.contains("Usage: webcodex runner init"));
+            assert!(stdout.contains("Usage: webpi runner init"));
             assert!(stdout.contains("Stable Runner client id"));
             assert!(stdout.contains("Human-readable Runner name"));
             assert!(stdout.contains("runner.toml"));
@@ -412,7 +452,7 @@ fn runner_namespace_owns_all_lifecycle_commands_and_agent_is_unknown() {
             CliAction::Exit { code, stdout, .. } => {
                 assert_eq!(code, 0, "runner {command} help must dispatch");
                 assert!(
-                    stdout.contains("webcodex runner"),
+                    stdout.contains("webpi runner"),
                     "runner {command} help did not stay in Runner namespace: {stdout}"
                 );
             }
@@ -440,9 +480,9 @@ fn runner_namespace_owns_all_lifecycle_commands_and_agent_is_unknown() {
 #[test]
 fn existing_removed_lifecycle_stubs_stay_fail_closed() {
     for (args, replacement) in [
-        (vec!["server", "up"], "webcodex server init"),
-        (vec!["server", "install-service"], "webcodex server install"),
-        (vec!["runner", "install-service"], "webcodex runner install"),
+        (vec!["server", "up"], "webpi server init"),
+        (vec!["server", "install-service"], "webpi server install"),
+        (vec!["runner", "install-service"], "webpi runner install"),
     ] {
         match cli_action(args) {
             CliAction::Exit {
@@ -465,9 +505,9 @@ fn removed_legacy_onboarding_paths_fail_closed_with_migration_guidance() {
     for (args, replacement) in [
         (
             vec!["setup", "single-user", "--help"],
-            "webcodex pairing create",
+            "webpi pairing create",
         ),
-        (vec!["client", "enroll", "--help"], "webcodex login"),
+        (vec!["client", "enroll", "--help"], "webpi login"),
     ] {
         match cli_action(args) {
             CliAction::Exit {
@@ -543,8 +583,8 @@ fn canonical_plural_admin_actions_dispatch_and_singular_groups_fail_closed() {
     ));
 
     for (group, replacement) in [
-        ("token", "webcodex tokens"),
-        ("agent-token", "webcodex runner-tokens"),
+        ("token", "webpi tokens"),
+        ("agent-token", "webpi runner-tokens"),
     ] {
         match cli_action([group, "list"]) {
             CliAction::Exit {
@@ -698,8 +738,8 @@ fn login_help_describes_root_and_non_root_default_directories() {
     match cli_action(["login", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
-            assert!(stdout.contains("root /etc/webcodex"), "{stdout}");
-            assert!(stdout.contains("non-root ~/.config/webcodex"), "{stdout}");
+            assert!(stdout.contains("root /etc/webpi"), "{stdout}");
+            assert!(stdout.contains("non-root ~/.config/webpi"), "{stdout}");
         }
         other => panic!("expected help exit, got {other:?}"),
     }

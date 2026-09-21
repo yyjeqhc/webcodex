@@ -48,18 +48,18 @@ pub(crate) async fn run_server_tunnel(opts: ServerTunnelOptions) -> Result<(), S
 }
 
 pub(crate) fn derive_regular_tunnel_bootstrap_token(env_file: &Path) -> Result<String, String> {
-    let value = match std::env::var("WEBCODEX_TOKEN") {
+    let value = match std::env::var("WEBPI_TOKEN") {
         Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => read_env_file_value(env_file, "WEBCODEX_TOKEN")?,
+        Err(std::env::VarError::NotPresent) => read_env_file_value(env_file, "WEBPI_TOKEN")?,
         Err(std::env::VarError::NotUnicode(_)) => {
-            return Err("WEBCODEX_TOKEN is not valid UTF-8".to_string())
+            return Err("WEBPI_TOKEN is not valid UTF-8".to_string())
         }
     };
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            "regular Server Tunnel requires the effective local Server WEBCODEX_TOKEN".to_string()
+            "regular Server Tunnel requires the effective local Server WEBPI_TOKEN".to_string()
         })
 }
 
@@ -67,11 +67,11 @@ pub(crate) fn derive_regular_tunnel_server_url(env_file: &Path) -> Result<String
     if !env_file.is_file() {
         return Err(format!("env file {} does not exist", env_file.display()));
     }
-    let value = read_env_file_value(env_file, "WEBCODEX_ADDR")?
-        .ok_or_else(|| format!("{} does not define WEBCODEX_ADDR", env_file.display()))?;
+    let value = read_env_file_value(env_file, "WEBPI_ADDR")?
+        .ok_or_else(|| format!("{} does not define WEBPI_ADDR", env_file.display()))?;
     let mut addr = value.trim().parse::<SocketAddr>().map_err(|error| {
         format!(
-            "WEBCODEX_ADDR {:?} from {} is not a fixed IP socket address: {error}",
+            "WEBPI_ADDR {:?} from {} is not a fixed IP socket address: {error}",
             value.trim(),
             env_file.display()
         )
@@ -84,12 +84,27 @@ pub(crate) fn derive_regular_tunnel_server_url(env_file: &Path) -> Result<String
         });
     }
     if !addr.ip().is_loopback() {
-        return Err("server tunnel requires a loopback WEBCODEX_ADDR".to_string());
+        return Err("server tunnel requires a loopback WEBPI_ADDR".to_string());
     }
     Ok(format!("http://{addr}"))
 }
 
 pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String> {
+    if opts.open {
+        return Err("WebPi does not support anonymous --open deployment".to_string());
+    }
+    if opts.env_file.is_file() {
+        let existing = std::fs::read_to_string(&opts.env_file)
+            .map_err(|_| "cannot inspect existing WebPi configuration".to_string())?;
+        if existing.lines().any(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line).trim();
+            line.split_once('=')
+                .is_some_and(|(key, _)| key.trim().starts_with("WEBCODEX_"))
+        }) {
+            return Err("Legacy WebPi-owned configuration must be explicitly migrated with webpi.cmd migrate-config; init never rotates its credential implicitly".to_string());
+        }
+    }
     if opts.env_file.exists() && !opts.overwrite {
         return Err(format!(
             "{} already exists; pass --overwrite to update it",
@@ -109,8 +124,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
         ));
     }
     let existing_token = if opts.env_file.exists() {
-        read_env_file_value(&opts.env_file, "WEBCODEX_TOKEN")?
-            .filter(|token| !token.trim().is_empty())
+        read_env_file_value(&opts.env_file, "WEBPI_TOKEN")?.filter(|token| !token.trim().is_empty())
     } else {
         None
     };
@@ -119,14 +133,14 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     let env_content = render_server_env(&opts, &token);
     super::system::write_server_secret_text_file(&opts.env_file, &env_content, opts.overwrite)?;
     let foreground_command = shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "server".to_string(),
         "run".to_string(),
         "--env-file".to_string(),
         opts.env_file.to_string_lossy().into_owned(),
     ]);
     let status_command = shell_command(&[
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "server".to_string(),
         "status".to_string(),
         "--env-file".to_string(),
@@ -134,7 +148,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
     ]);
     let install_command = (cfg!(target_os = "linux") && is_effective_root()).then(|| {
         shell_command(&[
-            "webcodex".to_string(),
+            "webpi".to_string(),
             "server".to_string(),
             "install".to_string(),
             "--env-file".to_string(),
@@ -157,7 +171,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
             "data_dir": opts.data_dir.to_string_lossy(),
             "public_url": opts.public_url,
             "open": opts.open,
-            "shared_key_enabled": true,
+            "shared_key_enabled": false,
             "token_generated": token_generated,
             "token_prefix": token_prefix(&token),
             "wrote_env_file": true,
@@ -166,7 +180,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
     let mut out = String::new();
-    out.push_str("WebCodex Server configured.\n\n");
+    out.push_str("WebPi Server configured.\n\n");
     out.push_str("Data:\n");
     out.push_str(&format!("  {}\n", opts.data_dir.display()));
     out.push_str("\nNext:\n");
@@ -201,18 +215,18 @@ fn configured_socket_addr(env_file: &Path) -> Result<String, String> {
     if !env_file.exists() {
         return Err(format!("env file {} does not exist", env_file.display()));
     }
-    let value = read_env_file_value(env_file, "WEBCODEX_ADDR")?
-        .ok_or_else(|| format!("{} does not define WEBCODEX_ADDR", env_file.display()))?;
+    let value = read_env_file_value(env_file, "WEBPI_ADDR")?
+        .ok_or_else(|| format!("{} does not define WEBPI_ADDR", env_file.display()))?;
     let value = value.trim();
     if value.is_empty() {
         return Err(format!(
-            "{} defines an empty WEBCODEX_ADDR",
+            "{} defines an empty WEBPI_ADDR",
             env_file.display()
         ));
     }
     let addr = value.parse::<SocketAddr>().map_err(|error| {
         format!(
-            "WEBCODEX_ADDR {value:?} from {} is not a fixed IP socket address valid for systemd ListenStream: {error}",
+            "WEBPI_ADDR {value:?} from {} is not a fixed IP socket address valid for systemd ListenStream: {error}",
             env_file.display()
         )
     })?;
@@ -222,13 +236,13 @@ fn configured_socket_addr(env_file: &Path) -> Result<String, String> {
 fn preflight_server_install(opts: &ServerInstallServiceOptions) -> Result<(), String> {
     let binary = std::fs::metadata(&opts.bin).map_err(|_| {
         format!(
-            "cannot install WebCodex Server: binary {} does not exist",
+            "cannot install WebPi Server: binary {} does not exist",
             opts.bin.display()
         )
     })?;
     if !binary.is_file() {
         return Err(format!(
-            "cannot install WebCodex Server: binary {} is not a regular file",
+            "cannot install WebPi Server: binary {} is not a regular file",
             opts.bin.display()
         ));
     }
@@ -237,52 +251,52 @@ fn preflight_server_install(opts: &ServerInstallServiceOptions) -> Result<(), St
         use std::os::unix::fs::PermissionsExt;
         if binary.permissions().mode() & 0o111 == 0 {
             return Err(format!(
-                "cannot install WebCodex Server: binary {} is not executable",
+                "cannot install WebPi Server: binary {} is not executable",
                 opts.bin.display()
             ));
         }
     }
     let working = std::fs::metadata(&opts.working_directory).map_err(|_| {
         format!(
-            "cannot install WebCodex Server: WorkingDirectory {} does not exist\n\nCreate it or pass --working-directory <existing-directory>.",
+            "cannot install WebPi Server: WorkingDirectory {} does not exist\n\nCreate it or pass --working-directory <existing-directory>.",
             opts.working_directory.display()
         )
     })?;
     if !working.is_dir() {
         return Err(format!(
-            "cannot install WebCodex Server: WorkingDirectory {} is not a directory",
+            "cannot install WebPi Server: WorkingDirectory {} is not a directory",
             opts.working_directory.display()
         ));
     }
     let env = std::fs::metadata(&opts.env_file).map_err(|_| {
         format!(
-            "cannot install WebCodex Server: env file {} does not exist",
+            "cannot install WebPi Server: env file {} does not exist",
             opts.env_file.display()
         )
     })?;
     if !env.is_file() {
         return Err(format!(
-            "cannot install WebCodex Server: env file {} is not a regular file",
+            "cannot install WebPi Server: env file {} is not a regular file",
             opts.env_file.display()
         ));
     }
     std::fs::File::open(&opts.env_file).map_err(|error| {
         format!(
-            "cannot install WebCodex Server: env file {} is not readable: {error}",
+            "cannot install WebPi Server: env file {} is not readable: {error}",
             opts.env_file.display()
         )
     })?;
     if let Some(user) = &opts.user {
         if !system_user_exists(user) {
             return Err(format!(
-                "cannot install WebCodex Server: User={user} does not name a local account"
+                "cannot install WebPi Server: User={user} does not name a local account"
             ));
         }
     }
     if let Some(group) = &opts.group {
         if !system_group_exists(group) {
             return Err(format!(
-                "cannot install WebCodex Server: Group={group} does not name a local group"
+                "cannot install WebPi Server: Group={group} does not name a local group"
             ));
         }
     }
@@ -385,7 +399,7 @@ fn render_systemd_unit(
 
     let mut unit = String::new();
     unit.push_str("[Unit]\n");
-    unit.push_str("Description=WebCodex Runtime\n");
+    unit.push_str("Description=WebPi Runtime\n");
     unit.push_str(&format!("Requires={socket_unit}\n"));
     unit.push_str(&format!("After=network-online.target {socket_unit}\n"));
     unit.push_str("Wants=network-online.target\n\n");
@@ -416,7 +430,7 @@ fn render_systemd_socket_unit(listen: &str, service_unit: &str) -> Result<String
         .map_err(|error| format!("invalid systemd ListenStream address {listen:?}: {error}"))?;
     let mut unit = String::new();
     unit.push_str("[Unit]\n");
-    unit.push_str("Description=WebCodex HTTP Socket\n\n");
+    unit.push_str("Description=WebPi HTTP Socket\n\n");
     unit.push_str("[Socket]\n");
     unit.push_str(&format!("ListenStream={listen}\n"));
     unit.push_str(&format!("Service={service_unit}\n"));
@@ -484,14 +498,14 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
             if opts.env_file_explicit {
                 return Err(format!("env file {} does not exist", path.display()));
             }
-        } else if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+        } else if let Some(token) = read_env_file_value(path, "WEBPI_TOKEN")? {
             let token = token.trim().to_string();
             if !token.is_empty() {
                 return Ok(Some(token));
             }
         }
     }
-    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
+    if let Ok(token) = std::env::var("WEBPI_TOKEN") {
         let token = token.trim().to_string();
         if !token.is_empty() {
             return Ok(Some(token));
@@ -513,19 +527,19 @@ pub(crate) fn derive_server_status_url(opts: &ServerStatusOptions) -> Result<Str
         }
         return Ok(opts.url.clone());
     }
-    let Some(value) = read_env_file_value(env_file, "WEBCODEX_ADDR")? else {
+    let Some(value) = read_env_file_value(env_file, "WEBPI_ADDR")? else {
         return Ok(opts.url.clone());
     };
     let value = value.trim();
     if value.is_empty() {
         return Err(format!(
-            "{} defines an empty WEBCODEX_ADDR",
+            "{} defines an empty WEBPI_ADDR",
             env_file.display()
         ));
     }
     let mut addr = value.parse::<SocketAddr>().map_err(|error| {
         format!(
-            "WEBCODEX_ADDR {value:?} from {} is not a fixed IP socket address: {error}",
+            "WEBPI_ADDR {value:?} from {} is not a fixed IP socket address: {error}",
             env_file.display()
         )
     })?;
@@ -622,7 +636,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
     if !http.reachable {
         if let Some(env_file) = opts.env_file.as_ref() {
             let command = shell_command(&[
-                "webcodex".to_string(),
+                "webpi".to_string(),
                 "server".to_string(),
                 "run".to_string(),
                 "--env-file".to_string(),
@@ -630,18 +644,18 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
             ]);
             out.push_str(&format!("  {command}\n"));
         } else {
-            out.push_str("  Start the WebCodex Server, then run this status command again.\n");
+            out.push_str("  Start the WebPi Server, then run this status command again.\n");
         }
     } else if agents_online_count == Some(0) {
         out.push_str(
-            "  Create a one-time login code in another terminal with `webcodex pairing create`.\n",
+            "  Create a one-time login code in another terminal with `webpi pairing create`.\n",
         );
     } else if agents_online_count.is_some_and(|count| count > 0) {
         out.push_str(
-            "  Check project readiness on the project machine with `webcodex runner status`.\n",
+            "  Check project readiness on the project machine with `webpi runner status`.\n",
         );
     } else {
-        out.push_str("  Continue first-run setup with `webcodex pairing create`, or check an existing Runner.\n");
+        out.push_str("  Continue first-run setup with `webpi pairing create`, or check an existing Runner.\n");
     }
     out.push_str("\nDetails:\n");
     out.push_str(&format!("  HTTP probe:            {}\n", probe_url));

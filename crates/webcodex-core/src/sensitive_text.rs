@@ -1,7 +1,7 @@
 //! Shared immutable vocabulary for detecting secret-like command/process text.
 
 /// Stable non-secret token prefixes shared by redaction consumers.
-pub const WEBCODEX_SECRET_PREFIXES: &[&str] = &[
+pub const WEBPI_SECRET_PREFIXES: &[&str] = &[
     "wc_pat_",
     "wc_agent_",
     "wc_acct_",
@@ -21,7 +21,7 @@ pub fn secret_like_value(value: &str) -> bool {
         || lower.contains("token=")
         || lower.contains("id_rsa")
         || lower.contains("id_ed25519")
-        || WEBCODEX_SECRET_PREFIXES
+        || WEBPI_SECRET_PREFIXES
             .iter()
             .any(|prefix| lower.contains(prefix))
 }

@@ -23,33 +23,31 @@ pub(crate) fn resolve_pairing_create_token(opts: &PairingCreateOptions) -> Resul
         return Ok(token);
     }
     if let Some(path) = &opts.env_file {
-        let token = read_pairing_server_env_file_value(path, "WEBCODEX_TOKEN")?
+        let token = read_pairing_server_env_file_value(path, "WEBPI_TOKEN")?
             .unwrap_or_default()
             .trim()
             .to_string();
         if token.is_empty() {
             return Err(format!(
-                "env file {} does not contain WEBCODEX_TOKEN",
+                "env file {} does not contain WEBPI_TOKEN",
                 path.display()
             ));
         }
         return Ok(token);
     }
-    let token = std::env::var("WEBCODEX_TOKEN")
-        .map_err(|_| {
-            "--env-file, --token-file, --token, or WEBCODEX_TOKEN is required".to_string()
-        })?
+    let token = std::env::var("WEBPI_TOKEN")
+        .map_err(|_| "--env-file, --token-file, --token, or WEBPI_TOKEN is required".to_string())?
         .trim()
         .to_string();
     if token.is_empty() {
-        return Err("WEBCODEX_TOKEN cannot be empty".to_string());
+        return Err("WEBPI_TOKEN cannot be empty".to_string());
     }
     Ok(token)
 }
 
 fn pairing_login_argv(opts: &PairingCreateOptions, value: &Value) -> Vec<String> {
     let mut argv = vec![
-        "webcodex".to_string(),
+        "webpi".to_string(),
         "login".to_string(),
         opts.server_url.clone(),
         "--code".to_string(),
@@ -169,7 +167,7 @@ mod tests {
             "{output}"
         );
         assert!(
-            output.contains("webcodex login https://example.test --code wc_pair_example"),
+            output.contains("webpi login https://example.test --code wc_pair_example"),
             "{output}"
         );
         assert!(
@@ -188,7 +186,7 @@ mod tests {
                 .unwrap();
         assert!(
             output.contains(
-                "webcodex login https://example.test --code wc_pair_example --device alice-laptop"
+                "webpi login https://example.test --code wc_pair_example --device alice-laptop"
             ),
             "{output}"
         );
@@ -220,7 +218,7 @@ mod tests {
         assert_eq!(
             value["login_argv"],
             serde_json::json!([
-                "webcodex",
+                "webpi",
                 "login",
                 "https://example.test",
                 "--code",

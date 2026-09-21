@@ -1,6 +1,6 @@
 pub(crate) fn usage() -> &'static str {
-    "Usage: webcodex [COMMAND]\n\n\
-Unified command-line interface for WebCodex.\n\n\
+    "Usage: webpi [COMMAND]\n\n\
+Unified command-line interface for WebPi.\n\n\
 Quick trial:\n\
   share                         Temporarily share one project; ends when the command exits\n\
   (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\n\
@@ -11,7 +11,7 @@ Daily self-hosted setup:\n\
   project register              Add an existing project for a stopped/legacy Runner\n\
   project activate              Activate an existing project on the current Runner\n\
   runner                        Configure and operate the Runner\n\
-  See `webcodex server --help` and `webcodex runner --help` for full lifecycle commands.\n\n\
+  See `webpi server --help` and `webpi runner --help` for full lifecycle commands.\n\n\
 Existing Server:\n\
   connect                       Connect the current project to an existing Server\n\n\
 Project / diagnostics:\n\
@@ -35,8 +35,8 @@ Options:\n\
 }
 
 pub(crate) fn connect_usage() -> &'static str {
-    "Usage: webcodex connect <SERVER_URL> [OPTIONS]\n\n\
-Connect a local project to a hosted WebCodex Server. Shared-key auth is the default;\n\
+    "Usage: webpi connect <SERVER_URL> [OPTIONS]\n\n\
+Connect a local project to a hosted WebPi Server. Shared-key auth is the default;\n\
 `--auth oauth` bridges that same shared-key identity through browser OAuth for ChatGPT.\n\
 `--auth managed-oauth` retains the advanced managed-user OAuth flow.\n\
 The command writes a reusable local profile, starts one background Runner,\n\
@@ -63,7 +63,7 @@ Options:\n\
   -h, --help                 Print help and exit\n\n\
 In bearer mode, omitting --key/--key-file generates a strong hosted shared key.\n\
 OAuth mode uses that same key for Runner transport and provisions a bridge client only\n\
-after the matching Runner group is connected. Enter the shared key only on WebCodex's\n\
+after the matching Runner group is connected. Enter the shared key only on WebPi's\n\
 browser authorize page; ChatGPT receives OAuth client credentials/tokens, never the key.\n\
 Without explicit opt-ins the bridge keeps the direct shared-key model-facing baseline.\n\
 --oauth-computer-permissions adds only the fixed launch/display/pointer/clipboard Computer\n\
@@ -76,8 +76,8 @@ clients are never widened implicitly. managed-oauth remains a separate managed-u
 }
 
 pub(crate) fn disconnect_usage() -> &'static str {
-    "Usage: webcodex disconnect [OPTIONS]\n\n\
-Disconnect exactly one local repository registered by hosted `webcodex connect`.\n\
+    "Usage: webpi disconnect [OPTIONS]\n\n\
+Disconnect exactly one local repository registered by hosted `webpi connect`.\n\
 The source repository and .git are never removed or modified. A live Runner is\n\
 unregistered through the Server first; an offline hosted Runner is updated locally.\n\n\
 Options:\n\
@@ -87,7 +87,7 @@ Options:\n\
 }
 
 pub(crate) fn project_register_usage() -> &'static str {
-    "Usage: webcodex project register --config PATH <PROJECT> [OPTIONS]\n\n\
+    "Usage: webpi project register --config PATH <PROJECT> [OPTIONS]\n\n\
 Add one existing project to a Runner configuration.\n\
 A newly added project is loaded after that Runner restarts; adding the same project again is idempotent.\n\
 Advanced: project_registry_dir is the Runner project registry directory, not a workspace root; allowed_roots remains the filesystem authority boundary.\n\n\
@@ -98,7 +98,7 @@ Options:\n\
 }
 
 pub(crate) fn project_activate_usage() -> &'static str {
-    "Usage: webcodex project activate --config PATH --user-token-file PATH <PROJECT> [OPTIONS]\n\n\
+    "Usage: webpi project activate --config PATH --user-token-file PATH <PROJECT> [OPTIONS]\n\n\
 Activate one explicitly selected local project on the existing Runner.\n\
 The command preserves Runner identity, grants only the canonical exact project root, hot-reloads policy with generation CAS, and asks that Runner to resolve/register the Project.\n\n\
 Options:\n\
@@ -109,19 +109,19 @@ Options:\n\
 }
 
 pub(crate) fn pairing_usage() -> &'static str {
-    "Usage: webcodex pairing <COMMAND>\n\n\
+    "Usage: webpi pairing <COMMAND>\n\n\
      Commands:\n\
        create       Create a short-lived one-time login code\n"
 }
 
 pub(crate) fn pairing_create_usage() -> &'static str {
-    "Usage: webcodex pairing create --server-url URL --username USER [--client-id CLIENT_ID] [OPTIONS]\n\n\
+    "Usage: webpi pairing create --server-url URL --username USER [--client-id CLIENT_ID] [OPTIONS]\n\n\
      Create a one-time login code on the Server, then use it once on the machine that holds the project.\n\n\
      Options:\n\
-       --server-url URL          WebCodex server URL\n\
+       --server-url URL          WebPi server URL\n\
        --proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
        --no-system-proxy        Ignore proxy environment and connect directly\n\
-       --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH           Read WEBPI_TOKEN from env file\n\
        --token-file PATH         Read bootstrap/admin bearer token from file\n\
        --token TOKEN             Bootstrap/admin bearer token (discouraged in shell history)\n\
        --username USER           User to ensure/create for enrollment\n\
@@ -136,18 +136,18 @@ pub(crate) fn pairing_create_usage() -> &'static str {
      Server/admin-side command:\n\
        pairing create needs server bootstrap/admin auth. The default server\n\
        bootstrap env file lives on the server, not the client.\n\
-       On the client, redeem the code with: webcodex login <server-url> --code <code>\n\
+       On the client, redeem the code with: webpi login <server-url> --code <code>\n\
        If --client-id was specified, append the matching\n\
        --device <client-id> to that login command.\n\
      Copy only the short-lived wc_pair_* code to the client. Do not copy\n\
-     WEBCODEX_TOKEN, wc_pat_*, or wc_agent_* values from server to client.\n\
+     WEBPI_TOKEN, wc_pat_*, or wc_agent_* values from server to client.\n\
      This command does not create wc_pat_* or wc_agent_* token files on the\n\
      server.\n"
 }
 
 pub(crate) fn ops_usage() -> &'static str {
-    "Usage: webcodex ops <COMMAND>\n\n\
-     Read-only operator workflow checks for WebCodex.\n\n\
+    "Usage: webpi ops <COMMAND>\n\n\
+     Read-only operator workflow checks for WebPi.\n\n\
      Commands:\n\
        status                  Summarize runtime, tools, jobs, Runners, and projects\n\
        runners                 Show compact Runner fleet status\n\
@@ -156,28 +156,28 @@ pub(crate) fn ops_usage() -> &'static str {
        windows                 Show observed ChatGPT Window activity for one project\n\
        smoke-preflight         Check a project before deploy smoke validation\n\n\
      Common flags:\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
        -h, --help              Print help and exit\n\n\
      User/API credential precedence: --token, --token-file, selected --env-file\n\
-     WEBCODEX_TOKEN then WEBCODEX_PAT, process WEBCODEX_TOKEN then WEBCODEX_PAT.\n\n\
+     WEBPI_TOKEN then WEBPI_PAT, process WEBPI_TOKEN then WEBPI_PAT.\n\n\
      These commands are read-only. They do not run jobs, start shell commands,\n\
      create sessions, write files, or print token/env values.\n"
 }
 
 pub(crate) fn ops_status_usage() -> &'static str {
-    "Usage: webcodex ops status [OPTIONS]\n\n\
+    "Usage: webpi ops status [OPTIONS]\n\n\
      Summarize runtime, tools, jobs, Runners, and project health.\n\n\
      Options:\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -186,13 +186,13 @@ pub(crate) fn ops_status_usage() -> &'static str {
 }
 
 pub(crate) fn ops_runners_usage() -> &'static str {
-    "Usage: webcodex ops runners [OPTIONS]\n\n\
+    "Usage: webpi ops runners [OPTIONS]\n\n\
      Show compact read-only Runner fleet status.\n\n\
      Options:\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -201,15 +201,15 @@ pub(crate) fn ops_runners_usage() -> &'static str {
 }
 
 pub(crate) fn ops_runner_usage() -> &'static str {
-    "Usage: webcodex ops runner --client-id CLIENT_ID [OPTIONS]\n\n\
+    "Usage: webpi ops runner --client-id CLIENT_ID [OPTIONS]\n\n\
      Show one exact caller-visible Runner registration and build identity.\n\n\
      Options:\n\
        --client-id CLIENT_ID   Exact Runner client_id (required)\n\
        --request-timeout-ms MS Bound one Server observation [default: 5000; max: 30000]\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -219,13 +219,13 @@ pub(crate) fn ops_runner_usage() -> &'static str {
 }
 
 pub(crate) fn ops_projects_usage() -> &'static str {
-    "Usage: webcodex ops projects [OPTIONS]\n\n\
+    "Usage: webpi ops projects [OPTIONS]\n\n\
      Show compact read-only project inventory and smoke suitability.\n\n\
      Options:\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -234,15 +234,15 @@ pub(crate) fn ops_projects_usage() -> &'static str {
 }
 
 pub(crate) fn ops_windows_usage() -> &'static str {
-    "Usage: webcodex ops windows --project PROJECT_ID [OPTIONS]\n\n\
+    "Usage: webpi ops windows --project PROJECT_ID [OPTIONS]\n\n\
      Show caller-visible ChatGPT Window activity for one exact project.\n\n\
      Options:\n\
        --project PROJECT_ID    Runtime project id to observe (required)\n\
        --limit COUNT           Maximum Window rows [default: 64; max: 64]\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -251,14 +251,14 @@ pub(crate) fn ops_windows_usage() -> &'static str {
 }
 
 pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
-    "Usage: webcodex ops smoke-preflight --project PROJECT_ID [OPTIONS]\n\n\
+    "Usage: webpi ops smoke-preflight --project PROJECT_ID [OPTIONS]\n\n\
      Read-only deploy smoke preflight for one project.\n\n\
      Options:\n\
        --project PROJECT_ID    Runtime project id to check\n\
-       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --server-url URL        WebPi server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+       --env-file PATH         Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -268,7 +268,7 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
 }
 
 pub(crate) fn plugin_usage() -> &'static str {
-    "Usage: webcodex plugin <COMMAND>\n\n\
+    "Usage: webpi plugin <COMMAND>\n\n\
 Native Tool Plugin authoring/operator commands. `init` is local scaffolding; the network\n\
 commands remain thin authenticated adapters over the canonical Server plugin_tool runtime.\n\n\
 Commands:\n\
@@ -277,7 +277,7 @@ Commands:\n\
   describe    Describe one exact provider-local tool and return its opaque binding observation\n\
   check       Ask one exact Runner to perform the disposable Plugin admission preflight\n\
   reload      Ask one exact Runner to atomically replace its complete configured provider set\n\n\
-Use `webcodex plugin <COMMAND> --help` for command-specific options.\n\
+Use `webpi plugin <COMMAND> --help` for command-specific options.\n\
 init is local-only and needs no Server, Runner, token, or Plugin scope.\n\
 list/describe require plugin:inspect. check/reload require plugin:manage.\n\
 --oauth-local-plugins grants plugin:inspect + plugin:invoke only; it never grants plugin:manage.\n\
@@ -285,9 +285,9 @@ There is intentionally no plugin call command in this authoring phase.\n"
 }
 
 pub(crate) fn plugin_init_usage() -> &'static str {
-    "Usage: webcodex plugin init <DIRECTORY> [--id PROVIDER_ID]\n\n\
+    "Usage: webpi plugin init <DIRECTORY> [--id PROVIDER_ID]\n\n\
 Create a deterministic local TypeScript/ESM Native Tool Plugin project. The generated project\n\
-pins @yyjeqhc/webcodex-plugin-sdk exactly to 0.1.0 and builds independently of a WebCodex\n\
+pins @yyjeqhc/webcodex-plugin-sdk exactly to 0.1.0 and builds independently of a WebPi\n\
 source checkout. This command is local-only: it performs no Server request, token lookup,\n\
 Runner operation, dependency installation, Runner config edit, or generated-code execution.\n\n\
 Options:\n\
@@ -301,23 +301,23 @@ but it never edits Runner configuration or performs any network/authentication a
 }
 
 fn plugin_common_usage() -> &'static str {
-    "  --server-url URL         WebCodex Server URL [default: http://127.0.0.1:8080]\n\
+    "  --server-url URL         WebPi Server URL [default: http://127.0.0.1:8080]\n\
   --proxy http://HOST:PORT  Explicit proxy override for this Server request\n\
   --no-system-proxy         Ignore proxy environment and connect directly\n\
-  --env-file PATH           Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+  --env-file PATH           Read user/API credential from WEBPI_TOKEN, then WEBPI_PAT\n\
   --token-file PATH         Read bearer token from file (recommended for Plugin authoring)\n\
   --token TOKEN             Bearer token input; never printed\n\
   --json                    Print the canonical plugin_tool output object as JSON\n\
   -h, --help                Print help and exit\n\n\
-Credential precedence: --token, --token-file, selected --env-file WEBCODEX_TOKEN then\n\
-WEBCODEX_PAT, process WEBCODEX_TOKEN then WEBCODEX_PAT. WEBCODEX_PAT is only an additive\n\
-user/API CLI alias; existing WEBCODEX_TOKEN behavior remains preferred. For repeat Plugin\n\
+Credential precedence: --token, --token-file, selected --env-file WEBPI_TOKEN then\n\
+WEBPI_PAT, process WEBPI_TOKEN then WEBPI_PAT. WEBPI_PAT is only an additive\n\
+user/API CLI alias; existing WEBPI_TOKEN behavior remains preferred. For repeat Plugin\n\
 authoring prefer --token-file /path/to/plugin-authoring-pat.\n"
 }
 
 pub(crate) fn plugin_list_usage() -> String {
     format!(
-        "Usage: webcodex plugin list [--runner RUNNER [--plugin PLUGIN]] [OPTIONS]\n\n\
+        "Usage: webpi plugin list [--runner RUNNER [--plugin PLUGIN]] [OPTIONS]\n\n\
 Mirror plugin_tool action=list without starting, checking, or reloading providers.\n\
 Without --runner, list caller-visible Plugin-capable Runners. With --runner, list\n\
 that exact Runner's committed providers. With --runner + --plugin, list the provider's\n\
@@ -332,7 +332,7 @@ Common options:\n{}",
 
 pub(crate) fn plugin_describe_usage() -> String {
     format!(
-        "Usage: webcodex plugin describe --runner RUNNER --plugin PLUGIN --tool TOOL [OPTIONS]\n\n\
+        "Usage: webpi plugin describe --runner RUNNER --plugin PLUGIN --tool TOOL [OPTIONS]\n\n\
 Mirror plugin_tool action=describe for one exact Runner/provider/tool. The Server returns\n\
 the current tool metadata and an opaque binding observation; the CLI does not cache it or\n\
 treat it as authorization. Requires plugin:inspect and does not perform an extra list.\n\n\
@@ -347,7 +347,7 @@ Common options:\n{}",
 
 pub(crate) fn plugin_check_usage() -> String {
     format!(
-        "Usage: webcodex plugin check --runner RUNNER --plugin PLUGIN [OPTIONS]\n\n\
+        "Usage: webpi plugin check --runner RUNNER --plugin PLUGIN [OPTIONS]\n\n\
 Mirror plugin_tool action=check. The exact Runner resolves its real provider configuration,\n\
 starts a disposable candidate, performs initialize/tools-list admission, and disposes it.\n\
 The candidate is never committed, but startup itself may have side effects. Requires\n\
@@ -362,7 +362,7 @@ Common options:\n{}",
 
 pub(crate) fn plugin_reload_usage() -> String {
     format!(
-        "Usage: webcodex plugin reload --runner RUNNER [OPTIONS]\n\n\
+        "Usage: webpi plugin reload --runner RUNNER [OPTIONS]\n\n\
 Mirror plugin_tool action=reload for one exact Runner. The Runner rereads runner.toml,\n\
 prepares every configured provider candidate, and atomically replaces the complete provider\n\
 set only when all candidates are admitted; otherwise the committed set is unchanged.\n\
@@ -375,12 +375,12 @@ Common options:\n{}",
 }
 
 pub(crate) fn server_usage() -> &'static str {
-    "Usage: webcodex server <COMMAND>\n\n\
-The Server is the first part of the full daily WebCodex setup.\n\n\
+    "Usage: webpi server <COMMAND>\n\n\
+The Server is the first part of the full daily WebPi setup.\n\n\
 Commands:\n\
   init        Initialize or update Server configuration\n\
   install     Install, enable, and start the Linux systemd socket/service pair\n\
-  run         Run webcodex-server directly in the foreground\n\
+  run         Run webpi-server directly in the foreground\n\
   tunnel      Run a regular local Server OpenAI Secure Tunnel in the foreground\n\
   start       Start the Linux listener socket, then the Server service\n\
   stop        Stop Linux socket activation and the Server service\n\
@@ -388,13 +388,13 @@ Commands:\n\
   status      Check socket/service state, HTTP reachability, and build revisions\n\
   logs        Read bounded Linux Server service journal logs or explicitly follow them\n\
   uninstall   Remove only the Linux systemd socket/service pair; requires --confirm\n\n\
-Windows supports `server init`, foreground `server run`, and `server tunnel`; WebCodex-managed Windows Server services are not supported yet.\n\
+Windows supports `server init`, foreground `server run`, and `server tunnel`; WebPi-managed Windows Server services are not supported yet.\n\
 For start/stop/restart/logs/uninstall, --service-file PATH targets a custom managed service unit and derives its sibling .socket.\n"
 }
 
 pub(crate) fn server_tunnel_usage() -> &'static str {
-    "Usage: webcodex server tunnel --provider openai --env-file PATH --json --stop-on-stdin-eof\n\n\
-Run the canonical OpenAI Secure Tunnel for an already-running local WebCodex Server.\n\n\
+    "Usage: webpi server tunnel --provider openai --env-file PATH --json --stop-on-stdin-eof\n\n\
+Run the canonical OpenAI Secure Tunnel for an already-running local WebPi Server.\n\n\
 Options:\n\
   --provider openai          Required provider; regular Cloudflare remains a separate future contract\n\
   --env-file PATH            Local Server env file used for loopback address and bootstrap authority\n\
@@ -405,25 +405,24 @@ The Tunnel exposes only the local Server MCP endpoint and authenticates it with 
 }
 
 pub(crate) fn server_init_usage() -> &'static str {
-    "Usage: webcodex server init [OPTIONS]\n\n\
+    "Usage: webpi server init [OPTIONS]\n\n\
 Options:\n\
-  --listen ADDR          Listen address [default: 127.0.0.1:8080]\n\
+  --listen ADDR          Listen address [default: 127.0.0.1:56542]\n\
   --data-dir PATH        Data directory\n\
   --env-file PATH        Server env file\n\
   --public-url URL       Optional public URL\n\
-  --open                 Allow anonymous access for trusted demos\n\
   --overwrite            Update an existing env file while preserving its token\n\
   --json                 Print a summary without the full token\n\
   -h, --help             Print help and exit\n\n\
-Shared-key mode is enabled. The full bootstrap token is saved only in the env file.\n"
+Anonymous and shared-key modes are disabled. The full bootstrap token is saved only in the WebPi env file.\n"
 }
 
 pub(crate) fn server_install_service_usage() -> &'static str {
-    "Usage: webcodex server install [OPTIONS]\n\n\
+    "Usage: webpi server install [OPTIONS]\n\n\
 Options:\n\
   --env-file PATH             EnvironmentFile= path\n\
-  --bin PATH                  webcodex-server path; sibling then absolute PATH by default\n\
-  --service-file PATH         Service unit path; sibling .socket is derived [default: /etc/systemd/system/webcodex.service]\n\
+  --bin PATH                  webpi-server path; installation sibling only by default\n\
+  --service-file PATH         Service unit path; sibling .socket is derived [default: /etc/systemd/system/webpi.service]\n\
   --user USER                 Optional systemd User=\n\
   --group GROUP               Optional systemd Group=\n\
   --working-directory PATH    WorkingDirectory=\n\
@@ -437,27 +436,27 @@ Normal execution installs both units coherently, runs daemon-reload, enables bot
 }
 
 pub(crate) fn server_status_usage() -> &'static str {
-    "Usage: webcodex server status [OPTIONS]\n\n\
+    "Usage: webpi server status [OPTIONS]\n\n\
      Options:\n\
-       --url URL              Runtime URL [default: http://127.0.0.1:8080]\n\
+       --url URL              Runtime URL [default: http://127.0.0.1:56542]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy      Ignore proxy environment and connect directly\n\
-       --env-file PATH        Read WEBCODEX_TOKEN from env file [default: root /etc/webcodex/webcodex.env; user ~/.config/webcodex/webcodex.env]\n\
+       --env-file PATH        Read WEBPI_TOKEN from env file [default: root /etc/webpi/webpi.env; user ~/.config/webpi/webpi.env]\n\
        --token-file PATH      Read bearer token from file\n\
-       --service-file PATH    Managed service unit path; sibling .socket is derived [default: /etc/systemd/system/webcodex.service]\n\
+       --service-file PATH    Managed service unit path; sibling .socket is derived [default: /etc/systemd/system/webpi.service]\n\
        --json                 Print a machine-readable summary\n\
        -h, --help             Print help and exit\n\n\
-     Token priority: --token-file, WEBCODEX_TOKEN from --env-file, process\n\
-     WEBCODEX_TOKEN, then no token for auth-disabled servers.\n"
+     Token priority: --token-file, WEBPI_TOKEN from --env-file, process\n\
+     WEBPI_TOKEN, then no token for auth-disabled servers.\n"
 }
 
 pub(crate) fn runner_usage() -> &'static str {
-    "Usage: webcodex runner <COMMAND>\n\n\
+    "Usage: webpi runner <COMMAND>\n\n\
 The Runner is the machine that executes project work for the full daily setup.\n\n\
 Commands:\n\
   init        Generate a Runner config (`runner.toml`)\n\
   install     Install, enable, and start the Linux systemd Runner service\n\
-  run         Run webcodex-runner directly in the foreground (all supported platforms)\n\
+  run         Run webpi-runner directly in the foreground (all supported platforms)\n\
   start       Start a hosted background Runner or installed Linux service\n\
   stop        Stop a hosted background Runner or installed Linux service\n\
   restart     Restart a hosted background Runner or installed Linux service\n\
@@ -466,12 +465,12 @@ Commands:\n\
   uninstall   Remove only the Linux systemd unit; requires --confirm\n\n\
 Linux systemd service commands accept --scope user|system. Non-root users default to user; root defaults to system.\n\
 Profiles created by `connect` keep their detached-process behavior when --scope is omitted.\n\n\
-`webcodex run` is the current-project runtime coordinator. `webcodex runner run` directly executes the standalone Runner.\n"
+`webpi run` is the current-project runtime coordinator. `webpi runner run` directly executes the standalone Runner.\n"
 }
 pub(crate) fn runner_init_usage() -> &'static str {
-    "Usage: webcodex runner init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
+    "Usage: webpi runner init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
      Options:\n\
-       --server-url URL           WebCodex server URL\n\
+       --server-url URL           WebPi server URL\n\
        --token TOKEN              Runner transport token for generated config\n\
        --token-file PATH          Read Runner transport token from file\n\
        --client-id ID             Stable Runner client id\n\
@@ -488,19 +487,19 @@ pub(crate) fn runner_init_usage() -> &'static str {
        --overwrite                Replace an existing output file\n\
        -h, --help                 Print help and exit\n\n\
      With --profile, missing output/project-registry paths are derived under\n\
-     /etc/webcodex/clients/<profile> for root or\n\
-     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
+     /etc/webpi/clients/<profile> for root or\n\
+     ~/.config/webpi/clients/<profile> for non-root users. Explicit path\n\
      flags override profile-derived defaults.\n"
 }
 
 pub(crate) fn runner_install_service_usage() -> &'static str {
-    "Usage: webcodex runner install [--profile NAME] [--config PATH] [OPTIONS]\n\n\
+    "Usage: webpi runner install [--profile NAME] [--config PATH] [OPTIONS]\n\n\
 Options:\n\
   --profile NAME             Profile for config and unit defaults\n\
   --scope user|system        Service manager scope [default: user for non-root; system for root]\n\
   --config PATH              Runner config path\n\
-  --bin PATH                 webcodex-runner path; sibling then absolute PATH by default\n\
-  --service-file PATH        Unit path [default: webcodex-runner[-<profile>].service]\n\
+  --bin PATH                 webpi-runner path; installation sibling only by default\n\
+  --service-file PATH        Unit path [default: webpi-runner[-<profile>].service]\n\
   --working-directory PATH   WorkingDirectory= [default: selected user's home]\n\
   --user USER                Required non-root system service user\n\
   --group GROUP              Optional system service Group=\n\
@@ -514,10 +513,10 @@ Options:\n\
 User scope uses systemctl --user, the XDG user unit directory, default.target,\n\
 and never writes User= or Group=. System scope uses /etc/systemd/system,\n\
 multi-user.target, and requires --user unless --allow-root-runner is explicit.\n\
-The unit runs webcodex-runner --config <config>. Tokens are never inlined.\n"
+The unit runs webpi-runner --config <config>. Tokens are never inlined.\n"
 }
 pub(crate) fn runner_status_usage() -> &'static str {
-    "Usage: webcodex runner status [OPTIONS]\n\n\
+    "Usage: webpi runner status [OPTIONS]\n\n\
      Options:\n\
        --profile NAME             Client config profile for config/token defaults\n\
        --scope user|system        Service manager scope [default: user for non-root; system for root]\n\
@@ -530,9 +529,9 @@ pub(crate) fn runner_status_usage() -> &'static str {
        --runner-token-file PATH   Read Runner transport token for boundary check\n\
        --json                     Print a machine-readable summary\n\
        -h, --help                 Print help and exit\n\n\
-     User scope derives config under $XDG_CONFIG_HOME/webcodex (or\n\
-     $HOME/.config/webcodex) and units under $XDG_CONFIG_HOME/systemd/user\n\
-     (or $HOME/.config/systemd/user). System scope uses /etc/webcodex and\n\
+     User scope derives config under $XDG_CONFIG_HOME/webpi (or\n\
+     $HOME/.config/webpi) and units under $XDG_CONFIG_HOME/systemd/user\n\
+     (or $HOME/.config/systemd/user). System scope uses /etc/webpi and\n\
      /etc/systemd/system. Explicit path flags override profile-derived defaults.\n\
      Profiles created by `connect` report their detached process when --scope\n\
      is omitted; an explicit scope checks systemd instead. Status prints safe metadata only:\n\
@@ -540,8 +539,8 @@ pub(crate) fn runner_status_usage() -> &'static str {
 }
 
 pub(crate) fn login_usage() -> &'static str {
-    "Usage: webcodex login <SERVER-URL> (--code <PAIRING-CODE>|--code-stdin) [OPTIONS]\n\n\
-     Use a one-time login code (`webcodex pairing create`) to connect this project machine.\n\
+    "Usage: webpi login <SERVER-URL> (--code <PAIRING-CODE>|--code-stdin) [OPTIONS]\n\n\
+     Use a one-time login code (`webpi pairing create`) to connect this project machine.\n\
      Add --project to add an existing project during the same login.\n\n\
      Options:\n\
      \x20\x20--code CODE          Pairing code from the server\n\
@@ -552,8 +551,8 @@ pub(crate) fn login_usage() -> &'static str {
      \x20\x20--allowed-root PATH  Repeatable location under which projects may be added later\n\
      \x20\x20--project PATH       Existing workspace to register with this login\n\
      \x20\x20--transport NAME     websocket|polling|quic|auto [default: websocket]\n\
-     \x20\x20--dir PATH           Where connections are stored [default: root /etc/webcodex;\n\
-     \x20\x20                       non-root ~/.config/webcodex]\n\
+     \x20\x20--dir PATH           Where connections are stored [default: root /etc/webpi;\n\
+     \x20\x20                       non-root ~/.config/webpi]\n\
      \x20\x20--overwrite          Replace an existing login for this server and user\n\
      \x20\x20--json               Print machine-readable output (no credentials)\n\
      \x20\x20--print-mcp-config   Print a Bearer MCP connection block (includes a\n\
@@ -566,12 +565,12 @@ pub(crate) fn login_usage() -> &'static str {
 }
 
 pub(crate) fn logout_usage() -> &'static str {
-    "Usage: webcodex logout <SERVER-URL> [OPTIONS]\n\n\
+    "Usage: webpi logout <SERVER-URL> [OPTIONS]\n\n\
      Remove this device's stored credentials for a server.\n\n\
      Options:\n\
      \x20\x20--user NAME    Log out one saved user\n\
      \x20\x20--all          Log out every saved user on this server (mutually exclusive with --user)\n\
-     \x20\x20--dir PATH     Where connections are stored [default: ~/.config/webcodex]\n\
+     \x20\x20--dir PATH     Where connections are stored [default: ~/.config/webpi]\n\
      \x20\x20-y, --yes      Confirm removal\n\
      \x20\x20--json         Print machine-readable output\n\
      \x20\x20-h, --help     Print help and exit\n\n\
@@ -580,10 +579,10 @@ pub(crate) fn logout_usage() -> &'static str {
 }
 
 pub(crate) fn status_usage() -> &'static str {
-    "Usage: webcodex auth status [OPTIONS]\n\n\
+    "Usage: webpi auth status [OPTIONS]\n\n\
      Show which servers this device is logged in to.\n\n\
      Options:\n\
-     \x20\x20--dir PATH     Where connections are stored [default: ~/.config/webcodex]\n\
+     \x20\x20--dir PATH     Where connections are stored [default: ~/.config/webpi]\n\
      \x20\x20--json         Print machine-readable output\n\
      \x20\x20-h, --help     Print help and exit\n"
 }

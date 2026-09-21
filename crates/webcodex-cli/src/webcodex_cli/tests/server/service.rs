@@ -4,10 +4,10 @@ use super::super::support::*;
 
 #[cfg(unix)]
 fn server_env(tmp: &tempfile::TempDir) -> std::path::PathBuf {
-    let path = tmp.path().join("webcodex.env");
+    let path = tmp.path().join("webpi.env");
     std::fs::write(
         &path,
-        "WEBCODEX_ADDR=127.0.0.1:8080\nWEBCODEX_TOKEN=secret-never-inline\n",
+        "WEBPI_ADDR=127.0.0.1:8080\nWEBPI_TOKEN=secret-never-inline\n",
     )
     .unwrap();
     path
@@ -28,19 +28,19 @@ fn install_service_generates_expected_unit_without_tokens() {
         "--working-directory",
         "/var/lib/webcodex",
         "--user",
-        "webcodex",
+        "webpi",
         "--group",
-        "webcodex",
+        "webpi",
         "--dry-run",
     ]))
     .unwrap();
     let unit = run_server_install_service(opts).unwrap();
-    assert!(unit.contains("[Unit]\nDescription=WebCodex Runtime\n"));
+    assert!(unit.contains("[Unit]\nDescription=WebPi Runtime\n"));
     assert!(unit.contains(&format!("EnvironmentFile={}\n", env_file.display())));
     assert!(unit.contains("ListenStream=127.0.0.1:8080\n"));
     assert!(unit.contains("FileDescriptorName=webcodex-http\n"));
-    assert!(unit.contains("Service=webcodex.service\n"));
-    assert!(unit.contains("# /etc/systemd/system/webcodex.socket\n"));
+    assert!(unit.contains("Service=webpi.service\n"));
+    assert!(unit.contains("# /etc/systemd/system/webpi.socket\n"));
     assert!(unit.contains("ExecStart=\"/usr/local/bin/webcodex-server\"\n"));
     assert!(unit.contains("TimeoutStopSec=330s\n"));
     assert!(
@@ -48,10 +48,10 @@ fn install_service_generates_expected_unit_without_tokens() {
             > webcodex::SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS
     );
     assert!(unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
-    assert!(unit.contains("User=webcodex\n"));
-    assert!(unit.contains("Group=webcodex\n"));
+    assert!(unit.contains("User=webpi\n"));
+    assert!(unit.contains("Group=webpi\n"));
     assert!(unit.contains("WantedBy=multi-user.target\n"));
-    assert!(!unit.contains("WEBCODEX_TOKEN"));
+    assert!(!unit.contains("WEBPI_TOKEN"));
     assert!(!unit.contains("secret-never-inline"));
     assert!(!unit.contains("wc_boot_"));
 }
@@ -66,9 +66,9 @@ fn user_runner_unit_uses_user_target_without_identity_directives_or_root_workdir
             "--scope",
             "user",
             "--config",
-            "/home/alice/.config/webcodex/runner.toml",
+            "/home/alice/.config/webpi/runner.toml",
             "--service-file",
-            "/home/alice/.config/systemd/user/webcodex-runner.service",
+            "/home/alice/.config/systemd/user/webpi-runner.service",
             "--bin",
             "/home/alice/.local/bin/webcodex-runner",
             "--working-directory",
@@ -97,7 +97,7 @@ fn explicitly_allowed_root_runner_is_visibly_marked() {
             "--scope",
             "system",
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
             "--working-directory",
             "/root",
             "--allow-root-runner",
@@ -120,9 +120,9 @@ fn install_service_refuses_overwrite_unless_requested() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = tempfile::tempdir().unwrap();
-    let service_file = tmp.path().join("webcodex.service");
+    let service_file = tmp.path().join("webpi.service");
     let env_file = server_env(&tmp);
-    let binary = tmp.path().join("webcodex-server");
+    let binary = tmp.path().join("webpi-server");
     std::fs::write(&binary, "test binary").unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::write(&service_file, "old").unwrap();
@@ -150,7 +150,7 @@ fn server_install_working_directory_follows_env_data_unless_explicit() {
     std::fs::write(
         &env_file,
         format!(
-            "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_DATA={}\n",
+            "WEBPI_ADDR=127.0.0.1:9090\nWEBPI_DATA={}\n",
             data_dir.display()
         ),
     )
@@ -190,15 +190,15 @@ fn server_install_preflight_rejects_missing_workdir_before_service_mutation() {
     std::fs::write(
         &env_file,
         format!(
-            "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_DATA={}\n",
+            "WEBPI_ADDR=127.0.0.1:9090\nWEBPI_DATA={}\n",
             missing_workdir.display()
         ),
     )
     .unwrap();
-    let binary = tmp.path().join("webcodex-server");
+    let binary = tmp.path().join("webpi-server");
     std::fs::write(&binary, "test binary").unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let service_file = tmp.path().join("webcodex.service");
+    let service_file = tmp.path().join("webpi.service");
     let opts = parse_server_install_service(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -226,7 +226,7 @@ fn server_install_preflight_rejects_missing_and_non_executable_binary() {
 
     let tmp = tempfile::tempdir().unwrap();
     let env_file = server_env(&tmp);
-    let service_file = tmp.path().join("webcodex.service");
+    let service_file = tmp.path().join("webpi.service");
     let missing = tmp.path().join("missing-server");
     let missing_opts = parse_server_install_service(&args(&[
         "--env-file",
@@ -270,10 +270,10 @@ fn server_install_preflight_rejects_unknown_user_and_group() {
 
     let tmp = tempfile::tempdir().unwrap();
     let env_file = server_env(&tmp);
-    let binary = tmp.path().join("webcodex-server");
+    let binary = tmp.path().join("webpi-server");
     std::fs::write(&binary, "test binary").unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let service_file = tmp.path().join("webcodex.service");
+    let service_file = tmp.path().join("webpi.service");
 
     let unknown_user = "webcodex-o1-user-that-must-not-exist";
     let user_opts = parse_server_install_service(&args(&[
@@ -359,12 +359,8 @@ fn install_service_dry_run_and_output_work_without_systemd() {
 fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projection() {
     let tmp = tempfile::tempdir().unwrap();
     let env_file = tmp.path().join("server.env");
-    std::fs::write(
-        &env_file,
-        "WEBCODEX_ADDR=127.0.0.1:9090\nWEBCODEX_TOKEN=hidden\n",
-    )
-    .unwrap();
-    let service_file = tmp.path().join("custom-webcodex.service");
+    std::fs::write(&env_file, "WEBPI_ADDR=127.0.0.1:9090\nWEBPI_TOKEN=hidden\n").unwrap();
+    let service_file = tmp.path().join("custom-webpi.service");
     let opts = parse_server_install_service(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -388,12 +384,12 @@ fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projecti
             .to_string_lossy()
             .as_ref()
     );
-    assert_eq!(json["service_unit"], "custom-webcodex.service");
-    assert_eq!(json["socket_unit"], "custom-webcodex.socket");
+    assert_eq!(json["service_unit"], "custom-webpi.service");
+    assert_eq!(json["socket_unit"], "custom-webpi.socket");
     assert!(json["units"]["service"]
         .as_str()
         .unwrap()
-        .contains("Requires=custom-webcodex.socket\n"));
+        .contains("Requires=custom-webpi.socket\n"));
     assert!(json["units"]["service"]
         .as_str()
         .unwrap()
@@ -401,7 +397,7 @@ fn server_socket_rendering_uses_env_address_custom_sibling_and_no_start_projecti
     assert!(json["units"]["socket"]
         .as_str()
         .unwrap()
-        .contains("Service=custom-webcodex.service\n"));
+        .contains("Service=custom-webpi.service\n"));
     assert!(!json.to_string().contains("hidden"));
 }
 
@@ -439,7 +435,7 @@ fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
     assert!(error.contains("does not exist"), "{error}");
 
     let malformed = tmp.path().join("malformed.env");
-    std::fs::write(&malformed, "WEBCODEX_ADDR=localhost:not-a-port\n").unwrap();
+    std::fs::write(&malformed, "WEBPI_ADDR=localhost:not-a-port\n").unwrap();
     let opts = parse_server_install_service(&args(&[
         "--env-file",
         malformed.to_str().unwrap(),
@@ -452,7 +448,7 @@ fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
     assert!(error.contains("systemd ListenStream"), "{error}");
 
     let absent_key = tmp.path().join("no-address.env");
-    std::fs::write(&absent_key, "WEBCODEX_TOKEN=hidden\n").unwrap();
+    std::fs::write(&absent_key, "WEBPI_TOKEN=hidden\n").unwrap();
     let opts = parse_server_install_service(&args(&[
         "--env-file",
         absent_key.to_str().unwrap(),
@@ -462,7 +458,7 @@ fn server_socket_rendering_fails_closed_on_missing_or_malformed_address() {
     ]))
     .unwrap();
     let error = run_server_install_service(opts).unwrap_err();
-    assert!(error.contains("does not define WEBCODEX_ADDR"), "{error}");
+    assert!(error.contains("does not define WEBPI_ADDR"), "{error}");
 }
 
 /// Unix-only: systemd service unit semantics with Unix absolute-path
@@ -479,22 +475,22 @@ fn runner_install_service_generates_expected_unit_without_tokens() {
         "--config",
         config.to_str().unwrap(),
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--working-directory",
         "/srv/webcodex",
         "--user",
-        "webcodex",
+        "webpi",
         "--group",
-        "webcodex",
+        "webpi",
         "--dry-run",
     ]))
     .unwrap();
     let unit = run_runner_install_service(opts).unwrap();
-    assert!(unit.contains("[Unit]\nDescription=WebCodex Runner\n"));
+    assert!(unit.contains("[Unit]\nDescription=WebPi Runner\n"));
     assert!(unit.contains("After=network-online.target\n"));
     assert!(unit.contains("Wants=network-online.target\n"));
     assert!(unit.contains(&format!(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"{}\"\n",
+        "ExecStart=\"/opt/webpi/bin/webcodex-runner\" \"--config\" \"{}\"\n",
         config.display()
     )));
     assert!(unit.contains("ExecReload=/bin/kill -HUP $MAINPID\n"));
@@ -504,8 +500,8 @@ fn runner_install_service_generates_expected_unit_without_tokens() {
     assert!(unit.contains("StandardError=journal\n"));
     assert!(unit.contains("Environment=RUST_LOG=info\n"));
     assert!(unit.contains("WorkingDirectory=/srv/webcodex\n"));
-    assert!(unit.contains("User=webcodex\n"));
-    assert!(unit.contains("Group=webcodex\n"));
+    assert!(unit.contains("User=webpi\n"));
+    assert!(unit.contains("Group=webpi\n"));
     assert!(!unit.contains("agent_secret_should_not_print"));
     assert!(!unit.contains("Authorization"));
     assert!(!unit.contains("token ="));
@@ -517,19 +513,19 @@ fn runner_install_service_generates_expected_unit_without_tokens() {
 #[test]
 fn runner_install_service_refuses_overwrite_unless_requested() {
     let tmp = tempfile::tempdir().unwrap();
-    let service_file = tmp.path().join("webcodex-runner.service");
+    let service_file = tmp.path().join("webpi-runner.service");
     std::fs::write(&service_file, "old").unwrap();
     let opts = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/runner.toml",
+        "/etc/webpi/runner.toml",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--service-file",
         service_file.to_str().unwrap(),
     ]))
@@ -547,31 +543,31 @@ fn runner_install_service_dry_run_and_output_work_without_systemd() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/runner.toml",
+        "/etc/webpi/runner.toml",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--dry-run",
     ]))
     .unwrap();
     assert!(run_runner_install_service(dry).unwrap().contains(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/runner.toml\""
+        "ExecStart=\"/opt/webpi/bin/webcodex-runner\" \"--config\" \"/etc/webpi/runner.toml\""
     ));
 
     let out = parse_runner_install_service(&args(&[
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/runner.toml",
+        "/etc/webpi/runner.toml",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--output",
         "-",
         "--json",
@@ -580,7 +576,7 @@ fn runner_install_service_dry_run_and_output_work_without_systemd() {
     let json: Value = serde_json::from_str(&run_runner_install_service(out).unwrap()).unwrap();
     assert_eq!(json["dry_run"], true);
     assert!(json["unit"].as_str().unwrap().contains(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/runner.toml\""
+        "ExecStart=\"/opt/webpi/bin/webcodex-runner\" \"--config\" \"/etc/webpi/runner.toml\""
     ));
 }
 
@@ -592,7 +588,7 @@ fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
     let tmp = tempfile::tempdir().unwrap();
     let env_file = tmp.path().join("env files").join("web\"codex\\main.env");
     std::fs::create_dir_all(env_file.parent().unwrap()).unwrap();
-    std::fs::write(&env_file, "WEBCODEX_ADDR=127.0.0.1:8080\n").unwrap();
+    std::fs::write(&env_file, "WEBPI_ADDR=127.0.0.1:8080\n").unwrap();
     let server = parse_server_install_service(&args(&[
         "--env-file",
         env_file.to_str().unwrap(),
@@ -617,12 +613,8 @@ fn systemd_unit_rendering_quotes_paths_and_rejects_invalid_fields_in_dry_run() {
     for (flag, value, field) in [
         ("--user", "bad user", "User"),
         ("--group", "bad/group", "Group"),
-        (
-            "--bin",
-            "/opt/webcodex/bin/server\nInjected=yes",
-            "ExecStart",
-        ),
-        ("--env-file", "/etc/webcodex/a\rb", "EnvironmentFile"),
+        ("--bin", "/opt/webpi/bin/server\nInjected=yes", "ExecStart"),
+        ("--env-file", "/etc/webpi/a\rb", "EnvironmentFile"),
         (
             "--working-directory",
             "/var/lib/web\0codex",
@@ -692,8 +684,8 @@ fn make_executable(path: &std::path::Path) {
 #[test]
 fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
     let tmp = tempfile::tempdir().unwrap();
-    let server_bin = tmp.path().join("webcodex-server");
-    let runner_bin = tmp.path().join("webcodex-runner");
+    let server_bin = tmp.path().join("webpi-server");
+    let runner_bin = tmp.path().join("webpi-runner");
     make_executable(&server_bin);
     make_executable(&runner_bin);
     let env_file = server_env(&tmp);
@@ -718,7 +710,7 @@ fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
     let socket_name = server_json["socket_unit"].as_str().unwrap();
     assert!(service_unit.contains(&format!("EnvironmentFile={}\n", env_file.display())));
     assert!(service_unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
-    assert!(service_unit.contains("webcodex-server"));
+    assert!(service_unit.contains("webpi-server"));
     assert!(socket_unit.contains("ListenStream=127.0.0.1:8080\n"));
     verify_systemd_units(&[(service_name, service_unit), (socket_name, socket_unit)]);
 
@@ -728,7 +720,7 @@ fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--bin",
         runner_bin.to_str().unwrap(),
         "--config",
@@ -748,15 +740,15 @@ fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
 #[test]
 fn special_supported_paths_pass_systemd_analyze_verify() {
     let tmp = tempfile::tempdir().unwrap();
-    let server_bin = tmp.path().join("webcodex server%p");
-    let runner_bin = tmp.path().join("webcodex runner%p");
+    let server_bin = tmp.path().join("webpi server%p");
+    let runner_bin = tmp.path().join("webpi runner%p");
     make_executable(&server_bin);
     make_executable(&runner_bin);
 
     let working = tmp.path().join("work space\"slash\\percent%p");
     std::fs::create_dir(&working).unwrap();
     let env_file = tmp.path().join("env space\"slash\\percent%p.env");
-    std::fs::write(&env_file, "WEBCODEX_ADDR=127.0.0.1:8080\n").unwrap();
+    std::fs::write(&env_file, "WEBPI_ADDR=127.0.0.1:8080\n").unwrap();
     let config = tmp.path().join("config space\"slash\\percent%p.toml");
     std::fs::write(&config, "server_url = \"http://127.0.0.1\"\n").unwrap();
 
@@ -788,7 +780,7 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--bin",
         runner_bin.to_str().unwrap(),
         "--config",
@@ -809,8 +801,8 @@ fn special_supported_paths_pass_systemd_analyze_verify() {
 #[test]
 fn executable_program_rejects_quote_and_backslash_in_dry_run() {
     for path in [
-        "/opt/webcodex/web\"codex-server",
-        "/opt/webcodex/web\\codex-server",
+        "/opt/webpi/web\"codex-server",
+        "/opt/webpi/web\\codex-server",
     ] {
         let opts = parse_server_install_service(&args(&["--bin", path, "--dry-run"])).unwrap();
         let error = run_server_install_service(opts).unwrap_err();
@@ -827,13 +819,13 @@ fn runner_output_mode_rejects_invalid_unit_fields() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--config",
-        "/etc/webcodex/runner.toml\nEnvironment=BAD=1",
+        "/etc/webpi/runner.toml\nEnvironment=BAD=1",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--output",
         "-",
     ]))
@@ -863,7 +855,7 @@ client_id = "alice-laptop"
 owner = "alice"
 display_name = "Alice Laptop"
 transport = "websocket"
-project_registry_dir = "/etc/webcodex/project-registry"
+project_registry_dir = "/etc/webpi/project-registry"
 
 [policy]
 allowed_roots = ["/srv/projects"]
@@ -886,7 +878,7 @@ allowed_roots = ["/srv/projects"]
     let output = rt.block_on(run_runner_status(opts)).unwrap();
     assert!(!output.contains(secret));
     let json: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(json["service"]["unit"], "webcodex-runner.service");
+    assert_eq!(json["service"]["unit"], "webpi-runner.service");
     assert!(json["service"].get("legacy_unit").is_none());
     assert_eq!(json["service"]["active"], "unknown");
     assert_eq!(json["service"]["enabled"], "unknown");
@@ -911,7 +903,7 @@ fn runner_status_rejects_runner_transport_token_in_user_runtime_token_file_witho
         "server_url = \"https://example.test\"\nclient_id = \"alice\"\n",
     )
     .unwrap();
-    let token_file = tmp.path().join("webcodex-user-token");
+    let token_file = tmp.path().join("webpi-user-token");
     let secret = "wc_agent_do_not_echo_status_0123456789";
     std::fs::write(&token_file, format!("{secret}\n")).unwrap();
     let opts = parse_runner_status(&args(&[
@@ -929,7 +921,7 @@ fn runner_status_rejects_runner_transport_token_in_user_runtime_token_file_witho
         .unwrap();
     let error = runtime.block_on(run_runner_status(opts)).unwrap_err();
     assert!(error.contains("Runner transport token"), "{error}");
-    assert!(error.contains("webcodex-user-token"), "{error}");
+    assert!(error.contains("webpi-user-token"), "{error}");
     assert!(!error.contains(secret));
 }
 
@@ -1087,8 +1079,8 @@ transport = "websocket"
 "#,
     )
     .unwrap();
-    let user_token_file = tmp.path().join("webcodex-user-token");
-    let runner_token_file = tmp.path().join("webcodex-runner-token");
+    let user_token_file = tmp.path().join("webpi-user-token");
+    let runner_token_file = tmp.path().join("webpi-runner-token");
     std::fs::write(&user_token_file, "pat_online_secret_1234567890\n").unwrap();
     std::fs::write(&runner_token_file, "runner_boundary_secret_1234567890\n").unwrap();
     let opts = parse_runner_status(&args(&[

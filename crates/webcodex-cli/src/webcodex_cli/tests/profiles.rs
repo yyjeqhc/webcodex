@@ -128,7 +128,7 @@ fn user_scope_runner_config_keeps_legacy_only_and_rejects_dual_names() {
     let _env = EnvGuard::new()
         .set("HOME", tmp_path)
         .set("XDG_CONFIG_HOME", tmp_path);
-    let config_dir = tmp.path().join("webcodex");
+    let config_dir = tmp.path().join("webpi");
     std::fs::create_dir_all(&config_dir).unwrap();
 
     assert_eq!(
@@ -261,10 +261,10 @@ fn runner_status_explicit_paths_win_and_no_profile_uses_canonical_default() {
     );
 
     let default = parse_runner_status(&args(&["--scope", "system"])).unwrap();
-    assert_eq!(default.config, PathBuf::from("/etc/webcodex/runner.toml"));
+    assert_eq!(default.config, PathBuf::from("/etc/webpi/runner.toml"));
     assert_eq!(
         default.service_file,
-        PathBuf::from("/etc/systemd/system/webcodex-runner.service")
+        PathBuf::from("/etc/systemd/system/webpi-runner.service")
     );
     assert_eq!(default.user_token_file, None);
     assert_eq!(default.runner_token_file, None);
@@ -298,11 +298,11 @@ fn runner_install_service_profile_derives_config_and_service_file() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
         "--dry-run",
     ]))
     .unwrap();
@@ -316,7 +316,7 @@ fn runner_install_service_profile_derives_config_and_service_file() {
     );
     let unit = render_runner_systemd_unit(&opts).unwrap();
     assert!(unit.contains(
-        "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/clients/special/runner.toml\""
+        "ExecStart=\"/opt/webpi/bin/webcodex-runner\" \"--config\" \"/etc/webpi/clients/special/runner.toml\""
     ));
 }
 
@@ -332,21 +332,21 @@ fn runner_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--config",
         "/tmp/agent.toml",
         "--service-file",
-        "/tmp/webcodex-runner.service",
+        "/tmp/webpi-runner.service",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
     ]))
     .unwrap();
     assert_eq!(opts.config, PathBuf::from("/tmp/agent.toml"));
     assert_eq!(
         opts.service_file,
-        PathBuf::from("/tmp/webcodex-runner.service")
+        PathBuf::from("/tmp/webpi-runner.service")
     );
 
     let err = parse_runner_install_service(&args(&[
@@ -355,11 +355,11 @@ fn runner_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
         "--scope",
         "system",
         "--user",
-        "webcodex",
+        "webpi",
         "--working-directory",
         "/srv/webcodex",
         "--bin",
-        "/opt/webcodex/bin/webcodex-runner",
+        "/opt/webpi/bin/webcodex-runner",
     ]))
     .unwrap_err();
     assert_eq!(err, CLIENT_PROFILE_ERROR);
@@ -378,7 +378,7 @@ fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {
         .set("XDG_CONFIG_HOME", "/tmp/alice-config");
 
     let user = parse_runner_install_service_with_identity(
-        &args(&["--bin", "/opt/webcodex/bin/webcodex-runner", "--dry-run"]),
+        &args(&["--bin", "/opt/webpi/bin/webcodex-runner", "--dry-run"]),
         false,
     )
     .unwrap();
@@ -389,13 +389,13 @@ fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {
     );
     assert_eq!(
         user.service_file,
-        PathBuf::from("/tmp/alice-config/systemd/user/webcodex-runner.service")
+        PathBuf::from("/tmp/alice-config/systemd/user/webpi-runner.service")
     );
     assert_eq!(user.working_directory, PathBuf::from("/home/alice"));
     assert!(!user.root_runner);
 
     let root_error = parse_runner_install_service_with_identity(
-        &args(&["--bin", "/opt/webcodex/bin/webcodex-runner", "--dry-run"]),
+        &args(&["--bin", "/opt/webpi/bin/webcodex-runner", "--dry-run"]),
         true,
     )
     .unwrap_err();
@@ -404,7 +404,7 @@ fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {
     let root = parse_runner_install_service_with_identity(
         &args(&[
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
             "--allow-root-runner",
             "--dry-run",
         ]),
@@ -412,20 +412,15 @@ fn runner_service_scope_parsing_defaults_and_paths_are_deterministic() {
     )
     .unwrap();
     assert_eq!(root.scope, ServiceScope::System);
-    assert_eq!(root.config, PathBuf::from("/etc/webcodex/runner.toml"));
+    assert_eq!(root.config, PathBuf::from("/etc/webpi/runner.toml"));
     assert_eq!(
         root.service_file,
-        PathBuf::from("/etc/systemd/system/webcodex-runner.service")
+        PathBuf::from("/etc/systemd/system/webpi-runner.service")
     );
     assert!(root.root_runner);
 
     let root_user_error = parse_runner_install_service_with_identity(
-        &args(&[
-            "--scope",
-            "user",
-            "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
-        ]),
+        &args(&["--scope", "user", "--bin", "/opt/webpi/bin/webcodex-runner"]),
         true,
     )
     .unwrap_err();
@@ -452,7 +447,7 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
             "--profile",
             "work",
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
             "--dry-run",
         ]),
         false,
@@ -460,7 +455,7 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
     .unwrap();
     assert_eq!(
         opts.config,
-        PathBuf::from("/home/bob/.config/webcodex/clients/work/runner.toml")
+        PathBuf::from("/home/bob/.config/webpi/clients/work/runner.toml")
     );
     assert_eq!(
         opts.service_file,
@@ -474,7 +469,7 @@ fn user_scope_falls_back_to_home_and_profile_paths() {
 #[cfg(unix)]
 #[test]
 fn runner_service_scope_rejects_invalid_and_conflicting_flags() {
-    let bin = "/opt/webcodex/bin/webcodex-runner";
+    let bin = "/opt/webpi/bin/webcodex-runner";
     let invalid = parse_runner_install_service_with_identity(
         &args(&["--scope", "session", "--bin", bin]),
         false,
@@ -537,7 +532,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
             "--working-directory",
             "/tmp",
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
         ]),
         false,
     )
@@ -553,9 +548,9 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
             "--scope",
             "user",
             "--service-file",
-            "/etc/systemd/system/webcodex-runner.service",
+            "/etc/systemd/system/webpi-runner.service",
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
         ]),
         false,
     )
@@ -567,9 +562,9 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
             "--scope",
             "user",
             "--service-file",
-            "/etc/webcodex-runner.service",
+            "/etc/webpi-runner.service",
             "--bin",
-            "/opt/webcodex/bin/webcodex-runner",
+            "/opt/webpi/bin/webcodex-runner",
         ]),
         false,
     )
@@ -582,7 +577,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
             "--scope",
             "system",
             "--service-file",
-            "/home/alice/.config/systemd/user/webcodex-runner.service",
+            "/home/alice/.config/systemd/user/webpi-runner.service",
         ]),
     )
     .unwrap_err();
@@ -594,7 +589,7 @@ fn explicit_service_paths_override_defaults_but_wrong_scope_paths_are_rejected()
             "--scope",
             "user",
             "--service-file",
-            "/home/alice/.config/systemd/user/../../../../etc/systemd/system/webcodex-runner.service",
+            "/home/alice/.config/systemd/user/../../../../etc/systemd/system/webpi-runner.service",
         ]),
     )
     .unwrap_err();
@@ -649,7 +644,7 @@ fn hosted_profile_runner_bin_override_is_narrow_and_explicit() {
         (
             "start",
             vec!["--profile", "hosted", "--bin", bin],
-            "valid only with `webcodex runner restart",
+            "valid only with `webpi runner restart",
         ),
     ] {
         let error = parse_runner_service_action(command, &args(&values)).unwrap_err();
@@ -675,13 +670,13 @@ fn omitted_scope_hosted_status_keeps_xdg_profile_paths_for_root() {
     assert_eq!(
         opts.user_token_file,
         Some(PathBuf::from(
-            "/tmp/test-xdg/webcodex/clients/hosted/webcodex-user-token"
+            "/tmp/test-xdg/webcodex/clients/hosted/webpi-user-token"
         ))
     );
     assert_eq!(
         opts.runner_token_file,
         Some(PathBuf::from(
-            "/tmp/test-xdg/webcodex/clients/hosted/webcodex-runner-token"
+            "/tmp/test-xdg/webcodex/clients/hosted/webpi-runner-token"
         ))
     );
     assert!(opts.local_state_dir.is_some());

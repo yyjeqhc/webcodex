@@ -20,6 +20,7 @@
 /// Credential trees and Git integrity-sensitive control data.
 const SECRET_COMPONENTS: &[&str] = &[
     ".git",
+    ".webpi-state",
     "secrets",
     "tokens",
     "project-registry",
@@ -29,9 +30,22 @@ const SECRET_COMPONENTS: &[&str] = &[
 /// Component prefixes that mark a credential or Runner-config file.
 ///
 /// `.env` as a prefix also covers `.env.local`, `.env.production`, and the
-/// like. Runner config names and `webcodex.env` are prefixes so editor and
+/// like. Runner config names and `webpi.env` are prefixes so editor and
 /// backup suffixes (`runner.toml.swp`, `agent.toml.bak`) remain protected.
-const SECRET_PREFIXES: &[&str] = &[".env", "runner.toml", "agent.toml", "webcodex.env"];
+const SECRET_PREFIXES: &[&str] = &[
+    ".env",
+    "runner.toml",
+    "agent.toml",
+    "webpi.env",
+    "webcodex.env",
+    "webpi-user-token",
+    "webpi-runner-token",
+    "webpi-action-token",
+    "webcodex-user-token",
+    "webcodex-runner-token",
+    "webcodex.db",
+    "webpi.db",
+];
 
 /// Component suffixes that mark key material or a credential backup.
 const SECRET_SUFFIXES: &[&str] = &[".pem", ".key", ".env", ".toml.bak"];
@@ -123,7 +137,7 @@ mod tests {
             "config/runner.toml",
             "agent.toml",
             "config/agent.toml",
-            "webcodex.env",
+            "webpi.env",
             // dotenv family
             ".env",
             ".env.local",
@@ -152,6 +166,24 @@ mod tests {
             "Agent.TOML",
         ] {
             assert!(is_secret_path(path), "expected secret: {path}");
+        }
+    }
+
+    #[test]
+    fn webpi_and_legacy_credentials_remain_protected_after_identity_migration() {
+        for path in [
+            ".webpi-state/pi-agent/auth.json",
+            ".webpi-state/server/data/webcodex.db",
+            "webpi.env.bak",
+            "webcodex.env.pre-migration",
+            "webpi-user-token",
+            "webcodex-user-token",
+            "webpi-action-token",
+            "webpi.db-wal",
+            "webcodex.db-shm",
+        ] {
+            assert!(is_secret_path(path), "unprotected credential: {path}");
+            assert!(glob_targets_protected_path(&format!("**/{path}")));
         }
     }
 

@@ -42,9 +42,9 @@ export const desktopApi = {
     invoke<ProjectSelection>("inspect_project", {
       request: { projectPath },
     }),
-  configureLocal: (projectPath?: string | null) =>
+  configureLocal: (projectPath: string) =>
     invoke<DesktopState>("configure_local_setup", {
-      request: { projectPath: projectPath ?? null },
+      request: { projectPath },
     }),
   activateLocalProject: (projectPath: string) =>
     invoke<DesktopState>("activate_local_project", {

@@ -567,7 +567,6 @@ fn can_refresh_legacy_runner(snapshot: Option<crate::process::ProcessSnapshot>) 
 
 pub struct DesktopCore {
     data_dir: PathBuf,
-    default_project_dir: PathBuf,
     config_path: PathBuf,
     config: StoredDesktopConfig,
     tunnel_config: TunnelConfig,
@@ -584,7 +583,6 @@ pub struct DesktopCore {
 impl DesktopCore {
     fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
         let activity = ActivityLog::default();
-        let default_project_dir = default_management_project_dir(&data_dir, &resource_dir);
         let config_path = data_dir.join("desktop-state.json");
         let config = load_config(&config_path, &activity)?;
         let tunnel_config = TunnelConfig::load(
@@ -628,7 +626,6 @@ impl DesktopCore {
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
         Ok(Self {
             data_dir,
-            default_project_dir,
             config_path,
             config,
             tunnel_config,
@@ -1066,31 +1063,17 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
-        let project = match project_path.map(str::trim).filter(|path| !path.is_empty()) {
-            Some(path) => self.adapter.inspect_project(path).await?,
-            None => {
-                tokio::fs::create_dir_all(&self.default_project_dir)
-                    .await
-                    .map_err(|error| {
-                        DesktopError::new(
-                            "default_project_unavailable",
-                            "Desktop could not prepare its default management project",
-                            "Check that the WebCodex Desktop install directory is writable, or choose another project from Change runtime mode.",
-                        )
-                        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-                    })?;
-                let mut project = self
-                    .adapter
-                    .inspect_project(&self.default_project_dir.to_string_lossy())
-                    .await?;
-                // The automatically registered management project should not
-                // also grant authority to register sibling installation folders.
-                // Equality is a valid allowed-root boundary, so keep this
-                // implicit setup scoped to the installation directory itself.
-                project.allowed_root = project.path.clone();
-                project
-            }
-        };
+        let project_path = project_path
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "project_not_ready",
+                    "Local setup requires an explicit project folder",
+                    "Choose the project folder that this Runner should manage, then retry setup.",
+                )
+            })?;
+        let project = self.adapter.inspect_project(project_path).await?;
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
@@ -2746,28 +2729,6 @@ fn runtime_autostart(config: &StoredDesktopConfig) -> bool {
     })
 }
 
-fn default_management_project_dir(data_dir: &Path, resource_dir: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let _ = data_dir;
-        // The NSIS package is current-user scoped. Use the actual installation
-        // directory as the default management Project so a fresh Desktop is
-        // immediately manageable without asking the user to choose an unrelated
-        // source checkout first. This intentionally grants the Project the same
-        // install-directory authority the user has requested for Desktop
-        // configuration and maintenance.
-        return resource_dir.to_path_buf();
-    }
-    #[cfg(not(windows))]
-    {
-        // A macOS resource directory lives inside the signed app bundle and is
-        // not a mutable workspace. Keep the same management-project semantics
-        // in the per-user Desktop data directory there.
-        let _ = resource_dir;
-        data_dir.join("workspace")
-    }
-}
-
 fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPreference {
     config.preferred_connection.unwrap_or_default()
 }
@@ -2830,15 +2791,19 @@ fn same_project(left: &str, right: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_management_project_uses_safe_platform_location() {
-        let data = PathBuf::from(r"C:\Users\test\AppData\Local\WebCodex");
-        let resources = PathBuf::from(r"D:\Apps\WebCodex Desktop");
-        let project = default_management_project_dir(&data, &resources);
-        #[cfg(windows)]
-        assert_eq!(project, resources);
-        #[cfg(not(windows))]
-        assert_eq!(project, data.join("workspace"));
+    #[tokio::test]
+    async fn local_setup_never_uses_the_install_directory_as_an_implicit_project() {
+        let data = unique_state_dir("explicit-local-project");
+        let resources = data.join("Relocated WebCodex Install");
+        std::fs::create_dir_all(&resources).unwrap();
+        let mut core = DesktopCore::new(data.clone(), resources).unwrap();
+        let error = core
+            .configure_local_setup(None, &CancellationContext::never())
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "project_not_ready");
+        assert!(core.snapshot.project.is_none());
+        let _ = std::fs::remove_dir_all(data);
     }
 
     #[test]

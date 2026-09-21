@@ -194,7 +194,7 @@ pub(crate) fn clamp_grace(raw: i64) -> i64 {
 pub fn job_recovery_grace_secs() -> i64 {
     static JOB_RECOVERY_GRACE: OnceLock<i64> = OnceLock::new();
     *JOB_RECOVERY_GRACE.get_or_init(|| {
-        std::env::var("WEBCODEX_JOB_RECOVERY_GRACE_SECS")
+        std::env::var("WEBPI_JOB_RECOVERY_GRACE_SECS")
             .ok()
             .and_then(|raw| raw.trim().parse::<i64>().ok())
             .map(clamp_grace)

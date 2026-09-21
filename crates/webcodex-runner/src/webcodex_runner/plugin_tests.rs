@@ -827,17 +827,17 @@ fn prepared_environment_reuses_shell_env_default_profile_and_clears_sensitive_va
     use std::collections::BTreeMap;
     let _guard = crate::tests::test_env_lock();
     let _env = crate::tests::EnvGuard::new()
-        .set("WEBCODEX_AGENT_TOKEN", "must-not-leak")
-        .set("WEBCODEX_PAT", "inherited-pat-must-not-leak");
+        .set("WEBPI_AGENT_TOKEN", "must-not-leak")
+        .set("WEBPI_PAT", "inherited-pat-must-not-leak");
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("marker.log");
     let fake = fake_binary();
     let mut shell = ShellConfig::default();
     shell
         .env
-        .insert("WEBCODEX_PLUGIN_TEST_ENV".to_string(), "base".to_string());
+        .insert("WEBPI_PLUGIN_TEST_ENV".to_string(), "base".to_string());
     shell.env.insert(
-        "WEBCODEX_PAT".to_string(),
+        "WEBPI_PAT".to_string(),
         "shell-pat-must-not-leak".to_string(),
     );
     shell.default_profile = Some("plugin".to_string());
@@ -846,11 +846,11 @@ fn prepared_environment_reuses_shell_env_default_profile_and_clears_sensitive_va
         ShellProfileConfig {
             env: BTreeMap::from([
                 (
-                    "WEBCODEX_PLUGIN_TEST_ENV".to_string(),
+                    "WEBPI_PLUGIN_TEST_ENV".to_string(),
                     "profile-ready".to_string(),
                 ),
                 (
-                    "WEBCODEX_PAT".to_string(),
+                    "WEBPI_PAT".to_string(),
                     "profile-pat-must-not-leak".to_string(),
                 ),
             ]),
@@ -908,7 +908,7 @@ fn runner_real_process_bare_plugin_command_resolves_from_prepared_path_with_expl
         "native".to_string(),
         ShellProfileConfig {
             env: BTreeMap::from([(
-                "WEBCODEX_PLUGIN_TEST_ENV".to_string(),
+                "WEBPI_PLUGIN_TEST_ENV".to_string(),
                 "profile-ready".to_string(),
             )]),
             ..ShellProfileConfig::default()
@@ -953,7 +953,7 @@ fn plugin_profile_init_script_is_captured_into_native_child_environment() {
     shell.profiles.insert(
         "native".to_string(),
         ShellProfileConfig {
-            init_script: Some("export WEBCODEX_PLUGIN_TEST_ENV=profile-ready".to_string()),
+            init_script: Some("export WEBPI_PLUGIN_TEST_ENV=profile-ready".to_string()),
             ..ShellProfileConfig::default()
         },
     );
@@ -1228,10 +1228,9 @@ fn plugin_committed_environment_ignores_unrelated_shell_runtime_controls() {
     unrelated_shell.max_persistent_shells += 1;
     unrelated_shell.persistent_shell_idle_timeout_secs += 1;
     let mut unused_profile = super::super::config::ShellProfileConfig::default();
-    unused_profile.env.insert(
-        "WEBCODEX_UNUSED_PLUGIN_PROFILE".to_string(),
-        "v1".to_string(),
-    );
+    unused_profile
+        .env
+        .insert("WEBPI_UNUSED_PLUGIN_PROFILE".to_string(), "v1".to_string());
     unrelated_shell
         .profiles
         .insert("unused".to_string(), unused_profile);
@@ -1274,7 +1273,7 @@ fn plugin_committed_environment_ignores_unrelated_shell_runtime_controls() {
         .get_mut("plugin")
         .unwrap()
         .env
-        .insert("WEBCODEX_PLUGIN_ENV_TEST".to_string(), "v2".to_string());
+        .insert("WEBPI_PLUGIN_ENV_TEST".to_string(), "v2".to_string());
     let changed_profile = runner_config(plugins, relevant_shell, fixture._temp.path());
     fixture
         .manager

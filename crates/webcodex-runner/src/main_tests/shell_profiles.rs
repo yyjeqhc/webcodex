@@ -8,7 +8,7 @@ fn prepared_profile_env_is_available_to_run_shell() {
         vec![(
             "test",
             ShellProfileConfig {
-                env: profile_env(&[("WEBCODEX_TEST_PROFILE", "from_env")]),
+                env: profile_env(&[("WEBPI_TEST_PROFILE", "from_env")]),
                 ..ShellProfileConfig::default()
             },
         )],
@@ -19,7 +19,7 @@ fn prepared_profile_env_is_available_to_run_shell() {
         tmp.path(),
         &PreparedShellProfileCache::default(),
         tmp.path(),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("from_env"));
@@ -36,10 +36,7 @@ fn prepared_profile_init_script_export_is_available_to_run_shell() {
         vec![(
             "test",
             ShellProfileConfig {
-                init_script: Some(profile_init_export(
-                    "WEBCODEX_TEST_PROFILE",
-                    "from_snapshot",
-                )),
+                init_script: Some(profile_init_export("WEBPI_TEST_PROFILE", "from_snapshot")),
                 ..ShellProfileConfig::default()
             },
         )],
@@ -50,7 +47,7 @@ fn prepared_profile_init_script_export_is_available_to_run_shell() {
         tmp.path(),
         &PreparedShellProfileCache::default(),
         tmp.path(),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("from_snapshot"));
@@ -101,7 +98,7 @@ fn prepared_profile_init_script_is_project_relative() {
         &activate,
         format!(
             "{}\n",
-            profile_init_export("WEBCODEX_PROJECT_VENV", "project_local")
+            profile_init_export("WEBPI_PROJECT_VENV", "project_local")
         ),
     )
     .unwrap();
@@ -122,7 +119,7 @@ fn prepared_profile_init_script_is_project_relative() {
         &project_registry_dir,
         &PreparedShellProfileCache::default(),
         &project_dir,
-        &shell_env_var("WEBCODEX_PROJECT_VENV"),
+        &shell_env_var("WEBPI_PROJECT_VENV"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("project_local"));
@@ -141,14 +138,14 @@ fn project_shell_profile_overrides_default_profile() {
             (
                 "default",
                 ShellProfileConfig {
-                    env: profile_env(&[("WEBCODEX_TEST_PROFILE", "default")]),
+                    env: profile_env(&[("WEBPI_TEST_PROFILE", "default")]),
                     ..ShellProfileConfig::default()
                 },
             ),
             (
                 "project",
                 ShellProfileConfig {
-                    env: profile_env(&[("WEBCODEX_TEST_PROFILE", "project")]),
+                    env: profile_env(&[("WEBPI_TEST_PROFILE", "project")]),
                     ..ShellProfileConfig::default()
                 },
             ),
@@ -160,7 +157,7 @@ fn project_shell_profile_overrides_default_profile() {
         &project_registry_dir,
         &PreparedShellProfileCache::default(),
         &project_dir,
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("project"));
@@ -206,7 +203,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
         vec![(
             "test",
             ShellProfileConfig {
-                env: profile_env(&[("WEBCODEX_TEST_PROFILE", "same")]),
+                env: profile_env(&[("WEBPI_TEST_PROFILE", "same")]),
                 ..ShellProfileConfig::default()
             },
         )],
@@ -218,7 +215,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
         &project_registry_dir,
         jobs.prepared_profiles(),
         &project_dir,
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(shell_result.stdout.as_deref(), Some("same"));
 
@@ -239,7 +236,7 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
         &persistent_shells,
         &project_registry_dir,
         &lsp,
-        shell_job_request(&project_dir, &shell_env_var("WEBCODEX_TEST_PROFILE")),
+        shell_job_request(&project_dir, &shell_env_var("WEBPI_TEST_PROFILE")),
     )
     .unwrap();
     let (job_stdout, execution_state) = wait_for_job_stdout(&mut rx);
@@ -261,14 +258,14 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
          $n = $n + 1\nSet-Content -Path {} -Value $n\n{}",
         shell_tree_quote(&counter.to_string_lossy()),
         shell_tree_quote(&counter.to_string_lossy()),
-        profile_init_export("WEBCODEX_TEST_PROFILE", "counted"),
+        profile_init_export("WEBPI_TEST_PROFILE", "counted"),
     );
     #[cfg(not(windows))]
     let init_script = format!(
             "count=$(cat {:?} 2>/dev/null || echo 0)\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > {:?}\n{}",
             counter.to_string_lossy(),
             counter.to_string_lossy(),
-            profile_init_export("WEBCODEX_TEST_PROFILE", "counted"),
+            profile_init_export("WEBPI_TEST_PROFILE", "counted"),
         );
     let shell = shell_with_profiles(
         Some("test"),
@@ -288,7 +285,7 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
             tmp.path(),
             &cache,
             tmp.path(),
-            &shell_env_var("WEBCODEX_TEST_PROFILE"),
+            &shell_env_var("WEBPI_TEST_PROFILE"),
         );
         assert_eq!(result.exit_code, Some(0), "{result:?}");
         assert_eq!(result.stdout.as_deref(), Some("counted"));
@@ -302,7 +299,7 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
         tmp.path(),
         &cache,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
         None,
         10,
         None,
@@ -319,7 +316,7 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
         tmp.path(),
         &cache,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
         None,
         10,
         None,
@@ -334,7 +331,7 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
         tmp.path(),
         &cache,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
         None,
         10,
         None,
@@ -348,10 +345,9 @@ fn prepared_profile_init_script_runs_once_per_project_profile_generation() {
 fn prepared_profile_init_script_stdout_noise_does_not_break_env_capture() {
     let tmp = tempfile::tempdir().unwrap();
     #[cfg(windows)]
-    let init_script =
-        "Write-Output 'noise before env'\n$env:WEBCODEX_TEST_PROFILE = 'ok'".to_string();
+    let init_script = "Write-Output 'noise before env'\n$env:WEBPI_TEST_PROFILE = 'ok'".to_string();
     #[cfg(not(windows))]
-    let init_script = "echo noise before env\nexport WEBCODEX_TEST_PROFILE=ok".to_string();
+    let init_script = "echo noise before env\nexport WEBPI_TEST_PROFILE=ok".to_string();
     let shell = shell_with_profiles(
         Some("test"),
         vec![(
@@ -368,7 +364,7 @@ fn prepared_profile_init_script_stdout_noise_does_not_break_env_capture() {
         tmp.path(),
         &PreparedShellProfileCache::default(),
         tmp.path(),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("ok"));
@@ -380,7 +376,7 @@ fn prepared_profile_prepare_reaps_background_pipe_holder() {
     let tmp = tempfile::tempdir().unwrap();
     let pid_file = tmp.path().join("prepare-background-pipe-holder.pid");
     let init_script = format!(
-            "sleep 60 & background_pid=$!; printf '%s' \"$background_pid\" > {}; export WEBCODEX_TEST_PROFILE=ready",
+            "sleep 60 & background_pid=$!; printf '%s' \"$background_pid\" > {}; export WEBPI_TEST_PROFILE=ready",
             shell_quote_path(&pid_file)
         );
     let shell = shell_with_profiles(
@@ -413,7 +409,7 @@ fn prepared_profile_prepare_reaps_background_pipe_holder() {
             &worker_project_registry_dir,
             &worker_cache,
             Some(&worker_cwd),
-            &shell_env_var("WEBCODEX_TEST_PROFILE"),
+            &shell_env_var("WEBPI_TEST_PROFILE"),
             None,
             10,
             None,
@@ -485,9 +481,9 @@ fn prepared_profile_filters_webcodex_token_env() {
     // must be filtered too; Unix is case-sensitive and only the exact name
     // can be inherited or configured.
     #[cfg(windows)]
-    let spellings = ["WEBCODEX_TOKEN", "WebCodex_Token", "authorization"];
+    let spellings = ["WEBPI_TOKEN", "WebCodex_Token", "authorization"];
     #[cfg(not(windows))]
-    let spellings = ["WEBCODEX_TOKEN"];
+    let spellings = ["WEBPI_TOKEN"];
     for spelling in spellings {
         let _env = EnvGuard::new().set(spelling, "secret-token");
         let result = run_profile_shell(
@@ -558,7 +554,7 @@ fn prepared_profile_env_payload_parse_failure_is_reported() {
                 program: Some("/bin/sh".to_string()),
                 args: Some(vec!["-c".to_string()]),
                 env: profile_env(&[("PATH", bin.to_string_lossy().as_ref())]),
-                init_script: Some("export WEBCODEX_TEST_PROFILE=ok".to_string()),
+                init_script: Some("export WEBPI_TEST_PROFILE=ok".to_string()),
                 ..ShellProfileConfig::default()
             },
         )],

@@ -404,6 +404,13 @@ fn interpreter_argv_binds_python_file_and_shell_zero_to_runner_owned_target() {
     let request = execution_request(&configured, "scripts/probe.py", PYTHON_PROBE);
     let target = "/trusted/skill/scripts/probe.py";
     let candidates = skill_execution_candidates(&request, target).unwrap();
+    #[cfg(windows)]
+    {
+        assert_eq!(candidates[0].0, "python");
+        assert_eq!(candidates[1].0, "py");
+        assert_eq!(candidates[1].1[0], "-3");
+    }
+    #[cfg(not(windows))]
     assert_eq!(candidates[0].0, "python3");
     assert_eq!(
         candidates[0].1[0..4],
@@ -414,6 +421,9 @@ fn interpreter_argv_binds_python_file_and_shell_zero_to_runner_owned_target() {
     let mut uppercase_request = request.clone();
     uppercase_request.path = "scripts/probe.PY".to_string();
     let uppercase_candidates = skill_execution_candidates(&uppercase_request, target).unwrap();
+    #[cfg(windows)]
+    assert_eq!(uppercase_candidates[0].0, "python");
+    #[cfg(not(windows))]
     assert_eq!(uppercase_candidates[0].0, "python3");
 
     let shell_script = "printf '%s\\n' \"$0\"\n";
@@ -426,6 +436,29 @@ fn interpreter_argv_binds_python_file_and_shell_zero_to_runner_owned_target() {
         shell[0].1[0..3],
         ["-c", SHELL_SKILL_WRAPPER, "/trusted/skill/scripts/probe.sh"]
     );
+}
+
+#[test]
+fn python3_capability_probe_is_side_effect_free_and_launcher_specific() {
+    assert_eq!(
+        python3_probe_args("python"),
+        vec![
+            "-B".to_string(),
+            "-c".to_string(),
+            PYTHON3_CAPABILITY_PROBE.to_string(),
+        ]
+    );
+    assert_eq!(
+        python3_probe_args("py"),
+        vec![
+            "-3".to_string(),
+            "-B".to_string(),
+            "-c".to_string(),
+            PYTHON3_CAPABILITY_PROBE.to_string(),
+        ]
+    );
+    assert!(!PYTHON3_CAPABILITY_PROBE.contains("exec("));
+    assert!(!PYTHON3_CAPABILITY_PROBE.contains("open("));
 }
 
 #[cfg(feature = "runner-real-process-tests")]

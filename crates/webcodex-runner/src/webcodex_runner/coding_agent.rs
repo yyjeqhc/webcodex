@@ -1419,7 +1419,7 @@ impl CodingAgentManager {
                 json!({
                     "protocolVersion": 1,
                     "clientCapabilities": {},
-                    "clientInfo": {"name":"webcodex-runner","version":env!("CARGO_PKG_VERSION")}
+                    "clientInfo": {"name":"webpi-runner","version":env!("CARGO_PKG_VERSION")}
                 }),
             ),
             run_deadline,
@@ -2948,7 +2948,7 @@ def log(x):
  with open(log_path,'a',encoding='utf-8') as f: f.write(json.dumps(x,separators=(',',':'))+'\n')
 def send(x):
  log({'send':x}); print(json.dumps(x),flush=True)
-log({'startup_pid':os.getpid(),'env_keys':sorted(k for k in os.environ if k.startswith('WEBCODEX_TEST_ACP_') or k=='ACP_VISIBLE')})
+log({'startup_pid':os.getpid(),'env_keys':sorted(k for k in os.environ if k.startswith('WEBPI_TEST_ACP_') or k=='ACP_VISIBLE')})
 for line in sys.stdin:
  m=json.loads(line); log({'recv':m}); method=m.get('method'); rid=m.get('id')
  if method=='initialize':
@@ -5225,14 +5225,14 @@ for line in sys.stdin:
     fn child_environment_is_cleared_and_missing_mapping_never_spawns() {
         let _guard = crate::tests::test_env_lock();
         let _env = crate::tests::EnvGuard::new()
-            .set("WEBCODEX_TEST_ACP_VISIBLE", "visible-value")
-            .set("WEBCODEX_TEST_ACP_HIDDEN", "must-not-reach-child");
+            .set("WEBPI_TEST_ACP_VISIBLE", "visible-value")
+            .set("WEBPI_TEST_ACP_HIDDEN", "must-not-reach-child");
         let temp = TempDir::new().unwrap();
         let (exe, args) = fake_agent(&temp, "end");
         let mut cfg = fake_config(exe, args);
         cfg.agents[0].env_from_env = BTreeMap::from([(
             "ACP_VISIBLE".to_string(),
-            "WEBCODEX_TEST_ACP_VISIBLE".to_string(),
+            "WEBPI_TEST_ACP_VISIBLE".to_string(),
         )]);
         let projects = project_fixture(&temp);
         let root = temp.path().join("repo");
@@ -5257,7 +5257,7 @@ for line in sys.stdin:
         let mut cfg = fake_config(exe, args);
         cfg.agents[0].env_from_env = BTreeMap::from([(
             "ACP_VISIBLE".to_string(),
-            "WEBCODEX_TEST_ACP_MISSING".to_string(),
+            "WEBPI_TEST_ACP_MISSING".to_string(),
         )]);
         let projects = project_fixture(&temp);
         let root = temp.path().join("repo");

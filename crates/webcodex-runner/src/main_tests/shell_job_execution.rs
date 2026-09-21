@@ -39,7 +39,7 @@ fn shell_job_filters_sensitive_env_case_insensitive() {
     // The plain (non-profile) path removes sensitive keys from the child
     // environment; Windows removal must be case-insensitive like the OS.
     for spelling in [
-        "WEBCODEX_TOKEN",
+        "WEBPI_TOKEN",
         "WebCodex_Pat",
         "WebCodex_User_Token",
         "Authorization",
@@ -63,7 +63,7 @@ fn shell_job_filters_sensitive_env_case_insensitive() {
     // inherited environment was scrubbed. Exercise canonical and mixed-case
     // spellings because Windows environment names are case-insensitive.
     for spelling in [
-        "WEBCODEX_TOKEN",
+        "WEBPI_TOKEN",
         "webcodex_pat",
         "WebCodex_User_Token",
         "authorization",

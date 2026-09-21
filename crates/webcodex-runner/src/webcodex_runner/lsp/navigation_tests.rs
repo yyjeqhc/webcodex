@@ -2052,8 +2052,8 @@ fn real_language_server(env_var: &str, executable: &str) -> Option<PathBuf> {
 #[test]
 #[ignore = "requires a real pyright-langserver (npm i -g pyright)"]
 fn real_pyright_document_symbols_end_to_end() {
-    let Some(pyright) = real_language_server("WEBCODEX_PYRIGHT", "pyright-langserver") else {
-        panic!("pyright-langserver not found; set WEBCODEX_PYRIGHT or install pyright");
+    let Some(pyright) = real_language_server("WEBPI_PYRIGHT", "pyright-langserver") else {
+        panic!("pyright-langserver not found; set WEBPI_PYRIGHT or install pyright");
     };
 
     let temp = tempfile::tempdir().unwrap();
@@ -2171,10 +2171,10 @@ fn real_pyright_document_symbols_end_to_end() {
 #[ignore = "requires typescript-language-server + typescript@5 (npm i -g typescript-language-server typescript@5)"]
 fn real_typescript_document_symbols_end_to_end() {
     let Some(server) = real_language_server(
-        "WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER",
+        "WEBPI_TYPESCRIPT_LANGUAGE_SERVER",
         "typescript-language-server",
     ) else {
-        panic!("typescript-language-server not found; set WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER");
+        panic!("typescript-language-server not found; set WEBPI_TYPESCRIPT_LANGUAGE_SERVER");
     };
 
     let temp = tempfile::tempdir().unwrap();
@@ -2274,14 +2274,14 @@ fn real_typescript_document_symbols_end_to_end() {
 }
 
 /// Opt-in real gopls smoke. It never installs gopls or dependencies; the test
-/// only runs when a preinstalled binary is selected via WEBCODEX_GOPLS/PATH.
+/// only runs when a preinstalled binary is selected via WEBPI_GOPLS/PATH.
 /// Run with:
 /// `cargo test -p webcodex-runner --bin webcodex-runner real_gopls -- --ignored --nocapture`
 #[test]
 #[ignore = "requires a preinstalled gopls; WebCodex never installs it automatically"]
 fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
-    let Some(gopls) = real_language_server("WEBCODEX_GOPLS", "gopls") else {
-        panic!("gopls not found; set WEBCODEX_GOPLS or preinstall gopls manually");
+    let Some(gopls) = real_language_server("WEBPI_GOPLS", "gopls") else {
+        panic!("gopls not found; set WEBPI_GOPLS or preinstall gopls manually");
     };
 
     let temp = tempfile::tempdir().unwrap();

@@ -3,7 +3,7 @@ use crate::{
     JobReceiptStore, JobTerminalEvent, JobTerminalEventSink, NoopRunnerRegistryTelemetry,
     RetainedJobReceipt, RunnerAccess, RunnerAccessGroup,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 #[derive(Debug, Default)]
@@ -67,12 +67,21 @@ async fn durable(store: &Arc<MemoryReceipts>) -> RunnerRegistry {
 struct MemoryTerminalEvents {
     rows: Mutex<Vec<JobTerminalEvent>>,
     fail_next: AtomicBool,
+    fail_delay_ms: AtomicU64,
     registry: Mutex<Option<Weak<crate::receipts::ReceiptRegistryState>>>,
 }
 
 impl MemoryTerminalEvents {
     fn fail_once(&self) {
         self.fail_next.store(true, Ordering::SeqCst);
+    }
+
+    fn fail_once_after(&self, delay: std::time::Duration) {
+        self.fail_delay_ms.store(
+            u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+            Ordering::SeqCst,
+        );
+        self.fail_once();
     }
 }
 
@@ -89,6 +98,10 @@ impl JobTerminalEventSink for MemoryTerminalEvents {
                 registry.is_unlocked_for_test(),
                 "terminal-event sink must run after registry unlock"
             );
+        }
+        let delay_ms = self.fail_delay_ms.swap(0, Ordering::SeqCst);
+        if delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
         if self.fail_next.swap(false, Ordering::SeqCst) {
             return Err("injected terminal-event failure".into());
@@ -178,7 +191,7 @@ async fn terminal_events_emit_once_only_after_accepted_sequenced_terminal_truth(
 
 
 #[tokio::test]
-async fn terminal_event_sink_failure_requeues_candidate_until_a_later_registry_unlock() {
+async fn terminal_event_sink_failure_retries_after_cooldown_without_hot_looping() {
     let store = Arc::new(MemoryReceipts::default());
     let events = Arc::new(MemoryTerminalEvents::default());
     let registry = durable_with_events(&store, &events).await;
@@ -192,13 +205,46 @@ async fn terminal_event_sink_failure_requeues_candidate_until_a_later_registry_u
         .unwrap();
     assert!(events.rows.lock().unwrap().is_empty());
 
-    // Any later registry guard release retries the exact bounded candidate.
+    // Registry activity during the cooldown must not retry the failed terminal
+    // attention write; this is what prevents storage faults from becoming a
+    // tight CPU/log loop.
+    assert_eq!(registry.get_job(&job.job_id).await.unwrap().status, "completed");
+    assert!(events.rows.lock().unwrap().is_empty());
+
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
     assert_eq!(registry.get_job(&job.job_id).await.unwrap().status, "completed");
     {
         let rows = events.rows.lock().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].job_id, job.job_id);
     }
+    let _ = registry.get_job(&job.job_id).await.unwrap();
+    assert_eq!(events.rows.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn terminal_event_retry_cooldown_starts_after_a_slow_sink_failure_returns() {
+    let store = Arc::new(MemoryReceipts::default());
+    let events = Arc::new(MemoryTerminalEvents::default());
+    let registry = durable_with_events(&store, &events).await;
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+
+    events.fail_once_after(std::time::Duration::from_secs(2));
+    registry
+        .update_job(update(INSTANCE_A, &job.job_id, 1, "completed", None, true))
+        .await
+        .unwrap();
+    assert!(events.rows.lock().unwrap().is_empty());
+
+    // Four seconds after the sink returned is still inside the five-second
+    // cooldown, even though more than five seconds elapsed since the registry
+    // guard originally began dropping.
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    let _ = registry.get_job(&job.job_id).await.unwrap();
+    assert!(events.rows.lock().unwrap().is_empty());
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let _ = registry.get_job(&job.job_id).await.unwrap();
     assert_eq!(events.rows.lock().unwrap().len(), 1);
 }

@@ -135,7 +135,7 @@ fn choose_managed_worktree_root(
         if !webcodex_runner_config::paths::path_is_within(source, &root) {
             continue;
         }
-        let candidate = root.join(".webcodex-managed-worktrees");
+        let candidate = root.join(".webpi-managed-worktrees");
         if webcodex_runner_config::paths::path_is_within(&candidate, source) {
             continue;
         }
@@ -143,7 +143,7 @@ fn choose_managed_worktree_root(
     }
     if policy.allow_cwd_anywhere {
         if let Some(parent) = source.parent() {
-            let candidate = parent.join(".webcodex-managed-worktrees");
+            let candidate = parent.join(".webpi-managed-worktrees");
             if !webcodex_runner_config::paths::path_is_within(&candidate, source) {
                 return Ok(candidate);
             }

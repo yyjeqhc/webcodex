@@ -160,12 +160,12 @@ async fn registry_inventory_snapshot_saves_projects() {
         &registry,
         "oe",
         "inst",
-        vec![project_summary("webcodex", "/root/git/webcodex")],
+        vec![project_summary("webpi", "/root/git/webcodex")],
     )
     .await;
     let runners = registry.list_runners().await;
     assert_eq!(runners[0].projects.len(), 1);
-    assert_eq!(runners[0].projects[0].id, "webcodex");
+    assert_eq!(runners[0].projects[0].id, "webpi");
 
     let projects = registry.list_runner_projects("oe").await.unwrap();
     assert_eq!(projects.len(), 1);

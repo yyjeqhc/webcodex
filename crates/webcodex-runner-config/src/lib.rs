@@ -17,12 +17,29 @@ use webcodex_core::runner_protocol::RunnerCapabilities;
 
 pub mod paths;
 
+/// Remove another product's ambient configuration before starting threads.
+/// Call only from native process entry points, never inside a running runtime.
+/// WebPi configuration is read from WEBPI_* or its explicitly selected files.
+pub fn isolate_webpi_process_environment() {
+    let foreign: Vec<_> = std::env::vars_os()
+        .filter(|(key, _)| {
+            key.to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("WEBCODEX_")
+        })
+        .map(|(key, _)| key)
+        .collect();
+    for key in foreign {
+        std::env::remove_var(key);
+    }
+}
+
 /// Desktop injects provider credentials under these private source names. Only
 /// explicit MCP env_from_env mappings may inherit them, not ordinary job children.
-pub const DESKTOP_MCP_ENV_PREFIX: &str = "WEBCODEX_DESKTOP_MCP_";
+pub const DESKTOP_MCP_ENV_PREFIX: &str = "WEBPI_DESKTOP_MCP_";
 
 /// Default Runner project registry selected for a new system-level install.
-pub const DEFAULT_INIT_PROJECT_REGISTRY_DIR: &str = "/etc/webcodex/project-registry";
+pub const DEFAULT_INIT_PROJECT_REGISTRY_DIR: &str = "/etc/webpi/project-registry";
 pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 /// Largest idle polling floor allowed when polling can be selected. The Server
 /// currently considers a Runner offline after 60 seconds without a keepalive;
@@ -166,12 +183,12 @@ pub fn resolve_runner_init_token(opts: &RunnerInitOptions) -> Result<String, Str
         }
         return Ok(token);
     }
-    let token = std::env::var("WEBCODEX_AGENT_TOKEN")
-        .map_err(|_| "--token, --token-file, or WEBCODEX_AGENT_TOKEN is required".to_string())?
+    let token = std::env::var("WEBPI_AGENT_TOKEN")
+        .map_err(|_| "--token, --token-file, or WEBPI_AGENT_TOKEN is required".to_string())?
         .trim()
         .to_string();
     if token.is_empty() {
-        return Err("WEBCODEX_AGENT_TOKEN cannot be empty".to_string());
+        return Err("WEBPI_AGENT_TOKEN cannot be empty".to_string());
     }
     Ok(token)
 }
@@ -489,7 +506,7 @@ mod tests {
             display_name: Some("Alice Laptop".to_string()),
             transport: TRANSPORT_WEBSOCKET.to_string(),
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-            project_registry_dir: PathBuf::from("/etc/webcodex/project-registry"),
+            project_registry_dir: PathBuf::from("/etc/webpi/project-registry"),
             output,
             allowed_roots: vec![PathBuf::from("/srv/projects")],
             allow_cwd_anywhere: false,

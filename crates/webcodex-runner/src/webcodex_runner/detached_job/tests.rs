@@ -53,11 +53,11 @@ fn windows_atomic_state_replace_retries_transient_destination_sharing() {
 
 #[test]
 fn internal_mode_subprocess_entrypoint() {
-    let Some(mode) = std::env::var_os("WEBCODEX_DETACHED_TEST_INTERNAL_MODE") else {
+    let Some(mode) = std::env::var_os("WEBPI_DETACHED_TEST_INTERNAL_MODE") else {
         return;
     };
     let args: Vec<String> = serde_json::from_str(
-        &std::env::var("WEBCODEX_DETACHED_TEST_INTERNAL_ARGS").expect("internal args"),
+        &std::env::var("WEBPI_DETACHED_TEST_INTERNAL_ARGS").expect("internal args"),
     )
     .expect("decode internal args");
     let mut full = vec![mode.to_string_lossy().into_owned()];
@@ -579,7 +579,7 @@ fn payload_command(
     ];
     let mut all_env = env;
     all_env.push((
-        "WEBCODEX_DETACHED_PAYLOAD_SCENARIO".to_string(),
+        "WEBPI_DETACHED_PAYLOAD_SCENARIO".to_string(),
         scenario.to_string(),
     ));
     (executable, args, all_env)
@@ -588,7 +588,7 @@ fn payload_command(
 #[cfg(unix)]
 #[test]
 fn payload_subprocess_entrypoint() {
-    let Some(scenario) = std::env::var_os("WEBCODEX_DETACHED_PAYLOAD_SCENARIO") else {
+    let Some(scenario) = std::env::var_os("WEBPI_DETACHED_PAYLOAD_SCENARIO") else {
         return;
     };
     match scenario.to_string_lossy().as_ref() {
@@ -631,7 +631,7 @@ fn payload_subprocess_entrypoint() {
                     .arg("webcodex_runner::detached_job::tests::payload_descendant_subprocess_entrypoint")
                     .arg("--nocapture")
                     .env_clear()
-                    .env("WEBCODEX_DETACHED_DESCENDANT_MARKER", child_marker)
+                    .env("WEBPI_DETACHED_DESCENDANT_MARKER", child_marker)
                     .stdin(Stdio::null())
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit());
@@ -646,7 +646,7 @@ fn payload_subprocess_entrypoint() {
 #[cfg(unix)]
 #[test]
 fn payload_descendant_subprocess_entrypoint() {
-    let Some(marker) = std::env::var_os("WEBCODEX_DETACHED_DESCENDANT_MARKER") else {
+    let Some(marker) = std::env::var_os("WEBPI_DETACHED_DESCENDANT_MARKER") else {
         return;
     };
     fs::write(marker, std::process::id().to_string()).unwrap();
@@ -699,7 +699,7 @@ fn run_accept_then_exit_owner(temp: &Path, state_root: &Path, request: &Detached
         .arg("webcodex_runner::detached_job::tests::accept_then_exit_owner_subprocess_entrypoint")
         .arg("--nocapture")
         .env_clear()
-        .env("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
+        .env("WEBPI_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     assert!(owner.spawn().unwrap().wait().unwrap().success());
@@ -756,7 +756,7 @@ fn runner_real_process_accepted_handoff_keeps_payload_alive_after_owner_process_
         .arg("webcodex_runner::detached_job::tests::owner_subprocess_entrypoint")
         .arg("--nocapture")
         .env_clear()
-        .env("WEBCODEX_DETACHED_OWNER_INSTRUCTION", &instruction)
+        .env("WEBPI_DETACHED_OWNER_INSTRUCTION", &instruction)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let status = owner.spawn().unwrap().wait().unwrap();
@@ -771,7 +771,7 @@ fn runner_real_process_accepted_handoff_keeps_payload_alive_after_owner_process_
 #[cfg(unix)]
 #[test]
 fn owner_subprocess_entrypoint() {
-    let Some(path) = std::env::var_os("WEBCODEX_DETACHED_OWNER_INSTRUCTION") else {
+    let Some(path) = std::env::var_os("WEBPI_DETACHED_OWNER_INSTRUCTION") else {
         return;
     };
     let (root, request, result_path): (PathBuf, DetachedStartRequest, PathBuf) =
@@ -817,7 +817,7 @@ fn runner_real_process_accepted_handoff_survives_owner_exit_before_ack() {
 #[cfg(unix)]
 #[test]
 fn accept_then_exit_owner_subprocess_entrypoint() {
-    let Some(path) = std::env::var_os("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION") else {
+    let Some(path) = std::env::var_os("WEBPI_DETACHED_ACCEPT_EXIT_INSTRUCTION") else {
         return;
     };
     let (root, request): (PathBuf, DetachedStartRequest) =

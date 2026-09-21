@@ -962,7 +962,7 @@ fn shutdown_reaps_descendant_and_stdout_closes_without_leaks() {
 #[test]
 fn opt_in_real_claude_mcp_probe() {
     let _serial = serialize_fake_mcp_test();
-    if env::var("WEBCODEX_PROBE_CLAUDE_PROVIDER").as_deref() != Ok("1") {
+    if env::var("WEBPI_PROBE_CLAUDE_PROVIDER").as_deref() != Ok("1") {
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -987,7 +987,7 @@ fn opt_in_real_claude_mcp_probe() {
 #[test]
 fn opt_in_real_claude_mcp_smoke() {
     let _serial = serialize_fake_mcp_test();
-    if env::var("WEBCODEX_TEST_CLAUDE_MCP").as_deref() != Ok("1") {
+    if env::var("WEBPI_TEST_CLAUDE_MCP").as_deref() != Ok("1") {
         return;
     }
     let temp = tempfile::tempdir().unwrap();
@@ -1016,7 +1016,7 @@ fn opt_in_real_claude_mcp_smoke() {
     let grep_tool = real_tool_name(
         &client,
         ProviderCapability::SearchProjectText,
-        "WEBCODEX_TEST_CLAUDE_GREP_TOOL",
+        "WEBPI_TEST_CLAUDE_GREP_TOOL",
     );
 
     if let Ok(name) = &grep_tool {

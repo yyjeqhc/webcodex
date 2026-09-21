@@ -64,7 +64,7 @@ impl Fixture {
             .arg(scenario)
             .arg(marker.as_os_str())
             .arg(exit_marker.as_os_str())
-            .env("WEBCODEX_LSP_FAKE", "1");
+            .env("WEBPI_LSP_FAKE", "1");
         let supervisor = LspSupervisor::new(LspSupervisorConfig {
             commands: HashMap::from([(LspServerKind::RustAnalyzer, command)]),
             max_servers_per_project: 1,
@@ -1092,7 +1092,7 @@ fn lsp_initialize_uses_constrained_typescript_profile() {
     );
     assert_eq!(
         options.pointer("/hostInfo"),
-        Some(&json!("webcodex-runner")),
+        Some(&json!("webpi-runner")),
         "{options}"
     );
 }

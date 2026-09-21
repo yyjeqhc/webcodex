@@ -89,7 +89,7 @@ pub(crate) struct RunnerDispatchOutcome {
 }
 
 pub(super) fn runner_tool_trace_enabled() -> bool {
-    std::env::var("WEBCODEX_TOOL_REQUEST_TRACE")
+    std::env::var("WEBPI_TOOL_REQUEST_TRACE")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .is_some_and(|value| {

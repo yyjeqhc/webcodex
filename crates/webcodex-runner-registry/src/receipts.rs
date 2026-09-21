@@ -1,6 +1,6 @@
 use crate::state::{RunnerRegistryInner, ShellJobRecord, ShellJobVisibility};
 use crate::{now_ts, RunnerRegistry};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
@@ -58,6 +58,8 @@ pub trait JobTerminalEventSink: std::fmt::Debug + Send + Sync {
 
 pub(crate) type ReceiptCandidates = Arc<Mutex<HashSet<String>>>;
 pub(crate) type TerminalEventCandidates = Arc<Mutex<HashSet<String>>>;
+pub(crate) type TerminalEventRetrySchedule = Arc<Mutex<HashMap<String, i64>>>;
+const TERMINAL_EVENT_RETRY_COOLDOWN_SECS: i64 = 5;
 
 /// One unlock boundary for every registry path, including early returns and
 /// read-triggered lost transitions. Notifications mark only changed terminal
@@ -67,6 +69,7 @@ pub(crate) struct ReceiptRegistryState {
     state: AsyncMutex<RunnerRegistryInner>,
     pub(crate) candidates: ReceiptCandidates,
     pub(crate) terminal_event_candidates: TerminalEventCandidates,
+    terminal_event_retry_not_before: TerminalEventRetrySchedule,
     store: Option<Arc<dyn JobReceiptStore>>,
     terminal_event_sink: Option<Arc<dyn JobTerminalEventSink>>,
 }
@@ -84,6 +87,7 @@ impl ReceiptRegistryState {
             state: AsyncMutex::new(RunnerRegistryInner::default()),
             candidates: Arc::default(),
             terminal_event_candidates: Arc::default(),
+            terminal_event_retry_not_before: Arc::default(),
             store,
             terminal_event_sink,
         }
@@ -130,17 +134,43 @@ impl DerefMut for ReceiptRegistryGuard<'_> {
 }
 impl Drop for ReceiptRegistryGuard<'_> {
     fn drop(&mut self) {
+        let now = now_ts();
         let ids = std::mem::take(&mut *self.state.candidates.lock().unwrap());
-        let terminal_ids =
-            std::mem::take(&mut *self.state.terminal_event_candidates.lock().unwrap());
+        let terminal_ids = {
+            let mut candidates = self.state.terminal_event_candidates.lock().unwrap();
+            let retry_not_before = self.state.terminal_event_retry_not_before.lock().unwrap();
+            let due = candidates
+                .iter()
+                .filter(|id| {
+                    retry_not_before
+                        .get(*id)
+                        .is_none_or(|deadline| *deadline <= now)
+                })
+                .cloned()
+                .collect::<HashSet<_>>();
+            for id in &due {
+                candidates.remove(id);
+            }
+            due
+        };
         let receipts: Vec<_> = ids
             .iter()
             .filter_map(|id| self.jobs_by_id.get(id).and_then(capture))
             .collect();
-        let terminal_events: Vec<_> = terminal_ids
-            .iter()
-            .filter_map(|id| self.jobs_by_id.get(id).and_then(capture_terminal_event))
-            .collect();
+        let mut terminal_events = Vec::new();
+        let mut terminal_ids_without_live_event = Vec::new();
+        for id in &terminal_ids {
+            match self.jobs_by_id.get(id).and_then(capture_terminal_event) {
+                Some(event) if event.expires_at > now => terminal_events.push(event),
+                _ => terminal_ids_without_live_event.push(id.clone()),
+            }
+        }
+        if !terminal_ids_without_live_event.is_empty() {
+            let mut retry_not_before = self.state.terminal_event_retry_not_before.lock().unwrap();
+            for id in terminal_ids_without_live_event {
+                retry_not_before.remove(&id);
+            }
+        }
         // Release authority before any storage calls, even if an adapter fails.
         drop(self.guard.take());
         if let Some(store) = &self.state.store {
@@ -158,27 +188,44 @@ impl Drop for ReceiptRegistryGuard<'_> {
         if let Some(sink) = &self.state.terminal_event_sink {
             let mut failed = 0;
             let mut retry_ids = Vec::new();
+            let mut succeeded_ids = Vec::new();
             for event in terminal_events {
+                let job_id = event.job_id.clone();
                 if sink.record_terminal_event(&event).is_err() {
                     failed += 1;
-                    retry_ids.push(event.job_id);
+                    retry_ids.push(job_id);
+                } else {
+                    succeeded_ids.push(job_id);
+                }
+            }
+            if !succeeded_ids.is_empty() {
+                let mut retry_not_before =
+                    self.state.terminal_event_retry_not_before.lock().unwrap();
+                for id in succeeded_ids {
+                    retry_not_before.remove(&id);
                 }
             }
             if !retry_ids.is_empty() {
                 // Terminal attention is durable caller state rather than optional
-                // historical telemetry. Preserve failed post-lock candidates so a
-                // later registry unlock can retry matching without changing the
-                // already-accepted Job verdict. The HashSet keeps retry state
-                // bounded and deduplicated.
-                self.state
-                    .terminal_event_candidates
-                    .lock()
-                    .unwrap()
-                    .extend(retry_ids);
+                // historical telemetry. Preserve failed post-lock candidates, but
+                // do not hot-loop every registry unlock. A bounded cooldown keeps
+                // persistence outages from turning into CPU/log storms while any
+                // later unlock after the deadline still retries the exact event.
+                let retry_at = now_ts().saturating_add(TERMINAL_EVENT_RETRY_COOLDOWN_SECS);
+                {
+                    let mut candidates = self.state.terminal_event_candidates.lock().unwrap();
+                    candidates.extend(retry_ids.iter().cloned());
+                }
+                let mut retry_not_before =
+                    self.state.terminal_event_retry_not_before.lock().unwrap();
+                for id in retry_ids {
+                    retry_not_before.insert(id, retry_at);
+                }
             }
             if failed > 0 {
                 tracing::warn!(
                     count = failed,
+                    retry_after_secs = TERMINAL_EVENT_RETRY_COOLDOWN_SECS,
                     "terminal Job attention persistence degraded"
                 );
             }

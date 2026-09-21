@@ -262,12 +262,12 @@ fn shell_config_default_environment_is_inherited() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
-    let _env = EnvGuard::new().set("WEBCODEX_INHERITED_TEST", "inherited-ok");
+    let _env = EnvGuard::new().set("WEBPI_INHERITED_TEST", "inherited-ok");
     let result = run_shell(
         &cfg.policy,
         &ShellConfig::default(),
         Some(&cwd),
-        &shell_env_var("WEBCODEX_INHERITED_TEST"),
+        &shell_env_var("WEBPI_INHERITED_TEST"),
         None,
         10,
         None,
@@ -281,7 +281,7 @@ fn shell_config_env_values_are_available() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let shell = ShellConfig {
-        env: HashMap::from([("WEBCODEX_TEST_VALUE".to_string(), "env-ok".to_string())]),
+        env: HashMap::from([("WEBPI_TEST_VALUE".to_string(), "env-ok".to_string())]),
         ..ShellConfig::default()
     };
     let cwd = tmp.path().to_string_lossy().to_string();
@@ -289,7 +289,7 @@ fn shell_config_env_values_are_available() {
         &cfg.policy,
         &shell,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_TEST_VALUE"),
+        &shell_env_var("WEBPI_TEST_VALUE"),
         None,
         10,
         None,
@@ -302,7 +302,7 @@ fn shell_config_env_values_are_available() {
 fn shell_config_init_script_is_sourced() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
-    let init = write_init_script(tmp.path(), "WEBCODEX_INIT_TEST", "init-ok");
+    let init = write_init_script(tmp.path(), "WEBPI_INIT_TEST", "init-ok");
     let shell = ShellConfig {
         init_script: Some(init),
         ..ShellConfig::default()
@@ -312,7 +312,7 @@ fn shell_config_init_script_is_sourced() {
         &cfg.policy,
         &shell,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_INIT_TEST"),
+        &shell_env_var("WEBPI_INIT_TEST"),
         None,
         10,
         None,
@@ -328,7 +328,7 @@ fn shell_config_init_script_awkward_path_is_sourced() {
     // Space, single quote, and non-ASCII characters in the init script path.
     let init_dir = tmp.path().join("init dir '脚本");
     std::fs::create_dir_all(&init_dir).unwrap();
-    let init = write_init_script(&init_dir, "WEBCODEX_INIT_TEST", "init-ok");
+    let init = write_init_script(&init_dir, "WEBPI_INIT_TEST", "init-ok");
     let shell = ShellConfig {
         init_script: Some(init),
         ..ShellConfig::default()
@@ -338,7 +338,7 @@ fn shell_config_init_script_awkward_path_is_sourced() {
         &cfg.policy,
         &shell,
         Some(&cwd),
-        &shell_env_var("WEBCODEX_INIT_TEST"),
+        &shell_env_var("WEBPI_INIT_TEST"),
         None,
         10,
         None,

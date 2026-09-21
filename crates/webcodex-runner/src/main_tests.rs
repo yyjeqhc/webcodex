@@ -909,12 +909,12 @@ fn shell_job_unicode_stdout_stderr_env_and_cwd() {
     assert_eq!(result.stderr.as_deref(), Some("err 測試"));
 
     // Unicode environment value inherited from the parent process.
-    let _env = EnvGuard::new().set("WEBCODEX_UNICODE_ENV", "值 测试");
+    let _env = EnvGuard::new().set("WEBPI_UNICODE_ENV", "值 测试");
     let result = run_shell(
         &cfg.policy,
         &ShellConfig::default(),
         Some(&cwd),
-        &shell_env_var("WEBCODEX_UNICODE_ENV"),
+        &shell_env_var("WEBPI_UNICODE_ENV"),
         None,
         10,
         None,
@@ -957,7 +957,7 @@ fn prepared_profile_unicode_env_round_trip_and_unicode_init_path() {
     // UTF-8 BOM: PowerShell 5.1 otherwise decodes .ps1 files with the system
     // ANSI code page and corrupts the non-ASCII value.
     let mut content = "\u{FEFF}".to_string();
-    content.push_str("$env:WEBCODEX_TEST_PROFILE = 'café 值'\n");
+    content.push_str("$env:WEBPI_TEST_PROFILE = 'café 值'\n");
     std::fs::write(&init, content).unwrap();
     let shell = shell_with_profiles(
         Some("test"),
@@ -975,7 +975,7 @@ fn prepared_profile_unicode_env_round_trip_and_unicode_init_path() {
         tmp.path(),
         &PreparedShellProfileCache::default(),
         tmp.path(),
-        &shell_env_var("WEBCODEX_TEST_PROFILE"),
+        &shell_env_var("WEBPI_TEST_PROFILE"),
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     assert_eq!(result.stdout.as_deref(), Some("café 值"), "{result:?}");

@@ -470,8 +470,8 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
     let _guard = crate::tests::test_env_lock();
     let _env = crate::tests::EnvGuard::new()
         .set("GITHUB_TOKEN", "github-provider-secret-value")
-        .set("WEBCODEX_MCP_MAPPED_SOURCE", "mapped-provider-secret-value")
-        .set("WEBCODEX_MCP_UNLISTED", "must-not-reach-provider");
+        .set("WEBPI_MCP_MAPPED_SOURCE", "mapped-provider-secret-value")
+        .set("WEBPI_MCP_UNLISTED", "must-not-reach-provider");
     let cwd = tempfile::tempdir().unwrap();
     let fixture = Fixture::with_execution_context(
         "execution_context",
@@ -481,8 +481,8 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
         BTreeMap::from([
             ("GITHUB_TOKEN".to_string(), "GITHUB_TOKEN".to_string()),
             (
-                "WEBCODEX_MCP_MAPPED_CHILD".to_string(),
-                "WEBCODEX_MCP_MAPPED_SOURCE".to_string(),
+                "WEBPI_MCP_MAPPED_CHILD".to_string(),
+                "WEBPI_MCP_MAPPED_SOURCE".to_string(),
             ),
         ]),
     );
@@ -517,7 +517,7 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
 #[test]
 fn missing_mapped_source_fails_before_provider_spawn() {
     let _guard = crate::tests::test_env_lock();
-    let _env = crate::tests::EnvGuard::new().remove("WEBCODEX_MCP_TEST_MISSING_SOURCE");
+    let _env = crate::tests::EnvGuard::new().remove("WEBPI_MCP_TEST_MISSING_SOURCE");
     let fixture = Fixture::with_execution_context(
         "normal",
         2,
@@ -525,7 +525,7 @@ fn missing_mapped_source_fails_before_provider_spawn() {
         None,
         BTreeMap::from([(
             "PROVIDER_CREDENTIAL".to_string(),
-            "WEBCODEX_MCP_TEST_MISSING_SOURCE".to_string(),
+            "WEBPI_MCP_TEST_MISSING_SOURCE".to_string(),
         )]),
     );
     let response = fixture.list(&fixture.provider());
@@ -546,7 +546,7 @@ fn sensitive_runner_env_mapping_is_blocked_before_provider_spawn() {
         None,
         BTreeMap::from([(
             "PROVIDER_CREDENTIAL".to_string(),
-            "WEBCODEX_AGENT_TOKEN".to_string(),
+            "WEBPI_AGENT_TOKEN".to_string(),
         )]),
     );
     let response = fixture.list(&fixture.provider());
@@ -558,7 +558,7 @@ fn sensitive_runner_env_mapping_is_blocked_before_provider_spawn() {
     assert_eq!(fixture.marker_count("start"), 0);
     assert!(!serde_json::to_string(&response)
         .unwrap()
-        .contains("WEBCODEX_AGENT_TOKEN"));
+        .contains("WEBPI_AGENT_TOKEN"));
 }
 
 #[test]

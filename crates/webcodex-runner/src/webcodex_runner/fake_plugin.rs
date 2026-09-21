@@ -29,7 +29,7 @@ fn main() -> io::Result<()> {
     if scenario == "execution_context" {
         append(
             marker,
-            if env::var("WEBCODEX_PLUGIN_TEST_ENV").as_deref() == Ok("profile-ready") {
+            if env::var("WEBPI_PLUGIN_TEST_ENV").as_deref() == Ok("profile-ready") {
                 "profile-env-ok\n"
             } else {
                 "profile-env-bad\n"
@@ -37,8 +37,8 @@ fn main() -> io::Result<()> {
         )?;
         append(
             marker,
-            if env::var_os("WEBCODEX_AGENT_TOKEN").is_none()
-                && env::var_os("WEBCODEX_PAT").is_none()
+            if env::var_os("WEBPI_AGENT_TOKEN").is_none()
+                && env::var_os("WEBPI_PAT").is_none()
             {
                 "sensitive-env-cleared\n"
             } else {

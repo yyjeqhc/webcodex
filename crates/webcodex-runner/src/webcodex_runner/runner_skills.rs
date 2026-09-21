@@ -29,6 +29,8 @@ sys.path[0] = os.path.dirname(p)
 g = {"__name__": "__main__", "__file__": p, "__package__": None, "__spec__": None, "__builtins__": __builtins__}
 exec(compile(src, p, "exec"), g, g)
 "#;
+const PYTHON3_CAPABILITY_PROBE: &str =
+    "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 3)";
 
 const SHELL_SKILL_WRAPPER: &str = "script=$(cat) || exit $?; eval \"$script\"";
 
@@ -100,11 +102,18 @@ fn skill_execution_candidates(
             let mut py = Vec::with_capacity(common.len() + 1);
             py.push("-3".to_string());
             py.extend(common.iter().cloned());
-            vec![
+            #[cfg(windows)]
+            let candidates = vec![
+                ("python".to_string(), common.clone()),
+                ("py".to_string(), py),
+                ("python3".to_string(), common),
+            ];
+            #[cfg(not(windows))]
+            let candidates = vec![
                 ("python3".to_string(), common.clone()),
                 ("python".to_string(), common),
-                ("py".to_string(), py),
-            ]
+            ];
+            candidates
         }
         "sh" => {
             let mut args = vec![
@@ -141,6 +150,32 @@ fn interpreter_unavailable(result: &ShellCommandResult) -> bool {
             error.starts_with("failed to spawn structured process")
                 || error.contains("structured process executable is unavailable")
         })
+}
+
+fn python3_probe_args(executable: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    if executable.eq_ignore_ascii_case("py") || executable.eq_ignore_ascii_case("py.exe") {
+        args.push("-3".to_string());
+    }
+    args.extend([
+        "-B".to_string(),
+        "-c".to_string(),
+        PYTHON3_CAPABILITY_PROBE.to_string(),
+    ]);
+    args
+}
+
+fn python3_probe_compatible(result: &ShellCommandResult) -> bool {
+    result.execution_state == webcodex_core::runner_protocol::ShellCommandExecutionState::Completed
+        && result.result.exit_code == Some(0)
+        && result.result.error.is_none()
+}
+
+fn python3_probe_can_try_next(result: &ShellCommandResult) -> bool {
+    interpreter_unavailable(result)
+        || (result.execution_state
+            == webcodex_core::runner_protocol::ShellCommandExecutionState::Completed
+            && result.result.exit_code != Some(0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -192,8 +227,44 @@ pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
             })
         }
     };
+    let is_python = Path::new(&request.path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("py"));
     let last = candidates.len().saturating_sub(1);
     for (index, (executable, args)) in candidates.into_iter().enumerate() {
+        if is_python {
+            let probe_args = python3_probe_args(&executable);
+            let probe = run_process_with_profiles_and_execution_state_with_start_hook(
+                generation,
+                policy,
+                shell,
+                project_registry_dir,
+                cache,
+                cwd,
+                &executable,
+                &probe_args,
+                None,
+                timeout_secs.min(10).max(1),
+                stop_requested,
+                None,
+            );
+            if !python3_probe_compatible(&probe) {
+                if index != last && python3_probe_can_try_next(&probe) {
+                    continue;
+                }
+                if python3_probe_can_try_next(&probe) {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(0),
+                        error: Some("skill_resource_python3_interpreter_unavailable".to_string()),
+                    });
+                }
+                return probe;
+            }
+        }
         let result = run_process_with_profiles_and_execution_state_with_start_hook(
             generation,
             policy,

@@ -427,7 +427,7 @@ fn detached_job_request(
     mut env: Vec<(String, String)>,
 ) -> DetachedStartRequest {
     env.push((
-        "WEBCODEX_DETACHED_JOB_MANAGER_SCENARIO".to_string(),
+        "WEBPI_DETACHED_JOB_MANAGER_SCENARIO".to_string(),
         scenario.to_string(),
     ));
     DetachedStartRequest {
@@ -480,7 +480,7 @@ fn detached_job_request(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn detached_job_payload_subprocess_entrypoint() {
-    let Ok(scenario) = std::env::var("WEBCODEX_DETACHED_JOB_MANAGER_SCENARIO") else {
+    let Ok(scenario) = std::env::var("WEBPI_DETACHED_JOB_MANAGER_SCENARIO") else {
         return;
     };
     match scenario.as_str() {

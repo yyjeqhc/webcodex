@@ -24,7 +24,7 @@ fn main() -> io::Result<()> {
         )?;
         append(
             marker,
-            if env::var("WEBCODEX_MCP_MAPPED_CHILD").as_deref()
+            if env::var("WEBPI_MCP_MAPPED_CHILD").as_deref()
                 == Ok("mapped-provider-secret-value")
             {
                 "mapped-env-ok\n"
@@ -34,7 +34,7 @@ fn main() -> io::Result<()> {
         )?;
         append(
             marker,
-            if env::var_os("WEBCODEX_MCP_UNLISTED").is_none() {
+            if env::var_os("WEBPI_MCP_UNLISTED").is_none() {
                 "unlisted-env-cleared\n"
             } else {
                 "unlisted-env-leaked\n"

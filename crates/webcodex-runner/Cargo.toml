@@ -1,8 +1,13 @@
 [package]
+autobins = false
 name = "webcodex-runner"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
+
+[[bin]]
+name = "webpi-runner"
+path = "src/main.rs"
 
 [features]
 default = []

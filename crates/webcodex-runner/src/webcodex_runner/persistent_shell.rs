@@ -1929,8 +1929,8 @@ mod windows_tests {
 
     #[test]
     fn windows_named_ssh_persistent_shell_real_transport_opt_in() {
-        let Ok(host) = std::env::var("WEBCODEX_TEST_WINDOWS_SSH_HOST") else {
-            eprintln!("skipping Windows SSH persistent-shell integration test; WEBCODEX_TEST_WINDOWS_SSH_HOST is unset");
+        let Ok(host) = std::env::var("WEBPI_TEST_WINDOWS_SSH_HOST") else {
+            eprintln!("skipping Windows SSH persistent-shell integration test; WEBPI_TEST_WINDOWS_SSH_HOST is unset");
             return;
         };
         let (_temp, _project, projects, mut policy) = fixture();

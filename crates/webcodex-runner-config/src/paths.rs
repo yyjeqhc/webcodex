@@ -4,8 +4,8 @@
 //! Both binaries must agree on where per-user configuration, credentials,
 //! runner state and logs live, and the rules differ per platform:
 //!
-//! - **Unix**: XDG-style layout rooted at `$HOME` (`~/.config/webcodex`,
-//!   `~/.local/state/webcodex`), with `/etc/webcodex` for effective-root.
+//! - **Unix**: XDG-style layout rooted at `$HOME` (`~/.config/webpi`,
+//!   `~/.local/state/webpi`), with `/etc/webpi` for effective-root.
 //!   Existing behavior is preserved exactly.
 //! - **Windows**: configuration and credentials live in `%APPDATA%\webcodex`
 //!   (Roaming profile, follows the user) with `%USERPROFILE%\.config\webcodex`
@@ -117,7 +117,7 @@ pub fn home_dir() -> Option<PathBuf> {
 }
 
 /// Effective-root detection. Only meaningful on Unix; on Windows always
-/// `false` (there is no `/etc/webcodex` system scope).
+/// `false` (there is no `/etc/webpi` system scope).
 pub fn is_effective_root() -> bool {
     #[cfg(unix)]
     {
@@ -143,8 +143,8 @@ pub fn is_effective_root() -> bool {
 /// Base directory for per-user WebCodex configuration and credentials
 /// (client profiles, `runner.toml`, Runner project registry, token files).
 ///
-/// - Unix (root): `/etc/webcodex`
-/// - Unix (user): `$XDG_CONFIG_HOME/webcodex`, else `$HOME/.config/webcodex`.
+/// - Unix (root): `/etc/webpi`
+/// - Unix (user): `$XDG_CONFIG_HOME/webcodex`, else `$HOME/.config/webpi`.
 ///   When `HOME` is also missing the caller gets an error (never `.`).
 /// - Windows: `%APPDATA%\webcodex`, else `%USERPROFILE%\.config\webcodex`,
 ///   else an error. `HOME` and `XDG_CONFIG_HOME` are ignored.
@@ -156,10 +156,10 @@ pub fn default_client_config_base_dir() -> Result<PathBuf, String> {
         // stripped-down environments and the two must not depend on each
         // other).
         if let Some(appdata) = std::env::var_os("APPDATA").filter(|value| !value.is_empty()) {
-            return Ok(PathBuf::from(appdata).join("webcodex"));
+            return Ok(PathBuf::from(appdata).join("webpi"));
         }
         if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-            return Ok(PathBuf::from(profile).join(".config/webcodex"));
+            return Ok(PathBuf::from(profile).join(".config/webpi"));
         }
         Err(
             "cannot determine the WebCodex config directory: set APPDATA or USERPROFILE"
@@ -171,23 +171,23 @@ pub fn default_client_config_base_dir() -> Result<PathBuf, String> {
         // An explicit XDG_CONFIG_HOME wins even for root, matching the historical
         // CLI behavior (see `omitted_scope_hosted_status_keeps_xdg_profile_paths_for_root`).
         if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-            return Ok(PathBuf::from(config_home).join("webcodex"));
+            return Ok(PathBuf::from(config_home).join("webpi"));
         }
         if is_effective_root() {
-            return Ok(PathBuf::from("/etc/webcodex"));
+            return Ok(PathBuf::from("/etc/webpi"));
         }
         let home = home_dir().ok_or_else(|| {
             "cannot determine user home: set HOME to derive the WebCodex config directory"
                 .to_string()
         })?;
-        Ok(home.join(".config/webcodex"))
+        Ok(home.join(".config/webpi"))
     }
 }
 
 /// Base directory for per-user WebCodex state: hosted Runner state
 /// (`runner.toml`), Runner logs, checkpoints and recovery data.
 ///
-/// - Unix: `$XDG_STATE_HOME/webcodex`, else `$HOME/.local/state/webcodex`,
+/// - Unix: `$XDG_STATE_HOME/webcodex`, else `$HOME/.local/state/webpi`,
 ///   else `$TMPDIR/webcodex` (existing behavior preserved).
 /// - Windows: `%LOCALAPPDATA%\webcodex`, else
 ///   `%USERPROFILE%\.local\state\webcodex`, else `%TEMP%\webcodex`. `HOME` and
@@ -197,26 +197,26 @@ pub fn default_client_state_base_dir() -> Result<PathBuf, String> {
     {
         // `LOCALAPPDATA` must work on its own, exactly like `APPDATA` above.
         if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
-            return Ok(PathBuf::from(local_appdata).join("webcodex"));
+            return Ok(PathBuf::from(local_appdata).join("webpi"));
         }
         if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-            return Ok(PathBuf::from(profile).join(".local/state/webcodex"));
+            return Ok(PathBuf::from(profile).join(".local/state/webpi"));
         }
         // A volatile temp location is better than a relative path for state
         // that can be regenerated.
-        Ok(std::env::temp_dir().join("webcodex"))
+        Ok(std::env::temp_dir().join("webpi"))
     }
     #[cfg(not(windows))]
     {
         if let Some(state_home) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
-            return Ok(PathBuf::from(state_home).join("webcodex"));
+            return Ok(PathBuf::from(state_home).join("webpi"));
         }
         if let Some(home) = home_dir() {
-            return Ok(home.join(".local/state/webcodex"));
+            return Ok(home.join(".local/state/webpi"));
         }
         // Existing Unix behavior: a volatile temp location is better than a
         // relative path for state that can be regenerated.
-        Ok(std::env::temp_dir().join("webcodex"))
+        Ok(std::env::temp_dir().join("webpi"))
     }
 }
 
@@ -737,7 +737,7 @@ mod tests {
         if is_effective_root() {
             assert_eq!(
                 default_client_config_base_dir().unwrap(),
-                PathBuf::from("/etc/webcodex")
+                PathBuf::from("/etc/webpi")
             );
         } else {
             assert!(default_client_config_base_dir().is_err());
@@ -755,14 +755,14 @@ mod tests {
             let _a = EnvVarRestore::set("APPDATA", "C:\\Users\\alice\\AppData\\Roaming");
             assert_eq!(
                 default_client_config_base_dir().unwrap(),
-                PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webcodex")
+                PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webpi")
             );
         }
         let _a2 = EnvVarRestore::remove("APPDATA");
         #[cfg(windows)]
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\.config\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\.config\\webpi")
         );
     }
 
@@ -777,14 +777,14 @@ mod tests {
             let _l = EnvVarRestore::set("LOCALAPPDATA", "C:\\Users\\alice\\AppData\\Local");
             assert_eq!(
                 default_client_state_base_dir().unwrap(),
-                PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webcodex")
+                PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webpi")
             );
         }
         let _l2 = EnvVarRestore::remove("LOCALAPPDATA");
         #[cfg(windows)]
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\.local\\state\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\.local\\state\\webpi")
         );
     }
 
@@ -798,12 +798,12 @@ mod tests {
         #[cfg(unix)]
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("/tmp/cfg/webcodex")
+            PathBuf::from("/tmp/cfg/webpi")
         );
         #[cfg(windows)]
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webcodex"),
+            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webpi"),
             "XDG_CONFIG_HOME must be ignored on Windows"
         );
         let _x2 = EnvVarRestore::remove("XDG_CONFIG_HOME");
@@ -811,18 +811,18 @@ mod tests {
         if is_effective_root() {
             assert_eq!(
                 default_client_config_base_dir().unwrap(),
-                PathBuf::from("/etc/webcodex")
+                PathBuf::from("/etc/webpi")
             );
         } else {
             assert_eq!(
                 default_client_config_base_dir().unwrap(),
-                PathBuf::from("/home/alice/.config/webcodex")
+                PathBuf::from("/home/alice/.config/webpi")
             );
         }
         #[cfg(windows)]
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webpi")
         );
     }
 
@@ -836,24 +836,24 @@ mod tests {
         #[cfg(unix)]
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("/tmp/state/webcodex")
+            PathBuf::from("/tmp/state/webpi")
         );
         #[cfg(windows)]
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webcodex"),
+            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webpi"),
             "XDG_STATE_HOME must be ignored on Windows"
         );
         let _x2 = EnvVarRestore::remove("XDG_STATE_HOME");
         #[cfg(unix)]
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("/home/alice/.local/state/webcodex")
+            PathBuf::from("/home/alice/.local/state/webpi")
         );
         #[cfg(windows)]
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webpi")
         );
     }
 
@@ -869,13 +869,13 @@ mod tests {
         let _a = EnvVarRestore::set("APPDATA", "C:\\Users\\alice\\AppData\\Roaming");
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webcodex"),
+            PathBuf::from("C:\\Users\\alice\\AppData\\Roaming\\webpi"),
             "APPDATA alone must be enough for the config base"
         );
         let _l = EnvVarRestore::set("LOCALAPPDATA", "C:\\Users\\alice\\AppData\\Local");
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webcodex"),
+            PathBuf::from("C:\\Users\\alice\\AppData\\Local\\webpi"),
             "LOCALAPPDATA alone must be enough for the state base"
         );
     }
@@ -897,7 +897,7 @@ mod tests {
         let _s = EnvVarRestore::remove("XDG_STATE_HOME");
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            std::env::temp_dir().join("webcodex"),
+            std::env::temp_dir().join("webpi"),
             "state base must fall back to TEMP, not HOME, on Windows"
         );
     }
@@ -914,11 +914,11 @@ mod tests {
         let _s = EnvVarRestore::remove("XDG_STATE_HOME");
         assert_eq!(
             default_client_config_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\.config\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\.config\\webpi")
         );
         assert_eq!(
             default_client_state_base_dir().unwrap(),
-            PathBuf::from("C:\\Users\\alice\\.local\\state\\webcodex")
+            PathBuf::from("C:\\Users\\alice\\.local\\state\\webpi")
         );
     }
 
@@ -1098,7 +1098,7 @@ mod tests {
         let _a = EnvVarRestore::remove("APPDATA");
         let base = default_client_state_base_dir().unwrap();
         assert!(base.is_absolute(), "state fallback must stay absolute");
-        assert_eq!(base, std::env::temp_dir().join("webcodex"));
+        assert_eq!(base, std::env::temp_dir().join("webpi"));
     }
 
     #[test]

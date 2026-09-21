@@ -801,7 +801,7 @@ impl ProjectMcpClient {
             json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "webcodex-runner", "version": env!("CARGO_PKG_VERSION")},
+                "clientInfo": {"name": "webpi-runner", "version": env!("CARGO_PKG_VERSION")},
             }),
             timeout(),
             shutdown,

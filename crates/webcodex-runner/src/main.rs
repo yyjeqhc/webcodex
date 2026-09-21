@@ -115,7 +115,7 @@ enum RunnerCliAction {
 }
 
 fn usage() -> &'static str {
-    "Usage: webcodex-runner [--config PATH] [--once] [--stop-on-stdin-eof]\n\n\
+    "Usage: webpi-runner [--config PATH] [--once] [--stop-on-stdin-eof]\n\n\
      Options:\n\
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
@@ -124,19 +124,19 @@ fn usage() -> &'static str {
        --once                     Complete one successful poll, then exit (polling transport)\n\
        --stop-on-stdin-eof        Stop when the invoking parent closes stdin\n\n\
      With --profile, the default config path is derived under\n\
-     /etc/webcodex/clients/<profile> for root or\n\
-     ~/.config/webcodex/clients/<profile> for non-root users. Explicit\n\
+     /etc/webpi/clients/<profile> for root or\n\
+     ~/.config/webpi/clients/<profile> for non-root users. Explicit\n\
      --config overrides the profile-derived default.\n\n\
      Environment:\n\
-       WEBCODEX_RUNNER_CONFIG     default config path override\n\
-       WEBCODEX_AGENT_CONFIG      legacy alias for WEBCODEX_RUNNER_CONFIG\n\
+       WEBPI_RUNNER_CONFIG     default config path override\n\
+       WEBPI_AGENT_CONFIG      legacy alias for WEBPI_RUNNER_CONFIG\n\
      Example runner.toml:\n\
        server_url = \"https://v4.yyjeqhc.cn\"\n\
        token = \"...\"\n\
        client_id = \"xrh\"\n\
        display_name = \"XRH\"\n\
        owner = \"yyjeqhc\"\n\
-       project_registry_dir = \"/root/.config/webcodex/project-registry\"\n\
+       project_registry_dir = \"/root/.config/webpi/project-registry\"\n\
        poll_interval_ms = 1000\n\
 \n\
        [policy]\n\
@@ -171,15 +171,15 @@ where
             "--version" | "-V" => {
                 return Ok(RunnerCliAction::Exit {
                     code: 0,
-                    stdout: build_info::version_output("webcodex-runner"),
+                    stdout: build_info::version_output("webpi-runner"),
                     stderr: String::new(),
                 });
             }
             _ => {}
         }
     }
-    let runner_config_env = std::env::var("WEBCODEX_RUNNER_CONFIG").ok();
-    let legacy_agent_config_env = std::env::var("WEBCODEX_AGENT_CONFIG").ok();
+    let runner_config_env = std::env::var("WEBPI_RUNNER_CONFIG").ok();
+    let legacy_agent_config_env = std::env::var("WEBPI_AGENT_CONFIG").ok();
     let mut config_path: Option<PathBuf> = None;
     let mut profile: Option<String> = None;
     let mut once = false;
@@ -197,7 +197,7 @@ where
             "--version" | "-V" => {
                 return Ok(RunnerCliAction::Exit {
                     code: 0,
-                    stdout: build_info::version_output("webcodex-runner"),
+                    stdout: build_info::version_output("webpi-runner"),
                     stderr: String::new(),
                 });
             }
@@ -230,7 +230,7 @@ where
         } else {
             if runner_config_env.is_some() && legacy_agent_config_env.is_some() {
                 return Err(
-                    "WEBCODEX_RUNNER_CONFIG and legacy WEBCODEX_AGENT_CONFIG cannot both be set"
+                    "WEBPI_RUNNER_CONFIG and legacy WEBPI_AGENT_CONFIG cannot both be set"
                         .to_string(),
                 );
             }
@@ -1382,12 +1382,12 @@ where
     decode_json_response(path, status, &content_type, body)
 }
 
-/// Hidden, test/ops-only knob: parse `WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION`
+/// Hidden, test/ops-only knob: parse `WEBPI_RUNNER_DISABLE_JOB_STATE_RECONCILIATION`
 /// as a boolean. Default false (reconciliation stays on). Inline rather than
 /// shared because the runner crate does not depend on the server config helpers.
 fn disable_job_state_reconciliation_for_test() -> bool {
     matches!(
-        std::env::var("WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION")
+        std::env::var("WEBPI_RUNNER_DISABLE_JOB_STATE_RECONCILIATION")
             .ok()
             .map(|raw| raw.trim().to_ascii_lowercase())
             .as_deref(),
@@ -2444,6 +2444,7 @@ fn handle_one_poll(
 }
 
 fn main() {
+    runner_config::isolate_webpi_process_environment();
     if let Some(code) =
         webcodex_runner::detached_job::maybe_run_internal_mode(std::env::args().skip(1))
     {
@@ -2494,12 +2495,11 @@ fn main() {
         }
     };
     if cfg.token.trim().is_empty() {
-        eprintln!(
-            "webcodex-runner warning: agent token is empty; connecting without Authorization; the server must be started with --open"
-        );
+        eprintln!("WebPi Runner requires its own non-empty transport credential");
+        std::process::exit(2);
     }
     if let Err(e) = run_runner(cfg, config_path, once, stop_on_stdin_eof) {
-        eprintln!("webcodex-runner failed: {}", e);
+        eprintln!("webpi-runner failed: {}", e);
         std::process::exit(1);
     }
 }

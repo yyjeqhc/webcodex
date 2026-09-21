@@ -3183,14 +3183,14 @@ mod windows_tests {
             &manager,
             "wc_shell_state",
             "wc_sess_state",
-            "$env:WEBCODEX_PERSIST_TEST='alpha'; Set-Location -LiteralPath 'sub'; $WC_LOCAL='beta'; function WC_FN { [Console]::Out.Write('fn') }",
+            "$env:WEBPI_PERSIST_TEST='alpha'; Set-Location -LiteralPath 'sub'; $WC_LOCAL='beta'; function WC_FN { [Console]::Out.Write('fn') }",
         );
         assert_eq!(set.exit_code, Some(0));
         let observed = exec(
             &manager,
             "wc_shell_state",
             "wc_sess_state",
-            "[Console]::Out.Write($env:WEBCODEX_PERSIST_TEST + '|' + (Get-Location).Path + '|' + $WC_LOCAL + '|'); WC_FN; [Console]::Error.Write('stderr-only')",
+            "[Console]::Out.Write($env:WEBPI_PERSIST_TEST + '|' + (Get-Location).Path + '|' + $WC_LOCAL + '|'); WC_FN; [Console]::Error.Write('stderr-only')",
         );
         assert!(observed.stdout.starts_with("alpha|"), "{}", observed.stdout);
         assert!(
@@ -3424,7 +3424,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
     #[test]
     #[ignore = "manual PowerShell 7 compatibility: duplicates real-process status coverage"]
     fn configured_pwsh_user_command_status_is_host_authoritative() {
-        let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
+        let Ok(program) = std::env::var("WEBPI_TEST_PWSH") else {
             return;
         };
         assert!(
@@ -3717,7 +3717,7 @@ Start-Sleep -Milliseconds 500
     #[test]
     #[ignore = "manual PowerShell 7 adversarial test: heavy introspection and timing"]
     fn configured_pwsh_user_command_cannot_forge_private_completion() {
-        let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
+        let Ok(program) = std::env::var("WEBPI_TEST_PWSH") else {
             return;
         };
         assert!(

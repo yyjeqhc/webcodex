@@ -486,8 +486,8 @@ fn runner_parent_liveness_is_explicit_opt_in() {
 fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed() {
     let _guard = test_env_lock();
     let _env = EnvGuard::new()
-        .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
-        .remove("WEBCODEX_AGENT_CONFIG");
+        .set("WEBPI_RUNNER_CONFIG", "/tmp/runner.toml")
+        .remove("WEBPI_AGENT_CONFIG");
     assert_eq!(
         parse_runner_args(std::iter::empty::<&str>()).unwrap(),
         RunnerCliAction::Run {
@@ -499,8 +499,8 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
     drop(_env);
 
     let _legacy = EnvGuard::new()
-        .remove("WEBCODEX_RUNNER_CONFIG")
-        .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
+        .remove("WEBPI_RUNNER_CONFIG")
+        .set("WEBPI_AGENT_CONFIG", "/tmp/agent.toml");
     assert_eq!(
         parse_runner_args(std::iter::empty::<&str>()).unwrap(),
         RunnerCliAction::Run {
@@ -512,8 +512,8 @@ fn runner_cli_config_env_prefers_runner_name_and_keeps_legacy_alias_fail_closed(
     drop(_legacy);
 
     let _ambiguous = EnvGuard::new()
-        .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
-        .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
+        .set("WEBPI_RUNNER_CONFIG", "/tmp/runner.toml")
+        .set("WEBPI_AGENT_CONFIG", "/tmp/agent.toml");
     let error = parse_runner_args(std::iter::empty::<&str>()).unwrap_err();
     assert!(error.contains("cannot both be set"));
 
@@ -545,8 +545,8 @@ fn runner_profile_config_resolution_accepts_legacy_only_and_rejects_dual_files()
         .set("XDG_CONFIG_HOME", tmp.path())
         .set("APPDATA", tmp.path())
         .set("USERPROFILE", tmp.path())
-        .remove("WEBCODEX_RUNNER_CONFIG")
-        .remove("WEBCODEX_AGENT_CONFIG");
+        .remove("WEBPI_RUNNER_CONFIG")
+        .remove("WEBPI_AGENT_CONFIG");
     let profile_dir = tmp.path().join("webcodex/clients/special");
     std::fs::create_dir_all(&profile_dir).unwrap();
 
@@ -740,7 +740,7 @@ allowed_roots = ["."]
 
 [ssh.resources.tmp]
 host = "tmp"
-default_cwd = "/opt/webcodex-edge"
+default_cwd = "/opt/webpi-edge"
 
 [ssh.resources.no_default]
 host = "ops-alias"
@@ -751,7 +751,7 @@ host = "ops-alias"
     let cfg = load_config(&path).unwrap();
     let tmp = cfg.ssh.resources.get("tmp").unwrap();
     assert_eq!(tmp.host, "tmp");
-    assert_eq!(tmp.default_cwd.as_deref(), Some("/opt/webcodex-edge"));
+    assert_eq!(tmp.default_cwd.as_deref(), Some("/opt/webpi-edge"));
     assert_eq!(
         cfg.ssh
             .resources
@@ -971,7 +971,7 @@ export SECRET={}
 fn runner_project_toml_parse_sorts_hook_names() {
     let project = parse_runner_project_toml(
         r#"
-id = "webcodex"
+id = "webpi"
 path = "/root/git/webcodex"
 kind = "rust"
 shell_profile = "rust"
@@ -983,8 +983,8 @@ doctor = ["git status --short"]
     )
     .unwrap();
     let summary = runner_project_summary(&project, 123456, false);
-    assert_eq!(summary.id, "webcodex");
-    assert_eq!(summary.name.as_deref(), Some("webcodex"));
+    assert_eq!(summary.id, "webpi");
+    assert_eq!(summary.name.as_deref(), Some("webpi"));
     assert_eq!(summary.path, "/root/git/webcodex");
     assert_eq!(summary.kind.as_deref(), Some("rust"));
     assert_eq!(summary.registration_source.as_deref(), Some("explicit"));

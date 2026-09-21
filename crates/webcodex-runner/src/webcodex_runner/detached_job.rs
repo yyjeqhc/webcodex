@@ -3151,9 +3151,9 @@ fn internal_mode_command(mode: &str, args: &[String]) -> Result<Command, String>
             .arg("webcodex_runner::detached_job::tests::internal_mode_subprocess_entrypoint")
             .arg("--nocapture")
             .env_clear()
-            .env("WEBCODEX_DETACHED_TEST_INTERNAL_MODE", mode)
+            .env("WEBPI_DETACHED_TEST_INTERNAL_MODE", mode)
             .env(
-                "WEBCODEX_DETACHED_TEST_INTERNAL_ARGS",
+                "WEBPI_DETACHED_TEST_INTERNAL_ARGS",
                 serde_json::to_string(args)
                     .map_err(|error| format!("failed to encode detached test args: {error}"))?,
             );

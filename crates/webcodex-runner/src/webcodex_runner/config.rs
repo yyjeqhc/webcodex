@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
-const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webcodex";
+const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webpi";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
@@ -317,7 +317,7 @@ pub(crate) struct QuicClientConfig {
     /// TLS SNI / server name to verify the certificate against. Must match the
     /// cert's SAN (typically the domain name).
     pub(crate) server_name: String,
-    /// ALPN protocol; must match the server's `WEBCODEX_QUIC_ALPN`.
+    /// ALPN protocol; must match the server's `WEBPI_QUIC_ALPN`.
     #[serde(default = "default_quic_alpn")]
     pub(crate) alpn: String,
     /// Connection timeout in seconds.
@@ -2125,7 +2125,7 @@ mod acp_config_tests {
 
     #[test]
     fn acp_env_mapping_rejects_webcodex_pat() {
-        for (destination, source) in [("WEBCODEX_PAT", "SOURCE"), ("DEST", "WEBCODEX_PAT")] {
+        for (destination, source) in [("WEBPI_PAT", "SOURCE"), ("DEST", "WEBPI_PAT")] {
             let mut sensitive = agent();
             sensitive
                 .env_from_env
@@ -2279,11 +2279,11 @@ mod mcp_gateway_config_tests {
     #[test]
     fn mcp_gateway_execution_context_rejects_sensitive_and_platform_duplicate_names() {
         for (destination, source) in [
-            ("WEBCODEX_TOKEN", "SOURCE"),
-            ("WEBCODEX_PAT", "SOURCE"),
-            ("DEST", "WEBCODEX_PAT"),
-            ("DEST", "WEBCODEX_AGENT_TOKEN"),
-            ("WEBCODEX_USER_TOKEN", "SOURCE"),
+            ("WEBPI_TOKEN", "SOURCE"),
+            ("WEBPI_PAT", "SOURCE"),
+            ("DEST", "WEBPI_PAT"),
+            ("DEST", "WEBPI_AGENT_TOKEN"),
+            ("WEBPI_USER_TOKEN", "SOURCE"),
             ("DEST", "AUTHORIZATION"),
         ] {
             let mut sensitive = provider();

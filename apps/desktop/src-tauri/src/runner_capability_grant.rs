@@ -13,6 +13,100 @@ pub struct GrantRequest {
     pub confirmed: bool,
 }
 
+#[derive(Clone, Serialize)]
+pub struct AuthorizationSnapshot {
+    pub target: crate::webcodex::settings::SettingsTarget,
+    pub can_authorize: bool,
+    pub coding_agents: bool,
+    pub ssh_resources: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScopeStatus {
+    coding_agents: bool,
+    ssh_resources: bool,
+}
+
+/// Read with the current user token, never operator authority. No Runner, SSH
+/// inventory, project, configured provider or local form history determines scopes.
+pub async fn observe(runtime: &StoredRuntime) -> DesktopResult<AuthorizationSnapshot> {
+    let mut url = url::Url::parse(&runtime.server_url).map_err(|_| unavailable())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(unavailable());
+    }
+    url.set_path("/api/pairing/runner-capabilities/status");
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(15));
+    if matches!(
+        url.host_str(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    ) {
+        builder = builder.no_proxy();
+    }
+    let token = read_user_token(runtime).await?;
+    let result = builder
+        .build()
+        .map_err(|_| unavailable())?
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&serde_json::json!({}))
+        .send()
+        .await;
+    drop(token);
+    let status: ScopeStatus = bounded_response(result.map_err(|_| unavailable())?).await?;
+    Ok(AuthorizationSnapshot {
+        target: crate::webcodex::settings::target(runtime)?,
+        can_authorize: can_authorize(runtime),
+        coding_agents: status.coding_agents,
+        ssh_resources: status.ssh_resources,
+    })
+}
+
+async fn read_user_token(runtime: &StoredRuntime) -> DesktopResult<String> {
+    let path = runtime.user_token_file.as_ref().ok_or_else(unavailable)?;
+    let mut token = String::new();
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|_| unavailable())?
+        .take(16385)
+        .read_to_string(&mut token)
+        .await
+        .map_err(|_| unavailable())?;
+    if token.len() > 16384 || token.trim().is_empty() {
+        return Err(unavailable());
+    }
+    Ok(token)
+}
+
+async fn bounded_response<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> DesktopResult<T> {
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > 4096)
+    {
+        return Err(unavailable());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
+        if bytes.len().saturating_add(chunk.len()) > 4096 {
+            return Err(unavailable());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| unavailable())
+}
+
 pub fn can_authorize(runtime: &StoredRuntime) -> bool {
     runtime.server_env_file.is_some() && local_url(runtime).is_ok()
 }
@@ -89,18 +183,7 @@ pub async fn grant(runtime: &StoredRuntime, operator_token: String) -> DesktopRe
         .as_deref()
         .filter(|id| !id.is_empty())
         .ok_or_else(unavailable)?;
-    let path = runtime.user_token_file.as_ref().ok_or_else(unavailable)?;
-    let mut token = String::new();
-    tokio::fs::File::open(path)
-        .await
-        .map_err(|_| unavailable())?
-        .take(16385)
-        .read_to_string(&mut token)
-        .await
-        .map_err(|_| unavailable())?;
-    if token.len() > 16384 || token.trim().is_empty() {
-        return Err(unavailable());
-    }
+    let token = read_user_token(runtime).await?;
     let user_token_hash = format!("{:x}", Sha256::digest(token.trim().as_bytes()));
     drop(token);
     let client = reqwest::Client::builder()
@@ -119,22 +202,7 @@ pub async fn grant(runtime: &StoredRuntime, operator_token: String) -> DesktopRe
         .send()
         .await;
     drop(operator_token);
-    let mut response = result.map_err(|_| unavailable())?;
-    if !response.status().is_success()
-        || response
-            .content_length()
-            .is_some_and(|length| length > 4096)
-    {
-        return Err(unavailable());
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
-        if bytes.len().saturating_add(chunk.len()) > 4096 {
-            return Err(unavailable());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let response: GrantResponse = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    let response: GrantResponse = bounded_response(result.map_err(|_| unavailable())?).await?;
     if !response.success
         || response.applied_scopes.len() != 2
         || !response

@@ -1,5 +1,53 @@
 use super::*;
 
+#[tokio::test]
+async fn authorization_status_uses_native_user_token_and_never_contacts_ssh_or_operator() {
+    use tokio::io::AsyncWriteExt;
+    let dir = crate::coding_agents::tests::Scratch::new();
+    let path = dir.0.join("user.token");
+    std::fs::write(&path, "fixture-legacy-user-token").unwrap();
+    for body in [
+        r#"{"coding_agents":false,"ssh_resources":true}"#,
+        r#"{"coding_agents":true,"ssh_resources":false}"#,
+        r#"{"coding_agents":true,"ssh_resources":true,"token":"private-response-sentinel"}"#,
+        r#"{"coding_agents":true}"#,
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut runtime = runtime(listener.local_addr().unwrap().port());
+        // This operator path intentionally does not exist; passive observation must not read it.
+        runtime.user_token_file = Some(path.clone());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                assert!(bytes.len() < 16384);
+            }
+            let request = String::from_utf8(bytes).unwrap().to_ascii_lowercase();
+            assert!(request.starts_with("post /api/pairing/runner-capabilities/status http/1.1"));
+            assert!(request.contains("authorization: bearer fixture-legacy-user-token"));
+            assert!(!request.contains("/api/tools/call"));
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        });
+        let result = observe(&runtime).await;
+        server.await.unwrap();
+        if body.contains("private-response-sentinel") || !body.contains("ssh_resources") {
+            let error = result.err().unwrap();
+            assert!(!error.message.contains("private-response-sentinel"));
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.coding_agents, body.contains("coding_agents\":true"));
+            assert!(result.can_authorize);
+            let value = serde_json::to_string(&result).unwrap();
+            assert!(!value.contains("fixture-legacy-user-token"));
+            assert!(!value.contains("server.env"));
+        }
+    }
+}
+
 fn runtime(port: u16) -> StoredRuntime {
     StoredRuntime {
         server_url: format!("http://127.0.0.1:{port}"),

@@ -138,6 +138,16 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        RunnerCapabilityAuthorization,
+        Post,
+        "/api/pairing/runner-capabilities/status",
+        Require(webcodex_core::authority::SCOPE_RUNTIME_READ),
+        AccountControl,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         PairingRunnerCapabilities,
         Post,
         "/api/pairing/runner-capabilities",

@@ -77,6 +77,7 @@ pub fn run() {
             commands::ssh_resource_register,
             commands::ssh_resource_remove,
             commands::authorize_runner_capabilities,
+            commands::runner_capability_authorization,
             commands::tunnel_profile_action,
             commands::inspect_project,
             commands::configure_local_setup,

@@ -3,6 +3,7 @@ mod connections;
 mod mcp_providers;
 #[cfg(test)]
 mod reconfiguration_tests;
+mod runner_capability_grant;
 mod ssh_resources;
 mod workspace;
 mod workspace_settings;

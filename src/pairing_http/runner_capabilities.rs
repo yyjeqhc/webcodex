@@ -6,6 +6,47 @@ use crate::runtime_http::require_runtime;
 use serde_json::Value;
 use webcodex_store::Database;
 
+/// Observe only this credential's two capability scopes. This is independent of
+/// SSH/provider inventory and never changes a grant or contacts a Runner.
+#[handler]
+pub(crate) async fn runner_capability_authorization(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        grant_error(res, StatusCode::UNAUTHORIZED);
+        return;
+    };
+    if !auth.has_scope(crate::auth::SCOPE_RUNTIME_READ)
+        || !matches!(
+            auth.kind,
+            crate::auth::AuthKind::Bootstrap
+                | crate::auth::AuthKind::ApiToken
+                | crate::auth::AuthKind::OAuth2Token
+        )
+    {
+        grant_error(res, StatusCode::FORBIDDEN);
+        return;
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct EmptyRequest {}
+    let valid = req
+        .payload_with_max_size(1024)
+        .await
+        .ok()
+        .is_some_and(|bytes| serde_json::from_slice::<EmptyRequest>(bytes).is_ok());
+    if !valid {
+        grant_error(res, StatusCode::BAD_REQUEST);
+        return;
+    }
+    res.render(Json(json!({
+        "coding_agents": auth.has_scope(SCOPE_CODING_AGENT_RUN),
+        "ssh_resources": auth.has_scope(SCOPE_SSH_LOCAL),
+    })));
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantRequest {

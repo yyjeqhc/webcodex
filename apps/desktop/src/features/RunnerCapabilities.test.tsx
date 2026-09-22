@@ -8,8 +8,9 @@ import type { DesktopState, RunnerSettings } from "../models/topology";
 import { codingAgentIsActive, EMPTY_CODING_AGENTS, type CodingAgentProfile, type CodingAgentRequest, type SshResource, type SshResourcesSnapshot } from "../models/runner-capabilities";
 import { CodingAgentsPanel } from "./extensions/CodingAgentsPanel";
 import { SshResourcesPanel } from "./extensions/SshResourcesPanel";
+import { RunnerCapabilityAuthorization } from "./extensions/RunnerCapabilityAuthorization";
 
-const api = vi.hoisted(() => ({ saveCodingAgent: vi.fn(), removeCodingAgent: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), sshResources: vi.fn(), registerSshResource: vi.fn(), removeSshResource: vi.fn(), authorizeRunnerCapabilities: vi.fn() }));
+const api = vi.hoisted(() => ({ saveCodingAgent: vi.fn(), removeCodingAgent: vi.fn(), runnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), sshResources: vi.fn(), registerSshResource: vi.fn(), removeSshResource: vi.fn(), authorizeRunnerCapabilities: vi.fn(), runnerCapabilityAuthorization: vi.fn() }));
 const query = vi.hoisted(() => vi.fn());
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("./workspace/WorkspaceContext", () => ({ workspaceQuery: query }));
@@ -29,7 +30,7 @@ function state(): DesktopState {
   };
 }
 function inventory(resources: SshResource[] = [], observation = "first"): SshResourcesSnapshot {
-  return { runner: "fixture", available: true, can_authorize: true, observation_id: observation, resources, error_kind: null };
+  return { runner: "fixture", available: true, observation_id: observation, resources, error_kind: null };
 }
 function resource(name: string, source: "static" | "managed" = "managed", pending = false): SshResource {
   return { name, source, active: !pending, pending_restart: pending };
@@ -43,6 +44,7 @@ function Harness({ mode = "acp", initial = state() }: { mode?: "acp" | "ssh"; in
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US");
   api.runnerSettings.mockResolvedValue(settings);
+  api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.restartOwnedRunner.mockResolvedValue(state());
   api.sshResources.mockResolvedValue(inventory());
   query.mockResolvedValue({ client_id: "fixture", connected: true, coding_agent_providers: [] });
@@ -184,22 +186,48 @@ describe("Desktop SSH Resources", () => {
     expect(api.removeSshResource).toHaveBeenCalledTimes(1);
   });
 
-  it("requires explicit local authorization confirmation and does not restart services", async () => {
-    api.sshResources.mockResolvedValue({ ...inventory(), available: false, observation_id: null, error_kind: "insufficient_scope" });
-    api.authorizeRunnerCapabilities.mockResolvedValue(inventory([], "authorized"));
-    render(<Harness mode="ssh" />);
+  it.each(["acp", "ssh"] as const)("%s uses shared explicit local authorization, independently of SSH inventory", async mode => {
+    api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: false, ssh_resources: false });
+    // Coding Agents must work without *any* SSH inventory, capability or request.
+    api.sshResources.mockRejectedValue(new Error("ssh-unavailable-fixture"));
+    api.authorizeRunnerCapabilities.mockImplementation(async () => {
+      api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
+      api.sshResources.mockResolvedValue(inventory([], "authorized"));
+      return { target, can_authorize: true, coding_agents: true, ssh_resources: true };
+    });
+    render(<Harness mode={mode} />);
     fireEvent.click(await screen.findByRole("button", { name: "Authorize Runner Capabilities" }));
     expect(api.authorizeRunnerCapabilities).not.toHaveBeenCalled();
     const dialog = screen.getByRole("dialog", { name: "Authorize Runner Capabilities" });
     expect(within(dialog).getByText(/Existing tokens, expiry/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Authorize Runner Capabilities" }));
     await waitFor(() => expect(api.authorizeRunnerCapabilities).toHaveBeenCalledExactlyOnceWith(target));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Add SSH Resource" })).toBeEnabled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Authorize Runner Capabilities" })).not.toBeInTheDocument());
     expect(api.registerSshResource).not.toHaveBeenCalled(); expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+    if (mode === "acp") expect(api.sshResources).not.toHaveBeenCalled();
+    else await waitFor(() => expect(screen.getByRole("button", { name: "Add SSH Resource" })).toBeEnabled());
+  });
+
+  it("Coding Agents grant failures only reobserve scopes and require an explicit retry", async () => {
+    api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: false, ssh_resources: true });
+    api.authorizeRunnerCapabilities.mockRejectedValue({ message: "private-grant-sentinel" });
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole("button", { name: "Authorize Runner Capabilities" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Authorize Runner Capabilities" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Authorization was not confirmed"));
+    expect(api.authorizeRunnerCapabilities).toHaveBeenCalledTimes(1);
+    expect(api.runnerCapabilityAuthorization).toHaveBeenCalledTimes(2);
+    expect(api.sshResources).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("private-grant-sentinel");
+    api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Runner Authorization" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(api.authorizeRunnerCapabilities).toHaveBeenCalledTimes(1);
   });
 
   it("never offers local operator grant for remote connections or silently retries failed grants", async () => {
-    const denied = { ...inventory(), available: false, can_authorize: false, observation_id: null, error_kind: "insufficient_scope" };
+    const denied = { ...inventory(), available: false, observation_id: null, error_kind: "insufficient_scope" };
+    api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: false, coding_agents: false, ssh_resources: false });
     api.sshResources.mockResolvedValue(denied);
     render(<Harness mode="ssh" />);
     await screen.findByRole("alert");
@@ -207,6 +235,20 @@ describe("Desktop SSH Resources", () => {
     expect(api.authorizeRunnerCapabilities).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Add SSH Resource" })).toBeDisabled();
   });
+});
+
+it("connection replacement discards an open shared authorization confirmation", async () => {
+  api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize:true, coding_agents:false, ssh_resources:false });
+  const renderFlow=(value: RunnerSettings) => <LocaleProvider><RunnerCapabilityAuthorization settings={value} capability="coding_agents" disabled={false} onAuthorized={() => undefined} /></LocaleProvider>;
+  const view=render(renderFlow(settings));
+  fireEvent.click(await screen.findByRole("button", {name:"Authorize Runner Capabilities"}));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  const replaced={...settings,target:{...target,client_id:"replacement"}};
+  api.runnerCapabilityAuthorization.mockResolvedValue({target:replaced.target,can_authorize:true,coding_agents:false,ssh_resources:false});
+  view.rerender(renderFlow(replaced));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(api.authorizeRunnerCapabilities).not.toHaveBeenCalled();
+  expect(api.sshResources).not.toHaveBeenCalled();
 });
 
 it("provides every capability label in every supported locale", () => {

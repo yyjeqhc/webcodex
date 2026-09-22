@@ -62,7 +62,6 @@ impl SshResourceError {
 pub struct SshResourcesSnapshot {
     pub runner: String,
     pub available: bool,
-    pub can_authorize: bool,
     pub observation_id: Option<String>,
     pub resources: Vec<SshResourceInventoryEntry>,
     pub error_kind: Option<SshResourceError>,
@@ -200,7 +199,6 @@ impl SshResourcesManager {
                 let snapshot = SshResourcesSnapshot {
                     runner: identity.runner.clone(),
                     available: true,
-                    can_authorize: crate::runner_capability_grant::can_authorize(runtime),
                     observation_id: Some(id.clone()),
                     resources: output.resources.clone(),
                     error_kind: None,
@@ -216,7 +214,6 @@ impl SshResourcesManager {
             Err(error) => SshResourcesSnapshot {
                 runner: identity.runner,
                 available: false,
-                can_authorize: crate::runner_capability_grant::can_authorize(runtime),
                 observation_id: None,
                 resources: Vec::new(),
                 error_kind: Some(error),

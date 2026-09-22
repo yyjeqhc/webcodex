@@ -11,8 +11,16 @@ use tauri::{AppHandle, State};
 pub async fn authorize_runner_capabilities(
     state: State<'_, AppState>,
     request: crate::runner_capability_grant::GrantRequest,
-) -> DesktopResult<crate::ssh_resources::SshResourcesSnapshot> {
+) -> DesktopResult<crate::runner_capability_grant::AuthorizationSnapshot> {
     state.authorize_runner_capabilities(request).await
+}
+
+#[tauri::command]
+pub async fn runner_capability_authorization(
+    state: State<'_, AppState>,
+    expected: crate::webcodex::settings::SettingsTarget,
+) -> DesktopResult<crate::runner_capability_grant::AuthorizationSnapshot> {
+    state.runner_capability_authorization(expected).await
 }
 
 #[tauri::command]

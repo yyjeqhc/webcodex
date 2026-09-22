@@ -42,10 +42,15 @@ export type SshResourceError = "insufficient_scope" | "authorization_unavailable
   | "ssh_resource_registry_stale" | "ssh_resource_outcome_unknown" | "ssh_resource_registry_unavailable"
   | "ssh_resource_invalid" | "ssh_resource_static_read_only" | "ssh_resource_static_conflict"
   | "ssh_resource_name_conflict" | "ssh_resource_not_found";
+export interface RunnerCapabilityAuthorizationSnapshot {
+  target: SettingsTarget;
+  can_authorize: boolean;
+  coding_agents: boolean;
+  ssh_resources: boolean;
+}
 export interface SshResourcesSnapshot {
   runner: string;
   available: boolean;
-  can_authorize?: boolean;
   observation_id: string | null;
   resources: SshResource[];
   error_kind: SshResourceError | null;

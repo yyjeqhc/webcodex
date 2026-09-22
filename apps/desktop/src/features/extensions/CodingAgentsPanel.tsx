@@ -8,6 +8,7 @@ import { useRunnerCapabilitiesText } from "../../i18n/runner-capabilities";
 import { workspaceQuery } from "../workspace/WorkspaceContext";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { CodingAgentEditor } from "./CodingAgentEditor";
+import { RunnerCapabilityAuthorization } from "./RunnerCapabilityAuthorization";
 
 export function CodingAgentsPanel({ state, onState, settings, onRestarted }: {
   state: DesktopState; onState: (state: DesktopState) => void; settings: RunnerSettings | null; onRestarted: () => void;
@@ -49,6 +50,7 @@ export function CodingAgentsPanel({ state, onState, settings, onRestarted }: {
   return <div role="presentation">
     <div className="extension-toolbar"><button type="button" className="primary-button" aria-label="Add Coding Agent" disabled={disabled || !settings || configured.config_error} onClick={() => settings && setEditor({ profile: null, revision: configured.revision, target: settings.target })}>{r("addCodingAgent")}</button><button type="button" className="secondary-button" aria-label="Refresh Coding Agents" disabled={disabled || loading} onClick={refresh}>{p("refresh")}</button></div>
     <p className="workspace-notice">{r("agentHelp")}</p>
+    <RunnerCapabilityAuthorization settings={settings} capability="coding_agents" disabled={disabled} refreshKey={revision} onAuthorized={refresh} />
     {configured.restart_required && <div className="extension-apply-bar" role="status"><span>{r("savedRestart")}</span><button type="button" className="secondary-button" aria-label="Restart Runner" disabled={disabled || !settings?.can_restart} onClick={() => void restart()}>{p("restartRunner")}</button></div>}
     {configured.config_error && <p role="alert" className="workspace-notice">{c("configError")}</p>}
     {failed && <p role="alert" className="workspace-notice">{c("operationFailed")}</p>}

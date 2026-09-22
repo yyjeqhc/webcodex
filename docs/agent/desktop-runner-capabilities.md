@@ -153,7 +153,15 @@ operator authority. Old persisted codes migrate with the flag false, and old
 transport tokens do not gain SSH or coding-agent permissions.
 
 An existing Desktop-owned local connection can choose **Authorize Runner
-Capabilities**, review the scope description, and explicitly confirm. This uses
+Capabilities** from either **Coding Agents** or **SSH Resources**, review the
+same scope description, and explicitly confirm. The shared flow observes current
+user-token scopes through a closed native `runner_capability_authorization` call
+to `/api/pairing/runner-capabilities/status`. This read needs `runtime:read`, not
+SSH access, a Project, provider inventory, or an online SSH registry. Coding-only
+legacy connections therefore discover the upgrade without ever opening SSH.
+Connection changes discard the previous confirmation; unavailable observations
+are not interpreted as permission. Grant results are re-observed with the user
+token independently of SSH inventory; uncertain grants are never retried automatically. This uses
 a narrow native-only call to `/api/pairing/runner-capabilities` with the local
 Server operator credential and a hash identifying the existing user token. The
 endpoint requires account-management plus administrator/bootstrap authority,

@@ -4,6 +4,81 @@ use salvo::affix_state;
 use salvo::test::{ResponseExt, TestClient};
 use salvo::{Router, Service};
 
+#[tokio::test]
+async fn capability_status_observes_scopes_without_runner_or_ssh_inventory_or_grant() {
+    for (coding, ssh) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut auth = AuthContext::new(AuthKind::ApiToken);
+        auth.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.into()];
+        if coding {
+            auth.scopes.push(SCOPE_CODING_AGENT_RUN.into());
+        }
+        if ssh {
+            auth.scopes.push(SCOPE_SSH_LOCAL.into());
+        }
+        // No Runtime/Runner/DB is present. Observation cannot contact SSH or mutate grants.
+        let service = Service::new(
+            Router::new()
+                .hoop(affix_state::inject(auth))
+                .push(Router::with_path("status").post(runner_capability_authorization)),
+        );
+        let mut response = TestClient::post("http://localhost/status")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(response.status_code.unwrap(), StatusCode::OK);
+        let value: Value = response.take_json().await.unwrap();
+        assert_eq!(value, json!({"coding_agents":coding,"ssh_resources":ssh}));
+    }
+}
+
+#[tokio::test]
+async fn capability_status_rejects_transport_subjects_missing_scope_and_arbitrary_inputs() {
+    for (kind, scopes) in [
+        (AuthKind::AgentToken, vec![crate::auth::SCOPE_RUNTIME_READ]),
+        (AuthKind::ApiToken, vec![]),
+        (
+            AuthKind::AccountCredential,
+            vec![crate::auth::SCOPE_RUNTIME_READ],
+        ),
+    ] {
+        let mut auth = AuthContext::new(kind);
+        auth.scopes = scopes.into_iter().map(str::to_owned).collect();
+        let service = Service::new(
+            Router::new()
+                .hoop(affix_state::inject(auth))
+                .push(Router::with_path("status").post(runner_capability_authorization)),
+        );
+        let response = TestClient::post("http://localhost/status")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(response.status_code.unwrap(), StatusCode::FORBIDDEN);
+    }
+    let mut auth = AuthContext::new(AuthKind::ApiToken);
+    auth.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.into()];
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(auth))
+            .push(Router::with_path("status").post(runner_capability_authorization)),
+    );
+    for input in [
+        json!({"scopes":["admin"]}),
+        json!({"client_id":"other"}),
+        json!({"token":"private-status-sentinel"}),
+    ] {
+        let mut response = TestClient::post("http://localhost/status")
+            .json(&input)
+            .send(&service)
+            .await;
+        assert_eq!(response.status_code.unwrap(), StatusCode::BAD_REQUEST);
+        assert!(!response
+            .take_string()
+            .await
+            .unwrap()
+            .contains("private-status-sentinel"));
+    }
+}
+
 fn fixture() -> (tempfile::TempDir, Database, ApiKeyRecord) {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::open(&dir.path().join("db.sqlite")).unwrap();

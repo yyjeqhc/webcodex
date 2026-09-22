@@ -7,7 +7,7 @@
 //! OpenAPI and are not exposed as MCP tools.
 
 mod runner_capabilities;
-pub(crate) use runner_capabilities::grant_runner_capabilities;
+pub(crate) use runner_capabilities::{grant_runner_capabilities, runner_capability_authorization};
 
 use crate::auth::{
     clean_token_name, generate_agent_token, generate_api_token, hash_token, scopes_to_string,

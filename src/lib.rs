@@ -534,6 +534,12 @@ only for local/trusted-network demos."
                         .post(pairing_http::pairing_create),
                 )
                 .push(
+                    Router::with_path(route_metadata::api_path(
+                        RouteId::RunnerCapabilityAuthorization,
+                    ))
+                    .post(pairing_http::runner_capability_authorization),
+                )
+                .push(
                     Router::with_path(route_metadata::api_path(RouteId::PairingRunnerCapabilities))
                         .post(pairing_http::grant_runner_capabilities),
                 ),

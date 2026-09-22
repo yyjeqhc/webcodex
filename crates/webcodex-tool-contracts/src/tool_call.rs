@@ -1593,8 +1593,9 @@ pub enum ToolCall {
         /// context-scoped and never resolves, accepts, executes, or gates work.
         #[serde(default)]
         requires_ack: bool,
-        /// Optional stable sender-scoped replay key. Exact retries with the same canonical payload
-        /// return the original message; reusing the key with a different payload fails closed.
+        /// Optional stable sender-scoped replay key. While the keyed message/replay metadata remains
+        /// retained, exact retries with the same canonical payload return the original message and survive
+        /// Server restart; reusing the key with a different retained payload fails closed.
         #[schemars(length(min = 1, max = 128))]
         #[serde(default)]
         delivery_key: Option<String>,
@@ -1627,8 +1628,9 @@ pub enum ToolCall {
         /// again. ACK never grants authority, resolves the message, or requires a reply.
         #[serde(default)]
         requires_ack: bool,
-        /// Optional stable sender-window-scoped replay key. Exact retries return the original
-        /// message; reusing the key with a different payload fails closed.
+        /// Optional stable sender-window-scoped replay key. While the keyed peer message remains
+        /// retained, exact retries return the original message and survive Server restart; reusing the key
+        /// with a different retained payload fails closed.
         #[schemars(length(min = 1, max = 128))]
         #[serde(default)]
         delivery_key: Option<String>,

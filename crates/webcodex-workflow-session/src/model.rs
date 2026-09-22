@@ -63,6 +63,7 @@ pub const MAX_MESSAGE_TAGS: usize = 16;
 pub const MAX_MESSAGE_TAG_CHARS: usize = 64;
 pub const MAX_MESSAGE_RESOLUTION_CHARS: usize = 8000;
 pub const MAX_MESSAGE_COMPLETION_KEY_CHARS: usize = 128;
+pub const MAX_MESSAGE_DELIVERY_KEY_CHARS: usize = 128;
 pub const MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS: usize = 64;
 pub const MAX_MESSAGE_SUMMARY_CHARS: usize = 240;
 pub const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
@@ -164,6 +165,10 @@ pub struct SessionRecord {
     /// deque so event FIFO eviction cannot resurrect an authoritative Job.
     pub materialized_validation_job_ids: VecDeque<String>,
     pub messages: VecDeque<Arc<SessionMessage>>,
+    /// Durable replay identity for optional message delivery keys. Both map keys
+    /// and payload fingerprints are domain-separated SHA-256 digests; raw keys,
+    /// principals, Window metadata, and message bodies are never retained here.
+    pub message_delivery_replays: BTreeMap<String, SessionMessageDeliveryReplay>,
     /// Durable Session-local monotonic message-state revision. This is never
     /// exposed as a public cursor; callers receive an opaque Session-bound token.
     pub message_observation_revision: u64,
@@ -464,6 +469,8 @@ pub struct PersistedSessionRecord {
     pub updated_at: i64,
     pub events: Vec<Arc<SessionEvent>>,
     pub messages: Vec<Arc<SessionMessage>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub message_delivery_replays: BTreeMap<String, SessionMessageDeliveryReplay>,
     pub message_observation_revision: u64,
     pub message_observation_floor: u64,
     pub message_observation_revisions: BTreeMap<String, u64>,
@@ -832,6 +839,28 @@ pub struct PostSessionMessageInput {
     pub priority: SessionMessagePriority,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionMessageDelivery {
+    /// Runtime-derived, domain-separated stable sender-scope digest.
+    pub sender_scope: String,
+    /// Caller replay key. Persistence retains only its domain-separated digest.
+    pub delivery_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMessageDeliveryReplay {
+    pub payload_fingerprint: String,
+    pub message_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMessageDeliveryOutcome {
+    pub message: SessionMessage,
+    pub replayed: bool,
+    pub state_changed: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionAckObservation {
     pub accepted_ids: Vec<String>,
@@ -1003,6 +1032,8 @@ pub enum SessionMessageError {
     MessageNotOpen,
     NotTodo,
     IdempotencyConflict,
+    DeliveryKeyConflict,
+    DeliveryPersistenceUncertain,
     AlreadyCompleted {
         answer_message_id: Option<String>,
         completion_id: Option<String>,

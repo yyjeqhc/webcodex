@@ -454,8 +454,81 @@ fn stateless_collaboration_ack_schema() -> Value {
             "type": "string",
             "pattern": "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
         },
-        "description": "Proves the current model context still retains the listed ACK-required collaboration messages. For Session messages the id must belong to the explicit recording Session; Peer messages may target the current principal-bound ClientWindow without a recorder. Repeat while retained. If later omitted, unresolved Session messages or retained Peer messages may be surfaced again. ACK neither resolves messages nor grants authority or gates execution."
+        "description": "Proves the current model context still retains the listed ACK-required collaboration messages. Session ACK uses the explicit recorder when present, otherwise an authorized same-Window active Session affinity for the resolved Project; Peer ACK targets the current principal-bound ClientWindow. Repeat while retained. ACK neither resolves messages nor grants authority or gates execution."
     })
+}
+
+fn stateless_session_attention_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Bounded open ACK-required messages from one exact authorized Workflow Session. Window affinity may select this delivery scope only when no explicit recorder was supplied; it never records the main call or supplies business authority.",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
+            },
+            "source": {
+                "type": "string",
+                "enum": ["recording_session", "business_session", "window_affinity"]
+            },
+            "requires_ack": {"type": "boolean"},
+            "messages": {
+                "type": "array",
+                "maxItems": crate::tool_runtime::SESSION_ATTENTION_MAX_MESSAGES,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "message_id": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "priority": {"type": "string"},
+                        "created_at": {"type": "integer"},
+                        "message": {"type": "string"},
+                        "message_truncated": {"type": "boolean"}
+                    },
+                    "required": ["message_id", "kind", "priority", "created_at", "message", "message_truncated"]
+                }
+            },
+            "omitted_count": {"type": "integer", "minimum": 0},
+            "truncated": {"type": "boolean"},
+            "ack": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "accepted_count": {"type": "integer", "minimum": 0},
+                    "ignored_count": {"type": "integer", "minimum": 0}
+                },
+                "required": ["accepted_count", "ignored_count"]
+            }
+        },
+        "required": ["session_id", "source", "requires_ack", "messages", "omitted_count", "truncated", "ack"]
+    })
+}
+
+fn add_stateless_session_attention_output_schema(tool: &mut Value) {
+    let Some(output_schema) = tool.get_mut("outputSchema") else {
+        return;
+    };
+    let projection = stateless_session_attention_output_schema();
+    if let Some(output) = output_schema.pointer_mut("/properties/output") {
+        add_wrapper_projection_to_output_shape(output, "session_attention", &projection);
+    }
+    if let Some(conditions) = output_schema.get_mut("allOf").and_then(Value::as_array_mut) {
+        for condition in conditions {
+            for branch_name in ["then", "else"] {
+                if let Some(output) =
+                    condition.pointer_mut(&format!("/{branch_name}/properties/output"))
+                {
+                    add_wrapper_projection_to_output_shape(
+                        output,
+                        "session_attention",
+                        &projection,
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn insert_stateless_collaboration_ack_property(properties: &mut serde_json::Map<String, Value>) {
@@ -490,7 +563,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             json!({
                 "type": "string",
                 "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
-                "description": "Optional explicit Workflow Session used only to record this call and trusted collaboration provenance. Separate from any tool business Session input; grants no authority; removed before concrete parsing."
+                "description": "Optional explicit recorder provenance for one exact Workflow Session. Never execution authority or a business Session target. When omitted, authorized same-Window affinity may still deliver and ACK Session collaboration without recording this call."
             }),
         );
         insert_stateless_collaboration_ack_property(properties);
@@ -557,6 +630,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             }
         }
         add_stateless_context_projection_output_schema(tool);
+        add_stateless_session_attention_output_schema(tool);
     }
 }
 

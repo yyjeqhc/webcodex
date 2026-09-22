@@ -7,10 +7,10 @@ use super::model::{
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, ListSessionMessagesFilter,
     PostSessionMessageInput, ReplaceSessionMessageInput, ReplaceSessionMessageOutcome,
     SessionAckObservation, SessionAssignmentSnapshot, SessionAttentionSnapshot,
-    SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageError,
-    SessionMessageObservationError, SessionMessageObservationOutcome, SessionMessageStatus,
-    WithdrawSessionMessageOutcome, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
-    MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageDelivery,
+    SessionMessageDeliveryOutcome, SessionMessageError, SessionMessageObservationError,
+    SessionMessageObservationOutcome, SessionMessageStatus, WithdrawSessionMessageOutcome,
+    DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -31,15 +31,42 @@ impl SessionStore {
         input: PostSessionMessageInput,
         requires_ack: bool,
     ) -> Result<SessionMessage, SessionMessageError> {
-        let (message, changed) = {
+        Ok(self
+            .post_message_with_ack_and_delivery(input, requires_ack, None)?
+            .message)
+    }
+
+    pub fn post_message_with_ack_and_delivery(
+        &self,
+        input: PostSessionMessageInput,
+        requires_ack: bool,
+        delivery: Option<SessionMessageDelivery>,
+    ) -> Result<SessionMessageDeliveryOutcome, SessionMessageError> {
+        let durable = delivery.is_some();
+        let outcome = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
-            inner.post_message(input, requires_ack)?
+            inner.post_message(input, requires_ack, delivery)?
         };
-        self.persist_after_mutation();
-        if changed {
+        if durable {
+            // A keyed delivery promises restart-safe replay on every successful
+            // return, including an exact retry after an earlier persistence
+            // failure. Re-run the durable barrier even when the in-memory
+            // mutation is already a replay; otherwise a recovered same-process
+            // retry could return success while the message/replay key is still
+            // absent from the ledger.
+            if self.persist_after_mutation_durable().is_err() {
+                if outcome.state_changed {
+                    self.notify_message_observation();
+                }
+                return Err(SessionMessageError::DeliveryPersistenceUncertain);
+            }
+        } else if outcome.state_changed {
+            self.persist_after_mutation();
+        }
+        if outcome.state_changed {
             self.notify_message_observation();
         }
-        Ok(message)
+        Ok(outcome)
     }
 
     pub fn list_messages(

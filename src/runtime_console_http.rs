@@ -957,6 +957,7 @@ fn session_message_mutation_error(
         }
         SessionMessageError::MessageNotOpen
         | SessionMessageError::IdempotencyConflict
+        | SessionMessageError::DeliveryKeyConflict
         | SessionMessageError::AlreadyCompleted { .. }
         | SessionMessageError::InvalidCompletionState
         | SessionMessageError::InvalidObservationState
@@ -965,7 +966,8 @@ fn session_message_mutation_error(
         | SessionMessageError::AssignmentTooLarge { .. }
         | SessionMessageError::NotTodo
         | SessionMessageError::SessionClosed { .. } => RuntimeConsoleError::Conflict,
-        SessionMessageError::PersistenceUncertain => RuntimeConsoleError::PersistenceUncertain,
+        SessionMessageError::DeliveryPersistenceUncertain
+        | SessionMessageError::PersistenceUncertain => RuntimeConsoleError::PersistenceUncertain,
         SessionMessageError::InvalidAssignmentFence | SessionMessageError::InvalidInput(_) => {
             RuntimeConsoleError::Invalid
         }
@@ -3022,6 +3024,7 @@ async fn session_post_message_for_auth(
                 reply_to: input.reply_to,
                 priority: input.priority,
                 requires_ack: input.requires_ack,
+                delivery_key: None,
             },
             Some(auth),
         )

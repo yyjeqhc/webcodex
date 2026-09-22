@@ -311,7 +311,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
         ),
-        "Post a bounded collaboration message (todo, question, progress, guidance, risk, or decision). Any message may request request-scoped ACK; ACK proves only current model-context retention and neither resolves nor gates work. Use complete_session_message to atomically answer and resolve a finished todo.",
+        "Post a bounded collaboration message (todo, question, progress, guidance, risk, or decision). Optional delivery_key makes exact sender-scoped retries return the original message and rejects key reuse with a different payload. Any message may request request-scoped ACK; ACK proves only current model-context retention and neither resolves nor gates work. Use complete_session_message to atomically answer and resolve a finished todo.",
     )),
     model_spec(
         def(
@@ -340,7 +340,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Send a bounded message to a principal-scoped peer window discovered through peer_awareness. Routing does not require Project equality, so a Project/worktree change alone does not invalidate the retained route; it grants no access to the recipient's Project, Workflow Session, files, or assignment authority. Ordinary messages are projected once; requires_ack messages repeat while retained whenever the recipient omits the request-scoped ACK.",
+        "Send a bounded message to a principal-scoped peer window discovered through peer_awareness. Optional delivery_key makes exact principal-and-sender-Window retries return the original message and rejects key reuse with a different payload. Routing does not require Project equality, so a Project/worktree change alone does not invalidate the retained route; it grants no access to the recipient's Project, Workflow Session, files, or assignment authority. Ordinary messages are projected once; requires_ack messages repeat while retained whenever the recipient omits the request-scoped ACK.",
     ),
     requires_explicit_business_session(model_spec(
         def(

@@ -11,7 +11,8 @@ use crate::db::{NewGoal, NewGoalStep};
 use crate::lsp_bridge::{RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
 use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload, RunnerResultRequest};
 use crate::tool_runtime::kernel::{
-    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+    ToolProtocolCapabilities, ToolTransport,
 };
 use crate::tool_runtime::permissions::{AuthorityMode, PermissionEvaluator};
 use crate::tool_runtime::sessions::{SessionEvent, SessionGuards};
@@ -133,6 +134,32 @@ async fn call_hygiene_in_window_with_local_runner_transport(
     window_id: &str,
     transport: ToolTransport,
 ) -> crate::tool_runtime::kernel::ToolCallOutcome {
+    call_hygiene_in_window_with_local_runner_metadata(
+        runtime,
+        client_id,
+        project,
+        recording_session_id,
+        business_session_id,
+        auth,
+        window_id,
+        transport,
+        ToolInvocationMetadata::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_hygiene_in_window_with_local_runner_metadata(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    recording_session_id: Option<&str>,
+    business_session_id: Option<&str>,
+    auth: &crate::auth::AuthContext,
+    window_id: &str,
+    transport: ToolTransport,
+    invocation_metadata: ToolInvocationMetadata,
+) -> crate::tool_runtime::kernel::ToolCallOutcome {
     let runtime_for_task = runtime.clone();
     let project = project.to_string();
     let recording_session_id = recording_session_id.map(str::to_string);
@@ -146,7 +173,7 @@ async fn call_hygiene_in_window_with_local_runner_transport(
             arguments["session_id"] = json!(session_id);
         }
         runtime_for_task
-            .call_tool_with_context(
+            .call_tool_with_invocation_metadata(
                 ToolCallRequest {
                     tool_name: "workspace_hygiene_check".to_string(),
                     arguments,
@@ -159,6 +186,8 @@ async fn call_hygiene_in_window_with_local_runner_transport(
                     record_oauth_scope_denials: true,
                     host_file_import_trust: HostFileImportTrust::Untrusted,
                 },
+                invocation_metadata,
+                ToolProtocolCapabilities::default(),
             )
             .await
     });
@@ -2102,6 +2131,20 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         .unwrap()
         .events
         .len();
+    let guidance = runtime
+        .sessions
+        .post_message_with_ack(
+            crate::tool_runtime::sessions::PostSessionMessageInput {
+                session_id: session_id.clone(),
+                kind: crate::tool_runtime::sessions::SessionMessageKind::Guidance,
+                message: "same-window attention without recorder".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: crate::tool_runtime::sessions::SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
 
     // T3: omitting recording_session_id does not block business execution and
     // does not forge a Session event. The exact same Window/principal/Project
@@ -2130,6 +2173,22 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         project
     );
     assert_eq!(
+        unrecorded_result.output["session_attention"]["session_id"],
+        session_id
+    );
+    assert_eq!(
+        unrecorded_result.output["session_attention"]["source"],
+        "window_affinity"
+    );
+    assert_eq!(
+        unrecorded_result.output["session_attention"]["messages"][0]["message_id"],
+        guidance.message_id
+    );
+    assert_eq!(
+        unrecorded_result.output["session_attention"]["messages"][0]["message"],
+        "same-window attention without recorder"
+    );
+    assert_eq!(
         runtime
             .sessions
             .summary(&session_id, Some(200))
@@ -2138,6 +2197,68 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
             .len(),
         recorded_event_count,
         "missing recorder must not backfill or mutate the Workflow Session ledger"
+    );
+
+    let acknowledged = call_hygiene_in_window_with_local_runner_metadata(
+        &runtime,
+        "wop-gap",
+        &project,
+        None,
+        None,
+        &auth,
+        window_id,
+        ToolTransport::Mcp,
+        ToolInvocationMetadata {
+            ack_session_message_ids: vec![guidance.message_id.clone()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(acknowledged.success, "{:?}", acknowledged.error_status);
+    let acknowledged = acknowledged.result.unwrap();
+    assert_eq!(
+        acknowledged.output["session_attention"]["session_id"],
+        session_id
+    );
+    assert_eq!(
+        acknowledged.output["session_attention"]["ack"]["accepted_count"],
+        1
+    );
+    assert!(acknowledged.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(guidance.message_id.clone()),
+                ..Default::default()
+            }
+        )
+        .unwrap()[0]
+        .first_ack_observed_at
+        .is_some());
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&session_id, Some(200))
+            .unwrap()
+            .events
+            .len(),
+        recorded_event_count,
+        "fallback ACK must not create a recorder ToolCall event"
+    );
+
+    let forgotten = call_hygiene_in_window_with_local_runner(
+        &runtime, "wop-gap", &project, None, None, &auth, window_id,
+    )
+    .await;
+    assert_eq!(
+        forgotten.result.unwrap().output["session_attention"]["messages"][0]["message_id"],
+        guidance.message_id,
+        "historical first ACK observation is not durable resolution"
     );
 
     // The recorder gap remains auditable, but an exact business Session equal to
@@ -2306,6 +2427,252 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         .unwrap();
     assert_eq!(affinity.workflow_session_id, session_id);
     assert_eq!(affinity.relation, "recording");
+}
+
+#[tokio::test]
+async fn window_affinity_attention_is_strict_and_explicit_recorder_keeps_precedence() {
+    let root = tempfile::tempdir().unwrap();
+    let audit_root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let window_db = std::sync::Arc::new(
+        crate::Database::open(&audit_root.path().join("attention-strict.db")).unwrap(),
+    );
+    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(window_db.clone());
+    let project =
+        register_runner_project_at_path(&runtime, "attention-strict", "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let window_id = "attention-strict-window";
+    let affinity = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("affinity target".to_string()));
+    let affinity_message = runtime
+        .sessions
+        .post_message_with_ack(
+            crate::tool_runtime::sessions::PostSessionMessageInput {
+                session_id: affinity.session_id.clone(),
+                kind: crate::tool_runtime::sessions::SessionMessageKind::Guidance,
+                message: "affinity-only guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: crate::tool_runtime::sessions::SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        window_id,
+        &project,
+        "work_on_project",
+        Some((
+            &affinity.session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::WorkOnProject,
+        )),
+        None,
+        1_000,
+    );
+
+    let wrong_window = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "attention-strict",
+        &project,
+        None,
+        None,
+        &auth,
+        "attention-strict-other-window",
+    )
+    .await;
+    assert!(wrong_window.success);
+    assert!(wrong_window
+        .result
+        .unwrap()
+        .output
+        .get("session_attention")
+        .is_none());
+
+    let other_principal = auth_context(Some("different-principal"), true);
+    let wrong_principal = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "attention-strict",
+        &project,
+        None,
+        None,
+        &other_principal,
+        window_id,
+    )
+    .await;
+    assert!(wrong_principal.success);
+    assert!(wrong_principal
+        .result
+        .unwrap()
+        .output
+        .get("session_attention")
+        .is_none());
+
+    let wrong_project_window = "attention-strict-wrong-project";
+    let unrelated_project = "agent:other:unregistered-project";
+    let unrelated = runtime.sessions.start_session(
+        Some(unrelated_project.to_string()),
+        Some("wrong project".to_string()),
+    );
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        wrong_project_window,
+        unrelated_project,
+        "work_on_project",
+        Some((
+            &unrelated.session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::WorkOnProject,
+        )),
+        None,
+        2_000,
+    );
+    let wrong_project = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "attention-strict",
+        &project,
+        None,
+        None,
+        &auth,
+        wrong_project_window,
+    )
+    .await;
+    assert!(wrong_project.success);
+    assert!(wrong_project
+        .result
+        .unwrap()
+        .output
+        .get("session_attention")
+        .is_none());
+
+    let closed_window = "attention-strict-closed";
+    let closed = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("closed affinity".to_string()));
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        closed_window,
+        &project,
+        "work_on_project",
+        Some((
+            &closed.session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::WorkOnProject,
+        )),
+        None,
+        3_000,
+    );
+    runtime.sessions.close_session(&closed.session_id).unwrap();
+    let inactive = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "attention-strict",
+        &project,
+        None,
+        None,
+        &auth,
+        closed_window,
+    )
+    .await;
+    assert!(inactive.success);
+    assert!(inactive
+        .result
+        .unwrap()
+        .output
+        .get("session_attention")
+        .is_none());
+
+    let recorder = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("explicit recorder".to_string()));
+    let recorder_message = runtime
+        .sessions
+        .post_message_with_ack(
+            crate::tool_runtime::sessions::PostSessionMessageInput {
+                session_id: recorder.session_id.clone(),
+                kind: crate::tool_runtime::sessions::SessionMessageKind::Guidance,
+                message: "explicit recorder guidance".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: crate::tool_runtime::sessions::SessionMessagePriority::Normal,
+            },
+            true,
+        )
+        .unwrap();
+    let explicit = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "attention-strict",
+        &project,
+        Some(&recorder.session_id),
+        None,
+        &auth,
+        window_id,
+    )
+    .await;
+    assert!(explicit.success);
+    let explicit_output = &explicit.result.as_ref().unwrap().output;
+    assert_eq!(
+        explicit_output["session_attention"]["session_id"],
+        recorder.session_id
+    );
+    assert_eq!(
+        explicit_output["session_attention"]["source"],
+        "recording_session"
+    );
+    assert_eq!(
+        explicit_output["session_attention"]["messages"][0]["message_id"],
+        recorder_message.message_id
+    );
+    assert_ne!(
+        explicit_output["session_attention"]["messages"][0]["message_id"],
+        affinity_message.message_id
+    );
+
+    let resolution_without_recorder = call_hygiene_in_window_with_local_runner_metadata(
+        &runtime,
+        "attention-strict",
+        &project,
+        None,
+        None,
+        &auth,
+        window_id,
+        ToolTransport::Mcp,
+        ToolInvocationMetadata {
+            session_message_resolution: Some(
+                crate::tool_runtime::sessions::ToolCallSessionMessageResolution {
+                    message_id: affinity_message.message_id.clone(),
+                    resolution: "must stay explicit".to_string(),
+                },
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        resolution_without_recorder.error_status,
+        Some(
+            crate::tool_runtime::kernel::ToolCallErrorStatus::InvalidArguments {
+                message: "session_message_resolution requires recording_session_id".to_string(),
+            }
+        )
+    );
+    assert!(resolution_without_recorder.result.is_none());
+    let retained = runtime
+        .sessions
+        .list_messages(
+            &affinity.session_id,
+            crate::tool_runtime::sessions::ListSessionMessagesFilter {
+                message_id: Some(affinity_message.message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        retained[0].status,
+        crate::tool_runtime::sessions::SessionMessageStatus::Open
+    );
+    assert!(retained[0].resolution.is_none());
 }
 
 #[tokio::test]

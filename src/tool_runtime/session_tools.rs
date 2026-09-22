@@ -17,6 +17,8 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
+        window: Option<&crate::client_window::ClientWindow>,
+        trusted_recording_session_id: Option<&str>,
     ) -> ToolResult {
         match call {
             ToolCall::StartSession {
@@ -74,6 +76,7 @@ impl ToolRuntime {
                 reply_to,
                 priority,
                 requires_ack,
+                delivery_key,
             } => {
                 self.post_session_message_tool(
                     session_id,
@@ -83,7 +86,10 @@ impl ToolRuntime {
                     reply_to,
                     priority,
                     requires_ack,
+                    delivery_key,
                     auth,
+                    window,
+                    trusted_recording_session_id,
                 )
                 .await
             }
@@ -500,7 +506,10 @@ impl ToolRuntime {
         reply_to: Option<String>,
         priority: sessions::SessionMessagePriority,
         requires_ack: bool,
+        delivery_key: Option<String>,
         auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        trusted_recording_session_id: Option<&str>,
     ) -> ToolResult {
         if let Err(result) = self
             .authorize_session_target(&session_id, "post_session_message", auth)
@@ -508,7 +517,31 @@ impl ToolRuntime {
         {
             return result;
         }
-        match self.sessions.post_message_with_ack(
+        let delivery = match delivery_key {
+            Some(delivery_key) => {
+                let sender_scope =
+                    match message_delivery_sender_scope(auth, window, trusted_recording_session_id)
+                    {
+                        Ok(scope) => scope,
+                        Err(message) => {
+                            return ToolResult::err_with_output(
+                                message,
+                                json!({
+                                    "error_kind": "message_sender_identity_unavailable",
+                                    "session_id": session_id,
+                                    "state_changed": false,
+                                }),
+                            )
+                        }
+                    };
+                Some(sessions::SessionMessageDelivery {
+                    sender_scope,
+                    delivery_key,
+                })
+            }
+            None => None,
+        };
+        match self.sessions.post_message_with_ack_and_delivery(
             sessions::PostSessionMessageInput {
                 session_id: session_id.clone(),
                 kind,
@@ -518,12 +551,15 @@ impl ToolRuntime {
                 priority,
             },
             requires_ack,
+            delivery,
         ) {
-            Ok(message) => ToolResult::ok(json!({
+            Ok(outcome) => ToolResult::ok(json!({
                 "success": true,
                 "session_id": session_id,
-                "message_id": message.message_id,
-                "message": message,
+                "message_id": outcome.message.message_id,
+                "message": outcome.message,
+                "replayed": outcome.replayed,
+                "state_changed": outcome.state_changed,
             })),
             Err(err) => session_message_error_result(&session_id, None, err),
         }
@@ -755,6 +791,26 @@ impl ToolRuntime {
             Err(err) => session_message_error_result(&session_id, None, err),
         }
     }
+}
+
+pub(crate) fn message_delivery_sender_scope(
+    auth: Option<&AuthContext>,
+    window: Option<&crate::client_window::ClientWindow>,
+    recording_session_id: Option<&str>,
+) -> Result<String, String> {
+    let (principal_kind, principal_id) = super::runtime_observation_principal(auth)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.message-delivery-sender.v1\0");
+    for field in [
+        principal_kind.as_str(),
+        principal_id.as_str(),
+        window.map_or("", crate::client_window::ClientWindow::key),
+        recording_session_id.unwrap_or_default(),
+    ] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn invalid_session_message_observation_request(session_id: &str, message: &str) -> ToolResult {

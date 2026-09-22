@@ -168,6 +168,8 @@ fn control_sidecars_closed_parse_strip_and_canonical_schema_parity() {
         json!({"after_success": {"session_close": {"session_id": "s", "extra": true}}}),
         json!({"before": []}),
         json!({"before": {}}),
+        json!({"communication": {}}),
+        json!({"communication": {"before": [{"session_message": {"session_id": "wc_sess_abcdefghijklmnop", "kind": "progress", "message": "missing key"}}]}}),
         Value::Null,
     ] {
         assert!(serde_json::from_value::<ControlSidecars>(value).is_err());
@@ -216,6 +218,183 @@ fn control_sidecars_closed_parse_strip_and_canonical_schema_parity() {
         schema["properties"]["after_success"]["properties"]["goal_completion"]["properties"]
             .get("lifecycle")
             .is_none()
+    );
+    assert_eq!(
+        schema["properties"]["communication"]["properties"]["before"]["maxItems"],
+        2
+    );
+    assert!(
+        schema["properties"]["communication"]["properties"]["before"]["items"]["properties"]
+            ["session_message"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("delivery_key"))
+    );
+}
+
+#[tokio::test]
+async fn control_communication_session_message_replays_coexists_and_gates_after_success() {
+    let f = Fixture::new();
+    let session = f.session().await;
+    let before_message = json!({"session_message": {
+        "session_id": session,
+        "kind": "progress",
+        "message": "runtime review started",
+        "tags": ["runtime"],
+        "requires_ack": true,
+        "delivery_key": "runtime-review-started"
+    }});
+    let control = json!({
+        "before": {"goal_progress": f.progress()},
+        "communication": {"before": [before_message]}
+    });
+    let result = f
+        .call(
+            "get_goal",
+            json!({"goal_id": f.goal}),
+            Some(control.clone()),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.output);
+    assert_eq!(result.output["control"]["before"]["success"], true);
+    assert_eq!(
+        result.output["control"]["communication"]["before"][0]["success"],
+        true
+    );
+    assert_eq!(
+        result.output["control"]["communication"]["before"][0]["state_changed"],
+        true
+    );
+    let message_id = result.output["control"]["communication"]["before"][0]["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        f.runtime
+            .sessions
+            .list_messages(&session, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let replay = f
+        .call("get_goal", json!({"goal_id": f.goal}), Some(control))
+        .await;
+    assert!(replay.success);
+    assert_eq!(
+        replay.output["control"]["communication"]["before"][0]["message_id"],
+        message_id
+    );
+    assert_eq!(
+        replay.output["control"]["communication"]["before"][0]["replayed"],
+        true
+    );
+    assert_eq!(
+        f.runtime
+            .sessions
+            .list_messages(&session, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let standalone = f
+        .call(
+            "post_session_message",
+            json!({
+                "session_id": session,
+                "kind": "progress",
+                "message": "runtime review started",
+                "tags": ["runtime"],
+                "requires_ack": true,
+                "delivery_key": "runtime-review-started"
+            }),
+            None,
+        )
+        .await;
+    assert!(standalone.success);
+    assert_eq!(standalone.output["message_id"], message_id);
+    assert_eq!(standalone.output["replayed"], true);
+
+    let after = json!({"communication": {"after_success": [{"session_message": {
+        "session_id": session,
+        "kind": "progress",
+        "message": "main observation complete",
+        "delivery_key": "main-observation-complete"
+    }}]}});
+    let failed = f
+        .call(
+            "get_goal",
+            json!({"goal_id": "wc_goal_abcdefghijklmnop"}),
+            Some(after.clone()),
+        )
+        .await;
+    assert!(!failed.success);
+    assert_eq!(
+        failed.output["control"]["communication"]["after_success"][0]["execution_state"],
+        "definitely_not_started"
+    );
+    assert_eq!(
+        f.runtime
+            .sessions
+            .list_messages(&session, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+    let succeeded = f
+        .call("get_goal", json!({"goal_id": f.goal}), Some(after))
+        .await;
+    assert!(succeeded.success);
+    assert_eq!(
+        succeeded.output["control"]["communication"]["after_success"][0]["success"],
+        true
+    );
+    assert_eq!(
+        f.runtime
+            .sessions
+            .list_messages(&session, Default::default())
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn control_communication_bounds_fail_closed_before_main() {
+    let f = Fixture::new();
+    let session = f.session().await;
+    let message = |key: &str| {
+        json!({"session_message": {
+            "session_id": session,
+            "kind": "note",
+            "message": "bounded",
+            "delivery_key": key
+        }})
+    };
+    let result = f
+        .call(
+            "create_goal",
+            json!({"title": "must not exist", "objective": "bound rejection", "idempotency_key": "bounded-main"}),
+            Some(json!({"communication": {
+                "before": [message("one"), message("two")],
+                "after_success": [message("three")]
+            }})),
+        )
+        .await;
+    assert_not_started(&result);
+    assert_eq!(
+        result.output["error_kind"],
+        "control_communication_limit_exceeded"
+    );
+    assert_eq!(
+        f.runtime
+            .sessions
+            .list_messages(&session, Default::default())
+            .unwrap()
+            .len(),
+        0
     );
 }
 

@@ -131,6 +131,121 @@ async fn call_in_window(
     outcome.result.expect("tool result")
 }
 
+async fn call_in_window_with_control(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    window: &ClientWindow,
+    tool_name: &str,
+    arguments: Value,
+    control: Value,
+) -> ToolResult {
+    let outcome = runtime
+        .call_tool_with_invocation_metadata(
+            ToolCallRequest {
+                tool_name: tool_name.to_string(),
+                arguments,
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: None,
+                auth: Some(auth),
+                window: Some(window),
+                record_oauth_scope_denials: false,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+            ToolInvocationMetadata {
+                control: Some(serde_json::from_value(control).unwrap()),
+                ..Default::default()
+            },
+            ToolProtocolCapabilities {
+                control_sidecars: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(outcome.error_status.is_none(), "{:?}", outcome.error_status);
+    outcome.result.unwrap()
+}
+
+#[tokio::test]
+async fn control_communication_peer_message_uses_canonical_replay_path() {
+    let (_temp, db, runtime) = runtime_with_peer_db();
+    let auth = shared_key_auth_context("peer-control-owner");
+    let sender = ClientWindow::for_test("peer-control-sender");
+    let recipient = ClientWindow::for_test("peer-control-recipient");
+    establish_peer_route(
+        &db,
+        &runtime,
+        &auth,
+        &sender,
+        &recipient,
+        "agent:special:source-project",
+        "read_files",
+        chrono::Utc::now().timestamp_millis() - 1_000,
+    );
+    let control = json!({"communication": {"before": [{"peer_message": {
+        "peer_id": recipient.peer_id(),
+        "kind": "progress",
+        "message": "parser review complete",
+        "tags": ["parser"],
+        "delivery_key": "parser-review-complete"
+    }}]}});
+    let first = call_in_window_with_control(
+        &runtime,
+        &auth,
+        &sender,
+        "runtime_status",
+        json!({"compact": true}),
+        control.clone(),
+    )
+    .await;
+    assert!(first.success, "{:?}", first.output);
+    let projection = &first.output["control"]["communication"]["before"][0];
+    assert_eq!(projection["success"], true);
+    assert_eq!(projection["state_changed"], true);
+    let message_id = projection["message_id"].as_str().unwrap().to_string();
+
+    let replay = call_in_window_with_control(
+        &runtime,
+        &auth,
+        &sender,
+        "runtime_status",
+        json!({"compact": true}),
+        control,
+    )
+    .await;
+    let replay = &replay.output["control"]["communication"]["before"][0];
+    assert_eq!(replay["message_id"], message_id);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["state_changed"], false);
+
+    let standalone = call_in_window(
+        &runtime,
+        &auth,
+        &sender,
+        "post_peer_message",
+        json!({
+            "peer_id": recipient.peer_id(),
+            "kind": "progress",
+            "message": "parser review complete",
+            "tags": ["parser"],
+            "delivery_key": "parser-review-complete"
+        }),
+        ToolInvocationMetadata::default(),
+    )
+    .await;
+    assert!(standalone.success);
+    assert_eq!(standalone.output["message_id"], message_id);
+    assert_eq!(standalone.output["replayed"], true);
+    let count: i64 = db
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM window_peer_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
 #[tokio::test]
 async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
     let (_temp, _db, runtime) = runtime_with_peer_db();

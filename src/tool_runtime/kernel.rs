@@ -725,6 +725,7 @@ impl ToolRuntime {
                 &mut result,
                 &self.sessions,
                 session_id,
+                "recording_session",
                 outer_ack_observation
                     .as_ref()
                     .expect("authorized outer recorder must have ACK observation"),
@@ -857,6 +858,7 @@ impl ToolRuntime {
                     &mut result,
                     &self.sessions,
                     session_id,
+                    "recording_session",
                     outer_ack_observation
                         .as_ref()
                         .expect("authorized outer recorder must have ACK observation"),
@@ -946,15 +948,19 @@ impl ToolRuntime {
                 relation: super::window_activity::WorkflowSessionCorrelationRelation::Recording,
             });
         }
-        if result.success && context.session_id.is_none() {
-            correlation.recorder_gap_session_id = self
-                .workflow_recording_gap_candidate(
-                    &request.tool_name,
-                    context.window,
-                    context.auth,
-                    &correlation,
-                )
-                .await;
+        let window_attention_session_id = if context.session_id.is_none() {
+            self.workflow_window_affinity_candidate(
+                &request.tool_name,
+                context.window,
+                context.auth,
+                &correlation,
+            )
+            .await
+        } else {
+            None
+        };
+        if result.success {
+            correlation.recorder_gap_session_id = window_attention_session_id.clone();
         }
         if let Some(start) = session_event.as_mut() {
             if let Some(permission) =
@@ -980,9 +986,31 @@ impl ToolRuntime {
                 &mut result,
                 &self.sessions,
                 session_id,
+                "recording_session",
                 outer_ack_observation
                     .as_ref()
                     .expect("authorized outer recorder must have ACK observation"),
+                recorder_ack_requested,
+            );
+        } else if let Some(session_id) = window_attention_session_id
+            .as_deref()
+            .filter(|_| result.output.get("session_attention").is_none())
+        {
+            // Window affinity is correlation evidence only. It may locate one
+            // authorized active Session message board for request-scoped ACK and
+            // delivery, but never becomes recorder, business input, execution
+            // context, or durable resolution authority.
+            let ack = session_context::observe_session_attention_acks(
+                &self.sessions,
+                session_id,
+                &recorder_metadata.ack_session_message_ids,
+            );
+            session_context::add_session_attention_projection(
+                &mut result,
+                &self.sessions,
+                session_id,
+                "window_affinity",
+                &ack,
                 recorder_ack_requested,
             );
         }
@@ -1074,7 +1102,7 @@ impl ToolRuntime {
         }
     }
 
-    async fn workflow_recording_gap_candidate(
+    async fn workflow_window_affinity_candidate(
         &self,
         tool_name: &str,
         window: Option<&crate::client_window::ClientWindow>,

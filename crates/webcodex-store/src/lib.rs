@@ -107,8 +107,9 @@ pub use self::memory::{
 };
 pub use self::oauth::RotateResult;
 pub use self::peer_collaboration::{
-    NewPeerMessage, PeerAttentionBatch, PeerMessageRecord, PeerProjectionRollback,
-    RecentProjectPeerRecord, MAX_PEER_DISCOVERY_LIMIT, MAX_PEER_MESSAGE_LIMIT,
+    NewPeerMessage, PeerAttentionBatch, PeerMessageDelivery, PeerMessageDeliveryOutcome,
+    PeerMessageRecord, PeerProjectionRollback, RecentProjectPeerRecord, MAX_PEER_DISCOVERY_LIMIT,
+    MAX_PEER_MESSAGE_LIMIT,
 };
 pub use self::project_reference::{ProjectReferenceRecord, ProjectReferenceStoreError};
 pub use self::server_instance::ServerInstanceGuard;

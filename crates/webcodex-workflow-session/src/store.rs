@@ -3,6 +3,7 @@
 //! All durable session-map mutations flow through `SessionStoreInner` helpers.
 //! Callers outside this module use `SessionStore` methods only.
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
@@ -44,14 +45,15 @@ use super::model::{
     SessionCloseError, SessionCloseOutcome, SessionCounts, SessionCreateOptions, SessionEvent,
     SessionExecutionContext, SessionExecutionContextUpdateError,
     SessionExecutionContextUpdateOutcome, SessionGuardDenial, SessionGuards, SessionLifecycle,
-    SessionLifecycleDenial, SessionMessage, SessionMessageClosureKind, SessionMessageError,
-    SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
-    StoredSession, ToolCallExpectation, ToolCallRecorderMetadata, ToolCallStart,
-    ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
+    SessionLifecycleDenial, SessionMessage, SessionMessageClosureKind, SessionMessageDelivery,
+    SessionMessageDeliveryOutcome, SessionMessageDeliveryReplay, SessionMessageError,
+    SessionMessagePriority, SessionMessageStatus, SessionRecord, SessionStoreStatus,
+    SessionSummary, SessionTransport, StoredSession, ToolCallExpectation, ToolCallRecorderMetadata,
+    ToolCallStart, ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
     DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
     DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
-    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX,
-    SESSION_LEDGER_VERSION,
+    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_DELIVERY_KEY_CHARS, MAX_SUMMARY_LIMIT,
+    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -515,6 +517,7 @@ impl SessionStore {
                 created_at: now,
                 updated_at: now,
                 messages: VecDeque::new(),
+                message_delivery_replays: Default::default(),
                 events: VecDeque::new(),
                 events_observed: 0,
                 git_baseline_tree: None,
@@ -778,6 +781,7 @@ impl SessionStore {
                     created_at: now,
                     updated_at: now,
                     messages: VecDeque::new(),
+                    message_delivery_replays: Default::default(),
                     events: VecDeque::from([Arc::new(event)]),
                     events_observed: 1,
                     git_baseline_tree,
@@ -2645,6 +2649,59 @@ fn summarize_record(
     }
 }
 
+fn session_message_delivery_identity(
+    delivery: &SessionMessageDelivery,
+    kind: super::model::SessionMessageKind,
+    message: &str,
+    tags: &[String],
+    reply_to: Option<&str>,
+    priority: SessionMessagePriority,
+    requires_ack: bool,
+) -> Result<(String, String), SessionMessageError> {
+    if delivery.sender_scope.len() != 64
+        || !delivery
+            .sender_scope
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(SessionMessageError::InvalidInput(
+            "message delivery sender scope is unavailable".to_string(),
+        ));
+    }
+    let delivery_key = delivery.delivery_key.trim();
+    if delivery_key.is_empty() || delivery_key.chars().count() > MAX_MESSAGE_DELIVERY_KEY_CHARS {
+        return Err(SessionMessageError::InvalidInput(format!(
+            "delivery_key must contain 1..={MAX_MESSAGE_DELIVERY_KEY_CHARS} characters"
+        )));
+    }
+    let mut key_hasher = Sha256::new();
+    key_hasher.update(b"webcodex.session-message-delivery-key.v1\0");
+    key_hasher.update(delivery_key.as_bytes());
+    let scope_key = format!("{}:{:x}", delivery.sender_scope, key_hasher.finalize());
+
+    fn hash_field(hasher: &mut Sha256, value: &[u8]) {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value);
+    }
+    let mut payload = Sha256::new();
+    payload.update(b"webcodex.session-message-delivery-payload.v1\0");
+    hash_field(&mut payload, kind.as_str().as_bytes());
+    hash_field(&mut payload, message.as_bytes());
+    payload.update((tags.len() as u64).to_be_bytes());
+    for tag in tags {
+        hash_field(&mut payload, tag.as_bytes());
+    }
+    hash_field(&mut payload, reply_to.unwrap_or_default().as_bytes());
+    let priority = match priority {
+        SessionMessagePriority::Low => "low",
+        SessionMessagePriority::Normal => "normal",
+        SessionMessagePriority::High => "high",
+    };
+    hash_field(&mut payload, priority.as_bytes());
+    payload.update([u8::from(requires_ack)]);
+    Ok((scope_key, format!("{:x}", payload.finalize())))
+}
+
 impl SessionStoreInner {
     // --- create / lifecycle ---
 
@@ -2733,7 +2790,8 @@ impl SessionStoreInner {
         &mut self,
         input: PostSessionMessageInput,
         requires_ack: bool,
-    ) -> Result<(SessionMessage, bool), SessionMessageError> {
+        delivery: Option<SessionMessageDelivery>,
+    ) -> Result<SessionMessageDeliveryOutcome, SessionMessageError> {
         self.touch(&input.session_id);
         let Some(stored) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
@@ -2744,7 +2802,7 @@ impl SessionStoreInner {
         }
         let record = stored
             .hot_mut()
-            .expect("active session message mutation must stay hot");
+            .expect("active touched session message mutation must stay hot");
         let message = validate_message_text(input.message)?;
         let tags = validate_message_tags(input.tags)?;
         if let Some(reply_to) = input.reply_to.as_deref() {
@@ -2754,6 +2812,39 @@ impl SessionStoreInner {
                 .any(|message| message.message_id == reply_to);
             if !found {
                 return Err(SessionMessageError::UnknownMessage);
+            }
+        }
+        let delivery_identity = delivery
+            .as_ref()
+            .map(|delivery| {
+                session_message_delivery_identity(
+                    delivery,
+                    input.kind,
+                    &message,
+                    &tags,
+                    input.reply_to.as_deref(),
+                    input.priority,
+                    requires_ack,
+                )
+            })
+            .transpose()?;
+        if let Some((scope_key, payload_fingerprint)) = delivery_identity.as_ref() {
+            if let Some(replay) = record.message_delivery_replays.get(scope_key) {
+                if replay.payload_fingerprint != *payload_fingerprint {
+                    return Err(SessionMessageError::DeliveryKeyConflict);
+                }
+                let Some(message) = record
+                    .messages
+                    .iter()
+                    .find(|message| message.message_id == replay.message_id)
+                else {
+                    return Err(SessionMessageError::DeliveryKeyConflict);
+                };
+                return Ok(SessionMessageDeliveryOutcome {
+                    message: message.as_ref().clone(),
+                    replayed: true,
+                    state_changed: false,
+                });
             }
         }
         let now = now_ts();
@@ -2786,12 +2877,28 @@ impl SessionStoreInner {
         record
             .message_observation_revisions
             .insert(message.message_id.clone(), revision);
+        if let Some((scope_key, payload_fingerprint)) = delivery_identity {
+            record.message_delivery_replays.insert(
+                scope_key,
+                SessionMessageDeliveryReplay {
+                    payload_fingerprint,
+                    message_id: message.message_id.clone(),
+                },
+            );
+        }
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             if let Some(evicted) = record.messages.pop_front() {
+                record
+                    .message_delivery_replays
+                    .retain(|_, replay| replay.message_id != evicted.message_id);
                 Self::note_evicted_message_observation(record, evicted.as_ref());
             }
         }
-        Ok((message, true))
+        Ok(SessionMessageDeliveryOutcome {
+            message,
+            replayed: false,
+            state_changed: true,
+        })
     }
 
     pub(super) fn observe_message_acks(

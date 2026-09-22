@@ -472,6 +472,137 @@ async fn observe_session_messages_duplicate_persisted_positive_revisions_fail_cl
     assert_eq!(delta.messages[0].message_id, after_restore.message_id);
 }
 
+#[test]
+fn session_message_delivery_key_replays_conflicts_and_survives_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let ledger = temp.path().join("session-message-delivery.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(None, Some("delivery replay".to_string()));
+    let input = |body: &str| PostSessionMessageInput {
+        session_id: session.session_id.clone(),
+        kind: SessionMessageKind::Progress,
+        message: body.to_string(),
+        tags: vec!["runtime".to_string()],
+        reply_to: None,
+        priority: SessionMessagePriority::Normal,
+    };
+    let delivery = || SessionMessageDelivery {
+        sender_scope: "a".repeat(64),
+        delivery_key: "stable-delivery".to_string(),
+    };
+
+    let first = store
+        .post_message_with_ack_and_delivery(
+            input("parser review complete"),
+            false,
+            Some(delivery()),
+        )
+        .unwrap();
+    assert!(!first.replayed);
+    assert!(first.state_changed);
+    let replay = store
+        .post_message_with_ack_and_delivery(
+            input("parser review complete"),
+            false,
+            Some(delivery()),
+        )
+        .unwrap();
+    assert_eq!(replay.message.message_id, first.message.message_id);
+    assert!(replay.replayed);
+    assert!(!replay.state_changed);
+    assert_eq!(
+        store
+            .list_messages(&session.session_id, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(matches!(
+        store.post_message_with_ack_and_delivery(
+            input("different payload"),
+            false,
+            Some(delivery())
+        ),
+        Err(SessionMessageError::DeliveryKeyConflict)
+    ));
+
+    store.flush_persistence();
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let replay_after_restart = restored
+        .post_message_with_ack_and_delivery(
+            input("parser review complete"),
+            false,
+            Some(delivery()),
+        )
+        .unwrap();
+    assert_eq!(
+        replay_after_restart.message.message_id,
+        first.message.message_id
+    );
+    assert!(replay_after_restart.replayed);
+    assert!(!replay_after_restart.state_changed);
+    assert_eq!(
+        restored
+            .list_messages(&session.session_id, Default::default())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn session_message_delivery_retry_reestablishes_durable_barrier_after_persist_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let ledger_dir = root.path().join("ledger");
+    std::fs::create_dir_all(&ledger_dir).unwrap();
+    let ledger = ledger_dir.join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(None, Some("delivery persistence retry".to_string()));
+    store.flush_persistence();
+
+    let input = || PostSessionMessageInput {
+        session_id: session.session_id.clone(),
+        kind: SessionMessageKind::Progress,
+        message: "durable retry".to_string(),
+        tags: vec!["runtime".to_string()],
+        reply_to: None,
+        priority: SessionMessagePriority::Normal,
+    };
+    let delivery = || SessionMessageDelivery {
+        sender_scope: "b".repeat(64),
+        delivery_key: "persist-retry".to_string(),
+    };
+
+    std::fs::remove_dir_all(&ledger_dir).unwrap();
+    std::fs::write(&ledger_dir, b"block directory recreation").unwrap();
+    assert!(matches!(
+        store.post_message_with_ack_and_delivery(input(), false, Some(delivery())),
+        Err(SessionMessageError::DeliveryPersistenceUncertain)
+    ));
+    let in_memory = store
+        .list_messages(&session.session_id, Default::default())
+        .unwrap();
+    assert_eq!(in_memory.len(), 1);
+    let message_id = in_memory[0].message_id.clone();
+
+    std::fs::remove_file(&ledger_dir).unwrap();
+    std::fs::create_dir_all(&ledger_dir).unwrap();
+    let replay = store
+        .post_message_with_ack_and_delivery(input(), false, Some(delivery()))
+        .unwrap();
+    assert!(replay.replayed);
+    assert!(!replay.state_changed);
+    assert_eq!(replay.message.message_id, message_id);
+
+    drop(store);
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let restored_messages = restored
+        .list_messages(&session.session_id, Default::default())
+        .unwrap();
+    assert_eq!(restored_messages.len(), 1);
+    assert_eq!(restored_messages[0].message_id, message_id);
+}
+
 #[tokio::test]
 async fn observe_session_messages_unexplained_persisted_revision_gap_reports_history_loss() {
     let dir = tempfile::tempdir().unwrap();

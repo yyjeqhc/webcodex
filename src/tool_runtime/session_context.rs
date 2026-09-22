@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch";
-const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
+pub(crate) const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
 const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
 
 #[derive(Debug, Clone)]
@@ -164,6 +164,31 @@ pub(crate) fn session_message_error_result(
                 "state_changed": false,
             }),
         ),
+        sessions::SessionMessageError::DeliveryKeyConflict => ToolResult::err_with_output(
+            "delivery_key_conflict",
+            json!({
+                "error_kind": "delivery_key_conflict",
+                "failure_kind": "conflict",
+                "session_id": session_id,
+                "message_id": message_id,
+                "state_changed": false,
+            }),
+        )
+        .with_recovery(RecoveryKind::FixInput),
+        sessions::SessionMessageError::DeliveryPersistenceUncertain => {
+            ToolResult::err_with_output(
+                "message_delivery_persistence_uncertain",
+                json!({
+                    "error_kind": "message_delivery_persistence_uncertain",
+                    "failure_kind": "outcome_unknown",
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "state_changed": true,
+                    "retry_same_delivery": true,
+                }),
+            )
+            .with_recovery(RecoveryKind::RetrySame)
+        }
         sessions::SessionMessageError::AlreadyCompleted {
             answer_message_id,
             completion_id,
@@ -351,6 +376,7 @@ pub(crate) fn add_session_attention_projection(
     result: &mut ToolResult,
     sessions: &sessions::SessionStore,
     session_id: &str,
+    source: &str,
     ack: &sessions::SessionAckObservation,
     ack_requested: bool,
 ) {
@@ -408,6 +434,8 @@ pub(crate) fn add_session_attention_projection(
     output.insert(
         "session_attention".to_string(),
         json!({
+            "session_id": session_id,
+            "source": source,
             "requires_ack": attention.total_open_requires_ack > 0,
             "messages": messages,
             "omitted_count": omitted_count,
@@ -433,6 +461,7 @@ pub(crate) fn add_session_attention(
         result,
         sessions,
         session_id,
+        "recording_session",
         &ack,
         !ack_message_ids.is_empty(),
     );

@@ -1368,6 +1368,7 @@ impl ToolRuntime {
                     result,
                     &self.sessions,
                     session_id,
+                    "business_session",
                     ack,
                     ack_requested,
                 );
@@ -1981,6 +1982,7 @@ impl ToolRuntime {
                 tags,
                 priority,
                 requires_ack,
+                delivery_key,
             } => self.post_peer_message_tool(
                 peer_id,
                 kind,
@@ -1988,6 +1990,7 @@ impl ToolRuntime {
                 tags,
                 priority,
                 requires_ack,
+                delivery_key,
                 auth,
                 window,
                 trusted_recording_session_id,
@@ -2006,7 +2009,14 @@ impl ToolRuntime {
             | ToolCall::ResolveSessionMessage { .. }
             | ToolCall::CompleteSessionMessage { .. }
             | ToolCall::SessionDiscussionSummary { .. }) => {
-                self.dispatch_session_tool(call, auth, transport).await
+                self.dispatch_session_tool(
+                    call,
+                    auth,
+                    transport,
+                    window,
+                    trusted_recording_session_id,
+                )
+                .await
             }
 
             call @ (ToolCall::WorkOnProject { .. } | ToolCall::FinishCodingTask { .. }) => {

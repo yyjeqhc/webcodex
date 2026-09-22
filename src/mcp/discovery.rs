@@ -45,8 +45,8 @@ pub(super) fn compact_tool(tool: &mut Value) {
         // session_id keeps its own canonical-derived copy and requiredness.
         // Nested IDs/resolution have no description; keep their type hints here.
         for (pointer, description) in [
-            ("/properties/recording_session_id", "Recorder wc_sess_* provenance only; never authority or a business Session target."),
-            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* IDs retained in model context; repeat while retained; never resolves or authorizes."),
+            ("/properties/recording_session_id", "Optional explicit wc_sess_* recorder for one exact Workflow Session; never execution/business authority. If omitted, authorized same-Window affinity may still deliver and ACK Session collaboration without recording."),
+            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* IDs retained in model context; Session ACK uses explicit recorder or authorized same-Window affinity; never resolves or authorizes."),
             ("/properties/session_message_resolution", "Resolve one handled non-todo recorder message by exact wc_msg_*; ACK separately if required. Independent of call success."),
             ("/properties/context_request", "Post-result sidecar keys; no authority: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
             ("/properties/context_request/items", "Context key; unsupported keys are nonfatal."),

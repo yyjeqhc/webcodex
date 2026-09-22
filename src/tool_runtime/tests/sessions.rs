@@ -23,6 +23,7 @@ async fn post_session_message(
             reply_to: None,
             priority,
             requires_ack: false,
+            delivery_key: None,
         })
         .await;
     assert!(result.success, "{:?}", result.error);
@@ -750,6 +751,7 @@ async fn closed_session_blocks_write_tools_and_message_post() {
             reply_to: None,
             priority: SessionMessagePriority::Normal,
             requires_ack: false,
+            delivery_key: None,
         })
         .await;
     assert!(!post.success);

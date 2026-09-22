@@ -1,4 +1,4 @@
-use super::{sessions, ToolResult, ToolRuntime};
+use super::{sessions, RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::client_window::{peer_id_from_window_key, peer_window_key_prefix, ClientWindow};
 use serde_json::{json, Value};
@@ -55,6 +55,7 @@ impl ToolRuntime {
         tags: Vec<String>,
         priority: sessions::SessionMessagePriority,
         requires_ack: bool,
+        delivery_key: Option<String>,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
         trusted_recording_session_id: Option<&str>,
@@ -63,6 +64,21 @@ impl ToolRuntime {
         let (message, tags) = match normalize_peer_message(message, tags) {
             Ok(normalized) => normalized,
             Err(message) => return peer_error("invalid_peer_message", &message),
+        };
+        let delivery = match delivery_key {
+            Some(delivery_key) => {
+                let delivery_key = delivery_key.trim().to_string();
+                if delivery_key.is_empty()
+                    || delivery_key.chars().count() > sessions::MAX_MESSAGE_DELIVERY_KEY_CHARS
+                {
+                    return peer_error(
+                        "invalid_delivery_key",
+                        "delivery_key must contain 1..=128 characters",
+                    );
+                }
+                Some(webcodex_store::PeerMessageDelivery { delivery_key })
+            }
+            None => None,
         };
         let Some(sender_window) = window else {
             return peer_error(
@@ -133,14 +149,33 @@ impl ToolRuntime {
             sender_project: trusted_recording_session_project.map(str::to_string),
             created_at_ms: chrono::Utc::now().timestamp_millis(),
         };
-        match db.post_peer_message(input) {
-            Ok(message) => ToolResult::ok(json!({
+        let replay_safe_delivery = delivery.is_some();
+        match db.post_peer_message_with_delivery(input, delivery) {
+            Ok(webcodex_store::PeerMessageDeliveryOutcome::Delivered {
+                message,
+                replayed,
+                state_changed,
+            }) => ToolResult::ok(json!({
                 "success": true,
                 "message_id": message.message_id,
                 "sender_peer_id": sender_peer_id,
                 "recipient_peer_id": peer_id,
                 "requires_ack": message.requires_ack,
+                "replayed": replayed,
+                "state_changed": state_changed,
             })),
+            Ok(webcodex_store::PeerMessageDeliveryOutcome::DeliveryKeyConflict) => {
+                ToolResult::err_with_output(
+                    "delivery_key_conflict",
+                    json!({
+                        "error_kind": "delivery_key_conflict",
+                        "failure_kind": "conflict",
+                        "dispatch_certainty": "not_started",
+                        "state_changed": false,
+                    }),
+                )
+            }
+            Err(_) if replay_safe_delivery => peer_delivery_persistence_error(),
             Err(_) => peer_error(
                 "peer_collaboration_unavailable",
                 "peer message persistence failed",
@@ -364,6 +399,19 @@ fn priority_name(priority: sessions::SessionMessagePriority) -> &'static str {
     }
 }
 
+fn peer_delivery_persistence_error() -> ToolResult {
+    ToolResult::err_with_output(
+        "peer message persistence outcome is unknown",
+        json!({
+            "error_kind": "peer_message_persistence_uncertain",
+            "failure_kind": "outcome_unknown",
+            "state_changed": null,
+            "retry_same_delivery": true,
+        }),
+    )
+    .with_recovery(RecoveryKind::RetrySame)
+}
+
 fn peer_error(kind: &str, message: &str) -> ToolResult {
     ToolResult::err_with_output(
         message,
@@ -372,6 +420,17 @@ fn peer_error(kind: &str, message: &str) -> ToolResult {
             "dispatch_certainty": "not_started",
         }),
     )
+}
+
+#[cfg(test)]
+#[test]
+fn keyed_peer_persistence_error_projects_outcome_unknown_retry_same() {
+    let result = peer_delivery_persistence_error();
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert!(result.output["state_changed"].is_null());
+    assert_eq!(result.output["retry_same_delivery"], true);
+    assert_eq!(result.output["recovery_kind"], "retry_same");
 }
 
 #[cfg(test)]

@@ -9,9 +9,12 @@ use super::kernel::{
 use super::{ToolCall, ToolResult, ToolRuntime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use webcodex_core::workflow_session_contract::{SessionExecutionContext, SessionMessagePriority};
+use webcodex_core::workflow_session_contract::{
+    SessionExecutionContext, SessionMessageKind, SessionMessagePriority,
+};
 
 pub(crate) const CONTROL_FIELD: &str = "_control";
+pub(crate) const MAX_CONTROL_COMMUNICATION_MESSAGES: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,7 +22,75 @@ pub(crate) struct ControlSidecars {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) before: Option<BeforeControl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) communication: Option<CommunicationControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) after_success: Option<AfterSuccessControl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct CommunicationControl {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) before: Vec<CommunicationMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) after_success: Vec<CommunicationMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationControlWire {
+    #[serde(default)]
+    before: Vec<CommunicationMessage>,
+    #[serde(default)]
+    after_success: Vec<CommunicationMessage>,
+}
+
+impl<'de> Deserialize<'de> for CommunicationControl {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = CommunicationControlWire::deserialize(deserializer)?;
+        if wire.before.is_empty() && wire.after_success.is_empty() {
+            return Err(serde::de::Error::custom(
+                "communication requires at least one before or after_success message",
+            ));
+        }
+        Ok(Self {
+            before: wire.before,
+            after_success: wire.after_success,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum CommunicationMessage {
+    SessionMessage {
+        session_id: String,
+        kind: SessionMessageKind,
+        message: String,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        reply_to: Option<String>,
+        #[serde(default)]
+        priority: SessionMessagePriority,
+        #[serde(default)]
+        requires_ack: bool,
+        delivery_key: String,
+    },
+    PeerMessage {
+        peer_id: String,
+        kind: SessionMessageKind,
+        message: String,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        priority: SessionMessagePriority,
+        #[serde(default)]
+        requires_ack: bool,
+        delivery_key: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +178,15 @@ impl AfterSuccessControl {
     }
 }
 
+impl CommunicationMessage {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::SessionMessage { .. } => "session_message",
+            Self::PeerMessage { .. } => "peer_message",
+        }
+    }
+}
+
 fn canonical_tool(kind: &str) -> &'static str {
     match kind {
         "goal_progress" => "checkpoint_goal",
@@ -116,6 +196,8 @@ fn canonical_tool(kind: &str) -> &'static str {
         "goal_completion" => "update_goal",
         "session_close" => "close_session",
         "todo_completion" => "complete_session_message",
+        "session_message" => "post_session_message",
+        "peer_message" => "post_peer_message",
         _ => unreachable!("closed control kind"),
     }
 }
@@ -152,7 +234,7 @@ pub(crate) fn strip_control_sidecars(
     // Do not interpolate serde errors: unknown fields/variants can contain
     // private continuation material supplied by a malformed caller.
     serde_json::from_value(value).map(Some).map_err(|_| {
-        "_control requires closed before/after_success objects, each with exactly one supported mutation"
+        "_control requires closed before/communication/after_success objects with bounded canonical operations"
     })
 }
 
@@ -176,10 +258,44 @@ fn phase_schema(kinds: &[&str]) -> Value {
                 .unwrap()
                 .retain(|field| fields.contains(&field.as_str().unwrap()));
         }
+        if matches!(*kind, "session_message" | "peer_message") {
+            let required = schema["required"].as_array_mut().unwrap();
+            if !required.iter().any(|field| field == "delivery_key") {
+                required.push(json!("delivery_key"));
+            }
+        }
         properties.insert((*kind).to_string(), schema);
     }
     json!({"type": "object", "additionalProperties": false,
         "minProperties": 1, "maxProperties": 1, "properties": properties})
+}
+
+fn communication_schema() -> Value {
+    let phase = json!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": MAX_CONTROL_COMMUNICATION_MESSAGES,
+        "items": phase_schema(&["session_message", "peer_message"]),
+    });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+            "before": phase.clone(),
+            "after_success": phase,
+        },
+        "allOf": [
+            {
+                "if": {"required": ["before"], "properties": {"before": {"minItems": 2}}},
+                "then": {"properties": {"after_success": {"maxItems": 0}}}
+            },
+            {
+                "if": {"required": ["after_success"], "properties": {"after_success": {"minItems": 2}}},
+                "then": {"properties": {"before": {"maxItems": 0}}}
+            }
+        ]
+    })
 }
 
 /// Project canonical payload schemas; no new per-tool business parameters.
@@ -191,9 +307,10 @@ pub(crate) fn input_schema(tool: &str) -> Value {
     };
     json!({
         "type": "object", "additionalProperties": false,
-        "description": "Optional piggyback optimization; omit without an explicit transition. At most one mutation per phase, each with its canonical tool authority. before records facts already true, never the predicted result of this call; failure proves main definitely_not_started. after_success runs only after known success (and non-blocking finish); failure preserves main success: recover only that canonical mutation, never retry main blindly. Goal/session close require finish_coding_task. session_context_update currently fails closed: no safe canonical CAS/replay contract. Standalone tools remain valid. No automatic transitions or lease renewal.",
+        "description": "Optional piggyback optimization; omit without an explicit transition or communication. At most one mutation per phase, independently plus at most two replay-safe communication messages total. before records facts already true; mutation failure proves main definitely_not_started, while communication failure is reported independently. after_success runs only after known success. Goal/session close require finish_coding_task. session_context_update currently fails closed. Standalone tools remain valid.",
         "properties": {
             "before": phase_schema(&["goal_progress", "wake_consume", "attempt_heartbeat", "session_context_update"]),
+            "communication": communication_schema(),
             "after_success": phase_schema(&after)
         }
     })
@@ -202,13 +319,14 @@ pub(crate) fn input_schema(tool: &str) -> Value {
 pub(crate) fn output_schema() -> Value {
     let phase = json!({"type": "object", "additionalProperties": false,
         "properties": {
-            "kind": {"type": "string", "enum": ["goal_progress", "wake_consume", "attempt_heartbeat", "session_context_update", "goal_completion", "session_close", "todo_completion"]},
+            "kind": {"type": "string", "enum": ["goal_progress", "wake_consume", "attempt_heartbeat", "session_context_update", "goal_completion", "session_close", "todo_completion", "session_message", "peer_message"]},
             "success": {"type": "boolean"},
             "execution_state": {"type": "string", "enum": ["succeeded", "failed", "definitely_not_started", "outcome_unknown"]},
             "state_changed": {"type": ["boolean", "null"]},
             "replayed": {"type": "boolean"},
             "revision": {"type": "integer"},
-            "error_kind": {"type": "string", "maxLength": 96}
+            "error_kind": {"type": "string", "maxLength": 96},
+            "message_id": {"type": "string", "maxLength": 160}
         }, "required": ["kind", "success", "execution_state", "state_changed", "replayed"]});
     json!({"type": "object", "additionalProperties": false,
         "description": "Per-phase truth. Top-level success continues to describe main only. After a post failure, recover the canonical mutation separately; no cross-domain transaction or main-call replay guarantee.",
@@ -218,7 +336,13 @@ pub(crate) fn output_schema() -> Value {
                 "execution_state": {"type": "string", "enum": ["succeeded", "failed", "definitely_not_started", "started", "outcome_unknown"]},
                 "state_changed": {"type": ["boolean", "null"]}
             }, "required": ["success", "execution_state", "state_changed"]},
-            "before": phase.clone(), "after_success": phase
+            "before": phase.clone(),
+            "communication": {"type": "object", "additionalProperties": false,
+                "properties": {
+                    "before": {"type": "array", "maxItems": MAX_CONTROL_COMMUNICATION_MESSAGES, "items": phase.clone()},
+                    "after_success": {"type": "array", "maxItems": MAX_CONTROL_COMMUNICATION_MESSAGES, "items": phase.clone()}
+                }},
+            "after_success": phase
         }, "required": ["main"]})
 }
 
@@ -236,6 +360,10 @@ fn request(kind: &str, value: impl Serialize) -> Result<ToolCallRequest, &'stati
         tool_name,
         arguments,
     })
+}
+
+fn communication_request(value: &CommunicationMessage) -> Result<ToolCallRequest, &'static str> {
+    request(value.kind(), value)
 }
 
 fn not_started(kind: &str, reason: &'static str) -> Value {
@@ -266,6 +394,8 @@ fn rejection_result(result: ToolResult) -> ToolCallOutcome {
 pub(crate) struct ControlExecution {
     sidecars: ControlSidecars,
     before: Option<Value>,
+    communication_before: Vec<Value>,
+    communication_after_success: Vec<Value>,
     after_success: Option<Value>,
     pub(crate) main_dispatched: bool,
     main: Option<Value>,
@@ -276,6 +406,8 @@ impl ControlExecution {
         Self {
             sidecars,
             before: None,
+            communication_before: Vec::new(),
+            communication_after_success: Vec::new(),
             after_success: None,
             main_dispatched: false,
             main: None,
@@ -309,6 +441,18 @@ impl ControlExecution {
         {
             return Err(rejection("control_requires_finish_coding_task"));
         }
+        let communication = self.sidecars.communication.as_ref();
+        let communication_count = communication.map_or(0, |communication| {
+            communication.before.len() + communication.after_success.len()
+        });
+        if communication_count > MAX_CONTROL_COMMUNICATION_MESSAGES {
+            return Err(rejection("control_communication_limit_exceeded"));
+        }
+        if communication.is_some_and(|communication| {
+            communication.before.is_empty() && communication.after_success.is_empty()
+        }) {
+            return Err(rejection("control_communication_empty"));
+        }
         let before = self
             .sidecars
             .before
@@ -324,6 +468,18 @@ impl ControlExecution {
         for request in [before, after] {
             let request = request.map_err(rejection)?;
             if let Some(request) = request {
+                if check_runtime_tool_scope(context.auth, &request.tool_name).is_err() {
+                    return Err(rejection("control_insufficient_scope"));
+                }
+            }
+        }
+        if let Some(communication) = communication {
+            for value in communication
+                .before
+                .iter()
+                .chain(&communication.after_success)
+            {
+                let request = communication_request(value).map_err(rejection)?;
                 if check_runtime_tool_scope(context.auth, &request.tool_name).is_err() {
                     return Err(rejection("control_insufficient_scope"));
                 }
@@ -353,6 +509,7 @@ impl ControlExecution {
                 .map_err(|error| rejection_result(error.into_tool_result()))?;
         }
         let Some(value) = &self.sidecars.before else {
+            self.execute_communication_before(runtime, context).await;
             return Ok(());
         };
         let kind = value.kind();
@@ -373,9 +530,34 @@ impl ControlExecution {
         let success = projection["success"] == true;
         self.before = Some(projection);
         if success {
+            self.execute_communication_before(runtime, context).await;
             Ok(())
         } else {
             Err(rejection("control_before_failed"))
+        }
+    }
+
+    async fn execute_communication_before(
+        &mut self,
+        runtime: &ToolRuntime,
+        context: ToolCallContext<'_>,
+    ) {
+        let values = self
+            .sidecars
+            .communication
+            .as_ref()
+            .map(|communication| communication.before.clone())
+            .unwrap_or_default();
+        for value in values {
+            self.communication_before.push(
+                execute(
+                    runtime,
+                    communication_request(&value).expect("prevalidated communication"),
+                    value.kind(),
+                    context,
+                )
+                .await,
+            );
         }
     }
 
@@ -388,10 +570,6 @@ impl ControlExecution {
     ) {
         let state = main_execution_state(result, self.main_dispatched);
         self.main = Some(main_projection(result, self.main_dispatched));
-        let Some(value) = &self.sidecars.after_success else {
-            return;
-        };
-        let kind = value.kind();
         let reason = if !result.success {
             Some("main_failed")
         } else if state != "succeeded" {
@@ -403,17 +581,40 @@ impl ControlExecution {
         } else {
             None
         };
-        self.after_success = Some(if let Some(reason) = reason {
-            not_started(kind, reason)
-        } else {
-            execute(
-                runtime,
-                request(kind, value).expect("prevalidated sidecar"),
-                kind,
-                context,
-            )
-            .await
-        });
+        if let Some(value) = &self.sidecars.after_success {
+            let kind = value.kind();
+            self.after_success = Some(if let Some(reason) = reason {
+                not_started(kind, reason)
+            } else {
+                execute(
+                    runtime,
+                    request(kind, value).expect("prevalidated sidecar"),
+                    kind,
+                    context,
+                )
+                .await
+            });
+        }
+        let values = self
+            .sidecars
+            .communication
+            .as_ref()
+            .map(|communication| communication.after_success.clone())
+            .unwrap_or_default();
+        for value in values {
+            self.communication_after_success
+                .push(if let Some(reason) = reason {
+                    not_started(value.kind(), reason)
+                } else {
+                    execute(
+                        runtime,
+                        communication_request(&value).expect("prevalidated communication"),
+                        value.kind(),
+                        context,
+                    )
+                    .await
+                });
+        }
     }
 
     pub(crate) fn decorate(self, outcome: &mut ToolCallOutcome) {
@@ -444,6 +645,38 @@ impl ControlExecution {
             control["after_success"] = self
                 .after_success
                 .unwrap_or_else(|| not_started(value.kind(), "main_not_started"));
+        }
+        if let Some(communication) = self.sidecars.communication {
+            let mut projection = serde_json::Map::new();
+            if !communication.before.is_empty() {
+                projection.insert(
+                    "before".to_string(),
+                    Value::Array(if self.communication_before.is_empty() {
+                        communication
+                            .before
+                            .iter()
+                            .map(|value| not_started(value.kind(), "request_rejected"))
+                            .collect()
+                    } else {
+                        self.communication_before
+                    }),
+                );
+            }
+            if !communication.after_success.is_empty() {
+                projection.insert(
+                    "after_success".to_string(),
+                    Value::Array(if self.communication_after_success.is_empty() {
+                        communication
+                            .after_success
+                            .iter()
+                            .map(|value| not_started(value.kind(), "main_not_started"))
+                            .collect()
+                    } else {
+                        self.communication_after_success
+                    }),
+                );
+            }
+            control["communication"] = Value::Object(projection);
         }
         if !result.output.is_object() {
             result.output = json!({});
@@ -550,6 +783,8 @@ fn project_result(kind: &str, result: &ToolResult) -> Value {
         });
     let unknown = !result.success
         && (changed.is_none()
+            || output["execution_state"] == "outcome_unknown"
+            || output["failure_kind"] == "outcome_unknown"
             || error_kind.is_some_and(|kind| kind.ends_with("serialization_failed")));
     let mut projection = json!({"kind": kind, "success": result.success,
         "execution_state": if result.success { "succeeded" } else if prestart { "definitely_not_started" } else if unknown { "outcome_unknown" } else { "failed" },
@@ -560,6 +795,12 @@ fn project_result(kind: &str, result: &ToolResult) -> Value {
         .or_else(|| output["current_revision"].as_i64())
     {
         projection["revision"] = json!(revision);
+    }
+    if let Some(message_id) = output["message_id"]
+        .as_str()
+        .filter(|message_id| message_id.len() <= 160 && message_id.starts_with("wc_msg_"))
+    {
+        projection["message_id"] = json!(message_id);
     }
     if !result.success {
         projection["error_kind"] = json!(error_kind.unwrap_or("control_mutation_failed"));
@@ -585,6 +826,17 @@ mod tests {
         assert!(projection["state_changed"].is_null());
         assert!(!projection.to_string().contains("PRIVATE"));
         assert!(projection.to_string().len() < 512);
+        let delivery = ToolResult::err_with_output(
+            "persistence uncertain",
+            json!({
+                "error_kind": "message_delivery_persistence_uncertain",
+                "failure_kind": "outcome_unknown",
+                "state_changed": true,
+            }),
+        );
+        let delivery_projection = project_result("session_message", &delivery);
+        assert_eq!(delivery_projection["execution_state"], "outcome_unknown");
+        assert!(delivery_projection["state_changed"].is_null());
         let schema = output_schema();
         let control = json!({"main": {"success": true, "execution_state": "succeeded", "state_changed": null}, "after_success": projection});
         webcodex_tool_contracts::test_support::validate_schema_instance(&control, &schema).unwrap();

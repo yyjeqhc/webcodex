@@ -98,6 +98,7 @@ impl PersistedSessionRecord {
             updated_at: record.updated_at,
             events,
             messages,
+            message_delivery_replays: record.message_delivery_replays.clone(),
             events_observed: record.events_observed,
             legacy_context_revision: None,
             git_baseline_tree: record.git_baseline_tree.clone(),
@@ -145,6 +146,7 @@ impl PersistedSessionRecord {
                 .iter()
                 .eq(record.materialized_validation_job_ids.iter())
             && self.message_observation_revision == record.message_observation_revision
+            && self.message_delivery_replays == record.message_delivery_replays
             && self.message_observation_floor == record.message_observation_floor
             && self.message_observation_revisions == record.message_observation_revisions
             && self.assignment_history_floors == record.assignment_history_floors
@@ -234,6 +236,16 @@ impl PersistedSessionRecord {
             .iter()
             .map(|message| message.message_id.clone())
             .collect::<HashSet<_>>();
+        let message_delivery_replays = self
+            .message_delivery_replays
+            .into_iter()
+            .filter(|(scope_key, replay)| {
+                is_lower_hex_sha256(scope_key.split_once(':').map_or("", |(scope, _)| scope))
+                    && is_lower_hex_sha256(scope_key.split_once(':').map_or("", |(_, key)| key))
+                    && is_lower_hex_sha256(&replay.payload_fingerprint)
+                    && retained_message_ids.contains(&replay.message_id)
+            })
+            .collect();
         let current_observation_revision = self.message_observation_revision;
         let mut observation_floor = self
             .message_observation_floor
@@ -393,6 +405,7 @@ impl PersistedSessionRecord {
             repository_edit_observed: self.repository_edit_observed,
             materialized_validation_job_ids,
             messages,
+            message_delivery_replays,
             project_instructions: None,
             message_observation_revision: current_observation_revision,
             message_observation_floor: observation_floor,

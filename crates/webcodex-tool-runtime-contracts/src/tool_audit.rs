@@ -5518,6 +5518,7 @@ impl ToolCallAuditProjection for ToolCall {
                 reply_to,
                 priority,
                 requires_ack,
+                delivery_key: _,
             } => serde_json::json!({
                 "session_id": session_id,
                 "kind": kind,
@@ -5535,6 +5536,7 @@ impl ToolCallAuditProjection for ToolCall {
                 tags,
                 priority,
                 requires_ack,
+                delivery_key: _,
             } => serde_json::json!({
                 "peer_id": peer_id,
                 "kind": kind,

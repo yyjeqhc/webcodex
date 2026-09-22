@@ -218,12 +218,6 @@ pub fn observe_job_continuation_schema() -> Value {
                                 "type": "string",
                                 "minLength": 1,
                                 "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
-                            },
-                            "observation_ref": {
-                                "type": "string",
-                                "minLength": 3,
-                                "maxLength": webcodex_core::job_observation::MAX_OBSERVATION_REF_LEN,
-                                "description": "Compact ref from the prior observe_jobs response. Mutually exclusive with job_id and after_observation_token."
                             }
                         },
                         "required": ["job_id"]

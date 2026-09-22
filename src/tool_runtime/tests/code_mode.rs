@@ -252,6 +252,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: None,
+                observation_ref: None,
             }],
             20,
             None,
@@ -289,6 +290,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: None,
+                observation_ref: None,
             }],
             20,
             None,
@@ -561,10 +563,12 @@ async fn e2a_promise_all_validators_handoff_sequentially_then_jobs_remain_indepe
                 ObserveJobsItem {
                     job_id: first_job.clone(),
                     after_observation_token: None,
+                    observation_ref: None,
                 },
                 ObserveJobsItem {
                     job_id: second_job.clone(),
                     after_observation_token: None,
+                    observation_ref: None,
                 },
             ],
             20,
@@ -600,10 +604,12 @@ async fn e2a_promise_all_validators_handoff_sequentially_then_jobs_remain_indepe
                 ObserveJobsItem {
                     job_id: first_job.clone(),
                     after_observation_token: None,
+                    observation_ref: None,
                 },
                 ObserveJobsItem {
                     job_id: second_job.clone(),
                     after_observation_token: None,
+                    observation_ref: None,
                 },
             ],
             20,

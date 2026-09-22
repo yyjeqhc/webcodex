@@ -636,6 +636,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: None,
+                observation_ref: None,
             }],
             40,
             None,

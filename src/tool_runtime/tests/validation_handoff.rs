@@ -680,6 +680,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
+                observation_ref: None,
             }],
             40,
             None,
@@ -920,6 +921,7 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
+                observation_ref: None,
             }],
             40,
             None,
@@ -1204,6 +1206,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
             vec![ObserveJobsItem {
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
+                observation_ref: None,
             }],
             40,
             None,
@@ -1251,6 +1254,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
             vec![ObserveJobsItem {
                 job_id,
                 after_observation_token: Some(observation_token),
+                observation_ref: None,
             }],
             200,
             None,
@@ -1642,6 +1646,7 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
                 items: vec![ObserveJobsItem {
                     job_id: job_id.clone(),
                     after_observation_token: None,
+                    observation_ref: None,
                 }],
                 tail_lines: 40,
                 wait_secs: None,

@@ -627,6 +627,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
                 items: vec![ObserveJobsItem {
                     job_id: job_id.to_string(),
                     after_observation_token: None,
+                    observation_ref: None,
                 }],
                 tail_lines: 40,
                 wait_secs: None,

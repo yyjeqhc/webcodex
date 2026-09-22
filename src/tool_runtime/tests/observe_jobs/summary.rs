@@ -47,6 +47,19 @@ fn validate_result(result: &ToolResult) {
     .unwrap();
 }
 
+fn without_observation_refs(output: &Value) -> Value {
+    let mut normalized = output.clone();
+    let Some(items) = normalized.get_mut("items").and_then(Value::as_array_mut) else {
+        return normalized;
+    };
+    for item in items {
+        if let Some(item) = item.as_object_mut() {
+            item.remove("observation_ref");
+        }
+    }
+    normalized
+}
+
 #[test]
 fn summary_only_is_opt_in_closed_and_audited_without_tokens() {
     for value in [None, Some(json!(false)), Some(json!(true))] {
@@ -217,6 +230,27 @@ fn summary_keeps_failure_unknown_zero_tests_and_unproven_evidence_unchanged() {
 }
 
 #[test]
+fn summary_ref_selector_preserves_original_ref_for_detail_expansion() {
+    let observation = successful_validation("summary-ref-job");
+    let mut result = canonical_batch(vec![canonical_success_item(0, observation)], "immediate", 0);
+    summarize_observe_jobs_result(&mut result, &[item_ref("~j77")], 200);
+
+    let output = &result.output["items"][0]["output"];
+    assert!(output.get("logs_omitted").is_some(), "{output}");
+    let detail = &output["suggested_call"];
+    assert_eq!(detail["tool"], "observe_jobs");
+    assert_eq!(
+        detail["arguments"]["items"][0],
+        json!({"observation_ref": "~j77"})
+    );
+    assert_eq!(detail["arguments"]["summary_only"], false);
+    assert!(detail["arguments"]["items"][0].get("job_id").is_none());
+    ToolCall::from_tool_name("observe_jobs", detail["arguments"].clone()).unwrap();
+    validate_result(&result);
+    validate_result(&compact_projection(&result));
+}
+
+#[test]
 fn summary_retains_reset_truncation_and_nonroutine_lines() {
     let mut observation = successful_validation("reset-summary");
     observation["log_delta_status"] = json!("reset");
@@ -384,8 +418,9 @@ async fn summary_runtime_roundtrip_expands_original_logs_without_reexecution() {
         )
         .await;
     assert_eq!(
-        baseline.output, explicit.output,
-        "omission must preserve the false path exactly"
+        without_observation_refs(&baseline.output),
+        without_observation_refs(&explicit.output),
+        "omission must preserve the false path exactly apart from refreshed compact refs"
     );
     explicit_args["summary_only"] = json!(true);
     let compact = runtime
@@ -411,8 +446,9 @@ async fn summary_runtime_roundtrip_expands_original_logs_without_reexecution() {
         )
         .await;
     assert_eq!(
-        expanded.output, baseline.output,
-        "expansion must reread the same retained log selection"
+        without_observation_refs(&expanded.output),
+        without_observation_refs(&baseline.output),
+        "expansion must reread the same retained log selection apart from refreshed compact refs"
     );
     assert!(
         probe_patch_agent_request(&runtime, client).await.is_none(),

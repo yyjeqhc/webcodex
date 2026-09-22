@@ -93,12 +93,14 @@ impl ObservationRefRegistry {
     /// principal.  Returns `None` when the ref is unknown, expired (evicted),
     /// or belongs to a different principal.
     pub fn resolve(&self, principal_id: &str, ref_str: &str) -> Option<(String, String)> {
-        let entries = self.entries.lock().expect("observation ref registry lock");
-        entries
+        let mut entries = self.entries.lock().expect("observation ref registry lock");
+        let index = entries
             .iter()
-            .rev()
-            .find(|e| e.ref_str == ref_str && e.principal_id == principal_id)
-            .map(|e| (e.job_id.clone(), e.observation_token.clone()))
+            .position(|entry| entry.ref_str == ref_str && entry.principal_id == principal_id)?;
+        let entry = entries.remove(index)?;
+        let resolved = (entry.job_id.clone(), entry.observation_token.clone());
+        entries.push_back(entry);
+        Some(resolved)
     }
 
     /// Return true iff the string looks like a well-formed observation ref
@@ -398,6 +400,55 @@ impl fmt::Display for JobObservationTokenError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observation_ref_registry_is_principal_scoped_and_lru_bounded() {
+        let registry = ObservationRefRegistry::default();
+        let keep = registry.mint("principal:a", "job-keep", "token-keep");
+        assert_eq!(
+            registry.resolve("principal:a", &keep),
+            Some(("job-keep".to_string(), "token-keep".to_string()))
+        );
+        assert_eq!(registry.resolve("principal:b", &keep), None);
+
+        let mut first_other = None;
+        for index in 0..(OBSERVATION_REF_REGISTRY_CAPACITY - 1) {
+            let reference = registry.mint(
+                "principal:a",
+                format!("job-{index}"),
+                format!("token-{index}"),
+            );
+            first_other.get_or_insert(reference);
+        }
+
+        // Refreshing the oldest live ref must move it to the MRU end.
+        assert!(registry.resolve("principal:a", &keep).is_some());
+        registry.mint("principal:a", "job-extra", "token-extra");
+
+        assert!(
+            registry.resolve("principal:a", &keep).is_some(),
+            "recently resolved ref must survive LRU eviction"
+        );
+        assert_eq!(
+            registry.resolve("principal:a", first_other.as_deref().unwrap()),
+            None,
+            "least-recently-used ref must be evicted at capacity"
+        );
+    }
+
+    #[test]
+    fn observation_ref_syntax_is_small_and_unambiguous() {
+        for valid in ["~j0", "~j4", "~j18446744073709551615"] {
+            assert!(ObservationRefRegistry::is_ref_syntax(valid), "{valid}");
+        }
+        for invalid in ["", "~j", "j4", "~j-1", "~j1x", "wj3_abc"] {
+            assert!(!ObservationRefRegistry::is_ref_syntax(invalid), "{invalid}");
+        }
+        assert!(!ObservationRefRegistry::is_ref_syntax(&format!(
+            "~j{}",
+            "1".repeat(MAX_OBSERVATION_REF_LEN)
+        )));
+    }
 
     #[test]
     fn compact_cursor_binding_and_length() {

@@ -1742,6 +1742,64 @@ fn observe_jobs_wake_policy_defaults_and_validates() {
     }
 }
 
+#[test]
+fn observe_jobs_compact_ref_selector_is_additive_and_unambiguous() {
+    let raw = ToolCall::from_tool_name(
+        "observe_jobs",
+        json!({
+            "items": [{
+                "job_id": "wc_job_example",
+                "after_observation_token": "wj3_example"
+            }],
+            "summary_only": true
+        }),
+    )
+    .expect("classic observe_jobs path must remain supported");
+    assert!(matches!(
+        raw,
+        ToolCall::ObserveJobs {
+            summary_only: true,
+            ..
+        }
+    ));
+
+    let compact = ToolCall::from_tool_name(
+        "observe_jobs",
+        json!({"items": [{"observation_ref": "~j12"}]}),
+    )
+    .expect("compact observation_ref path must parse");
+    let ToolCall::ObserveJobs { items, .. } = compact else {
+        panic!("expected observe_jobs");
+    };
+    assert_eq!(items.len(), 1);
+    assert!(items[0].job_id.is_empty());
+    assert_eq!(items[0].observation_ref.as_deref(), Some("~j12"));
+    assert!(items[0].after_observation_token.is_none());
+
+    for invalid in [
+        json!({"items": [{}]}),
+        json!({"items": [{"job_id": "job", "observation_ref": "~j1"}]}),
+        json!({"items": [{"observation_ref": "~j1", "after_observation_token": "wj3_x"}]}),
+        json!({"items": [{"observation_ref": "j1"}]}),
+        json!({"items": [{"observation_ref": "~j2"}, {"observation_ref": "~j2"}]}),
+    ] {
+        assert!(
+            ToolCall::from_tool_name("observe_jobs", invalid).is_err(),
+            "ambiguous/invalid compact selector must fail closed"
+        );
+    }
+
+    let schema = crate::input_schema_for_tool("observe_jobs");
+    let branches = schema["properties"]["items"]["items"]["oneOf"]
+        .as_array()
+        .expect("observe_jobs item schema must expose selector oneOf");
+    assert_eq!(branches.len(), 2);
+    assert_eq!(branches[0]["required"], json!(["job_id"]));
+    assert_eq!(branches[1]["required"], json!(["observation_ref"]));
+    assert_eq!(branches[0]["additionalProperties"], false);
+    assert_eq!(branches[1]["additionalProperties"], false);
+}
+
 #[cfg(feature = "experimental-code-mode")]
 #[test]
 fn code_mode_exec_parses_outer_authority() {

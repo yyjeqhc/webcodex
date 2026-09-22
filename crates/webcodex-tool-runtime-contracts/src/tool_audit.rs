@@ -372,6 +372,7 @@ fn typed_structured_validation_request_audit(
 #[derive(Debug, Clone, Copy)]
 enum GoalRequestAudit {
     Create,
+    Prepare,
     Get,
     List,
     Update,
@@ -385,7 +386,10 @@ fn typed_goal_request_audit(kind: GoalRequestAudit, arguments: &Value) -> Value 
     };
     let mut out = serde_json::Map::new();
     match kind {
-        GoalRequestAudit::Create => {
+        GoalRequestAudit::Create | GoalRequestAudit::Prepare => {
+            if matches!(kind, GoalRequestAudit::Prepare) {
+                copy_keys(obj, &mut out, &["session_id"]);
+            }
             out.insert(
                 "title_chars".to_string(),
                 Value::from(
@@ -4069,15 +4073,21 @@ impl ToolCallAuditProjection for ToolCall {
                 tail_lines,
                 wait_secs,
                 wake_on,
+                summary_only,
             } => serde_json::json!({
+                "summary_only": summary_only,
                 "item_count": items.len(),
                 "token_count": items
                     .iter()
                     .filter(|item| item.after_observation_token.is_some())
                     .count(),
+                "observation_ref_count": items
+                    .iter()
+                    .filter(|item| item.observation_ref.is_some())
+                    .count(),
                 "job_ids": items
                     .iter()
-                    .map(|item| item.job_id.as_deref().or(item.observation_ref.as_deref()))
+                    .filter_map(|item| (!item.job_id.is_empty()).then_some(item.job_id.as_str()))
                     .collect::<Vec<_>>(),
                 "tail_lines": tail_lines,
                 "wait_secs": wait_secs,
@@ -4311,6 +4321,23 @@ impl ToolCallAuditProjection for ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::PrepareGoalWorkflow {
+                session_id,
+                title,
+                objective,
+                controller_agent_id,
+                idempotency_key,
+                ..
+            } => typed_goal_request_audit(
+                GoalRequestAudit::Prepare,
+                &serde_json::json!({
+                    "session_id": session_id,
+                    "title": title,
+                    "objective": objective,
+                    "controller_agent_id": controller_agent_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
             Self::CreateGoal {
                 title,
                 objective,

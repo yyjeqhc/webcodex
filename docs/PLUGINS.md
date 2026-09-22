@@ -15,6 +15,14 @@ contain, sign, or otherwise make an untrusted executable safe. A Plugin has the
 same practical local-process trust implications as launching that executable
 directly with the prepared Runner environment.
 
+> **Terminology:** ChatGPT may call a developer MCP/custom app a “plugin”. That
+> Host-side MCP connection is different from a WebCodex **Native Tool Plugin**.
+> A ChatGPT error such as `FORBIDDEN: This conversation does not support
+> developer MCPs` happens before `plugin_tool` when the Host refuses the MCP
+> connection; it is not a Native Tool Plugin health result. Use
+> [Troubleshooting](TROUBLESHOOTING.md) for that case. Use the `plugin_tool`
+> diagnostics in this document only after the request reaches WebCodex.
+
 ## Configure a Plugin
 
 Plugins have their own `runner.toml` section; they are not MCP providers:

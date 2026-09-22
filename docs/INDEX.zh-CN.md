@@ -32,7 +32,7 @@
 
 ## 我遇到了问题
 
-- [故障排查](TROUBLESHOOTING.zh-CN.md) —— 安装、连接、运行和 Runner 问题
+- [故障排查](TROUBLESHOOTING.zh-CN.md) —— ChatGPT/MCP Host、安装、连接、运行和 Runner 问题
 - [安全说明](../SECURITY.md) —— 安全模型和使用建议
 
 ## 我想理解或扩展 WebCodex

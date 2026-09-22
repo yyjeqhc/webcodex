@@ -490,6 +490,12 @@ Adaptive Runtime while ProjectGrant visibility keeps them bound to their Project
 
 See [GPT Actions](GPT_ACTIONS.md), [MCP](MCP.md), and [AI Onboarding](AI_ONBOARDING.md).
 
+If ChatGPT reports a conversation-level developer-MCP `FORBIDDEN` error, do not
+treat it as proof that the deployed Server or Runner is down. Verify the
+deployment through the operator checks below and use the Host-layer decision tree
+in [Troubleshooting](TROUBLESHOOTING.md) before rotating credentials, re-registering
+projects, or restarting a healthy Runner.
+
 ## Operations
 
 ### Authority mode

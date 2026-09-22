@@ -39,6 +39,13 @@ apps, and write/modify actions are controlled independently by the ChatGPT plan,
 workspace, and admin settings; those client-side permissions are not widened by
 WebCodex scopes.
 
+If ChatGPT itself reports `FORBIDDEN: This conversation does not support
+developer MCPs` (or says the current conversation disabled the developer MCP
+server), treat that as a Host/conversation admission problem until proven
+otherwise. If the Host refuses to dispatch `runtime_status`, that text is not a
+WebCodex tool result. Verify the Server/Runner independently before changing
+credentials or Runner configuration; see [Troubleshooting](TROUBLESHOOTING.md).
+
 ## Claude and other MCP clients
 
 Use the same printed `/mcp` URL and authentication values. In Claude, add a

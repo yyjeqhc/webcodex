@@ -428,6 +428,11 @@ MCP 与 GPT Actions 最终进入同一个 ToolRuntime authority path；GPT Actio
 详见 [GPT Actions](GPT_ACTIONS.zh-CN.md)、[MCP](MCP.zh-CN.md) 与
 [AI 接入指南](AI_ONBOARDING.zh-CN.md)。
 
+如果 ChatGPT 返回 conversation-level developer-MCP `FORBIDDEN`，不要直接把它当作
+Server 或 Runner 已离线的证据。先使用下面的 operator checks 独立验证部署，再按照
+[故障排查](TROUBLESHOOTING.zh-CN.md) 中的 Host 分层决策树判断；不要在 Runner 本来
+健康时仅因为该 Host error 就旋转 credential、重新注册 project 或反复重启 Runner。
+
 ## 运维
 
 ### Authority mode

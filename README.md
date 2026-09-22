@@ -92,7 +92,7 @@ Those are follow-up operating concerns, not concepts a first-time user should ha
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
 - [Deployment](docs/DEPLOYMENT.md) — production, self-hosting, and advanced operations
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — connection and runtime problems
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — ChatGPT/MCP Host, connection, and runtime problems
 - [CLI](docs/CLI.md) — command and credential reference
 - [AI-assisted setup](docs/AI_ONBOARDING.md) — have an AI agent help configure WebCodex
 - [Security](SECURITY.md) — security model and operational guidance

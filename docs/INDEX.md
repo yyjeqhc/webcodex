@@ -32,7 +32,7 @@ Start with the goal that matches what you are trying to do.
 
 ## I need help
 
-- [Troubleshooting](TROUBLESHOOTING.md) — installation, connection, runtime, and Runner problems
+- [Troubleshooting](TROUBLESHOOTING.md) — ChatGPT/MCP Host, installation, connection, runtime, and Runner problems
 - [Security](../SECURITY.md) — safe operating guidance and security model
 
 ## I want to understand or extend WebCodex

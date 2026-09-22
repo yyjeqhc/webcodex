@@ -25,6 +25,92 @@ Client:
   passes for a managed deployment.
 - `list_runners` / `runtime_status` shows the Runner online.
 
+## Identify the failing layer first
+
+When ChatGPT says an app, plugin, or tool is blocked, do not start by restarting the
+Runner. First determine whether the request reached WebCodex at all.
+
+| Signal | Likely layer | Next check |
+| --- | --- | --- |
+| ChatGPT reports `FORBIDDEN: This conversation does not support developer MCPs` or says the current conversation disabled the developer MCP server | ChatGPT Host / conversation MCP admission, when no matching request reaches WebCodex | Verify WebCodex independently from the operator/Runner host; then test the Host connection separately |
+| WebCodex returns HTTP 401/403, an MCP authentication error, or a normal structured ToolResult failure | Server authentication / authorization / ToolRuntime | Check the user/API credential, OAuth scopes, Server logs, and the exact WebCodex error |
+| `runtime_status` succeeds but shows the Runner offline or the project missing | Runner / project registration | Use `webcodex runner status` and bounded Runner logs on the Runner host |
+| `plugin_tool` reaches WebCodex and returns `ready=false`, `plugin_check_busy`, `plugin_reload_busy`, or another Plugin diagnostic | WebCodex Native Tool Plugin runtime | Use `webcodex plugin check/list/describe/reload` and the [Native Tool Plugin guide](PLUGINS.md) |
+
+The first row is important: if the ChatGPT Host refuses to dispatch
+`runtime_status`, the displayed `FORBIDDEN` text is **not** a WebCodex
+`runtime_status` result. Restarting or reconfiguring the Runner cannot repair a
+request that never reached the Server.
+
+### ChatGPT says developer MCP is disabled or unsupported
+
+Reports in [Issue #500](https://github.com/yyjeqhc/webcodex/issues/500) include a
+conversation that had already used WebCodex successfully, then repeatedly received:
+
+```text
+FORBIDDEN: This conversation does not support developer MCPs
+```
+
+The same Server, Runner, project, and local workspace remained usable through
+independent paths, and the same ChatGPT conversation later recovered without a
+WebCodex configuration change. This is consistent with a Host/conversation-level
+developer-MCP routing or permission state, not with a durable Runner failure.
+
+Use this order:
+
+1. Record the exact error text, timestamp, timezone, and ChatGPT surface
+   (web/desktop/mobile if relevant).
+2. Verify WebCodex independently of that conversation. For a hosted profile:
+
+   ```bash
+   webcodex --version
+   webcodex-runner --version
+   webcodex runner status --profile <profile-from-connect>
+   webcodex runner logs --profile <profile-from-connect> --lines 100
+   ```
+
+   For a managed deployment, the read-only operator checks are also useful:
+
+   ```bash
+   webcodex ops status --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE" --strict
+   webcodex ops runners --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+   ```
+
+   For a systemd Runner, use the same `--scope user|system` that installed it.
+3. Determine whether the failing ChatGPT attempt reached the Server. If ordinary
+   logs are insufficient, use the bounded one-call trace procedure in
+   [Capture one failing tool call](#capture-one-failing-tool-call). A healthy
+   Server/Runner plus no matching inbound request at the exact reproduction time
+   is strong evidence that the failure is before WebCodex. Check trace-capture
+   warnings before treating an absent file as definitive.
+4. In ChatGPT, verify that Developer Mode / the developer MCP app is still
+   available for that conversation/workspace. Reconnect or re-enable the same MCP
+   if the Host UI offers that control. Testing the same endpoint in a fresh
+   conversation is a useful isolation step: if one conversation works and another
+   does not, do not change Runner/project configuration just to make the failing
+   conversation look healthy.
+5. Change WebCodex configuration only when the independent checks show a WebCodex
+   problem (Server unreachable/auth failure, Runner offline, project missing, or a
+   real `plugin_tool` diagnostic).
+
+Creating another MCP entry with a different display name may cause the Host to
+mount a fresh connection, but it is not a reliable WebCodex fix and does not
+explain the underlying Host state. Likewise, do not rotate tokens, rewrite
+`runner.toml`, re-register projects, or repeatedly restart a healthy Runner
+solely because of the exact Host-level developer-MCP error above.
+
+When reporting this class of issue, include only safe evidence:
+
+- exact Host error text plus reproduction/recovery timestamps and timezone;
+- ChatGPT surface and whether the same MCP works in a fresh conversation;
+- `webcodex --version` and `webcodex-runner --version`;
+- sanitized `webcodex runner status` / `webcodex ops status` output;
+- if another conversation/client can still call `runtime_status`, its sanitized build/connection-layer summary;
+- whether a matching Server request/trace was observed at the failure time.
+
+Do **not** publish access tokens, OAuth secrets, `Authorization` headers,
+complete env files, complete `runner.toml`, or an unreviewed raw full trace.
+
 ## Common issues
 
 ### `webcodex connect` cannot finish

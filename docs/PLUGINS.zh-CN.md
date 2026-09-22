@@ -13,6 +13,13 @@ Native Plugin 是**受信任的本地 executable**。WebCodex 不会 sandbox、�
 不可信 executable 自动变安全；启动 Plugin 与在 prepared Runner environment 下直接运行
 这个本地程序具有同等级别的本机信任含义。
 
+> **术语区分：** ChatGPT 有时把 developer MCP/custom app 也称为“插件”，但它与
+> WebCodex 的 **Native Tool Plugin** 不是同一层。若 ChatGPT 返回
+> `FORBIDDEN: This conversation does not support developer MCPs`，并且 Host 在
+> `plugin_tool` 到达 WebCodex 之前就拒绝 MCP connection，这不是 Native Tool Plugin
+> health result。此类问题先看[故障排查](TROUBLESHOOTING.zh-CN.md)；只有请求已经到达
+> WebCodex 后，才使用本文的 `plugin_tool` diagnostic 排查本地 provider。
+
 ## 配置 Plugin
 
 Plugin 使用独立的 `runner.toml` 配置，不复用 MCP provider：

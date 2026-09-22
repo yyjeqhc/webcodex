@@ -25,6 +25,85 @@ Client：
   `webcodex ops status --strict --server-url https://your-domain.example`。
 - `list_runners` / `runtime_status` 显示 Runner online。
 
+## 先判断故障发生在哪一层
+
+当 ChatGPT 提示 app、插件或工具被 block 时，不要第一步就重启 Runner。先判断这次
+请求是否真正到达 WebCodex。
+
+| 现象 | 更可能的层 | 下一步 |
+| --- | --- | --- |
+| ChatGPT 返回 `FORBIDDEN: This conversation does not support developer MCPs`，或提示当前会话已禁用 developer MCP server；同时 WebCodex 没有观察到对应请求 | ChatGPT Host / conversation 的 MCP admission | 从 operator/Runner 主机独立验证 WebCodex，再单独排查 Host 连接 |
+| WebCodex 返回 HTTP 401/403、MCP authentication error，或正常 structured ToolResult failure | Server auth / authorization / ToolRuntime | 检查 user/API credential、OAuth scope、Server 日志与精确 WebCodex error |
+| `runtime_status` 能成功执行，但显示 Runner offline 或 project missing | Runner / project registration | 在 Runner 主机执行 `webcodex runner status` 并查看有界日志 |
+| `plugin_tool` 已到达 WebCodex，并返回 `ready=false`、`plugin_check_busy`、`plugin_reload_busy` 等 Plugin diagnostic | WebCodex Native Tool Plugin runtime | 使用 `webcodex plugin check/list/describe/reload`，并查看 [Native Tool Plugin 文档](PLUGINS.zh-CN.md) |
+
+第一行尤其重要：如果 ChatGPT Host 根本没有 dispatch `runtime_status`，界面显示的
+`FORBIDDEN` **不是** WebCodex 的 `runtime_status` 返回值。一个没有到达 Server 的
+请求，无法通过重启或重配 Runner 来修复。
+
+### ChatGPT 提示 developer MCP 被禁用或当前会话不支持
+
+[Issue #500](https://github.com/yyjeqhc/webcodex/issues/500) 已出现一组很有代表性的
+对照：同一个会话此前已经正常使用 WebCodex，随后连续得到：
+
+```text
+FORBIDDEN: This conversation does not support developer MCPs
+```
+
+当时同一 Server、Runner、project 与本地 workspace 通过独立路径仍然可用；之后没有
+修改 WebCodex 配置，同一个 ChatGPT 会话又自行恢复。这更符合 Host/conversation 级
+developer-MCP routing / permission state 的间歇性异常，而不是持久的 Runner 故障。
+
+推荐按下面顺序排查：
+
+1. 记录完整错误文本、发生时间、时区，以及使用的 ChatGPT surface
+   （例如 web/desktop/mobile）。
+2. 脱离这个会话，独立验证 WebCodex。Hosted profile 可执行：
+
+   ```bash
+   webcodex --version
+   webcodex-runner --version
+   webcodex runner status --profile <connect 输出的 profile>
+   webcodex runner logs --profile <connect 输出的 profile> --lines 100
+   ```
+
+   Managed deployment 还可以使用只读 operator 检查：
+
+   ```bash
+   webcodex ops status --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE" --strict
+   webcodex ops runners --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+   ```
+
+   systemd Runner 要使用安装时相同的 `--scope user|system`。
+3. 判断失败的 ChatGPT 调用有没有到达 Server。普通日志不够时，使用下面
+   [捕获一次失败的 tool call](#捕获一次失败的-tool-call) 的单次有界 trace 流程。
+   如果 Server/Runner 独立检查正常，而且精确复现时间没有对应 inbound request，这是
+   “故障发生在 WebCodex 之前”的强证据。若 trace 文件缺失，仍应先检查 trace-capture
+   warning，不能单凭“没有文件”下结论。
+4. 在 ChatGPT 中确认 Developer Mode / developer MCP app 对当前 conversation/workspace
+   仍然可用；Host UI 提供时可以重新连接或重新启用同一个 MCP。使用相同 endpoint 在
+   新会话中测试也是很有价值的隔离手段：如果新会话正常、旧会话异常，不要为了旧会话
+   去改 Runner/project 配置。
+5. 只有独立检查确实发现 WebCodex 问题时，才修改 WebCodex：例如 Server 不可达/auth
+   失败、Runner offline、project missing，或真正的 `plugin_tool` diagnostic。
+
+复制一个新 MCP、只改 display name 有时可能让 Host 建立新的 mount，但它不是可靠的
+WebCodex 修复，也不能解释原来的 Host state。对于上面的精确 Host-level error，也不要
+仅因为它就旋转 token、改写 `runner.toml`、重新注册 project，或反复重启本来健康的
+Runner。
+
+反馈此类问题时，建议只提供安全 evidence：
+
+- 精确 Host error、复现/恢复时间与时区；
+- ChatGPT surface，以及相同 MCP 在新会话中是否可用；
+- `webcodex --version` 与 `webcodex-runner --version`；
+- 已脱敏的 `webcodex runner status` / `webcodex ops status`；
+- 如果另一个会话/client 仍能调用 `runtime_status`，提供其已脱敏的 build / connection-layer summary；
+- 故障时间点 Server 是否观察到对应 request/trace。
+
+不要公开 access token、OAuth secret、`Authorization` header、完整 env file、完整
+`runner.toml`，也不要未经检查/脱敏直接贴 full raw trace。
+
 ## 常见问题
 
 ### `webcodex connect` 无法完成

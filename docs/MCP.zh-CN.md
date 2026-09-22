@@ -37,6 +37,12 @@ UI 文案可能随 rollout 变化；URL 与认证以 CLI 输出为准。Develope
 和 write/modify action 是否可用，还分别受 ChatGPT 套餐、workspace 与管理员设置控制；
 WebCodex scope 不会扩大这些客户端侧权限。
 
+如果 ChatGPT 自身返回 `FORBIDDEN: This conversation does not support developer MCPs`
+（或提示当前会话已禁用 developer MCP server），在有相反证据之前应先按 Host/conversation
+admission 问题处理。如果 Host 根本没有 dispatch `runtime_status`，这段文本并不是
+WebCodex tool result。修改 credential 或 Runner 配置前，先从独立路径确认 Server/Runner；
+完整流程见[故障排查](TROUBLESHOOTING.zh-CN.md)。
+
 ## Claude 与其他 MCP client
 
 使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；

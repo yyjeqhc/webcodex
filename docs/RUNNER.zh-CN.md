@@ -59,6 +59,11 @@ transport-specific v1 首个注册帧中，共享 Runner envelope 不再携带�
 
 精确的 protocol-generation field、baseline capability list、registration grammar 与 compatibility test matrix 属于 maintainer/wire contract，有意不放在这份运维指南中。
 
+ChatGPT Host 提示“当前会话不支持 developer MCP”并不是 Runner heartbeat 或 reconnect
+结果。如果 ChatGPT 连 `runtime_status` 都无法 dispatch，应先在本机执行
+`webcodex runner status` 并查看有界 Runner 日志，再决定是否重启或修改 Runner 配置。
+Host / Server / Runner 的分层判断见[故障排查](TROUBLESHOOTING.zh-CN.md)。
+
 使用 QUIC 时保持 Server/Runner QUIC 配置一致。`[quic].keepalive_interval_secs` 默认 20 秒，允许 `1..=25`；非法值会被拒绝，不会 silent clamp。
 
 ## 注册项目

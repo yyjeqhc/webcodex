@@ -66,6 +66,13 @@ When upgrading an older installation across the 0.4 boundary, upgrade the first-
 
 The exact protocol-generation field names, baseline capability list, registration grammar, and compatibility-test matrix are maintainer/wire-contract details and are intentionally omitted from this operations guide.
 
+A ChatGPT Host message that the current conversation does not support developer
+MCPs is not a Runner heartbeat or reconnect result. If ChatGPT cannot dispatch
+`runtime_status`, first run `webcodex runner status` locally (and inspect bounded
+Runner logs) before restarting or changing Runner configuration. See
+[Troubleshooting](TROUBLESHOOTING.md) for the Host-vs-Server-vs-Runner decision
+tree.
+
 If you use QUIC, keep Server and Runner QUIC settings compatible. `[quic].keepalive_interval_secs` defaults to 20 seconds and accepts `1..=25`; invalid values are rejected rather than silently clamped.
 
 ## Registering projects

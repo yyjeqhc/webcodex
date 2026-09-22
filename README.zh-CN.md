@@ -92,7 +92,7 @@ Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考
 - [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 生产、自托管和高级运维
-- [故障排查](docs/TROUBLESHOOTING.zh-CN.md) —— 连接和运行问题
+- [故障排查](docs/TROUBLESHOOTING.zh-CN.md) —— ChatGPT/MCP Host、连接和运行问题
 - [CLI](docs/CLI.zh-CN.md) —— 命令与凭据参考
 - [AI 辅助接入](docs/AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你配置 WebCodex
 - [安全说明](SECURITY.md) —— 安全模型与使用建议

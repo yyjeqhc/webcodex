@@ -122,7 +122,7 @@ fn runner_init_rejects_retired_projects_dir_alias() {
 
 #[cfg(unix)]
 #[test]
-fn user_scope_runner_config_rejects_retired_agent_toml() {
+fn user_scope_runner_config_accepts_legacy_only_agent_toml_and_rejects_dual_names() {
     let _guard = env_test_guard();
     let tmp = tempfile::tempdir().unwrap();
     let tmp_path = tmp.path().to_str().unwrap();
@@ -137,14 +137,15 @@ fn user_scope_runner_config_rejects_retired_agent_toml() {
         config_dir.join("runner.toml")
     );
     std::fs::write(config_dir.join("agent.toml"), "legacy = true\n").unwrap();
-    let error = runner_config_for_scope(ServiceScope::User, None).unwrap_err();
-    assert!(error.contains("retired Runner config"), "{error}");
-    assert!(error.contains("rename it to runner.toml"), "{error}");
+    assert_eq!(
+        runner_config_for_scope(ServiceScope::User, None).unwrap(),
+        config_dir.join("agent.toml")
+    );
 
     std::fs::write(config_dir.join("runner.toml"), "current = true\n").unwrap();
     let error = runner_config_for_scope(ServiceScope::User, None).unwrap_err();
     assert!(
-        error.contains("both runner.toml and retired agent.toml"),
+        error.contains("both runner.toml and legacy agent.toml"),
         "{error}"
     );
     assert!(error.contains("remove or archive agent.toml"), "{error}");

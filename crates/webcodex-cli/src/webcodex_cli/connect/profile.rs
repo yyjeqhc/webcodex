@@ -872,7 +872,7 @@ mod tests {
         let error =
             resolve_key(&options, &config_base, "https://example.test", &project).unwrap_err();
         assert!(
-            error.contains("both runner.toml and retired agent.toml"),
+            error.contains("both runner.toml and legacy agent.toml"),
             "{error}"
         );
         assert!(error.contains("remove or archive agent.toml"), "{error}");

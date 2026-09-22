@@ -75,10 +75,10 @@ pub(crate) struct RunnerConfig {
     pub(crate) host_context: Option<RunnerHostContext>,
     #[serde(default)]
     pub(crate) project_registry_dir: Option<PathBuf>,
-    /// Retired config spelling retained only as a deserialization trap so old
-    /// configs fail with explicit migration guidance instead of being ignored.
+    /// Legacy config spelling accepted only during the 0.4.x migration window.
+    /// `load_config` normalizes it into `project_registry_dir` before runtime use.
     #[serde(default, rename = "projects_dir")]
-    pub(crate) removed_projects_dir: Option<toml::Value>,
+    pub(crate) legacy_projects_dir: Option<PathBuf>,
     /// Minimum delay after an empty polling response. Repeated idle polls back
     /// off through the built-in schedule while never going below this value.
     #[serde(default = "default_poll_interval_ms")]
@@ -1093,7 +1093,7 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, skills: _, instructions: _, ssh: _, plugins: _, tool_providers: _, mcp_gateway: _, removed_projects_dir: _,
+                policy: _, shell: _, skills: _, instructions: _, ssh: _, plugins: _, tool_providers: _, mcp_gateway: _, legacy_projects_dir: _,
                 $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
@@ -1534,12 +1534,6 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
         .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
     let mut cfg: RunnerConfig = toml::from_str(&content)
         .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
-    if cfg.removed_projects_dir.is_some() {
-        return Err(
-            "Runner config field 'projects_dir' is retired; use 'project_registry_dir' instead"
-                .to_string(),
-        );
-    }
     if cfg.server_url.trim().is_empty() {
         return Err("server_url cannot be empty".to_string());
     }
@@ -1589,11 +1583,26 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     let effective =
         effective_allowed_roots(&cfg.policy.allowed_roots, cfg.policy.allow_cwd_anywhere)?;
     cfg.policy.allowed_roots = effective;
-    if cfg.project_registry_dir.is_none() {
-        // Keep the physical legacy `projects.d/` layout readable in place;
-        // the retired config spelling does not require moving existing registry data.
-        cfg.project_registry_dir = Some(default_project_registry_dir()?);
-    }
+    cfg.project_registry_dir = match (
+        cfg.project_registry_dir.take(),
+        cfg.legacy_projects_dir.take(),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "project_registry_dir and legacy projects_dir cannot both be configured; keep exactly one Runner project registry setting"
+                    .to_string(),
+            );
+        }
+        (Some(path), None) => Some(path),
+        (None, Some(path)) => {
+            eprintln!(
+                "webcodex-runner warning: Runner config field 'projects_dir' is deprecated; use 'project_registry_dir' instead. Legacy startup compatibility will be removed in WebCodex {}.",
+                crate::runner_config::paths::LEGACY_RUNNER_CONFIG_REMOVAL_VERSION
+            );
+            Some(path)
+        }
+        (None, None) => Some(default_project_registry_dir()?),
+    };
     validate_shell_config(&cfg.shell)?;
     validate_ssh_config(&mut cfg.ssh)?;
     if let Some(quic) = &cfg.quic {

@@ -33,7 +33,7 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 
 ### Runner 配置文件名迁移
 
-`runner.toml` 是 canonical config filename。自动/default/profile discovery 不再加载已退役的 `agent.toml`：目录中只有旧文件时会直接报错并提示重命名为 `runner.toml`；两种文件名同时存在时继续 fail closed，直到 operator 删除或归档 `agent.toml`。显式 `--config PATH` 仍保持精确路径语义，可以指向 operator 自己选择的任意文件名。`WEBCODEX_RUNNER_CONFIG` 是受支持的 path override；使用默认环境变量解析时，已退役的 `WEBCODEX_AGENT_CONFIG` 会返回明确迁移提示。
+`runner.toml` 是 canonical config filename。在 WebCodex 0.4.x 迁移窗口内，自动/default/profile discovery 仍接受仅存在旧 `agent.toml` 的安装；当 `WEBCODEX_RUNNER_CONFIG` 未设置时，`WEBCODEX_AGENT_CONFIG` 也继续作为 deprecated fallback。仅存在旧 `projects_dir` 字段时，Runner 会在加载时归一化为 `project_registry_dir`。这些兼容输入会输出迁移 warning，并计划在 WebCodex 0.5.0 删除。歧义状态仍然 fail closed：`runner.toml` 与 `agent.toml` 同时存在、两个 config-path 环境变量同时设置、或新旧 registry 字段同时存在时，operator 必须先消除歧义。新生成的配置始终只使用 `runner.toml`、`project_registry_dir` 与 `WEBCODEX_RUNNER_CONFIG`。
 
 ## 连接 Server
 
@@ -81,10 +81,11 @@ allow_patch = true
 用于保存 Project record，本身不是 workspace root。
 
 新配置使用 `project-registry/` 与 `project_registry_dir`。历史安装如果唯一存在的
-物理 registry directory 是 `projects.d/`，仍会原地继续使用该目录；但旧
-`projects_dir` 配置字段与 `--projects-dir` CLI flag 已退役，出现时会返回迁移提示。
-如果两个物理 registry directory 同时存在，WebCodex 仍会 fail closed，而不是
-merge 或猜 precedence。显式 CLI 选择使用 `--project-registry-dir`。
+物理 registry directory 是 `projects.d/`，仍会原地继续使用该目录。0.4.x 期间，
+仅存在旧 `projects_dir` 配置字段时也会继续兼容，并输出 deprecation warning、在加载时
+归一化为 `project_registry_dir`；旧 `--projects-dir` CLI flag 仍保持 retired。
+如果两个物理 registry directory 或新旧两个配置字段同时存在，WebCodex 仍会
+fail closed，而不是 merge 或猜 precedence。显式 CLI 选择使用 `--project-registry-dir`。
 
 Runtime Project 的 canonical id 仍形如 `agent:<client_id>:<project_id>`，例如 `agent:workstation:my-repo`。该 canonical identity 继续用于 authorization、persistence、audit、Runner routing、diagnostic、API 与 CLI 显式 addressing。Model-facing bootstrap/discovery 还可以返回很短的 Server-issued `project_ref`（例如 `~p1`）；后续 Project-scoped tool call 应优先复用它，而不是反复复制 canonical id。映射由 Server 持久维护并按 authenticated caller 隔离，同时钉住 canonical id 与 Runner 报告的 Project root identity；它不是 credential/capability，每次使用都会重新执行当前 Project visibility/authorization。该 ref 不依赖 Workflow Session、ClientWindow、MCP session、transport connection、recent activity 或 Host hidden state；失效 ref 绝不会静默重绑到另一个 Project。
 

@@ -227,13 +227,20 @@ where
         if let Some(profile) = profile {
             client_profile_runner_config(&profile)?
         } else {
-            if legacy_agent_config_env.is_some() {
+            if runner_config_env.is_some() && legacy_agent_config_env.is_some() {
                 return Err(
-                    "WEBCODEX_AGENT_CONFIG is retired; use WEBCODEX_RUNNER_CONFIG instead"
+                    "WEBCODEX_RUNNER_CONFIG and legacy WEBCODEX_AGENT_CONFIG cannot both be set"
                         .to_string(),
                 );
             }
+            if runner_config_env.is_none() && legacy_agent_config_env.is_some() {
+                eprintln!(
+                    "webcodex-runner warning: WEBCODEX_AGENT_CONFIG is deprecated; use WEBCODEX_RUNNER_CONFIG instead. Legacy startup compatibility will be removed in WebCodex {}.",
+                    runner_config::paths::LEGACY_RUNNER_CONFIG_REMOVAL_VERSION
+                );
+            }
             runner_config_env
+                .or(legacy_agent_config_env)
                 .map(PathBuf::from)
                 .map(Ok)
                 .unwrap_or_else(default_config_path)?
@@ -2497,6 +2504,14 @@ fn main() {
             std::process::exit(code);
         }
     };
+    if config_path.file_name().and_then(|name| name.to_str())
+        == Some(runner_config::paths::LEGACY_AGENT_CONFIG_FILE)
+    {
+        eprintln!(
+            "webcodex-runner warning: legacy Runner config filename 'agent.toml' is deprecated; rename it to 'runner.toml' before WebCodex {}.",
+            runner_config::paths::LEGACY_RUNNER_CONFIG_REMOVAL_VERSION
+        );
+    }
     let cfg = match load_config(&config_path) {
         Ok(cfg) => cfg,
         Err(e) => {

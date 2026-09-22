@@ -79,7 +79,7 @@ fn test_config(project_registry_dir: PathBuf) -> RunnerConfig {
         hostname: None,
         host_context: None,
         project_registry_dir: Some(project_registry_dir),
-        removed_projects_dir: None,
+        legacy_projects_dir: None,
         poll_interval_ms: 1000,
         capabilities: None,
         max_concurrent_jobs: None,

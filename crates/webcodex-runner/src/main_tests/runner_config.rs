@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn runner_config_rejects_retired_projects_dir_with_migration_guidance() {
+fn runner_config_accepts_legacy_projects_dir_and_normalizes_it() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("runner.toml");
     let registry = tmp.path().join("projects.d");
@@ -13,9 +13,12 @@ fn runner_config_rejects_retired_projects_dir_with_migration_guidance() {
         ),
     )
     .unwrap();
-    let error = load_config(&path).unwrap_err();
-    assert!(error.contains("'projects_dir' is retired"), "{error}");
-    assert!(error.contains("'project_registry_dir'"), "{error}");
+    let cfg = load_config(&path).unwrap();
+    assert_eq!(
+        cfg.project_registry_dir.as_deref(),
+        Some(registry.as_path())
+    );
+    assert!(cfg.legacy_projects_dir.is_none());
 }
 
 #[test]
@@ -36,11 +39,11 @@ fn runner_config_accepts_canonical_project_registry_dir() {
         cfg.project_registry_dir.as_deref(),
         Some(registry.as_path())
     );
-    assert!(cfg.removed_projects_dir.is_none());
+    assert!(cfg.legacy_projects_dir.is_none());
 }
 
 #[test]
-fn runner_config_rejects_retired_projects_dir_even_with_canonical_field() {
+fn runner_config_rejects_legacy_and_canonical_registry_fields_together() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("runner.toml");
     let current = tmp.path().join("project-registry");
@@ -55,8 +58,7 @@ fn runner_config_rejects_retired_projects_dir_even_with_canonical_field() {
     )
     .unwrap();
     let error = load_config(&path).unwrap_err();
-    assert!(error.contains("'projects_dir' is retired"), "{error}");
-    assert!(error.contains("'project_registry_dir'"), "{error}");
+    assert!(error.contains("cannot both be configured"), "{error}");
 }
 
 #[test]
@@ -478,7 +480,7 @@ fn runner_parent_liveness_is_explicit_opt_in() {
 }
 
 #[test]
-fn runner_cli_config_env_rejects_retired_alias_when_defaults_are_consulted() {
+fn runner_cli_config_env_keeps_legacy_fallback_and_rejects_dual_env() {
     let _guard = test_env_lock();
     let _env = EnvGuard::new()
         .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
@@ -496,22 +498,21 @@ fn runner_cli_config_env_rejects_retired_alias_when_defaults_are_consulted() {
     let _legacy = EnvGuard::new()
         .remove("WEBCODEX_RUNNER_CONFIG")
         .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
-    let error = parse_runner_args(std::iter::empty::<&str>()).unwrap_err();
-    assert!(
-        error.contains("WEBCODEX_AGENT_CONFIG is retired"),
-        "{error}"
+    assert_eq!(
+        parse_runner_args(std::iter::empty::<&str>()).unwrap(),
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/agent.toml"),
+            once: false,
+            stop_on_stdin_eof: false,
+        }
     );
-    assert!(error.contains("WEBCODEX_RUNNER_CONFIG"), "{error}");
     drop(_legacy);
 
     let _both = EnvGuard::new()
         .set("WEBCODEX_RUNNER_CONFIG", "/tmp/runner.toml")
         .set("WEBCODEX_AGENT_CONFIG", "/tmp/agent.toml");
     let error = parse_runner_args(std::iter::empty::<&str>()).unwrap_err();
-    assert!(
-        error.contains("WEBCODEX_AGENT_CONFIG is retired"),
-        "{error}"
-    );
+    assert!(error.contains("cannot both be set"), "{error}");
 
     assert_eq!(
         parse_runner_args(["--config", "/tmp/explicit.toml"]).unwrap(),
@@ -534,7 +535,7 @@ fn runner_cli_config_env_rejects_retired_alias_when_defaults_are_consulted() {
 }
 
 #[test]
-fn runner_profile_config_resolution_rejects_retired_agent_toml() {
+fn runner_profile_config_resolution_accepts_legacy_only_and_rejects_dual_names() {
     let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let _env = EnvGuard::new()
@@ -551,14 +552,15 @@ fn runner_profile_config_resolution_rejects_retired_agent_toml() {
         profile_dir.join("runner.toml")
     );
     std::fs::write(profile_dir.join("agent.toml"), "legacy").unwrap();
-    let error = client_profile_runner_config("special").unwrap_err();
-    assert!(error.contains("retired Runner config"), "{error}");
-    assert!(error.contains("rename it to runner.toml"), "{error}");
+    assert_eq!(
+        client_profile_runner_config("special").unwrap(),
+        profile_dir.join("agent.toml")
+    );
 
     std::fs::write(profile_dir.join("runner.toml"), "current").unwrap();
     let error = client_profile_runner_config("special").unwrap_err();
     assert!(
-        error.contains("both runner.toml and retired agent.toml"),
+        error.contains("both runner.toml and legacy agent.toml"),
         "{error}"
     );
     assert!(error.contains("remove or archive agent.toml"), "{error}");

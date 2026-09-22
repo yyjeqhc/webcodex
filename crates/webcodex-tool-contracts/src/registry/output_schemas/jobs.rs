@@ -489,7 +489,7 @@ fn observe_jobs_batch_followup_arguments_schema() -> Value {
 }
 
 fn observe_jobs_output_schema() -> Value {
-    let mut job_observation = json!({
+    let job_observation = json!({
         "type": "object",
         "additionalProperties": true,
         "properties": {
@@ -568,7 +568,7 @@ fn observe_jobs_output_schema() -> Value {
             "activity", "detected_summary", "validation"
         ]
     });
-    let mut sparse_job_observation = json!({
+    let sparse_job_observation = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -629,37 +629,6 @@ fn observe_jobs_output_schema() -> Value {
             "observation_token"
         ]
     });
-    let summary_detail_call = suggested_tool_call_schema(
-        "observe_jobs",
-        json!({
-            "type": "object", "additionalProperties": false,
-            "properties": {
-                "items": {
-                    "type": "array", "minItems": 1, "maxItems": 1,
-                    "items": {
-                        "type": "object", "additionalProperties": false,
-                        "properties": {
-                            "job_id": {"type": "string", "minLength": 1},
-                            "after_observation_token": {"type": "string", "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN}
-                        },
-                        "required": ["job_id"]
-                    }
-                },
-                "tail_lines": {"type": "integer", "minimum": 1, "maximum": 200},
-                "summary_only": {"type": "boolean", "const": false}
-            },
-            "required": ["items", "tail_lines", "summary_only"]
-        }),
-        "Expand retained logs with the original observation cursor. Logs may have expired; retention/reset evidence remains authoritative. Never re-executes the Job.",
-    );
-    for observation in [&mut job_observation, &mut sparse_job_observation] {
-        observation["properties"]["logs_omitted"] = json!({
-            "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
-            "items": {"type": "string", "enum": ["stdout", "stderr"]},
-            "description": "Streams with routine successful validation lines omitted by explicit summary_only. Other log text and all diagnostic/state evidence remain unchanged."
-        });
-        observation["properties"]["suggested_call"] = summary_detail_call.clone();
-    }
     let mut item = json!({
         "type": "object",
         "additionalProperties": false,
@@ -671,7 +640,13 @@ fn observe_jobs_output_schema() -> Value {
             "error_kind": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "recovery_kind": recovery_kind_schema(),
             "suggested_call": list_jobs_recovery_call_schema(false),
-            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "observation_ref": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": webcodex_core::job_observation::MAX_OBSERVATION_REF_LEN,
+                "description": "Compact server-issued continuation selector for this item. Encodes job_id and the current observation_token. Echo it verbatim as observation_ref in the next observe_jobs items list to resume from this exact cursor without repeating job_id and after_observation_token. Observation-only; grants no execution authority. Omit on the first call and whenever you prefer to supply job_id directly."
+            }
         },
         "required": ["index", "job_id", "success", "output", "error_kind", "error"],
         "allOf": [{

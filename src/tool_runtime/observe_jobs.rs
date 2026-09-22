@@ -129,150 +129,6 @@ fn observation_recovery(error_kind: &str) -> RecoveryKind {
     }
 }
 
-/// A presentation-only filter. Unrecognized output, warnings and test summaries stay verbatim.
-/// Partial final lines stay visible because their complete meaning is not yet proven.
-fn compact_validation_log(text: &str, tool: &str, stream: &str) -> String {
-    text.split_inclusive('\n')
-        .filter(|line| {
-            if !line.ends_with('\n') {
-                return true;
-            }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            let passed_test = stream == "stdout"
-                && tool == "cargo_test"
-                && trimmed.starts_with("test ")
-                && trimmed.ends_with(" ... ok");
-            let cargo_progress = stream == "stderr"
-                && tool.starts_with("cargo_")
-                && [
-                    "   Compiling ",
-                    "    Checking ",
-                    "    Finished ",
-                    "     Running ",
-                ]
-                .iter()
-                .any(|prefix| line.starts_with(prefix));
-            !(passed_test || cargo_progress)
-        })
-        .collect()
-}
-
-fn successful_validation_for_summary(output: &Value) -> Option<&str> {
-    if output["status"] != "completed"
-        || output["terminal"] != true
-        || output["exit_code"].as_i64() != Some(0)
-        // Structured validation Jobs may omit this supplementary process field.
-        // Canonical terminal status, exit code and validation evidence below prove success;
-        // an explicit contradictory or unknown process state still fails closed.
-        || output.get("command_execution_state").is_some_and(|state| {
-            !state.is_null() && state.as_str() != Some("completed")
-        })
-        || ["recovery_state", "recovery_reason_code"]
-            .iter()
-            .any(|key| output.get(*key).is_some_and(|value| !value.is_null()))
-    {
-        return None;
-    }
-    let validation = output.get("validation")?;
-    let tool = validation.get("tool")?.as_str()?;
-    if !matches!(tool, "cargo_test" | "cargo_check" | "cargo_fmt" | "go_test")
-        || validation["state"] != "completed"
-        || validation["passed"] != true
-        || validation["truncated"] != false
-        || validation["no_run"] == true
-        || validation
-            .get("test_count_assertion")
-            .is_some_and(|assertion| !assertion.is_null() && assertion["status"] != "passed")
-    {
-        return None;
-    }
-    if matches!(tool, "cargo_test" | "go_test")
-        && (validation["tests_detected"] != true
-            || !validation["tests_run_count"]
-                .as_u64()
-                .is_some_and(|count| count > 0)
-            || validation["zero_tests_run"] != false
-            || validation["tests_failed"].as_u64() != Some(0))
-    {
-        return None;
-    }
-    if tool == "cargo_check" && validation["errors_count"].as_u64() != Some(0) {
-        return None;
-    }
-    Some(tool)
-}
-
-/// Keeps canonical Job storage and observation cursors unchanged. Detail recovery deliberately
-/// repeats the caller's original selection, so an advanced token cannot skip omitted log lines.
-/// Apply after canonical observation/packing; never retry, wait, authorize or mutate a Job here.
-pub(crate) fn summarize_observe_jobs_result(
-    result: &mut ToolResult,
-    originals: &[ObserveJobsItem],
-    tail_lines: usize,
-) {
-    if !result.success {
-        return;
-    }
-    let tail_lines = tail_lines.clamp(1, MAX_OBSERVE_JOBS_TAIL_LINES);
-    let Some(items) = result.output.get_mut("items").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for item in items {
-        if item["success"] != true {
-            continue;
-        }
-        let Some(original) = item["index"]
-            .as_u64()
-            .and_then(|index| originals.get(index as usize))
-        else {
-            continue;
-        };
-        if item["job_id"].as_str() != Some(original.job_id.as_str()) {
-            continue;
-        }
-        let output = &item["output"];
-        let Some(tool) = successful_validation_for_summary(output) else {
-            continue;
-        };
-        let mut compact = output.clone();
-        let mut omitted = Vec::new();
-        for stream in ["stdout", "stderr"] {
-            let key = format!("{stream}_tail");
-            let Some(text) = output.get(&key).and_then(Value::as_str) else {
-                continue;
-            };
-            let projected = compact_validation_log(text, tool, stream);
-            if projected != text {
-                compact[format!("{stream}_returned_lines")] = json!(projected.lines().count());
-                compact[key] = json!(projected);
-                omitted.push(stream);
-            }
-        }
-        if omitted.is_empty() {
-            continue;
-        }
-        compact["logs_omitted"] = json!(omitted);
-        compact["suggested_call"] = SuggestedToolCall::new(
-            "observe_jobs",
-            json!({
-                "items": [observe_jobs_item_argument_value(original)],
-                "tail_lines": tail_lines,
-                "summary_only": false,
-            }),
-        )
-        .to_value();
-        // Do not make tiny results larger merely to call them summaries.
-        if serialized_json_len(&compact).unwrap_or(usize::MAX)
-            < serialized_json_len(output).unwrap_or(0)
-        {
-            item["output"] = compact;
-        }
-    }
-    if let Some(arguments) = result.output.pointer_mut("/suggested_call/arguments") {
-        arguments["summary_only"] = json!(true);
-    }
-}
-
 fn batch_item(observed: ObservedJob) -> Value {
     if observed.result.success {
         let mut output = observed.result.output;
@@ -373,7 +229,7 @@ fn batch_output(
 }
 
 fn observe_jobs_item_argument_value(item: &ObserveJobsItem) -> Value {
-    let mut value = json!({"job_id": item.job_id});
+    let mut value = json!({"job_id": item.effective_job_id()});
     if let Some(token) = item.after_observation_token.as_deref() {
         value["after_observation_token"] = json!(token);
     }
@@ -573,8 +429,6 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
         "detected_summary",
         "validation",
         "ssh_resource",
-        "logs_omitted",
-        "suggested_call",
     ] {
         copy_non_null(observation, &mut sparse, key);
     }
@@ -769,8 +623,12 @@ impl ToolRuntime {
         if !(1..=MAX_OBSERVE_JOBS_ITEMS).contains(&items.len()) {
             return Err("observe_jobs requires between 1 and 8 items".into());
         }
-        if items.iter().any(|item| item.job_id.trim().is_empty()) {
-            return Err("observe_jobs requires every item to have a non-empty job_id".into());
+        // After ref resolution every item must have a job_id.
+        if items
+            .iter()
+            .any(|item| item.job_id.as_deref().is_none_or(|id| id.trim().is_empty()))
+        {
+            return Err("observe_jobs requires every item to have a resolved job_id".into());
         }
         if let Some(item) = items.iter().find(|item| {
             item.after_observation_token.as_ref().is_some_and(|token| {
@@ -779,7 +637,7 @@ impl ToolRuntime {
         }) {
             return Err(format!(
                 "observe_jobs token for job_id {} exceeds 192 bytes",
-                item.job_id
+                item.effective_job_id()
             ));
         }
         if tail_lines == 0 {
@@ -791,7 +649,7 @@ impl ToolRuntime {
         let mut seen = HashSet::with_capacity(items.len());
         if let Some(duplicate) = items
             .iter()
-            .map(|item| item.job_id.as_str())
+            .map(|item| item.effective_job_id())
             .find(|job_id| !seen.insert(*job_id))
         {
             return Err(format!(
@@ -809,9 +667,13 @@ impl ToolRuntime {
     ) -> Vec<ObservedJob> {
         let mut observed: Vec<ObservedJob> = stream::iter(items.iter().cloned().enumerate().map(
             |(index, item)| async move {
+                let job_id = item
+                    .job_id
+                    .clone()
+                    .expect("job_id resolved before observe_jobs_pass");
                 let result = self
                     .job_log_for_auth(
-                        item.job_id.clone(),
+                        job_id.clone(),
                         None,
                         Some(tail_lines),
                         auth,
@@ -821,7 +683,7 @@ impl ToolRuntime {
                     .await;
                 ObservedJob {
                     index,
-                    job_id: item.job_id,
+                    job_id,
                     result,
                 }
             },
@@ -845,13 +707,19 @@ impl ToolRuntime {
         // canonical Notify + revision recheck covers updates both before and
         // during wait registration; no polling heartbeat is needed here.
         let mut waits = stream::iter(items.iter().cloned().map(|mut item| async move {
+            // By the time we reach wait_for_observed_jobs, ref resolution has
+            // already replaced any observation_ref with (job_id, token).
+            let resolved_job_id = item
+                .job_id
+                .clone()
+                .expect("job_id resolved before wait_for_observed_jobs");
             loop {
                 if Instant::now() >= deadline {
                     return Ok::<WakeReason, String>(WakeReason::Timeout);
                 }
                 let result = self
                     .job_log_for_auth(
-                        item.job_id.clone(),
+                        resolved_job_id.clone(),
                         None,
                         Some(1),
                         auth,
@@ -917,6 +785,46 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let (tail_lines, wait_secs) = normalize_observe_jobs_preferences(tail_lines, wait_secs);
+
+        // --- Ref resolution -------------------------------------------------
+        // Resolve any observation_ref items into canonical (job_id, token)
+        // before any further processing.  Unknown refs fail closed: the call
+        // returns an error rather than silently degrading to an empty baseline.
+        let principal_key =
+            match crate::tool_runtime::session_context::runtime_observation_principal(auth) {
+                Ok((kind, id)) => format!("{kind}:{id}"),
+                Err(e) => return ToolResult::err(e),
+            };
+        let mut items: Vec<ObserveJobsItem> = {
+            let mut resolved = Vec::with_capacity(items.len());
+            for item in items {
+                if item.observation_ref.is_some() {
+                    let ref_str = item.observation_ref.as_deref().unwrap();
+                    match self
+                        .observation_ref_registry
+                        .resolve(&principal_key, ref_str)
+                    {
+                        Some((job_id, token)) => {
+                            resolved.push(ObserveJobsItem::resolved(
+                                job_id,
+                                Some(token).filter(|t| !t.is_empty()),
+                            ));
+                        }
+                        None => {
+                            return ToolResult::err(format!(
+                                "observation_ref {ref_str} is unknown or has expired; \
+                                 supply job_id and after_observation_token directly"
+                            ));
+                        }
+                    }
+                } else {
+                    resolved.push(item);
+                }
+            }
+            resolved
+        };
+        // --------------------------------------------------------------------
+
         if let Err(error) = Self::validate_observe_jobs_input(&items, tail_lines, wait_secs) {
             return ToolResult::err(error);
         }
@@ -974,7 +882,37 @@ impl ToolRuntime {
             (refreshed, final_reason, waited_ms)
         };
 
-        let completed = observed.into_iter().map(batch_item).collect();
+        // --- Mint observation refs for this response -------------------------
+        // For each successfully observed job that returned an observation_token,
+        // mint a compact ref the model can echo back verbatim on the next call.
+        // The ref encodes (principal, job_id, token) in the server-local
+        // registry; it carries no execution authority.
+        let mut completed: Vec<Value> = observed.into_iter().map(batch_item).collect();
+        for item_value in &mut completed {
+            // observation_token lives inside item["output"]["observation_token"].
+            // Only mint a ref when the item was successful and carries a token.
+            let job_id = item_value
+                .get("job_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let token = item_value
+                .get("output")
+                .and_then(|o| o.get("observation_token"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if let (Some(job_id), Some(token)) = (job_id, token) {
+                if !token.is_empty() {
+                    let observation_ref =
+                        self.observation_ref_registry
+                            .mint(&principal_key, &job_id, &token);
+                    if let Some(obj) = item_value.as_object_mut() {
+                        obj.insert("observation_ref".to_string(), json!(observation_ref));
+                    }
+                }
+            }
+        }
+        // --------------------------------------------------------------------
+
         match apply_output_budget(requested_count, completed, wake_reason, waited_ms) {
             Ok(mut output) => {
                 add_actionable_batch_continuation(&mut output, &items, tail_lines);

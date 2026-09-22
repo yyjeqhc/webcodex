@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use webcodex_core::apply_patch_shared::ApplyPatchMatchingMode;
-use webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN;
+use webcodex_core::job_observation::{
+    MAX_JOB_OBSERVATION_TOKEN_LEN, MAX_OBSERVATION_REF_LEN, ObservationRefRegistry,
+};
 use webcodex_core::lsp_bridge::{
     CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
 };
@@ -339,10 +341,10 @@ pub struct SearchProjectTextsQuery {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveJobsItem {
-    /// Existing opaque runtime Job id.
+    /// Existing opaque runtime Job id.  Required unless `observation_ref` is supplied.
     #[schemars(length(min = 1))]
-    #[serde(deserialize_with = "deserialize_non_empty_job_id")]
-    pub job_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_job_id")]
+    pub job_id: Option<String>,
     /// Optional opaque Job-bound lifecycle/log-delta token from the latest observation. Return it
     /// unchanged without interpreting its cursor state. It is not execution identity or retry
     /// authority; a stale Server epoch is immediately actionable and conservatively resets the bounded
@@ -350,6 +352,33 @@ pub struct ObserveJobsItem {
     #[schemars(length(max = 62))]
     #[serde(default, deserialize_with = "deserialize_optional_observation_token")]
     pub after_observation_token: Option<String>,
+    /// Compact server-issued continuation selector that encodes the exact job_id and
+    /// after_observation_token from a prior successful observe_jobs response.  When present,
+    /// `job_id` and `after_observation_token` must be absent.  The ref is observation-only and
+    /// grants no execution authority.  Unknown or expired refs fail closed.
+    #[schemars(length(max = 22))]
+    #[serde(default, deserialize_with = "deserialize_optional_observation_ref")]
+    pub observation_ref: Option<String>,
+}
+
+impl ObserveJobsItem {
+    /// Construct a canonical item from resolved (job_id, after_observation_token) pair.
+    /// Used internally after dereferencing an observation_ref.
+    pub fn resolved(job_id: String, after_observation_token: Option<String>) -> Self {
+        Self {
+            job_id: Some(job_id),
+            after_observation_token,
+            observation_ref: None,
+        }
+    }
+
+    /// Return the effective `job_id` for this item, which is always `Some` after validation /
+    /// ref resolution. Panics if called before resolution.
+    pub fn effective_job_id(&self) -> &str {
+        self.job_id
+            .as_deref()
+            .expect("ObserveJobsItem job_id must be resolved before use")
+    }
 }
 
 /// Which observable changes may end a bounded batch Job wait early.
@@ -386,15 +415,47 @@ where
     Ok(Some(revision))
 }
 
-fn deserialize_non_empty_job_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+/// Deserializer for `ObserveJobsItem.job_id` — optional field that, when
+/// present, must be non-empty and not look like an observation_ref.
+fn deserialize_optional_job_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let job_id = String::deserialize(deserializer)?;
-    if job_id.trim().is_empty() {
-        return Err(serde::de::Error::custom("job_id must not be empty"));
+    let job_id = Option::<String>::deserialize(deserializer)?;
+    if let Some(id) = job_id.as_deref() {
+        if id.trim().is_empty() {
+            return Err(serde::de::Error::custom("job_id must not be empty"));
+        }
+        if ObservationRefRegistry::is_ref_syntax(id) {
+            return Err(serde::de::Error::custom(
+                "job_id must not use observation_ref syntax (~j prefix); supply it as observation_ref instead",
+            ));
+        }
     }
     Ok(job_id)
+}
+
+/// Deserializer for `ObserveJobsItem.observation_ref`.
+fn deserialize_optional_observation_ref<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    if let Some(ref_str) = value.as_deref() {
+        if ref_str.len() > MAX_OBSERVATION_REF_LEN {
+            return Err(serde::de::Error::custom(format!(
+                "observation_ref must not exceed {MAX_OBSERVATION_REF_LEN} bytes"
+            )));
+        }
+        if !ObservationRefRegistry::is_ref_syntax(ref_str) {
+            return Err(serde::de::Error::custom(
+                "observation_ref must start with '~j' followed by digits",
+            ));
+        }
+    }
+    Ok(value)
 }
 
 fn deserialize_optional_observation_token<'de, D>(
@@ -456,15 +517,49 @@ where
             "items must contain between 1 and 8 entries",
         ));
     }
-    let mut job_ids = HashSet::with_capacity(items.len());
-    if let Some(duplicate) = items
-        .iter()
-        .map(|item| item.job_id.as_str())
-        .find(|job_id| !job_ids.insert(*job_id))
-    {
-        return Err(serde::de::Error::custom(format!(
-            "duplicate job_id in items: {duplicate}"
-        )));
+    // Cross-field validation: each item must supply exactly one of job_id or
+    // observation_ref.  after_observation_token is forbidden alongside
+    // observation_ref (the ref already encodes both).
+    for item in &items {
+        match (&item.job_id, &item.observation_ref) {
+            (None, None) => {
+                return Err(serde::de::Error::custom(
+                    "each observe_jobs item must supply either job_id or observation_ref",
+                ));
+            }
+            (Some(_), Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "observation_ref and job_id are mutually exclusive in the same item",
+                ));
+            }
+            (None, Some(_)) => {
+                // observation_ref path: after_observation_token must be absent
+                if item.after_observation_token.is_some() {
+                    return Err(serde::de::Error::custom(
+                        "after_observation_token must be absent when observation_ref is supplied; the ref already encodes both job_id and cursor state",
+                    ));
+                }
+            }
+            (Some(_), None) => {
+                // Classic job_id path — no additional constraint here.
+            }
+        }
+    }
+    // Duplicate detection: collect canonical identifiers (job_id for classic
+    // items, observation_ref for ref items).  Duplicate refs are also rejected
+    // because they would map to the same job_id after resolution.
+    let mut seen = HashSet::with_capacity(items.len());
+    for item in &items {
+        let key = item
+            .job_id
+            .as_deref()
+            .or(item.observation_ref.as_deref())
+            .expect("validated above");
+        if !seen.insert(key) {
+            return Err(serde::de::Error::custom(format!(
+                "duplicate identifier in observe_jobs items: {key}"
+            )));
+        }
     }
     Ok(items)
 }
@@ -550,25 +645,6 @@ impl HostFileImportProvenance {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserSnapshotModeCall {
-    #[default]
-    Auto,
-    Full,
-    Interactive,
-}
-
-impl BrowserSnapshotModeCall {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Full => "full",
-            Self::Interactive => "interactive",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserObserveToolCall {
@@ -596,14 +672,6 @@ pub enum BrowserObserveToolCall {
         #[schemars(length(min = 1, max = 128))]
         #[schemars(regex(pattern = "^page_[A-Za-z0-9_-]{16,64}$"))]
         page_id: String,
-        #[serde(default)]
-        mode: BrowserSnapshotModeCall,
-        #[schemars(range(min = 1, max = 256))]
-        #[serde(default)]
-        max_nodes: Option<usize>,
-        #[schemars(range(min = 1, max = 32))]
-        #[serde(default)]
-        max_depth: Option<u32>,
     },
     Console {
         #[schemars(length(min = 1, max = 128))]
@@ -638,8 +706,6 @@ pub enum BrowserObserveToolCall {
         include_all_console: bool,
         #[serde(default)]
         include_all_network: bool,
-        #[serde(default)]
-        since_cursor: Option<u64>,
     },
     Screenshot {
         #[schemars(length(min = 1, max = 128))]
@@ -2751,37 +2817,6 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    /// Atomically admit one new durable Goal with one exact Workflow Session correlation.
-    /// This is Runtime/Store workflow composition only; it does not establish any Host carrier.
-    PrepareGoalWorkflow {
-        /// Exact Workflow Session independently re-authorized before durable admission.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
-        session_id: String,
-        /// Fixed durable completion intent; the Server does not evaluate natural-language conditions.
-        /// At most 8 conditions, each additionally bounded to 512 UTF-8 bytes.
-        #[serde(default)]
-        #[schemars(schema_with = "goal_conditions_schema")]
-        completion_conditions: Vec<String>,
-        /// Fixed bounded plan. Stable ids are unique; all steps start pending.
-        #[serde(default)]
-        #[schemars(length(max = 32))]
-        steps: Vec<GoalStepInputCall>,
-        /// Bounded human-readable Goal title.
-        #[schemars(length(min = 1, max = 200))]
-        title: String,
-        /// Bounded authoritative high-level objective/instruction.
-        #[schemars(length(min = 1, max = 8192))]
-        objective: String,
-        /// Optional exact owned durable Agent used only as Goal attention-routing identity.
-        #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        #[serde(default)]
-        controller_agent_id: Option<String>,
-        /// Caller-generated composition key. Exact replay returns the same admitted Goal;
-        /// changed reuse fails closed.
-        #[schemars(length(min = 1, max = 128))]
-        idempotency_key: String,
-    },
-
     /// Create explicit high-level durable intent/control state without execution authority.
     CreateGoal {
         /// Fixed durable completion intent; the Server does not evaluate natural-language conditions.
@@ -3830,13 +3865,6 @@ pub enum ToolCall {
         /// observation.
         #[serde(default)]
         wake_on: ObserveJobsWakeOn,
-        /// Opt-in projection for proven successful structured validation Jobs. Removes routine
-        /// passed-test/progress lines only; preserves diagnostics, lifecycle, counts and log boundaries.
-        /// A returned suggested_call expands retained logs from the original cursor, not the advanced
-        /// observation token. Failures, unknown results and ordinary commands keep their full projection.
-        #[serde(default)]
-        #[schemars(extend("default" = false))]
-        summary_only: bool,
     },
 
     /// Arm one caller-owned durable one-shot terminal attention for an exact
@@ -5257,7 +5285,6 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
-            Self::PrepareGoalWorkflow { .. } => "prepare_goal_workflow",
             Self::CreateGoal { .. } => "create_goal",
             Self::GetGoal { .. } => "get_goal",
             Self::PresentGoalPlan { .. } => "present_goal_plan",

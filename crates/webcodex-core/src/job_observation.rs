@@ -1,8 +1,119 @@
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::fmt;
+use std::sync::Mutex;
 
 const TOKEN_PREFIX: &str = "wj3_";
 pub const MAX_JOB_OBSERVATION_TOKEN_LEN: usize = 62;
+
+/// Prefix that distinguishes a compact observation ref from a `job_id` or bare
+/// observation token. Short enough to be unambiguous; not a valid `job_id` or
+/// `wj3_` token prefix.
+const OBSERVATION_REF_PREFIX: &str = "~j";
+
+/// Maximum number of (principal, ref) entries retained across all callers.
+/// Refs are ephemeral convenience handles; eviction is LRU on capacity.
+const OBSERVATION_REF_REGISTRY_CAPACITY: usize = 512;
+
+/// Maximum observation-ref string length (prefix + up to 20-digit decimal
+/// counter). Strict length check keeps deserialization predictable.
+pub const MAX_OBSERVATION_REF_LEN: usize = 22;
+
+/// Compact server-issued continuation selector that pins one exact Job
+/// observation state (job_id + observation token) for a specific principal.
+///
+/// A ref is **observation authority only**: it never starts, retries, stops,
+/// or redispatches a Job. Dereference re-authorizes visibility through the
+/// same canonical path as supplying job_id + after_observation_token directly.
+/// Stale or mismatched state fails closed — the underlying job_log call
+/// returns the same canonical reset/recovery semantics as today.
+///
+/// Refs survive only while the process is running; a server restart
+/// invalidates all refs fail-closed (the model falls back to job_id + token).
+#[derive(Debug)]
+pub struct ObservationRefRegistry {
+    entries: Mutex<VecDeque<ObservationRefEntry>>,
+    counter: Mutex<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct ObservationRefEntry {
+    /// Opaque ref string, e.g. `~j42`.
+    ref_str: String,
+    /// Stable non-secret principal identifier scoped by the registry owner.
+    /// Cross-principal substitution is rejected at dereference time.
+    principal_id: String,
+    /// Exact job_id bound at mint time.
+    job_id: String,
+    /// Observation token string bound at mint time (the `observation_token`
+    /// field from the successful observe_jobs item output).
+    observation_token: String,
+}
+
+impl Default for ObservationRefRegistry {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(VecDeque::new()),
+            counter: Mutex::new(0),
+        }
+    }
+}
+
+impl ObservationRefRegistry {
+    /// Mint a new compact ref for `(principal_id, job_id, observation_token)`.
+    /// Returns the opaque ref string (e.g. `~j42`).
+    pub fn mint(
+        &self,
+        principal_id: impl Into<String>,
+        job_id: impl Into<String>,
+        observation_token: impl Into<String>,
+    ) -> String {
+        let mut counter = self.counter.lock().expect("observation ref counter lock");
+        let index = *counter;
+        *counter = counter.wrapping_add(1);
+        drop(counter);
+
+        let ref_str = format!("{OBSERVATION_REF_PREFIX}{index}");
+        let entry = ObservationRefEntry {
+            ref_str: ref_str.clone(),
+            principal_id: principal_id.into(),
+            job_id: job_id.into(),
+            observation_token: observation_token.into(),
+        };
+
+        let mut entries = self.entries.lock().expect("observation ref registry lock");
+        if entries.len() >= OBSERVATION_REF_REGISTRY_CAPACITY {
+            entries.pop_front();
+        }
+        entries.push_back(entry);
+        ref_str
+    }
+
+    /// Resolve a ref back to `(job_id, observation_token)` for the given
+    /// principal.  Returns `None` when the ref is unknown, expired (evicted),
+    /// or belongs to a different principal.
+    pub fn resolve(&self, principal_id: &str, ref_str: &str) -> Option<(String, String)> {
+        let entries = self.entries.lock().expect("observation ref registry lock");
+        entries
+            .iter()
+            .rev()
+            .find(|e| e.ref_str == ref_str && e.principal_id == principal_id)
+            .map(|e| (e.job_id.clone(), e.observation_token.clone()))
+    }
+
+    /// Return true iff the string looks like a well-formed observation ref
+    /// (prefix + non-empty decimal suffix, within the length bound).
+    /// This is a syntactic check only; it does not prove the ref is known.
+    pub fn is_ref_syntax(value: &str) -> bool {
+        if value.len() > MAX_OBSERVATION_REF_LEN {
+            return false;
+        }
+        let Some(suffix) = value.strip_prefix(OBSERVATION_REF_PREFIX) else {
+            return false;
+        };
+        !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+    }
+}
 
 /// Observation state, never execution identity or authority. A 96-bit digest
 /// binds the exact Job and registry generation without repeating either ID.

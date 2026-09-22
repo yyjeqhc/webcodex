@@ -196,6 +196,12 @@ pub struct ToolRuntime {
     /// created only when the durable communication database is injected and is
     /// intentionally empty again after process restart.
     pub(crate) agent_continuations: Option<crate::agent_wake::AgentContinuationController>,
+    /// Process-local LRU registry of compact observation refs (e.g. `~j4`).
+    /// Each ref pins one exact (job_id, observation_token) pair for a specific
+    /// principal. Intentionally empty after server restart — the model falls back
+    /// to raw job_id + after_observation_token on unknown refs.
+    pub(crate) observation_ref_registry:
+        Arc<webcodex_core::job_observation::ObservationRefRegistry>,
 }
 
 impl ToolRuntime {
@@ -255,6 +261,9 @@ impl ToolRuntime {
             #[cfg(test)]
             job_terminal_registration_test_hook: None,
             agent_continuations: None,
+            observation_ref_registry: Arc::new(
+                webcodex_core::job_observation::ObservationRefRegistry::default(),
+            ),
         }
     }
 

@@ -62,7 +62,7 @@ When bootstrap or discovery returns `project_ref`, reuse it as the `project` sel
 ## Tool strategy guidance
 
 `work_on_project` accepts `guidance_profile`, defaulting to `direct`. Workflow
-contract v16 returns shared `guidance`, `model_protocol` and review `roles`, plus
+contract v17 returns shared `guidance`, `model_protocol` and review `roles`, plus
 only the selected `tool_strategy: {profile, guidance}`, when explicitly requested
 through `context_request=["webcodex.workflow"]`. The selection is request-local:
 choose again on exact resume without changing Session identity or business state.

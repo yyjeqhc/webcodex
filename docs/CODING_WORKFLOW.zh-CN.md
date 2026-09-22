@@ -27,7 +27,7 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v16
+`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v17
 保持共享的 `guidance`、`model_protocol` 和 review `roles`，并在显式
 `context_request=["webcodex.workflow"]` 时通过
 `tool_strategy: {profile, guidance}` 返回本次请求选中的策略。

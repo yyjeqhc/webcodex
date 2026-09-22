@@ -869,6 +869,41 @@ impl SessionStore {
         })
     }
 
+    /// Latest retained task-instruction identity at an exact Session event-count
+    /// snapshot. Unlike `summary`, this scans the full bounded durable ledger so
+    /// the model-facing 200-event tail cannot erase the current attempt identity.
+    /// `through_events_total` fences the lookup against a later instruction racing
+    /// the caller's already-observed Session snapshot. Durable eviction remains
+    /// fail-closed and therefore returns `None`.
+    pub fn retained_task_instruction_event_id_at(
+        &self,
+        session_id: &str,
+        through_events_total: usize,
+    ) -> Option<String> {
+        self.with_record_for_query(session_id, |record, _cold| {
+            let observed_total = usize::try_from(record.events_observed).unwrap_or(usize::MAX);
+            if through_events_total > observed_total {
+                return None;
+            }
+            let retained_len = record.events.len();
+            let first_retained_sequence = observed_total.saturating_sub(retained_len);
+            if through_events_total <= first_retained_sequence {
+                return None;
+            }
+            let retained_end = through_events_total
+                .saturating_sub(first_retained_sequence)
+                .min(retained_len);
+            record
+                .events
+                .iter()
+                .take(retained_end)
+                .rev()
+                .find(|event| event.kind == "task_instruction")
+                .map(|event| event.event_id.clone())
+        })
+        .flatten()
+    }
+
     /// Bounded, read-only Workflow Session rows for one exact runtime project.
     /// The project is authoritative caller context, never request-controlled UI state.
     pub fn console_list_for_project(

@@ -241,15 +241,6 @@ changes_git() {
 }
 "#;
 
-fn current_work_result_attempt_key(summary: &super::sessions::SessionSummary) -> Option<String> {
-    summary
-        .events
-        .iter()
-        .rev()
-        .find(|event| event.kind == "task_instruction")
-        .map(|event| event.event_id.clone())
-}
-
 impl ToolRuntime {
     /// Cheap closeout eligibility probe. It intentionally does not freeze a
     /// snapshot or generate diff bodies: only the explicit presentation call
@@ -313,7 +304,10 @@ exit 0
         summary: &super::sessions::SessionSummary,
         auth: Option<&AuthContext>,
     ) -> Result<Option<Value>, ToolResult> {
-        let Some(attempt_key) = current_work_result_attempt_key(summary) else {
+        let Some(attempt_key) = self
+            .sessions
+            .retained_task_instruction_event_id_at(&summary.session_id, summary.events_total)
+        else {
             return Ok(None);
         };
         self.freeze_work_result_changes(project, summary, &attempt_key, auth)
@@ -326,7 +320,10 @@ exit 0
         summary: &super::sessions::SessionSummary,
         auth: Option<&AuthContext>,
     ) -> Result<Option<Value>, ToolResult> {
-        let Some(attempt_key) = current_work_result_attempt_key(summary) else {
+        let Some(attempt_key) = self
+            .sessions
+            .retained_task_instruction_event_id_at(&summary.session_id, summary.events_total)
+        else {
             return Ok(None);
         };
         let caller_fingerprint = workflow_session_authority_fingerprint(auth)

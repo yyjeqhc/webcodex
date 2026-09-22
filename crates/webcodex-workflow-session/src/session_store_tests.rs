@@ -161,6 +161,86 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
 }
 
 #[test]
+fn retained_task_instruction_identity_survives_summary_tail_and_fences_later_attempt() {
+    let store = SessionStore::new(10, DEFAULT_MAX_EVENTS_PER_SESSION);
+    let request = |resume_session_id: Option<String>, instruction: &str| CodingSessionRequest {
+        project: "agent:test:attempt-fence".to_string(),
+        authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
+        resume_session_id,
+        instruction: Some(instruction.to_string()),
+        mode: SessionMode::Normal,
+        guards: SessionGuards::default(),
+        execution_context: None,
+        project_instructions: None,
+        transport: SessionTransport::Api,
+        context_refreshed: true,
+        write_scope_verified: true,
+    };
+    let created = store
+        .ensure_coding_session_with_git_baseline(
+            request(None, "first attempt"),
+            Some("a".repeat(40)),
+        )
+        .unwrap();
+    let session_id = created.summary.session_id.clone();
+    let first_instruction_id = created
+        .summary
+        .events
+        .iter()
+        .find(|event| event.kind == "task_instruction")
+        .unwrap()
+        .event_id
+        .clone();
+
+    for index in 0..110 {
+        let start = store.record_tool_call_started(
+            Some(&session_id),
+            SessionTransport::Api,
+            "runtime_status",
+            &json!({"probe": index}),
+            session_tool_contract("runtime_status"),
+        );
+        store.record_tool_call_finished(start, true, &json!({"ok": true}), None, None);
+    }
+    let truncated = store.summary(&session_id, Some(usize::MAX)).unwrap();
+    assert!(truncated.events_truncated);
+    assert!(truncated
+        .events
+        .iter()
+        .all(|event| event.kind != "task_instruction"));
+    let first_attempt_events_total = truncated.events_total;
+    assert_eq!(
+        store.retained_task_instruction_event_id_at(&session_id, first_attempt_events_total),
+        Some(first_instruction_id.clone())
+    );
+
+    let resumed = store
+        .ensure_coding_session_with_git_baseline(
+            request(Some(session_id.clone()), "second attempt"),
+            Some("b".repeat(40)),
+        )
+        .unwrap();
+    let second_instruction_id = resumed
+        .summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "task_instruction")
+        .unwrap()
+        .event_id
+        .clone();
+    assert_ne!(second_instruction_id, first_instruction_id);
+    assert_eq!(
+        store.retained_task_instruction_event_id_at(&session_id, first_attempt_events_total),
+        Some(first_instruction_id)
+    );
+    assert_eq!(
+        store.retained_task_instruction_event_id_at(&session_id, resumed.summary.events_total),
+        Some(second_instruction_id)
+    );
+}
+
+#[test]
 fn input_summary_redacts_sensitive_keys() {
     let store = SessionStore::default();
     let summary = store.start_session(None, None);

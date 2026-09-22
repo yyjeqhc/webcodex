@@ -719,6 +719,58 @@ async fn committed_final_tree_is_presentable_even_when_worktree_is_clean() {
 }
 
 #[tokio::test]
+async fn final_changes_seal_survives_model_summary_tail_truncation() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "base\n", "base");
+    let baseline = git(tmp.path(), &["rev-parse", "HEAD^{tree}"]);
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let client_id = "changes-long-attempt";
+    let project =
+        register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
+            .await;
+    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    record_first_class_edit(&runtime, &session.session_id, &project, "README.md");
+    fs::write(tmp.path().join("README.md"), "long task final state\n").unwrap();
+
+    for index in 0..110 {
+        let start = runtime.sessions.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Mcp,
+            "read_files",
+            &json!({"project": project, "items": [{"path": format!("src/{index}.rs")}]}),
+            crate::tool_runtime::sessions::session_tool_contract("read_files"),
+        );
+        runtime
+            .sessions
+            .record_tool_call_finished(start, true, &json!({"items": []}), None, None);
+    }
+    let truncated = runtime
+        .sessions
+        .summary(&session.session_id, Some(usize::MAX))
+        .unwrap();
+    assert!(truncated.events_truncated);
+    assert!(truncated
+        .events
+        .iter()
+        .all(|event| event.kind != "task_instruction"));
+    assert!(presentation_needed(&runtime, client_id, &project, truncated).await);
+
+    let sealed =
+        seal_successful_closeout(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(
+        sealed.is_some(),
+        "long attempts must retain closeout identity beyond the model event tail"
+    );
+    let work = present(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(work.success, "{:?}", work.error);
+    assert!(work.output["work_result"]["final_changes"]["snapshot_id"]
+        .as_str()
+        .is_some());
+}
+
+#[tokio::test]
 async fn shell_only_is_ineligible_and_reverted_first_class_edit_has_no_presentation() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());

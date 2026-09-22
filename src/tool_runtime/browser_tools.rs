@@ -58,8 +58,6 @@ fn browser_diagnostics_payload(
     payload
 }
 
-
-
 fn browser_observe_policy(call: &BrowserObserveToolCall) -> SpecializedOperationPolicy {
     SpecializedOperationPolicy::read(
         SpecializedSource::Browser,

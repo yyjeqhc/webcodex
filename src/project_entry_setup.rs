@@ -599,11 +599,17 @@ pub(super) fn validate_existing_runner(
         return Ok(());
     }
     let value: toml::Value = read_toml(&runner_config)?;
-    if value.get("projects_dir").is_some() {
+    let canonical_registry = value
+        .get("project_registry_dir")
+        .and_then(toml::Value::as_str);
+    let legacy_registry = value.get("projects_dir").and_then(toml::Value::as_str);
+    if value.get("project_registry_dir").is_some() && value.get("projects_dir").is_some() {
         return Err(ProductError::new(
             "project_registration_invalid",
-            "existing Runner configuration uses retired field 'projects_dir'; use 'project_registry_dir' instead",
-            Some("Rename the Runner config field to 'project_registry_dir', then retry setup."),
+            "existing Runner configuration sets both 'project_registry_dir' and legacy 'projects_dir'",
+            Some(
+                "Keep exactly one Runner project registry setting; prefer 'project_registry_dir' for migrated state.",
+            ),
         ));
     }
     let expected = [
@@ -621,9 +627,7 @@ pub(super) fn validate_existing_runner(
             ));
         }
     }
-    let current_registry = value
-        .get("project_registry_dir")
-        .and_then(toml::Value::as_str);
+    let current_registry = canonical_registry.or(legacy_registry);
     let expected_registry = paths.project_registry.to_string_lossy();
     if current_registry != Some(expected_registry.as_ref()) {
         return Err(ProductError::new(

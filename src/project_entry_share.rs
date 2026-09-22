@@ -1622,7 +1622,12 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn tunnel_startup_timeout_kills_fake_process() {
-        let (_temp, binary) = fake_cloudflared("#!/bin/sh\nsleep 5\n");
+        // Keep the fake process alive without spawning an external `sleep` child.
+        // The full server test suite runs many process-heavy tests concurrently on
+        // CI; under transient process pressure an extra shell child can fail to
+        // spawn and make this fixture look like an early tunnel exit instead of
+        // the startup timeout this test is intended to exercise.
+        let (_temp, binary) = fake_cloudflared("#!/bin/sh\nwhile :; do :; done\n");
         let error = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
@@ -1631,7 +1636,11 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code, "tunnel_unavailable");
-        assert!(error.message.contains("startup timeout"));
+        assert!(
+            error.message.contains("startup timeout"),
+            "unexpected tunnel startup error: {}",
+            error.message
+        );
     }
 
     #[cfg(unix)]

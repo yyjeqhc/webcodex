@@ -1165,7 +1165,6 @@ fn rust_workspace_symbol_timeout_remains_bounded_by_the_operation_deadline() {
 fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::new("workspace_readiness_restart");
-    let started = Instant::now();
     let result = fixture.request_with_timeout(
         RunnerLspPayload {
             project_id: "demo".into(),
@@ -1174,11 +1173,14 @@ fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
                 limit: 50,
             },
         },
-        1,
+        5,
     );
     assert_eq!(result["success"], false, "{result}");
-    assert_eq!(result["error"]["code"], "lsp_request_timeout", "{result}");
-    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(result["error"]["code"], "lsp_server_failed", "{result}");
+    assert_eq!(
+        result["error"]["message"],
+        "language server workspace is not ready (health=warning)"
+    );
     let marker = fs::read_to_string(&fixture.marker).unwrap();
     assert_eq!(
         marker

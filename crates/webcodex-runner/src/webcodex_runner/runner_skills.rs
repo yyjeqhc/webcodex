@@ -1,6 +1,8 @@
 use super::config::SkillsConfig;
 use super::configured_skills;
 use super::output::{CommandResult, ShellCommandResult};
+#[cfg(windows)]
+use super::shell::prepare_detached_process_launch;
 use super::shell::{
     run_process_with_profiles_and_execution_state_with_start_hook, PreparedShellProfileCache,
 };
@@ -143,6 +145,14 @@ fn interpreter_unavailable(result: &ShellCommandResult) -> bool {
         })
 }
 
+#[cfg(windows)]
+fn windows_skill_interpreter_path_available(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    !configured_skills::metadata_is_link_like(&metadata)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
     generation: u64,
@@ -194,6 +204,51 @@ pub(crate) fn run_skill_resource_with_profiles_and_execution_state(
     };
     let last = candidates.len().saturating_sub(1);
     for (index, (executable, args)) in candidates.into_iter().enumerate() {
+        #[cfg(windows)]
+        let executable = {
+            let resolved = match prepare_detached_process_launch(
+                generation,
+                policy,
+                shell,
+                project_registry_dir,
+                cache,
+                cwd,
+                &executable,
+                &args,
+                timeout_secs,
+                stop_requested,
+            ) {
+                Ok(launch) => launch.process.executable,
+                Err(error)
+                    if index != last
+                        && error.contains("structured process executable is unavailable") =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(0),
+                        error: Some(error),
+                    });
+                }
+            };
+            if !windows_skill_interpreter_path_available(Path::new(&resolved)) {
+                if index != last {
+                    continue;
+                }
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(0),
+                    error: Some("skill_resource_interpreter_unavailable".to_string()),
+                });
+            }
+            resolved
+        };
         let result = run_process_with_profiles_and_execution_state_with_start_hook(
             generation,
             policy,

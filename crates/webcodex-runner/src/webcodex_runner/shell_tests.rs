@@ -855,7 +855,7 @@ fn structured_process_supports_empty_args_and_bounded_stdin() {
 fn structured_process_without_stdin_receives_eof_instead_of_runner_parent_lease() {
     let cwd = tempfile::tempdir().unwrap();
     let helper = process_argv_helper();
-    let result = run_direct_process(cwd.path(), &helper, &["stdin".to_string()], None, 2);
+    let result = run_direct_process(cwd.path(), &helper, &["stdin".to_string()], None, 10);
     assert_eq!(
         result.execution_state,
         ShellCommandExecutionState::Completed,

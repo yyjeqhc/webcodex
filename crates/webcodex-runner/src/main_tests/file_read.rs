@@ -133,7 +133,7 @@ fn runner_file_read_range_output_obeys_max_bytes() {
 #[test]
 fn runner_file_read_range_rejects_serialized_envelope_expansion_before_stdout() {
     for (name, byte, len) in [
-        ("nul.txt", 0x00, 48 * 1024),
+        ("nul-byte.txt", 0x00, 48 * 1024),
         ("quote.txt", b'\"', 140 * 1024),
         ("backslash.txt", b'\\', 140 * 1024),
         ("control.txt", 0x01, 48 * 1024),

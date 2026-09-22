@@ -161,7 +161,12 @@ fn run() -> io::Result<()> {
                             if start_count(marker.as_deref()) <= 1 {
                                 write_server_status(&mut writer, "ok", true, None)?;
                             } else {
-                                write_server_status(&mut writer, "ok", false, None)?;
+                                write_server_status(
+                                    &mut writer,
+                                    "warning",
+                                    true,
+                                    Some("workspace restart must reapply readiness"),
+                                )?;
                             }
                         }
                         "workspace_readiness_warning" => {

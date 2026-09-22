@@ -304,20 +304,12 @@ fn unix_directory_open_flags() -> libc::c_int {
 fn open_instruction_file_windows(path: &Path, before_leaf: impl FnOnce()) -> io::Result<File> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE,
-    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_READ};
 
     let parent_path = path
         .parent()
         .ok_or_else(|| io::Error::other("instruction path must name an absolute file"))?;
-    let parent = match windows_nt_open_absolute(
-        parent_path,
-        FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        WINDOWS_FILE_DIRECTORY_FILE,
-    ) {
+    let parent = match open_windows_directory(parent_path) {
         Ok(handle) => File::from(handle),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Err(io::Error::other("instruction parent is unavailable"));
@@ -365,19 +357,10 @@ fn open_instruction_file_windows(path: &Path, before_leaf: impl FnOnce()) -> io:
 
 #[cfg(windows)]
 fn windows_parent_still_current(path: &Path, expected: (u64, [u8; 16])) -> bool {
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    };
-
-    windows_nt_open_absolute(
-        path,
-        FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        WINDOWS_FILE_DIRECTORY_FILE,
-    )
-    .map(File::from)
-    .and_then(|file| windows_file_identity(&file))
-    .is_ok_and(|current| current == expected)
+    open_windows_directory(path)
+        .map(File::from)
+        .and_then(|file| windows_file_identity(&file))
+        .is_ok_and(|current| current == expected)
 }
 
 #[cfg(windows)]
@@ -405,20 +388,78 @@ fn windows_file_identity(file: &File) -> io::Result<(u64, [u8; 16])> {
 }
 
 #[cfg(windows)]
-fn windows_nt_open_absolute(
-    path: &Path,
-    desired_access: u32,
-    share_access: u32,
-    create_options: u32,
-) -> io::Result<std::os::windows::io::OwnedHandle> {
-    let mut name = windows_nt_path(path)?;
-    windows_nt_open(
-        std::ptr::null_mut(),
-        &mut name,
-        desired_access,
-        share_access,
-        create_options,
-    )
+fn open_windows_directory(path: &Path) -> io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+    use std::path::Component;
+    use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let mut components = path.components();
+    let prefix = match components.next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "instruction path must be an absolute Windows path",
+            ))
+        }
+    };
+    if !matches!(components.next(), Some(Component::RootDir)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "instruction path must include a Windows root",
+        ));
+    }
+
+    let mut root = std::path::PathBuf::from(prefix.as_os_str());
+    root.push(r"\");
+    let wide = std::os::windows::ffi::OsStrExt::encode_wide(root.as_os_str())
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // Resolve only the Windows drive/share root through Win32 namespace rules.
+    // Every real filesystem descendant is then opened relative to the pinned
+    // parent handle with OBJ_DONT_REPARSE, so junction/reparse ancestors remain
+    // fail-closed without rejecting the ordinary DOS drive mapping itself.
+    let root_handle: HANDLE = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if root_handle.is_null() || root_handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let mut directory = unsafe { OwnedHandle::from_raw_handle(root_handle as RawHandle) };
+
+    for component in components {
+        let name = match component {
+            Component::Normal(name) => name,
+            Component::CurDir => continue,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "instruction path must not contain parent traversal",
+                ))
+            }
+        };
+        directory = windows_nt_open_relative(
+            directory.as_raw_handle() as HANDLE,
+            name,
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            WINDOWS_FILE_DIRECTORY_FILE,
+        )?;
+    }
+
+    Ok(directory)
 }
 
 #[cfg(windows)]
@@ -532,54 +573,6 @@ fn windows_nt_open(
         ));
     }
     Ok(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) })
-}
-
-#[cfg(windows)]
-fn windows_nt_path(path: &Path) -> io::Result<Vec<u16>> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    use std::path::{Component, Prefix};
-
-    if !path.is_absolute() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "instruction path must be absolute",
-        ));
-    }
-    let (prefix, source_offset) = match path.components().next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::Disk(_) => ("\\??\\", 0),
-            Prefix::VerbatimDisk(_) => ("\\??\\", 4),
-            Prefix::UNC(_, _) => ("\\??\\UNC\\", 2),
-            Prefix::VerbatimUNC(_, _) => ("\\??\\UNC\\", 8),
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "instruction path uses an unsupported Windows namespace",
-                ));
-            }
-        },
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "instruction path must be an absolute Windows path",
-            ));
-        }
-    };
-    let mut result = OsStr::new(prefix).encode_wide().collect::<Vec<_>>();
-    result.extend(
-        path.as_os_str()
-            .encode_wide()
-            .skip(source_offset)
-            .map(|unit| {
-                if unit == b'/' as u16 {
-                    b'\\' as u16
-                } else {
-                    unit
-                }
-            }),
-    );
-    Ok(result)
 }
 
 fn read_instruction_bytes(reader: impl Read) -> io::Result<Vec<u8>> {

@@ -92,6 +92,21 @@ fn instruction_open_supports_search_only_parent_directories() {
 
 #[cfg(windows)]
 #[test]
+fn instruction_secure_open_reads_ordinary_windows_file() {
+    use std::io::Read as _;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("AGENTS.md");
+    std::fs::write(&path, "ordinary guidance").unwrap();
+    let mut file = open_instruction_file_windows(&path, || {})
+        .unwrap_or_else(|error| panic!("ordinary Windows instruction open failed: {error:?}"));
+    let mut content = String::new();
+    file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "ordinary guidance");
+}
+
+#[cfg(windows)]
+#[test]
 fn instruction_snapshot_reads_unicode_crlf_and_canonical_windows_paths() {
     let tmp = tempfile::tempdir().unwrap();
     let directory = tmp.path().join("规则 with spaces");

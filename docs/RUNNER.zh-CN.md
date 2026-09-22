@@ -111,11 +111,15 @@ runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Run
 
 `skill_list` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：
 
+**自 v0.4.2 起可用：** configured live Runner Skill roots 与 Managed Runner Skill Store 会共同参与这个统一 catalog。v0.4.1 的 `skill_list` 不会隐式扫描 `~/.codex/skills`；如果希望该目录参与 v0.4.2+ discovery，必须在 `[skills].roots` 中显式配置。
+
 | 来源 | 位置 / owner | Trust | 版本语义 |
 | --- | --- | --- | --- |
 | Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Project live content；没有 package revision。 |
 | Configured live Runner Skill roots | Runner 主机上由 operator 配置的绝对目录 | `operator_configured_guidance` | WebCodex 不修改的 live filesystem content；受支持脚本可通过 `run_skill_resource` 执行；没有 install、activation、rollback 或 package revision。 |
 | Managed Runner Skill Store | Runner state 下的 `runner-skills-v1` | `operator_installed_guidance` | immutable package revision，并保留 install、activation、remove 与 rollback-oriented Store 语义。 |
+
+`skill_list.sources` 固定报告这三类逻辑 source，并提供有界的 `status`、计数、truncation 与安全 reason code。source 为 available 且 `skill_count=0` 表示 discovery 成功但没有发现 Skill，不代表索引损坏。只有 Project source 会暴露逻辑 root hint `.agents/skills`；Runner 上真实 configured root 路径保持私有。
 
 Configured live roots 默认不存在，需要在 Runner 的 `runner.toml` 中显式配置：
 
@@ -160,6 +164,10 @@ Skill 文件本身是 live 的：修改 `SKILL.md` 或 resource 后，下一次 
 SHA-256。Managed installed Skill 还会用 `expected_package_revision` fence immutable package。
 只有修改 `roots` 配置列表时才需要按正式流程先执行 `runner_config_check`，再携带当前
 generation 执行 `runner_config_reload`；该字段支持 hot reload，不需要重启 Runner 进程。
+
+## Runner build identity
+
+Runner 连接后，`runtime_status(client_id=...)` 与 `list_runners` 会暴露有界、非敏感的 binary identity：package version、Git commit/dirty 状态、build timestamp、Cargo target triple 与 architecture。旧 Runner 可以缺省这些 optional 字段。该信息用于部署与 source-alignment 诊断，不包含 executable path、environment、token 或 credential；连接前仍可用 `webcodex-runner --version` 做本机 identity 检查。
 
 ## Runner 级 configured instructions
 

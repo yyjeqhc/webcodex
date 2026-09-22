@@ -7,6 +7,7 @@ use webcodex_core::skill_metadata::{MAX_SKILL_DESCRIPTION_CHARS, MAX_SKILL_NAME_
 use webcodex_core::skill_store::MAX_OPERATOR_SKILL_KEY_CHARS;
 
 fn descriptor_schema() -> Value {
+    // Skill descriptors intentionally never expose native Runner Skill root paths.
     json!({
         "type": "object",
         "properties": {
@@ -20,6 +21,36 @@ fn descriptor_schema() -> Value {
             "name_conflict": {"type": "boolean"}
         },
         "required": ["skill_id", "name", "description", "definition_revision", "source_scope", "trust", "package_revision", "name_conflict"],
+        "additionalProperties": false
+    })
+}
+
+fn skill_source_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": ["project", "configured_runner_roots", "managed_runner_store"]
+            },
+            "status": {
+                "type": "string",
+                "enum": ["available", "unavailable"]
+            },
+            "root_hint": {
+                "type": "string",
+                "const": ".agents/skills",
+                "description": "Logical Project-relative root hint. Native Runner Skill root paths are never exposed."
+            },
+            "skill_count": {"type": "integer", "minimum": 0},
+            "invalid_count": {"type": "integer", "minimum": 0},
+            "discovery_truncated": {"type": "boolean"},
+            "reason_code": {
+                "type": "string",
+                "enum": ["runner_skill_sources_unavailable"]
+            }
+        },
+        "required": ["kind", "status", "skill_count", "invalid_count", "discovery_truncated"],
         "additionalProperties": false
     })
 }
@@ -265,6 +296,18 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     descriptor_schema(),
                     "Lightweight Skill descriptors; never SKILL.md bodies.",
                 ),
+            ),
+            (
+                "sources",
+                {
+                    let mut schema = array_schema(
+                        skill_source_summary_schema(),
+                        "Fixed three-source discovery participation summary: Project .agents/skills, configured Runner roots, and the managed Runner store. Empty available sources mean discovery succeeded and found zero Skills; unavailable Runner sources carry only a stable reason code. Native Runner paths are never exposed.",
+                    );
+                    schema["minItems"] = json!(3);
+                    schema["maxItems"] = json!(3);
+                    schema
+                },
             ),
             (
                 "invalid_count",

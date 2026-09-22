@@ -364,7 +364,7 @@ Client enrollment generates the Runner config. Important settings in
 | `transport` | Prefer `auto` with `[quic]` configured. |
 | `project_registry_dir` | Directory of project registry files. |
 | `[policy]` | Local execution boundary (`allowed_roots`, etc.). |
-| `[skills].roots` | Optional absolute Runner-local live Skill roots. WebCodex does not modify them; supported scripts may execute via `run_skill_resource`; content is not copied into the managed Skill Store. |
+| `[skills].roots` | **Available since v0.4.2.** Optional absolute Runner-local live Skill roots. WebCodex does not modify them; supported scripts may execute via `run_skill_resource`; content is not copied into the managed Skill Store. |
 | `[instructions].files` | Optional absolute Runner-local instruction files applied to every Project on this Runner. No implicit default path; the list is hot-reloadable and file contents are live. |
 | `[shell]` | Optional shell profile definitions and bounded persistent-shell limits. |
 | `[ssh.resources.<name>]` | Optional named SSH target for Session-bound `run_shell` / `run_job`. |

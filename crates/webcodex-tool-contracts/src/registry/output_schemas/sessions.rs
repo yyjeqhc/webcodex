@@ -441,9 +441,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "workspace_clean",
-                schema_type(
+                nullable_schema(
                     "boolean",
-                    "Diagnostic workspace cleanliness verdict.",
+                    "Diagnostic workspace cleanliness verdict; null means Git cleanliness is not applicable or unavailable.",
                 ),
             ),
             (

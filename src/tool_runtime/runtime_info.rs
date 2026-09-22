@@ -214,6 +214,7 @@ impl ToolRuntime {
                         "project_inventory": client.project_inventory,
                         "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
                         "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
+                        "build": client.build,
                         "capabilities": client.capabilities,
                         "policy": sanitized_policy_summary(client.policy.as_ref()),
                         "shell_profiles": sanitized_shell_profiles_summary(
@@ -628,6 +629,7 @@ impl ToolRuntime {
                 "active_jobs": active_jobs_for_client(&selected_jobs, &client.client_id),
                 "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
                 "projects_count": project_count,
+                "build": client.build,
             }],
             "summary": runner_health_summary(&clients, &selected_jobs, now),
         });
@@ -752,6 +754,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "version": status.get("version").cloned().unwrap_or(Value::Null),
             "git_commit": status.pointer("/build/git_commit").cloned().unwrap_or(Value::Null),
             "git_dirty": status.pointer("/build/git_dirty").cloned().unwrap_or(Value::Null),
+            "built_at": status.pointer("/build/built_at").cloned().unwrap_or(Value::Null),
+            "target": status.pointer("/build/target").cloned().unwrap_or(Value::Null),
+            "architecture": status.pointer("/build/architecture").cloned().unwrap_or(Value::Null),
         },
         "tools": {
             "count": status.pointer("/tools/count").cloned().unwrap_or(Value::Null),
@@ -834,6 +839,9 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
                 "transport": runner.get("transport").cloned().unwrap_or(Value::Null),
                 "build_git_commit": compat.and_then(|value| value.get("build_git_commit")).cloned().unwrap_or(Value::Null),
                 "build_git_dirty": compat.and_then(|value| value.get("build_git_dirty")).cloned().unwrap_or(Value::Null),
+                "build_built_at": compat.and_then(|value| value.get("build_built_at")).cloned().unwrap_or(Value::Null),
+                "build_target": compat.and_then(|value| value.get("build_target")).cloned().unwrap_or(Value::Null),
+                "build_architecture": compat.and_then(|value| value.get("build_architecture")).cloned().unwrap_or(Value::Null),
                 "version_matches_server": compat.and_then(|value| value.get("version_matches_server")).cloned().unwrap_or(Value::Null),
                 "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
             });
@@ -1164,6 +1172,12 @@ fn version_compatibility_against(
             let build_version = client.build.as_ref().and_then(|b| b.version.clone());
             let build_git_commit = client.build.as_ref().and_then(|b| b.git_commit.clone());
             let build_git_dirty = client.build.as_ref().and_then(|b| b.git_dirty);
+            let build_built_at = client.build.as_ref().and_then(|b| b.built_at.clone());
+            let build_target = client.build.as_ref().and_then(|b| b.target.clone());
+            let build_architecture = client
+                .build
+                .as_ref()
+                .and_then(|b| b.architecture.clone());
             let version_matches_server = build_version
                 .as_deref()
                 .map(|version| version == server_version);
@@ -1223,6 +1237,9 @@ fn version_compatibility_against(
                 "build_version": build_version,
                 "build_git_commit": build_git_commit,
                 "build_git_dirty": build_git_dirty,
+                "build_built_at": build_built_at,
+                "build_target": build_target,
+                "build_architecture": build_architecture,
                 "version_matches_server": version_matches_server,
                 "status": status,
                 "reason_code": reason_code,
@@ -1270,6 +1287,8 @@ pub(crate) fn version_compatibility_for_test(
             "git_commit": server_git_commit,
             "git_dirty": server_git_dirty,
             "built_at": null,
+            "target": null,
+            "architecture": null,
         }),
     )
 }
@@ -1411,6 +1430,7 @@ fn runtime_status_client_summary(
         "job_concurrency".to_string(),
         job_concurrency_for_client(client, runner_jobs),
     );
+    value.insert("build".to_string(), json!(client.build));
     value.insert("capabilities".to_string(), json!(client.capabilities));
     value.insert(
         "projects_count".to_string(),

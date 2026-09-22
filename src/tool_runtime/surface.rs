@@ -449,6 +449,41 @@ fn tool_manifest_route(spec: &ToolSpec) -> (&'static str, Option<&'static str>) 
     }
 }
 
+fn tool_manifest_invocation_route(spec: &ToolSpec) -> Value {
+    let target = spec.name.as_str();
+    let (availability, gateway_tool) = tool_manifest_route(spec);
+    let primary = match (availability, gateway_tool) {
+        (crate::model_surface::TOOL_SURFACE_AVAILABILITY_DIRECT, None) => {
+            json!({"mode": "direct", "tool": target})
+        }
+        (crate::model_surface::TOOL_SURFACE_AVAILABILITY_GATEWAY, Some(gateway)) => {
+            json!({"mode": "gateway", "tool": gateway, "target": target})
+        }
+        _ => json!({"mode": "unavailable", "tool": Value::Null, "target": target}),
+    };
+
+    let fallback = if availability == crate::model_surface::TOOL_SURFACE_AVAILABILITY_DIRECT
+        && target != crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    {
+        json!({
+            "mode": "gateway",
+            "tool": crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "target": target,
+            "when": "direct_callable_unavailable",
+            "blocked_when_mcp_apps_enabled": crate::model_surface::tool_requires_direct_app_presentation(target),
+        })
+    } else {
+        Value::Null
+    };
+
+    json!({
+        "primary": primary,
+        "fallback": fallback,
+        "tool_manifest_registers_host_tool": false,
+        "discovery_effect": "none",
+    })
+}
+
 impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 256;
 
@@ -602,6 +637,7 @@ impl ToolRuntime {
             "total_count": tool_count,
             "filtered_count": 1,
             "tool_name": spec.name,
+            "route": tool_manifest_invocation_route(spec),
             "contract": {
                 "name": spec.name,
                 "description": spec.description,
@@ -626,6 +662,7 @@ impl ToolRuntime {
             "requested_limit": Value::Null,
             "categories": Value::Object(exact_categories),
             "tools": [compact_manifest_tool_entry(spec)],
+            "routing_note": "tool_manifest only describes an existing route; it never dynamically registers a new Host tool. Follow route.primary, or route.fallback when the direct callable is unavailable and the fallback is not blocked by MCP App presentation requirements.",
         });
         if let Some(execution) = runtime_tool_execution_contract(spec.name.as_str()) {
             output["contract"]["execution"] = manifest_execution_projection(execution);

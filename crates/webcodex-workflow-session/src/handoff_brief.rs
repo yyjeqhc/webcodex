@@ -329,6 +329,18 @@ fn project_workspace(requested: bool, workspace: Option<&Value>) -> WorkspacePro
         .get("git_available")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let non_git_project = workspace
+        .get("non_git_project")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if non_git_project {
+        return WorkspaceProjection {
+            value: unavailable_workspace("available", "non_git_project"),
+            status: "available",
+            dirty: None,
+            conflicted: None,
+        };
+    }
     let clean = workspace.get("clean").and_then(Value::as_bool);
     let conflicted_count = workspace
         .pointer("/counts/conflicted")
@@ -342,7 +354,7 @@ fn project_workspace(requested: bool, workspace: Option<&Value>) -> WorkspacePro
         };
     }
 
-    let dirty = !clean.unwrap_or(false);
+    let dirty = !clean.expect("workspace clean was checked above");
     let conflicted = conflicted_count.unwrap_or(0) > 0;
     let branch = safe_branch(workspace.get("branch").and_then(Value::as_str));
     let head = safe_head(workspace.get("head"));

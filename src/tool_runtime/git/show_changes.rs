@@ -275,7 +275,7 @@ fn non_git_show_changes_payload_with_observation(
         "git_error": "not a git repository; git-backed diff unavailable",
         "branch": null,
         "upstream_status": "unobserved",
-        "upstream_reason_code": "git_unavailable",
+        "upstream_reason_code": "non_git_project",
         "upstream": null,
         "ahead": null,
         "behind": null,
@@ -316,7 +316,7 @@ fn non_git_show_changes_payload_with_observation(
         "head_exit": null,
         "warnings": [],
         "suggested_next_actions": [
-            "git-backed status/diff unavailable; project is not a git repository",
+            "git-backed status/diff is not applicable; project is not a git repository",
         ],
         "session": null,
         "exit_code": observation.exit_code,
@@ -1464,7 +1464,12 @@ pub(crate) fn parse_show_changes_output_with_observation(
         }
     }
 
-    let suggested_next_actions = if status_observed {
+    let suggested_next_actions = if observation.non_git() {
+        vec![
+            "git-backed status/diff is not applicable; continue with non-git review evidence"
+                .to_string(),
+        ]
+    } else if status_observed {
         suggested_next_actions_for(
             clean.unwrap_or(false),
             untracked > 0,
@@ -2074,11 +2079,17 @@ fn set_show_changes_verdict(output: &mut Value) {
         }
         _ => {}
     }
-    if !git_available || non_git_project {
+    if non_git_project {
+        push_unique_reason(&mut warning_reasons, "non_git_project");
+        push_unique_action(
+            &mut actions,
+            "git-backed status/diff is not applicable; continue with non-git review evidence",
+        );
+    } else if !git_available {
         push_unique_reason(&mut warning_reasons, "git_unavailable");
         push_unique_action(
             &mut actions,
-            "git-backed status/diff unavailable; continue with non-git review evidence",
+            "git-backed status/diff unavailable; inspect Git availability before relying on worktree review",
         );
     }
 

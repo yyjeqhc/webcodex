@@ -50,7 +50,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("session_id", schema_type("string", "Full closeout explicit task session id; omitted from summary_only.")),
             (
                 "workspace_clean",
-                schema_type("boolean", "Compact summary_only workspace cleanliness verdict."),
+                nullable_schema("boolean", "Compact summary_only workspace cleanliness verdict; null means Git cleanliness is not applicable or was not observed."),
             ),
             (
                 "workspace_conflicts",
@@ -467,7 +467,16 @@ fn startup_workspace_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "status": {"type": "string", "enum": ["clean", "dirty", "blocked", "unavailable"]},
+            "status": {"type": "string", "enum": ["available", "clean", "dirty", "blocked", "unavailable"]},
+            "git": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["clean", "dirty", "conflicted", "not_applicable", "unavailable"]},
+                    "reason_code": nullable_schema("string", "Stable Git-state reason such as non_git_project or git_unavailable.")
+                },
+                "required": ["status", "reason_code"],
+                "additionalProperties": false
+            },
             "git_available": nullable_schema("boolean", "Whether bounded Git inspection was available."),
             "branch": nullable_schema("string", "Current branch when observed."),
             "head": nullable_schema("string", "Current full HEAD commit when observed."),
@@ -481,6 +490,7 @@ fn startup_workspace_schema() -> Value {
         },
         "required": [
             "status",
+            "git",
             "git_available",
             "branch",
             "head",
@@ -1159,14 +1169,23 @@ fn work_on_project_output_schema() -> Value {
         "type": "object",
         "description": "Sparse workspace state. status is always present; null/default facts are omitted, branch/head are included when observed, git_available is emitted only when false, and conflicts only when non-zero.",
         "properties": {
-            "status": {"type": "string", "enum": ["clean", "dirty", "blocked", "unavailable"]},
+            "status": {"type": "string", "enum": ["available", "clean", "dirty", "blocked", "unavailable"]},
+            "git": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["clean", "dirty", "conflicted", "not_applicable", "unavailable"]},
+                    "reason_code": nullable_schema("string", "Stable Git-state reason such as non_git_project or git_unavailable.")
+                },
+                "required": ["status", "reason_code"],
+                "additionalProperties": false
+            },
             "git_available": nullable_schema("boolean", "Emitted when bounded Git inspection is explicitly unavailable; omission means no exceptional Git-unavailable fact."),
             "branch": nullable_schema("string", "Current branch when observed."),
             "head": nullable_schema("string", "Current full HEAD commit when observed."),
             "clean": nullable_schema("boolean", "Legacy compatibility field; normal clean/dirty state is represented by status and may omit this field."),
             "conflicts": {"type": "integer", "minimum": 1}
         },
-        "required": ["status"],
+        "required": ["status", "git"],
         "additionalProperties": true
     });
     let compact_instructions = json!({

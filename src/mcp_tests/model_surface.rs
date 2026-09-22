@@ -104,8 +104,11 @@ async fn long_tail_manifest_routes_through_call_runtime_tool() {
         panic!("tool_manifest must succeed");
     };
     let output = &value["result"]["structuredContent"]["output"];
-    assert_eq!(output["route"]["mode"], "gateway");
-    assert_eq!(output["route"]["via"], "call_runtime_tool");
+    assert_eq!(output["route"]["primary"]["mode"], "gateway");
+    assert_eq!(output["route"]["primary"]["tool"], "call_runtime_tool");
+    assert_eq!(output["route"]["primary"]["target"], "apply_patch");
+    assert!(output["route"]["fallback"].is_null());
+    assert_eq!(output["route"]["tool_manifest_registers_host_tool"], false);
 }
 
 #[tokio::test]
@@ -138,10 +141,11 @@ async fn closeout_helpers_remain_visible_with_exact_gateway_contracts() {
             panic!("manifest {name}");
         };
         let output = &value["result"]["structuredContent"]["output"];
-        assert_eq!(
-            output["route"],
-            json!({"mode": "gateway", "via": "call_runtime_tool"})
-        );
+        assert_eq!(output["route"]["primary"]["mode"], "gateway");
+        assert_eq!(output["route"]["primary"]["tool"], "call_runtime_tool");
+        assert_eq!(output["route"]["primary"]["target"], name);
+        assert!(output["route"]["fallback"].is_null());
+        assert_eq!(output["route"]["tool_manifest_registers_host_tool"], false);
         assert_eq!(
             output["input_schema"],
             webcodex_tool_contracts::input_schema_for_tool(name)

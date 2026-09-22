@@ -2044,8 +2044,17 @@ async fn tool_manifest_returns_sparse_static_plugin_tool_contract_without_runner
     };
     let output = &value["result"]["structuredContent"]["output"];
     assert_eq!(output["name"], crate::plugin_gateway::PLUGIN_TOOL_NAME);
-    assert_eq!(output["route"]["mode"], "direct");
-    assert!(output["route"].get("via").is_none());
+    assert_eq!(output["route"]["primary"]["mode"], "direct");
+    assert_eq!(
+        output["route"]["primary"]["tool"],
+        crate::plugin_gateway::PLUGIN_TOOL_NAME
+    );
+    assert_eq!(output["route"]["fallback"]["mode"], "gateway");
+    assert_eq!(output["route"]["fallback"]["tool"], "call_runtime_tool");
+    assert_eq!(
+        output["route"]["fallback"]["target"],
+        crate::plugin_gateway::PLUGIN_TOOL_NAME
+    );
     assert_eq!(
         output["input_schema"]["properties"]["binding"]["pattern"],
         "^wc_pbind_[A-Za-z0-9_-]{21}[AQgw]$"

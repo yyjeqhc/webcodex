@@ -409,7 +409,7 @@ pub(crate) fn build_hygiene_summary(
         }
     }
 
-    let clean = git_available && findings.is_empty();
+    let clean = git_available.then_some(findings.is_empty());
 
     let findings_json: Vec<Value> = findings
         .iter()
@@ -1083,7 +1083,7 @@ mod tests {
             &["non_git_project".to_string()],
         );
         assert_eq!(summary["git_available"], false);
-        assert_eq!(summary["clean"], false);
+        assert!(summary["clean"].is_null());
         assert!(!summary["warnings"].as_array().unwrap().is_empty());
         for omitted in ["counts", "findings", "truncated", "suggested_next_actions"] {
             assert!(

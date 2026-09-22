@@ -294,10 +294,10 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
             panic!("manifest {name}");
         };
         let output = &value["result"]["structuredContent"]["output"];
-        assert_eq!(
-            output["route"],
-            json!({"mode": "gateway", "via": "call_runtime_tool"})
-        );
+        assert_eq!(output["route"]["primary"]["mode"], "gateway");
+        assert_eq!(output["route"]["primary"]["tool"], "call_runtime_tool");
+        assert_eq!(output["route"]["primary"]["target"], name);
+        assert!(output["route"]["fallback"].is_null());
         let spec = crate::tool_runtime::stateless_operator_extension_tool_specs()
             .into_iter()
             .find(|spec| spec.name == name)

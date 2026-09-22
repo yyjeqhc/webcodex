@@ -665,7 +665,14 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
             registered_project("webcodex", "/root/git/webcodex"),
             registered_project("other", "/tmp/other"),
         ],
-        None,
+        Some(RunnerBuildInfo {
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            git_commit: Some("catalog-build".to_string()),
+            git_dirty: Some(false),
+            built_at: Some("300".to_string()),
+            target: Some("x86_64-pc-windows-msvc".to_string()),
+            architecture: Some("x86_64".to_string()),
+        }),
     )
     .await;
     register_target_agent(
@@ -692,6 +699,9 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
     let agent = &focused.output["agents"][0];
     assert_eq!(agent["client_id"], "special");
     assert_eq!(agent["projects_count"], 2);
+    assert_eq!(agent["build"]["built_at"], "300");
+    assert_eq!(agent["build"]["target"], "x86_64-pc-windows-msvc");
+    assert_eq!(agent["build"]["architecture"], "x86_64");
     for omitted in [
         "projects",
         "capabilities",
@@ -766,11 +776,17 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         git_commit: Some("A".to_string()),
         git_dirty: Some(false),
+        built_at: Some("100".to_string()),
+        target: Some("x86_64-unknown-linux-gnu".to_string()),
+        architecture: Some("x86_64".to_string()),
     };
     let mini_build = RunnerBuildInfo {
         version: Some("0.0.1".to_string()),
         git_commit: Some("B".to_string()),
         git_dirty: Some(false),
+        built_at: Some("200".to_string()),
+        target: Some("aarch64-apple-darwin".to_string()),
+        architecture: Some("aarch64".to_string()),
     };
     register_target_agent(
         &runtime,
@@ -805,6 +821,12 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         .find(|runner| runner["client_id"] == "mini")
         .unwrap();
     assert_eq!(synthetic_special["source_alignment"]["status"], "aligned");
+    assert_eq!(synthetic_special["build_built_at"], "100");
+    assert_eq!(
+        synthetic_special["build_target"],
+        "x86_64-unknown-linux-gnu"
+    );
+    assert_eq!(synthetic_special["build_architecture"], "x86_64");
     assert_eq!(synthetic_mini["source_alignment"]["status"], "different");
 
     let global = runtime.dispatch(runtime_status_call(None, false)).await;
@@ -825,6 +847,12 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         .await;
     assert!(special.success, "{:?}", special.error);
     assert_eq!(special.output["focus"]["client_id"], "special");
+    assert_eq!(special.output["focus"]["build"]["built_at"], "100");
+    assert_eq!(
+        special.output["focus"]["build"]["target"],
+        "x86_64-unknown-linux-gnu"
+    );
+    assert_eq!(special.output["focus"]["build"]["architecture"], "x86_64");
     assert_eq!(
         special.output["version_compatibility"]["status"],
         "compatible"

@@ -77,6 +77,58 @@ pub(crate) struct SkillCatalog {
     pub(crate) invalid_count: usize,
     pub(crate) diagnostics: Vec<Value>,
     pub(crate) discovery_truncated: bool,
+    sources: Vec<SkillCatalogSourceSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct SkillCatalogSourceSummary {
+    kind: &'static str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_hint: Option<&'static str>,
+    skill_count: usize,
+    invalid_count: usize,
+    discovery_truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_code: Option<&'static str>,
+}
+
+fn project_skill_source_summary(
+    skill_count: usize,
+    invalid_count: usize,
+    discovery_truncated: bool,
+) -> SkillCatalogSourceSummary {
+    SkillCatalogSourceSummary {
+        kind: "project",
+        status: "available",
+        root_hint: Some(SKILL_ROOT),
+        skill_count,
+        invalid_count,
+        discovery_truncated,
+        reason_code: None,
+    }
+}
+
+fn runner_skill_source_summary(
+    kind: &'static str,
+    skill_count: usize,
+    invalid_count: usize,
+    discovery_truncated: bool,
+    available: bool,
+) -> SkillCatalogSourceSummary {
+    SkillCatalogSourceSummary {
+        kind,
+        status: if available {
+            "available"
+        } else {
+            "unavailable"
+        },
+        root_hint: None,
+        skill_count,
+        invalid_count,
+        discovery_truncated,
+        reason_code: (!available).then_some("runner_skill_sources_unavailable"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -718,12 +770,21 @@ impl ToolRuntime {
             .map(|skill| skill.descriptor.skill_id.clone())
             .collect::<std::collections::BTreeSet<_>>();
         if let Some(runner) = runner {
-            catalog.invalid_count = catalog.invalid_count.saturating_add(runner.invalid_count);
-            catalog.discovery_truncated |= runner.discovery_truncated;
-            for reason_code in runner.diagnostics {
+            let RunnerSkillListResponse {
+                skills: runner_skills,
+                invalid_count: runner_invalid_count,
+                diagnostics: runner_diagnostics,
+                discovery_truncated: runner_discovery_truncated,
+                ..
+            } = runner;
+            catalog.invalid_count = catalog.invalid_count.saturating_add(runner_invalid_count);
+            catalog.discovery_truncated |= runner_discovery_truncated;
+            for reason_code in runner_diagnostics {
                 push_diagnostic(&mut catalog.diagnostics, &reason_code);
             }
-            for skill in runner.skills {
+            let mut configured_count = 0usize;
+            let mut managed_count = 0usize;
+            for skill in runner_skills {
                 if !seen_ids.insert(skill.skill_id().to_string()) {
                     return Err("skills_catalog_unavailable");
                 }
@@ -734,6 +795,7 @@ impl ToolRuntime {
                         description,
                         definition_revision,
                     } => {
+                        configured_count += 1;
                         let order_key = skill_id.clone();
                         (
                             SkillDescriptor {
@@ -756,25 +818,37 @@ impl ToolRuntime {
                         description,
                         package_revision,
                         definition_revision,
-                    } => (
-                        SkillDescriptor {
-                            skill_id,
-                            name,
-                            description,
-                            definition_revision,
-                            package_revision: Some(package_revision),
-                            source_scope: "runner",
-                            trust: "operator_installed_guidance",
-                            name_conflict: false,
-                        },
-                        skill_key,
-                    ),
+                    } => {
+                        managed_count += 1;
+                        (
+                            SkillDescriptor {
+                                skill_id,
+                                name,
+                                description,
+                                definition_revision,
+                                package_revision: Some(package_revision),
+                                source_scope: "runner",
+                                trust: "operator_installed_guidance",
+                                name_conflict: false,
+                            },
+                            skill_key,
+                        )
+                    }
                 };
                 catalog.skills.push(CatalogSkill {
                     descriptor,
                     order_key,
                 });
             }
+            catalog.sources[1] = runner_skill_source_summary(
+                "configured_runner_roots",
+                configured_count,
+                runner_invalid_count,
+                runner_discovery_truncated,
+                true,
+            );
+            catalog.sources[2] =
+                runner_skill_source_summary("managed_runner_store", managed_count, 0, false, true);
         }
         recompute_name_conflicts(&mut catalog.skills);
         catalog.catalog_revision = catalog_revision(
@@ -782,6 +856,7 @@ impl ToolRuntime {
             catalog.invalid_count,
             &catalog.diagnostics,
             catalog.discovery_truncated,
+            &catalog.sources,
         );
         Ok(catalog)
     }
@@ -1853,14 +1928,25 @@ impl ToolRuntime {
         }
         skills.sort_by(|left, right| left.order_key.cmp(&right.order_key));
         recompute_name_conflicts(&mut skills);
-        let catalog_revision =
-            catalog_revision(&skills, invalid_count, &diagnostics, discovery_truncated);
+        let sources = vec![
+            project_skill_source_summary(skills.len(), invalid_count, discovery_truncated),
+            runner_skill_source_summary("configured_runner_roots", 0, 0, false, false),
+            runner_skill_source_summary("managed_runner_store", 0, 0, false, false),
+        ];
+        let catalog_revision = catalog_revision(
+            &skills,
+            invalid_count,
+            &diagnostics,
+            discovery_truncated,
+            &sources,
+        );
         Ok(SkillCatalog {
             catalog_revision,
             skills,
             invalid_count,
             diagnostics,
             discovery_truncated,
+            sources,
         })
     }
 
@@ -2122,6 +2208,11 @@ impl SkillCatalog {
             })
             .collect::<Vec<_>>();
         let total_count = filtered.len();
+        let sources = self
+            .sources
+            .iter()
+            .map(|source| json!(source))
+            .collect::<Vec<_>>();
         let offset = offset.min(total_count);
         let mut descriptors = Vec::new();
         let hard_end = offset.saturating_add(limit).min(total_count);
@@ -2134,6 +2225,7 @@ impl SkillCatalog {
                 offset,
                 hard_end,
                 &descriptors,
+                &sources,
                 self.invalid_count,
                 &self.diagnostics,
                 self.discovery_truncated,
@@ -2154,6 +2246,7 @@ impl SkillCatalog {
             offset,
             next_offset,
             descriptors,
+            sources,
             self.invalid_count,
             &self.diagnostics,
             self.discovery_truncated,
@@ -2171,6 +2264,7 @@ struct SkillCatalogPageMeasure<'a> {
     next_offset: Option<usize>,
     truncated: bool,
     skills: &'a [Value],
+    sources: &'a [Value],
     invalid_count: usize,
     diagnostics: &'a [Value],
     discovery_truncated: bool,
@@ -2184,6 +2278,7 @@ fn catalog_page_serialized_len(
     offset: usize,
     next_offset: usize,
     skills: &[Value],
+    sources: &[Value],
     invalid_count: usize,
     diagnostics: &[Value],
     discovery_truncated: bool,
@@ -2198,6 +2293,7 @@ fn catalog_page_serialized_len(
         next_offset: truncated.then_some(next_offset),
         truncated,
         skills,
+        sources,
         invalid_count,
         diagnostics,
         discovery_truncated,
@@ -2211,6 +2307,7 @@ fn catalog_page_envelope(
     offset: usize,
     next_offset: usize,
     skills: Vec<Value>,
+    sources: Vec<Value>,
     invalid_count: usize,
     diagnostics: &[Value],
     discovery_truncated: bool,
@@ -2226,6 +2323,7 @@ fn catalog_page_envelope(
         "next_offset": if truncated { Some(next_offset) } else { None },
         "truncated": truncated,
         "skills": skills,
+        "sources": sources,
         "invalid_count": invalid_count,
         "diagnostics": diagnostics,
         "discovery_truncated": discovery_truncated,
@@ -2538,9 +2636,10 @@ fn catalog_revision(
     invalid_count: usize,
     diagnostics: &[Value],
     discovery_truncated: bool,
+    sources: &[SkillCatalogSourceSummary],
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"webcodex.skill-catalog.v2\0");
+    hasher.update(b"webcodex.skill-catalog.v3\0");
     for skill in skills {
         for value in [
             skill.descriptor.skill_id.as_str(),
@@ -2567,6 +2666,20 @@ fn catalog_revision(
         }
     }
     hasher.update([u8::from(discovery_truncated)]);
+    for source in sources {
+        for value in [
+            source.kind,
+            source.status,
+            source.root_hint.unwrap_or_default(),
+            source.reason_code.unwrap_or_default(),
+        ] {
+            hasher.update((value.len() as u64).to_be_bytes());
+            hasher.update(value.as_bytes());
+        }
+        hasher.update((source.skill_count as u64).to_be_bytes());
+        hasher.update((source.invalid_count as u64).to_be_bytes());
+        hasher.update([u8::from(source.discovery_truncated)]);
+    }
     format!(
         "wc_skillcat_{}",
         webcodex_core::compact::encode(hasher.finalize())
@@ -2639,12 +2752,18 @@ mod tests {
             },
             order_key: "demo".to_string(),
         }];
+        let sources = vec![
+            project_skill_source_summary(skills.len(), 0, true),
+            runner_skill_source_summary("configured_runner_roots", 0, 0, false, false),
+            runner_skill_source_summary("managed_runner_store", 0, 0, false, false),
+        ];
         let catalog = SkillCatalog {
-            catalog_revision: catalog_revision(&skills, 0, &[], true),
+            catalog_revision: catalog_revision(&skills, 0, &[], true, &sources),
             skills,
             invalid_count: 0,
             diagnostics: Vec::new(),
             discovery_truncated: true,
+            sources,
         };
         assert_eq!(
             exact_skill_name_matches(&catalog, "demo").unwrap_err(),
@@ -2673,13 +2792,19 @@ mod tests {
                 order_key: format!("package-{index:02}"),
             });
         }
-        let catalog_revision = catalog_revision(&skills, 0, &[], false);
+        let sources = vec![
+            project_skill_source_summary(skills.len(), 0, false),
+            runner_skill_source_summary("configured_runner_roots", 0, 0, false, false),
+            runner_skill_source_summary("managed_runner_store", 0, 0, false, false),
+        ];
+        let catalog_revision = catalog_revision(&skills, 0, &[], false, &sources);
         let catalog = SkillCatalog {
             catalog_revision,
             skills,
             invalid_count: 0,
             diagnostics: Vec::new(),
             discovery_truncated: false,
+            sources,
         };
         let page = catalog.page_value(
             "agent:test:project",
@@ -2703,6 +2828,54 @@ mod tests {
         );
         assert!(serde_json::to_vec(&explicit).unwrap().len() <= MAX_SKILL_CATALOG_RESULT_BYTES);
         assert_eq!(explicit["offset"], next);
+    }
+
+    #[test]
+    fn catalog_projection_explains_empty_source_participation_and_revisions() {
+        let skills = Vec::new();
+        let unavailable_sources = vec![
+            project_skill_source_summary(0, 0, false),
+            runner_skill_source_summary("configured_runner_roots", 0, 0, false, false),
+            runner_skill_source_summary("managed_runner_store", 0, 0, false, false),
+        ];
+        let available_sources = vec![
+            project_skill_source_summary(0, 0, false),
+            runner_skill_source_summary("configured_runner_roots", 0, 0, false, true),
+            runner_skill_source_summary("managed_runner_store", 0, 0, false, true),
+        ];
+        assert_ne!(
+            catalog_revision(&skills, 0, &[], false, &unavailable_sources),
+            catalog_revision(&skills, 0, &[], false, &available_sources),
+            "source availability must fence the catalog revision even when every source is empty"
+        );
+        let catalog = SkillCatalog {
+            catalog_revision: catalog_revision(&skills, 0, &[], false, &available_sources),
+            skills,
+            invalid_count: 0,
+            diagnostics: Vec::new(),
+            discovery_truncated: false,
+            sources: available_sources,
+        };
+        let page = catalog.page_value(
+            "agent:test:empty-skills",
+            None,
+            0,
+            DEFAULT_SKILL_LIST_LIMIT,
+            MAX_SKILL_CATALOG_RESULT_BYTES,
+        );
+        assert_eq!(page["skills"], json!([]));
+        assert_eq!(page["sources"].as_array().unwrap().len(), 3);
+        assert_eq!(page["sources"][0]["kind"], "project");
+        assert_eq!(page["sources"][0]["status"], "available");
+        assert_eq!(page["sources"][0]["root_hint"], SKILL_ROOT);
+        assert_eq!(page["sources"][0]["skill_count"], 0);
+        assert_eq!(page["sources"][1]["kind"], "configured_runner_roots");
+        assert_eq!(page["sources"][1]["status"], "available");
+        assert_eq!(page["sources"][1]["skill_count"], 0);
+        assert!(page["sources"][1].get("root_hint").is_none());
+        assert_eq!(page["sources"][2]["kind"], "managed_runner_store");
+        assert_eq!(page["sources"][2]["status"], "available");
+        assert_eq!(page["sources"][2]["skill_count"], 0);
     }
 
     #[test]

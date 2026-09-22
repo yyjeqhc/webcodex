@@ -2097,6 +2097,61 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
 }
 
 #[tokio::test]
+async fn tool_manifest_exact_route_is_parser_ready_for_direct_and_gateway_tools() {
+    let runtime = test_runtime();
+
+    let direct = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("run_shell".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(direct.success, "{:?}", direct.error);
+    assert_eq!(direct.output["route"]["primary"]["mode"], "direct");
+    assert_eq!(direct.output["route"]["primary"]["tool"], "run_shell");
+    assert_eq!(direct.output["route"]["fallback"]["mode"], "gateway");
+    assert_eq!(
+        direct.output["route"]["fallback"]["tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(direct.output["route"]["fallback"]["target"], "run_shell");
+    assert_eq!(
+        direct.output["route"]["fallback"]["when"],
+        "direct_callable_unavailable"
+    );
+    assert_eq!(
+        direct.output["route"]["fallback"]["blocked_when_mcp_apps_enabled"],
+        false
+    );
+    assert_eq!(
+        direct.output["route"]["tool_manifest_registers_host_tool"],
+        false
+    );
+    assert_eq!(direct.output["route"]["discovery_effect"], "none");
+
+    let gateway = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("apply_patch".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(gateway.success, "{:?}", gateway.error);
+    assert_eq!(gateway.output["route"]["primary"]["mode"], "gateway");
+    assert_eq!(
+        gateway.output["route"]["primary"]["tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(gateway.output["route"]["primary"]["target"], "apply_patch");
+    assert!(gateway.output["route"]["fallback"].is_null());
+}
+
+#[tokio::test]
 async fn bounded_list_tools_hides_schemas_and_finds_artifact_upload_tools() {
     let runtime = test_runtime();
     let full = runtime

@@ -659,6 +659,33 @@ fn handoff_brief_not_requested_and_unavailable_statuses_use_fixed_reasons() {
 }
 
 #[test]
+fn handoff_brief_non_git_workspace_is_available_with_git_not_applicable() {
+    let store = store_with_limit(200);
+    let session_id = start_session(&store, "non-git workspace");
+    let jobs = empty_jobs();
+    let workspace = json!({
+        "git_available": false,
+        "non_git_project": true,
+        "clean": null,
+        "counts": {},
+    });
+    let brief = brief_for(
+        &store,
+        &session_id,
+        true,
+        Some(&workspace),
+        false,
+        None,
+        Some(&jobs),
+        true,
+    );
+    assert_eq!(brief["workspace"]["status"], "available");
+    assert_eq!(brief["workspace"]["reason_code"], "non_git_project");
+    assert!(brief["workspace"]["dirty"].is_null());
+    assert!(brief["workspace"]["conflicted"].is_null());
+}
+
+#[test]
 fn handoff_brief_attempt_boundary_eviction_marks_basis_incomplete() {
     let store = store_with_limit(6);
     let session_id = start_session(&store, "evicted attempt");

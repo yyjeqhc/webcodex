@@ -593,6 +593,9 @@ fn http_runtime_status_after_runner_registration_fits_default_worker_stack() {
                         version: Some(env!("CARGO_PKG_VERSION").to_string()),
                         git_commit: Some("0123456789abcdef".to_string()),
                         git_dirty: Some(false),
+                        built_at: Some("100".to_string()),
+                        target: Some("x86_64-unknown-linux-gnu".to_string()),
+                        architecture: Some("x86_64".to_string()),
                     }),
                     job_concurrency_limit: Some(4),
                     job_inventory: Some(ShellJobInventory {
@@ -662,6 +665,18 @@ fn http_runtime_status_after_runner_registration_fits_default_worker_stack() {
             assert_eq!(
                 body["output"]["agents"]["clients"][0]["client_id"],
                 "status-stack-runner"
+            );
+            assert_eq!(
+                body["output"]["agents"]["clients"][0]["build"]["built_at"],
+                "100"
+            );
+            assert_eq!(
+                body["output"]["agents"]["clients"][0]["build"]["target"],
+                "x86_64-unknown-linux-gnu"
+            );
+            assert_eq!(
+                body["output"]["agents"]["clients"][0]["build"]["architecture"],
+                "x86_64"
             );
         })
         .await

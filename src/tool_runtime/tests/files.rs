@@ -4612,6 +4612,8 @@ fn validate_edit_file_path_rejects_unsafe_and_sensitive_paths() {
     assert!(validate_edit_file_path("README.md").is_ok());
     assert!(validate_edit_file_path("src/main.rs").is_ok());
     assert!(validate_edit_file_path("a/b/c.txt").is_ok());
+    assert!(validate_edit_file_path(".env.example").is_ok());
+    assert!(validate_edit_file_path(".ENV.SAMPLE").is_ok());
     // Empty / NUL / absolute / traversal rejected.
     assert!(validate_edit_file_path("").is_err());
     assert!(validate_edit_file_path("src\0main.rs").is_err());
@@ -4656,6 +4658,9 @@ fn is_sensitive_edit_path_is_component_wise_not_substring() {
     assert!(is_sensitive_edit_path(".git/HEAD"));
     assert!(is_sensitive_edit_path("node_modules/x"));
     assert!(is_sensitive_edit_path("a/b/.env"));
+    assert!(!is_sensitive_edit_path(".env.example"));
+    assert!(!is_sensitive_edit_path(".ENV.TEMPLATE"));
+    assert!(is_sensitive_edit_path(".env.example.local"));
 }
 
 #[test]
@@ -5156,6 +5161,11 @@ async fn read_file_routes_safe_and_bulk_skipped_explicit_paths_to_agent() {
             "node_modules/foo/package.json",
             "{}\n",
         ),
+        (
+            "dotenv-template-read",
+            ".env.example",
+            "EXAMPLE_ONLY=fake\n",
+        ),
     ] {
         let runtime = runtime_with_agent_project(client_id);
         register_agent(
@@ -5203,6 +5213,9 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
         ".env",
         ".env.production",
         "app/.env.local",
+        ".env.example.local",
+        ".env.example.bak",
+        ".env.production.example",
         ".ENV",
         "certs/server.pem",
         "certs/server.key",

@@ -74,8 +74,11 @@ pub(crate) fn is_secret_like_path(path: &str) -> bool {
     }
     let last = parts.last().copied().unwrap_or("");
 
-    // .env or .env.*
-    if last == ".env" || last.starts_with(".env.") {
+    // `.env` and credential-bearing variants, excluding the small conventional
+    // public template allowlist shared with direct project-file policy.
+    if !webcodex_core::sensitive_paths::is_public_dotenv_template_component(last)
+        && (last == ".env" || last.starts_with(".env."))
+    {
         return true;
     }
     // Exact SSH key filenames.
@@ -120,8 +123,8 @@ pub(crate) fn is_strong_tracked_secret_path(path: &str) -> bool {
     let Some(last) = parts.last().copied() else {
         return false;
     };
-    if last == ".env"
-        || last.starts_with(".env.")
+    if (!webcodex_core::sensitive_paths::is_public_dotenv_template_component(last)
+        && (last == ".env" || last.starts_with(".env.")))
         || matches!(
             last,
             "id_rsa" | "id_dsa" | "id_ed25519" | "passwd" | ".password"
@@ -875,6 +878,10 @@ mod tests {
         assert!(is_secret_like_path(".env"));
         assert!(is_secret_like_path(".env.local"));
         assert!(is_secret_like_path(".env.production"));
+        assert!(!is_secret_like_path(".env.example"));
+        assert!(!is_secret_like_path(".ENV.SAMPLE"));
+        assert!(is_secret_like_path(".env.example.local"));
+        assert!(is_secret_like_path("secrets/.env.example"));
         assert!(is_secret_like_path("secrets/api.key"));
         assert!(is_secret_like_path("config/token.json"));
         assert!(is_secret_like_path("id_rsa"));
@@ -901,6 +908,7 @@ mod tests {
             "config/token.json",
             "credentials/service.yaml",
             "private.pem",
+            "secrets/.env.example",
         ] {
             assert!(
                 is_strong_tracked_secret_path(path),
@@ -913,6 +921,8 @@ mod tests {
             "src/runner_tokens_http.rs",
             "docs/token-design.md",
             "tests/credential_parser.ts",
+            ".env.example",
+            ".ENV.DIST",
         ] {
             assert!(
                 !is_strong_tracked_secret_path(path),

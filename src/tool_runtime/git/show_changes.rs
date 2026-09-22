@@ -1663,33 +1663,18 @@ fn untracked_preview_path_is_invalid(path: &str) -> bool {
 }
 
 fn untracked_preview_path_is_sensitive(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    normalized
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .any(|part| {
-            matches!(
-                part,
-                ".git"
-                    | "target"
-                    | "node_modules"
-                    | "project-registry"
-                    | "projects.d"
-                    | "runner.toml"
-                    | "agent.toml"
-                    | "webcodex.env"
-                    | ".env"
-                    | "secrets"
-                    | "tokens"
-                    | "id_rsa"
-                    | "id_ed25519"
-            ) || part.starts_with(".env")
-                || part.starts_with("runner.toml")
-                || part.starts_with("agent.toml")
-                || part.starts_with("webcodex.env")
-                || part.ends_with(".pem")
-                || part.ends_with(".key")
-        })
+    webcodex_core::sensitive_paths::is_secret_path(path)
+        || path
+            .replace('\\', "/")
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .map(str::to_ascii_lowercase)
+            .any(|part| {
+                matches!(
+                    part.as_str(),
+                    "target" | "node_modules" | "id_rsa" | "id_ed25519"
+                )
+            })
 }
 
 fn untracked_preview_from_bytes(

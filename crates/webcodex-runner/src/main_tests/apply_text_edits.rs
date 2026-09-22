@@ -105,6 +105,53 @@ fn file_apply_text_edits_applies_multi_file_transaction() {
 }
 
 #[test]
+fn file_apply_text_edits_allows_public_dotenv_template_but_rejects_env() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    std::fs::write(tmp.path().join(".env.example"), "KEY=fake\n").unwrap();
+    std::fs::write(tmp.path().join(".env"), "KEY=secret\n").unwrap();
+
+    let allowed = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            ".env.example",
+            serde_json::json!({
+                "edits": [{"kind": "replace_exact", "old_text": "fake", "new_text": "sample"}]
+            }),
+        ),
+    ));
+    assert_eq!(allowed["changed"], true, "{allowed}");
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".env.example")).unwrap(),
+        "KEY=sample\n"
+    );
+
+    let denied = handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            ".env",
+            serde_json::json!({
+                "edits": [{"kind": "replace_exact", "old_text": "secret", "new_text": "changed"}]
+            }),
+        ),
+    );
+    assert_eq!(denied.exit_code, None, "{denied:?}");
+    assert!(
+        denied
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("sensitive")),
+        "{denied:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".env")).unwrap(),
+        "KEY=secret\n"
+    );
+}
+
+#[test]
 fn file_apply_text_edits_unique_local_edit_without_sha_uses_current_content() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

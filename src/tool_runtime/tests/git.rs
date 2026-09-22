@@ -6179,6 +6179,22 @@ async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
     );
 }
 
+#[tokio::test]
+async fn show_changes_untracked_public_dotenv_template_preview_is_visible() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(
+        tmp.path().join(".env.example"),
+        "PUBLIC_EXAMPLE_MARKER=fake\n",
+    )
+    .unwrap();
+
+    let output = show_changes_output_from_command(tmp.path(), true);
+    let preview = preview_for_path(&output, ".env.example");
+    assert_eq!(preview["kind"], "text");
+    assert_eq!(preview["lines"][0]["text"], "PUBLIC_EXAMPLE_MARKER=fake");
+}
+
 #[test]
 fn git_diff_hunks_command_is_read_only_and_scoped_to_paths() {
     let command = git_diff_hunks_command(&["src/lib.rs".to_string()], false).unwrap();

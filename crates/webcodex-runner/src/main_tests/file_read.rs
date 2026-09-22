@@ -214,7 +214,10 @@ fn runner_file_read_allows_exact_generated_files_but_protects_secrets_and_git() 
     for (path, allowed) in [
         ("node_modules/foo/package.json", true),
         ("target/result.txt", true),
+        (".env.example", true),
+        (".ENV.SAMPLE", true),
         (".env", false),
+        (".env.example.local", false),
         (".git/config", false),
     ] {
         let target = tmp.path().join(path);

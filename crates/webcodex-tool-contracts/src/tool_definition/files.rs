@@ -30,7 +30,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
         ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
-        "Deterministic, bounded, metadata-only overview of an unfamiliar project: conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_files for contents.",
+        "Deterministic, bounded, metadata-only project overview. With the root/default scope it performs conservative project discovery from tracked state; with an explicit eligible path such as cache or build it can inspect ignored/generated directories through the bounded filesystem walk, while high-volume target/node_modules scopes remain excluded. Returns conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_files for exact file contents.",
     ),
     model_spec(
         def(
@@ -53,7 +53,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
         ),
-        "List one deterministic page of files in a Runner-registered project directory (bounded, read-only). Entries are sorted before offset/limit slicing; use next_offset until null. Successful paging is exposed only when the complete directory source reached the Server—retained-tail truncation fails closed instead of inventing total_entries or a safe continuation. Returns project-relative paths plus a file/dir kind. Routed to the owning registered Runner; the server never reads the Runner project path directly.",
+        "List one deterministic page of files in an explicit Runner-registered project directory (bounded, read-only), including ignored/generated directories when the caller names them. Entries are sorted before offset/limit slicing; use next_offset until null. Successful paging is exposed only when the complete directory source reached the Server—retained-tail truncation fails closed instead of inventing total_entries or a safe continuation. Returns project-relative paths plus a file/dir kind. Use list_project_tracked_files for default repository discovery and read_files for an exact file. Routed to the owning registered Runner; the server never reads the Runner project path directly.",
     ),
     model_spec(
         def(

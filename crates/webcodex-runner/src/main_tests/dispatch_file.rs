@@ -63,6 +63,38 @@ fn project_overview_runner_request_returns_metadata_without_contents() {
 }
 
 #[test]
+fn project_overview_runner_explicit_generated_scope_uses_filesystem_and_hides_secrets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    std::fs::create_dir_all(tmp.path().join("cache/secrets")).unwrap();
+    std::fs::write(
+        tmp.path().join("cache/generated.json"),
+        "fake generated content",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("cache/.env"), "TOKEN=fake-secret").unwrap();
+    std::fs::write(tmp.path().join("cache/secrets/token"), "fake-secret").unwrap();
+    let request = json_file_op_request(
+        tmp.path(),
+        "file_project_overview",
+        "cache",
+        serde_json::json!({"max_depth": 2, "limit": 200}),
+    );
+
+    let output = line_edit_json(handle_file_request(&policy, &request));
+    assert_eq!(output["path"], "cache");
+    let serialized = output.to_string();
+    assert!(serialized.contains("cache/generated.json"), "{serialized}");
+    assert!(!serialized.contains("cache/.env"), "{serialized}");
+    assert!(!serialized.contains("cache/secrets"), "{serialized}");
+    assert!(
+        !serialized.contains("fake generated content"),
+        "{serialized}"
+    );
+    assert!(!serialized.contains("fake-secret"), "{serialized}");
+}
+
+#[test]
 fn skill_file_ops_are_project_contained_text_only_and_path_private() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

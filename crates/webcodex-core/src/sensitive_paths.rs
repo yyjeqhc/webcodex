@@ -33,6 +33,18 @@ const SECRET_COMPONENTS: &[&str] = &[
 /// backup suffixes (`runner.toml.swp`, `agent.toml.bak`) remain protected.
 const SECRET_PREFIXES: &[&str] = &[".env", "runner.toml", "agent.toml", "webcodex.env"];
 
+/// Conventional dotenv template filenames intended to be public developer examples.
+const PUBLIC_DOTENV_TEMPLATE_COMPONENTS: &[&str] =
+    &[".env.example", ".env.sample", ".env.template", ".env.dist"];
+
+/// True only for the small conventional dotenv template allowlist.
+/// Matching is exact and case-insensitive; derived variants stay protected.
+pub fn is_public_dotenv_template_component(component: &str) -> bool {
+    PUBLIC_DOTENV_TEMPLATE_COMPONENTS
+        .iter()
+        .any(|template| component.eq_ignore_ascii_case(template))
+}
+
 /// Component suffixes that mark key material or a credential backup.
 const SECRET_SUFFIXES: &[&str] = &[".pem", ".key", ".env", ".toml.bak"];
 
@@ -42,11 +54,14 @@ const BULK_COMPONENTS: &[&str] = &["target", "node_modules"];
 /// True when any component names credentials, key material, Runner configuration
 /// or Git integrity-sensitive control data. Deny both reads and writes for these.
 pub fn is_secret_path(path: &str) -> bool {
-    path_components(path).any(|component| {
+    let components = path_components(path).collect::<Vec<_>>();
+    let basename_index = components.len().saturating_sub(1);
+    components.iter().enumerate().any(|(index, component)| {
         SECRET_COMPONENTS.contains(&component.as_str())
-            || SECRET_PREFIXES
+            || (SECRET_PREFIXES
                 .iter()
                 .any(|prefix| component.starts_with(prefix))
+                && !(index == basename_index && is_public_dotenv_template_component(component)))
             || SECRET_SUFFIXES
                 .iter()
                 .any(|suffix| component.ends_with(suffix))
@@ -153,6 +168,40 @@ mod tests {
         ] {
             assert!(is_secret_path(path), "expected secret: {path}");
         }
+    }
+
+    #[test]
+    fn public_dotenv_templates_are_exact_case_insensitive_exceptions() {
+        for path in [
+            ".env.example",
+            ".env.sample",
+            ".env.template",
+            ".env.dist",
+            ".ENV.EXAMPLE",
+            ".Env.Sample",
+        ] {
+            assert!(
+                is_public_dotenv_template_component(path),
+                "expected public dotenv template: {path}"
+            );
+            assert!(!is_secret_path(path), "unexpected secret template: {path}");
+        }
+        for path in [
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".env.development",
+            ".env.test",
+            ".env.example.local",
+            ".env.example.bak",
+            ".env.production.example",
+        ] {
+            assert!(is_secret_path(path), "expected secret dotenv path: {path}");
+        }
+        assert!(is_secret_path("secrets/.env.example"));
+        assert!(is_secret_path(".git/.env.example"));
+        assert!(is_secret_path(".env.example/nested.txt"));
+        assert!(is_secret_path("config/.env.sample/value.txt"));
     }
 
     #[test]

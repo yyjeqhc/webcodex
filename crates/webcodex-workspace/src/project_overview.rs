@@ -76,8 +76,11 @@ pub fn normalize_project_overview_path(path: &str) -> Result<String, String> {
         }
     }
     let normalized = parts.join("/");
-    if is_project_overview_excluded_path(&normalized) {
-        return Err("path is protected or excluded from project overview scans".to_string());
+    if crate::path_policy::project_overview_protected_path(&normalized) {
+        return Err("path is protected by the sensitive-path policy".to_string());
+    }
+    if is_project_overview_high_volume_scope(&normalized) {
+        return Err("path is excluded as a high-volume project overview scope".to_string());
     }
     Ok(normalized)
 }
@@ -125,13 +128,18 @@ pub fn build_project_overview(
         return Err("path is not a directory".to_string());
     }
 
-    // Project detection trusts the git index: the author's own statement of
-    // what belongs to the project. Untracked tool state (.opencode/, .codex/,
-    // caches, virtualenvs) otherwise pollutes language/manifest detection —
-    // the field test misclassified a pure-Python thesis repo as node because
-    // of a gitignored .opencode/package.json. Non-git directories (and empty
-    // indexes, e.g. fresh `git init`) fall back to the filesystem walk.
-    let tracked = git_tracked_index(&canonical_root);
+    // Automatic root discovery trusts the git index: the author's own statement
+    // of what belongs to the project. Untracked tool state otherwise pollutes
+    // language/manifest detection. An explicit caller scope expresses narrower
+    // intent, so it uses the bounded filesystem walk even when ignored/untracked.
+    // Non-git roots (and empty indexes, e.g. fresh `git init`) also fall back to
+    // the filesystem walk.
+    let explicit_scope = !path.is_empty();
+    let tracked = if explicit_scope {
+        None
+    } else {
+        git_tracked_index(&canonical_root)
+    };
 
     let mut queue = VecDeque::from([PendingDirectory {
         absolute_path: canonical_scope,
@@ -176,7 +184,7 @@ pub fn build_project_overview(
             };
             let scoped_path = join_relative(&directory.scoped_path, &name);
             let project_path = join_relative(&path, &scoped_path);
-            if is_project_overview_excluded_path(&project_path) {
+            if project_overview_scan_excluded(&project_path, &scoped_path, explicit_scope) {
                 continue;
             }
             let file_type = match child.file_type() {
@@ -283,16 +291,36 @@ fn join_relative(prefix: &str, name: &str) -> String {
     }
 }
 
-fn is_project_overview_excluded_path(path: &str) -> bool {
-    crate::path_policy::sensitive_path(path) || path.split('/').any(is_excluded_component)
+fn project_overview_scan_excluded(
+    project_path: &str,
+    scoped_path: &str,
+    explicit_scope: bool,
+) -> bool {
+    crate::path_policy::project_overview_protected_path(project_path)
+        || is_project_overview_automatic_excluded_path(if explicit_scope {
+            scoped_path
+        } else {
+            project_path
+        })
 }
 
-fn is_excluded_component(component: &str) -> bool {
-    let lower = component.to_ascii_lowercase();
-    if matches!(
-        lower.as_str(),
-        ".git"
-            | "target"
+fn is_project_overview_high_volume_scope(path: &str) -> bool {
+    path.split('/').any(|component| {
+        matches!(
+            component.to_ascii_lowercase().as_str(),
+            "target" | "node_modules"
+        )
+    })
+}
+
+fn is_project_overview_automatic_excluded_path(path: &str) -> bool {
+    path.split('/').any(is_automatic_excluded_component)
+}
+
+fn is_automatic_excluded_component(component: &str) -> bool {
+    matches!(
+        component.to_ascii_lowercase().as_str(),
+        "target"
             | "node_modules"
             | "vendor"
             | "dist"
@@ -312,35 +340,7 @@ fn is_excluded_component(component: &str) -> bool {
             | ".parcel-cache"
             | ".pnpm-store"
             | ".turbo"
-            | "project-registry"
-            | "projects.d"
-            | "secrets"
-            | "secret"
-            | "tokens"
-            | "token"
-            | "credentials"
-            | "credential"
-            | "passwords"
-            | "password"
-            | "runner.toml"
-            | "agent.toml"
-            | "webcodex.env"
-            | ".env"
-            | ".npmrc"
-            | ".netrc"
-            | ".pypirc"
-            | ".ssh"
-            | ".aws"
-            | "id_rsa"
-            | "id_ed25519"
-    ) {
-        return true;
-    }
-    lower.starts_with(".env.")
-        || lower.ends_with(".pem")
-        || lower.ends_with(".key")
-        || lower.ends_with(".p12")
-        || lower.ends_with(".pfx")
+    )
 }
 
 fn basename(path: &str) -> &str {
@@ -768,7 +768,7 @@ fn path_within_scope(path: &str, scope: &str) -> bool {
 /// Validate a single project-relative path field. The returned string is the
 /// canonicalized form when the path is acceptable (the caller may use it to
 /// re-emit the field without trusting extra trailing data).
-fn validate_path_field(path: &str) -> Result<String, String> {
+fn validate_path_field(path: &str, scope: &str) -> Result<String, String> {
     if path.contains('\0') {
         return Err("path contains NUL".to_string());
     }
@@ -805,8 +805,19 @@ fn validate_path_field(path: &str) -> Result<String, String> {
     if normalized != path {
         return Err("path must be normalized".to_string());
     }
-    if is_project_overview_excluded_path(&normalized) {
-        return Err("path is protected or excluded".to_string());
+    if crate::path_policy::project_overview_protected_path(&normalized) {
+        return Err("path is protected by the sensitive-path policy".to_string());
+    }
+    let automatic_path = if scope.is_empty() {
+        normalized.as_str()
+    } else {
+        normalized
+            .strip_prefix(scope)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or("")
+    };
+    if !automatic_path.is_empty() && is_project_overview_automatic_excluded_path(automatic_path) {
+        return Err("path is excluded from automatic project overview scans".to_string());
     }
     Ok(normalized)
 }
@@ -934,7 +945,7 @@ pub fn validate_project_overview(
             let evidence_path = evidence_path
                 .as_str()
                 .ok_or_else(|| "evidence must be a string".to_string())?;
-            let normalized = validate_path_field(evidence_path)?;
+            let normalized = validate_path_field(evidence_path, &normalized_path)?;
             if !path_within_scope(&normalized, &normalized_path) {
                 return Err("evidence path is outside the request scope".to_string());
             }
@@ -982,7 +993,7 @@ pub fn validate_project_overview(
             .get("path")
             .and_then(Value::as_str)
             .ok_or_else(|| "key file path must be a string".to_string())?;
-        let path = validate_path_field(path)?;
+        let path = validate_path_field(path, &normalized_path)?;
         if !path_within_scope(&path, &normalized_path) {
             return Err("key file path is outside the request scope".to_string());
         }
@@ -1025,7 +1036,7 @@ pub fn validate_project_overview(
             let path = path
                 .as_str()
                 .ok_or_else(|| format!("roots.{class} entry must be a string"))?;
-            let path = validate_path_field(path)?;
+            let path = validate_path_field(path, &normalized_path)?;
             if !path_within_scope(&path, &normalized_path) {
                 return Err(format!("roots.{class} path is outside the request scope"));
             }
@@ -1068,7 +1079,7 @@ pub fn validate_project_overview(
             .get("path")
             .and_then(Value::as_str)
             .ok_or_else(|| "top level path must be a string".to_string())?;
-        let path = validate_path_field(path)?;
+        let path = validate_path_field(path, &normalized_path)?;
         if !path_within_scope(&path, &normalized_path) {
             return Err("top level path is outside the request scope".to_string());
         }
@@ -1110,7 +1121,7 @@ pub fn validate_project_overview(
             .get("path")
             .and_then(Value::as_str)
             .ok_or_else(|| "suggested read path must be a string".to_string())?;
-        let path = validate_path_field(path)?;
+        let path = validate_path_field(path, &normalized_path)?;
         if !path_within_scope(&path, &normalized_path) {
             return Err("suggested read path is outside the request scope".to_string());
         }
@@ -1213,7 +1224,7 @@ fn validate_path_kind_list(
             .get("path")
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{label} path must be a string"))?;
-        let path = validate_path_field(path)?;
+        let path = validate_path_field(path, scope)?;
         if !path_within_scope(&path, scope) {
             return Err(format!("{label} path is outside the request scope"));
         }
@@ -1457,11 +1468,16 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         assert!(build_project_overview(temp.path(), "../outside", None, None).is_err());
         assert!(build_project_overview(temp.path(), "/tmp", None, None).is_err());
-        for protected in [".git", "target", "node_modules", ".env", "secrets"] {
+        for protected in [".git", ".env", "secrets"] {
             assert!(
                 build_project_overview(temp.path(), protected, None, None).is_err(),
                 "protected scope {protected} must be rejected before scanning"
             );
+        }
+        for high_volume in ["target", "node_modules", "nested/target"] {
+            let error = build_project_overview(temp.path(), high_volume, None, None).unwrap_err();
+            assert!(error.contains("high-volume"), "{high_volume}: {error}");
+            assert!(!error.contains("sensitive"), "{high_volume}: {error}");
         }
 
         #[cfg(unix)]
@@ -1522,6 +1538,54 @@ mod git_index_tests {
             .collect();
         assert!(manifests.contains(&"pyproject.toml"));
         assert!(!manifests.iter().any(|path| path.contains(".opencode")));
+    }
+
+    #[test]
+    fn explicit_ignored_generated_scope_uses_bounded_filesystem_without_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join(".gitignore"), "cache/\nbuild/\n").unwrap();
+        touch(root, "src/main.rs");
+        git(&["add", ".gitignore", "src/main.rs"]);
+
+        touch(root, "cache/generated.json");
+        touch(root, "cache/.env");
+        touch(root, "cache/secrets/token");
+        touch(root, "cache/node_modules/pkg/index.js");
+        touch(root, "build/output.txt");
+        touch(root, "secrets/token");
+
+        let root_overview = build_project_overview(root, "", Some(4), Some(200)).unwrap();
+        let root_serialized = root_overview.to_string();
+        assert!(!root_serialized.contains("cache/generated.json"));
+        assert!(!root_serialized.contains("build/output.txt"));
+        validate_project_overview(&root_overview, "", 4, 200).unwrap();
+
+        let cache = build_project_overview(root, "cache", Some(4), Some(200)).unwrap();
+        let cache_serialized = cache.to_string();
+        assert!(cache_serialized.contains("cache/generated.json"));
+        assert!(!cache_serialized.contains("cache/.env"));
+        assert!(!cache_serialized.contains("cache/secrets"));
+        assert!(!cache_serialized.contains("cache/node_modules"));
+        assert!(cache["scan"]["returned_entry_count"].as_u64().unwrap() <= 200);
+        validate_project_overview(&cache, "cache", 4, 200).unwrap();
+
+        let build = build_project_overview(root, "build", Some(4), Some(200)).unwrap();
+        assert!(build.to_string().contains("build/output.txt"));
+        validate_project_overview(&build, "build", 4, 200).unwrap();
+
+        let error = build_project_overview(root, "secrets", None, None).unwrap_err();
+        assert!(error.contains("sensitive-path policy"), "{error}");
     }
 
     #[test]

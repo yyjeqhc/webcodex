@@ -172,31 +172,18 @@ fn normalize_extended_header_path(raw: &str) -> Result<Option<String>, UnifiedDi
 }
 
 fn sensitive_path_warning(path: &str) -> Option<String> {
-    let mut sensitive = None;
+    if webcodex_core::sensitive_paths::is_secret_path(path) {
+        return Some(format!("unified diff touches sensitive path: {path}"));
+    }
     for component in path.split(['/', '\\']) {
         let lower = component.to_ascii_lowercase();
-        let is_sensitive = matches!(
-            lower.as_str(),
-            "runner.toml"
-                | "agent.toml"
-                | "webcodex.env"
-                | "secret.pem"
-                | "id_rsa"
-                | "project-registry"
-                | "projects.d"
-                | ".git"
-                | "target"
-                | "node_modules"
-        ) || lower == ".env"
-            || lower.starts_with(".env.");
-        if is_sensitive {
-            sensitive = Some(format!(
+        if matches!(lower.as_str(), "id_rsa" | "target" | "node_modules") {
+            return Some(format!(
                 "unified diff touches sensitive path component '{component}': {path}"
             ));
-            break;
         }
     }
-    sensitive
+    None
 }
 
 pub(crate) fn sensitive_path_warnings(path: &str) -> Vec<String> {

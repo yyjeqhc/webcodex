@@ -203,19 +203,26 @@ fn zip_extraction_reads_only_the_exact_tunnel_client_member() {
     assert!(!temp.path().join("tunnel-client.exe").exists());
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn version_verification_requires_the_pinned_client_line() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempfile::tempdir().unwrap();
-    let good = temp.path().join("good");
-    fs::write(&good, "#!/bin/sh\necho '0.0.12+test (git sha: abc)'\n").unwrap();
-    fs::set_permissions(&good, fs::Permissions::from_mode(0o700)).unwrap();
-    verify_tunnel_client_version(&good).await.unwrap();
-
-    let wrong = temp.path().join("wrong");
-    fs::write(&wrong, "#!/bin/sh\necho '0.0.13'\n").unwrap();
-    fs::set_permissions(&wrong, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(verify_tunnel_client_version(&wrong).await.is_err());
+#[test]
+fn version_verification_requires_the_pinned_client_line() {
+    assert!(tunnel_client_version_output_is_pinned(
+        true,
+        b"0.0.12+test (git sha: abc)\n",
+        b"",
+    ));
+    assert!(tunnel_client_version_output_is_pinned(
+        true,
+        b"",
+        b"0.0.12+test (git sha: abc)\n",
+    ));
+    assert!(!tunnel_client_version_output_is_pinned(
+        true,
+        b"0.0.13\n",
+        b"",
+    ));
+    assert!(!tunnel_client_version_output_is_pinned(
+        false,
+        b"0.0.12+test (git sha: abc)\n",
+        b"",
+    ));
 }

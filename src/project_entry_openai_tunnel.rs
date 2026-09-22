@@ -762,6 +762,22 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
     Ok(())
 }
 
+fn tunnel_client_version_output_is_pinned(
+    status_success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> bool {
+    if !status_success {
+        return false;
+    }
+    let version_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
+    version_text.starts_with(TUNNEL_CLIENT_VERSION)
+}
+
 async fn verify_tunnel_client_version(path: &Path) -> Result<(), ProductError> {
     let mut command = Command::new(path);
     suppress_windows_console(&mut command);
@@ -770,12 +786,11 @@ async fn verify_tunnel_client_version(path: &Path) -> Result<(), ProductError> {
         .await
         .map_err(|_| verification_error())?
         .map_err(|_| verification_error())?;
-    let version_text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if !output.status.success() || !version_text.starts_with(TUNNEL_CLIENT_VERSION) {
+    if !tunnel_client_version_output_is_pinned(
+        output.status.success(),
+        &output.stdout,
+        &output.stderr,
+    ) {
         return Err(verification_error());
     }
     Ok(())

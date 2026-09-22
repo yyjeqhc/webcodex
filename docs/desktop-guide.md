@@ -4,6 +4,8 @@
 
 Desktop prepares local projects and manages connections. You ask for work in ChatGPT or another AI client. For installation, Tunnel configuration, and system permissions, see the [installation and connection guide](desktop-install.md).
 
+For contributor workflows—frontend/Tauri development, source runtime resolution, NSIS/DMG packaging, and native smoke tests—see [Desktop development](DESKTOP_DEVELOPMENT.md).
+
 ## First use
 
 1. Choose **Use WebCodex on this computer** on the welcome page, the recommended personal setup.

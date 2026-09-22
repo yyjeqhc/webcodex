@@ -93,6 +93,7 @@ private file contents, or other secrets. For security-sensitive reports, use
 For repository testing guidance, see [docs/TESTING.md](docs/TESTING.md). For the
 coding workflow and closeout conventions, see
 [docs/CODING_WORKFLOW.md](docs/CODING_WORKFLOW.md).
+Desktop contributors should also use [docs/DESKTOP_DEVELOPMENT.md](docs/DESKTOP_DEVELOPMENT.md) for the source runtime, Tauri, native packaging, and installer/DMG smoke workflow.
 
 On developer machines, ordinary `dev` and `test` Cargo profiles intentionally omit
 source-line debuginfo to keep large test binaries and links smaller. Linux developers

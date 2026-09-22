@@ -4,6 +4,8 @@
 
 Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户端中发起工作。首次安装、Tunnel 配置和系统权限请看[安装与连接指南](desktop-install.zh-CN.md)。
 
+贡献者如果要做 frontend/Tauri 开发、从源码加载 runtime、构建 NSIS/DMG 或运行原生安装 smoke，请看 [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md)。
+
 ## 第一次使用
 
 1. 在欢迎页选择 **在此电脑使用 WebCodex**。这是普通个人使用的推荐入口。

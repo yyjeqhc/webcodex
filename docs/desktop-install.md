@@ -21,11 +21,13 @@ install Desktop
 
 For everyday use after installation, see [Using Desktop](desktop-guide.md). Home now centers the current project and three usage steps; component details live under “View runtime diagnostics”. OpenAI Platform screenshots below are configuration references; follow the current Desktop control names in the text.
 
+Contributors who want to modify Desktop or build their own Windows/macOS package should use [Desktop development and local packaging](DESKTOP_DEVELOPMENT.md); the install guide below assumes a finished release artifact.
+
 ## 1. Install WebCodex Desktop
 
 Download the matching Desktop artifact from the [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases) page:
 
-- **Windows:** use the Windows x64 installer.
+- **Windows:** use the installer matching your architecture, x64 or ARM64. Windows ARM64 Desktop is part of the v0.4.2+ release build path.
 - **macOS:** use the DMG matching your Mac architecture, Intel or Apple Silicon.
 
 Current macOS builds are ad-hoc signed and are not notarized. If Gatekeeper blocks the first launch of a newly downloaded build, open **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**. Do not disable Gatekeeper globally.

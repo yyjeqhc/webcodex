@@ -74,7 +74,7 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
 - **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
 - **Windows x64** — Desktop local Server + Runner with the official OpenAI Secure Tunnel, plus CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`.
-- **Windows arm64** — CLI + Runner, local foreground Server, and `share`; managed OpenAI `tunnel-client` is supported. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare requires a trusted explicit/PATH `cloudflared`. The Desktop installer is currently Windows x64 only. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
+- **Windows arm64** — Desktop local Server + Runner and the official OpenAI Secure Tunnel are supported by the native ARM64 build path; CLI + Runner, local foreground Server, and `share` are also supported. Release builds include the Windows ARM64 Desktop installer from v0.4.2+. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare still requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 
@@ -88,6 +88,7 @@ Those are follow-up operating concerns, not concepts a first-time user should ha
 
 - [Desktop installation](docs/desktop-install.md) — recommended Windows/macOS path: Desktop + official OpenAI Secure Tunnel
 - [Using Desktop](docs/desktop-guide.md) — projects, connections, activity, and background operation
+- [Desktop development](docs/DESKTOP_DEVELOPMENT.md) — run from source and build Windows/macOS installers locally
 - [Full Setup](docs/PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
@@ -108,6 +109,8 @@ WebCodex can read and modify files and execute commands inside configured projec
 cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
+
+For Desktop UI/Tauri development and local Windows/macOS packaging, use the [Desktop development guide](docs/DESKTOP_DEVELOPMENT.md) instead of a raw Tauri bundle command.
 
 ## Contributing
 

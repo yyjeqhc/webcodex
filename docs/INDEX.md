@@ -45,6 +45,8 @@ Start with the goal that matches what you are trying to do.
 
 ## I want to contribute or release WebCodex
 
+- [Desktop development](DESKTOP_DEVELOPMENT.md) — run Desktop from source and build/test native Windows/macOS packages
+
 The `docs/agent/` pages below are maintainer/internal contracts. They intentionally
 contain protocol fields, compatibility names, and implementation invariants that
 ordinary users should not need to learn.

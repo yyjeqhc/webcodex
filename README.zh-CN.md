@@ -74,7 +74,7 @@ WebCodex
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
 - **macOS x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、本机 `share` 和独立 Runner 工作流。
 - **Windows x64** —— 推荐 Desktop 本机 Server + Runner + 官方 OpenAI Secure Tunnel；同时支持 CLI + Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。
-- **Windows arm64** —— 支持 CLI + Runner、本地前台 Server 与 `share`，managed OpenAI `tunnel-client` 可用。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时需要受信任的显式/`PATH` `cloudflared`。当前 Desktop installer 仅提供 Windows x64。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
+- **Windows arm64** —— native ARM64 构建路径支持 Desktop 本机 Server + Runner 与官方 OpenAI Secure Tunnel，同时也支持 CLI + Runner、本地前台 Server 与 `share`；从 v0.4.2+ 的 Release 构建开始提供 Windows ARM64 Desktop installer。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时仍需要受信任的显式/`PATH` `cloudflared`。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 
@@ -88,6 +88,7 @@ Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP
 
 - [Desktop 安装与连接](docs/desktop-install.zh-CN.md) —— Windows / macOS 推荐路径：Desktop + 官方 OpenAI Secure Tunnel
 - [Desktop 日常使用](docs/desktop-guide.zh-CN.md) —— 项目、连接、活动与后台运行
+- [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md) —— 从源码运行并在 Windows/macOS 本地构建安装包
 - [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考
@@ -108,6 +109,8 @@ WebCodex 能在配置的项目范围内读取和修改文件、执行命令。�
 cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
+
+Desktop UI/Tauri 开发以及 Windows/macOS 本地打包请看 [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md)，不要把 raw Tauri bundle 当成完整 WebCodex Desktop 包。
 
 ## 参与贡献
 

@@ -54,6 +54,7 @@ Agent 创建的 issue 还应：
 
 仓库测试说明见 [docs/TESTING.md](docs/TESTING.md)，coding workflow 与 closeout 约定见
 [docs/CODING_WORKFLOW.zh-CN.md](docs/CODING_WORKFLOW.zh-CN.md)。
+Desktop 贡献者还应查看 [docs/DESKTOP_DEVELOPMENT.zh-CN.md](docs/DESKTOP_DEVELOPMENT.zh-CN.md)，其中说明源码 runtime、Tauri、原生打包以及 installer/DMG smoke 流程。
 
 开发机上的普通 Cargo `dev` / `test` profile 会有意关闭源码行号 debuginfo，以减小大型测试二进制和链接开销。Linux 开发者可按需使用 `bash scripts/cargo_fast.sh <cargo-args>`；只有在 Linux 且检测到 mold 时才通过 `mold -run` 启动 Cargo。缺少 mold 时会透明回退到普通 Cargo，且不会修改 macOS 或 Windows 的链接器。
 

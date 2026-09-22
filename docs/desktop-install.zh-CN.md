@@ -21,11 +21,13 @@
 
 安装完成后的日常操作请看[Desktop 使用指南](desktop-guide.zh-CN.md)。新版首页以当前项目和三个使用步骤为中心，组件详情收在“查看运行诊断”中。下文的 OpenAI 平台截图用于配置参考；Desktop 操作以文字中的当前控件名称为准。
 
+如果你是贡献者，希望修改 Desktop 或自己构建 Windows/macOS 安装包，请看 [Desktop 开发与本地打包](DESKTOP_DEVELOPMENT.zh-CN.md)；下面的安装指南默认你已经拿到一个完整 Release artifact。
+
 ## 1. 安装 WebCodex Desktop
 
 从 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases) 下载对应安装包：
 
-- **Windows：**使用 Windows x64 installer。
+- **Windows：**按主机架构选择 x64 或 ARM64 installer；Windows ARM64 Desktop 从 v0.4.2+ release build path 开始提供。
 - **macOS：**按 Mac 架构选择 Intel 或 Apple Silicon DMG。
 
 当前 macOS 构建使用 ad-hoc 签名且没有 notarization。如果 Gatekeeper 拦截新下载构建的首次启动，进入**系统设置 → 隐私与安全 → 仍要打开**，再确认**打开**；不要全局关闭 Gatekeeper。

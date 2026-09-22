@@ -881,6 +881,8 @@ impl ToolRuntime {
             &runtime_status_for_brief,
             runtime_status_call_failed,
         );
+        let coding_agent_providers =
+            project_coding_agent_providers(&resolved.config.client_id, &runtime_status_for_brief);
         let git = self
             .coding_startup_git_summary(
                 &resolved.resolved_id,
@@ -1218,6 +1220,7 @@ impl ToolRuntime {
             force_instruction_load,
             include_instruction_content: startup.include_instruction_content,
             extensions: extensions.as_ref(),
+            coding_agent_providers: &coding_agent_providers,
             git: &git,
             semantic_navigation: &semantic_navigation,
             repository: &repository_overview,
@@ -2296,6 +2299,8 @@ struct WorkOnProjectBriefProjection {
     semantic_navigation: WorkOnProjectSemanticNavigationProjection,
     #[serde(default)]
     extensions: Option<Value>,
+    #[serde(default)]
+    coding_agent_providers: Vec<webcodex_core::coding_agent::CodingAgentProviderSummary>,
     repository: Value,
     continuation: WorkOnProjectContinuationProjection,
     blockers: Vec<String>,
@@ -2709,6 +2714,9 @@ fn project_work_on_project_output_inner(
     }
     if let Some(extensions) = projection.extensions {
         result.output["extensions"] = extensions;
+    }
+    if !projection.coding_agent_providers.is_empty() {
+        result.output["coding_agent_providers"] = json!(projection.coding_agent_providers);
     }
     if !project_resolution_is_default {
         let mut project_resolution = json!(projection.project_resolution);
@@ -3199,6 +3207,34 @@ fn startup_agent_check(
         Some(true) => ("pass", None),
         None => ("warn", Some("agent_health_unknown")),
     }
+}
+
+/// Reuse the already-authorized startup observation, selecting only the Project's
+/// owning Runner. Never combine fleet inventories or choose a default provider.
+pub(crate) fn project_coding_agent_providers(
+    client_id: &str,
+    runtime_status: &Value,
+) -> Vec<webcodex_core::coding_agent::CodingAgentProviderSummary> {
+    runtime_status
+        .pointer("/agents/clients")
+        .and_then(Value::as_array)
+        .and_then(|clients| {
+            clients.iter().find(|client| {
+                client.get("client_id").and_then(Value::as_str) == Some(client_id)
+                    && client.get("connected").and_then(Value::as_bool) == Some(true)
+            })
+        })
+        .and_then(|client| client.get("coding_agent_providers"))
+        .and_then(|providers| {
+            serde_json::from_value::<Vec<webcodex_core::coding_agent::CodingAgentProviderSummary>>(
+                providers.clone(),
+            )
+            .ok()
+        })
+        .filter(|providers| {
+            providers.len() <= webcodex_core::coding_agent::CODING_AGENT_MAX_PROVIDERS
+        })
+        .unwrap_or_default()
 }
 
 fn owning_runner_available(

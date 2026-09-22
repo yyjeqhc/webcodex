@@ -323,6 +323,8 @@ pub(crate) struct StartupBriefInput<'a> {
     pub(crate) force_instruction_load: bool,
     pub(crate) include_instruction_content: bool,
     pub(crate) extensions: Option<&'a StartupExtensions>,
+    pub(crate) coding_agent_providers:
+        &'a [webcodex_core::coding_agent::CodingAgentProviderSummary],
     pub(crate) git: &'a Value,
     pub(crate) semantic_navigation: &'a Value,
     pub(crate) repository: &'a Value,
@@ -407,6 +409,9 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
                 "plugins": StartupPluginsCatalog::unavailable("plugin_runtime_unavailable"),
             })
         });
+    }
+    if !input.coding_agent_providers.is_empty() {
+        brief["coding_agent_providers"] = json!(input.coding_agent_providers);
     }
     enforce_hard_size_limit(&mut brief);
     brief
@@ -2326,6 +2331,7 @@ mod tests {
                 force_instruction_load: true,
                 include_instruction_content: true,
                 extensions: Some(&extensions),
+                coding_agent_providers: &[],
                 git: &git,
                 semantic_navigation: &semantic_navigation,
                 repository: &large_repository(),

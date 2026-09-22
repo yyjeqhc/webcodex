@@ -277,6 +277,7 @@ fn startup_brief_schema(detail: &str) -> Value {
             "continuation": startup_continuation_schema(detail),
             "semantic_navigation": startup_semantic_navigation_schema(),
             "extensions": startup_extensions_schema(),
+            "coding_agent_providers": super::coding_agents::provider_inventory_schema(),
             "repository": startup_repository_schema(),
             "blockers": startup_issue_list_schema(true),
             "warnings": startup_issue_list_schema(false),
@@ -1340,6 +1341,7 @@ fn work_on_project_output_schema() -> Value {
         ("instructions", compact_instructions),
         ("semantic_navigation", compact_semantic_navigation),
         ("extensions", startup_extensions_schema()),
+        ("coding_agent_providers", super::coding_agents::provider_inventory_schema()),
         ("jobs", compact_jobs),
         (
             "blockers",

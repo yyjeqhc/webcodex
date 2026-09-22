@@ -2,6 +2,22 @@ use serde_json::{json, Value};
 
 use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
 
+pub(super) fn provider_inventory_schema() -> Value {
+    json!({
+        "type": "array",
+        "description": "Current exact Runner ACP discovery; logical IDs and names only. Does not select a default or grant execution authority.",
+        "maxItems": webcodex_core::coding_agent::CODING_AGENT_MAX_PROVIDERS,
+        "items": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+                "provider_id": {"type":"string", "minLength":1, "maxLength":webcodex_core::coding_agent::CODING_AGENT_MAX_PROVIDER_ID_BYTES},
+                "name": {"type":"string", "minLength":1, "maxLength":webcodex_core::coding_agent::CODING_AGENT_MAX_PROVIDER_NAME_BYTES}
+            },
+            "required": ["provider_id", "name"]
+        }
+    })
+}
+
 fn state_schema() -> Value {
     json!({"type":"string","enum":["starting","running","waiting_permission","completed","failed","cancelled","lost"]})
 }
@@ -99,6 +115,17 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     let mut fields = common_run_fields();
     match name {
         "coding_agent_start" => {
+            fields.push(("available_providers", provider_inventory_schema()));
+            fields.push(("suggested_call", json!({
+                "type":"object", "additionalProperties":false,
+                "properties": {
+                    "tool":{"type":"string", "const":"runtime_status"},
+                    "arguments":{"type":"object", "additionalProperties":false,
+                        "properties":{"client_id":{"type":"string"},"compact":{"type":"boolean", "const":true}},
+                        "required":["client_id","compact"]}
+                },
+                "required":["tool","arguments"]
+            })));
             fields.push((
                 "observation_token",
                 schema_type("string", "Opaque Run-bound observation token."),

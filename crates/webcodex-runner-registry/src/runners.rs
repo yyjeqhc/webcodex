@@ -43,7 +43,11 @@ fn validate_coding_agent_registration(
     inventory: Option<&CodingAgentRunInventory>,
 ) -> Result<(), String> {
     match (capability, providers, inventory) {
-        (false, None, None) => return Ok(()),
+        // Older/no-ACP Runners may serialize the optional provider list as []
+        // instead of null/absent. Empty discovery grants no execution capability.
+        (false, providers, None) if providers.is_none_or(|providers| providers.is_empty()) => {
+            return Ok(())
+        }
         (false, _, _) => {
             return Err(
                 "coding-agent provider/inventory metadata requires coding_agent_runs capability"

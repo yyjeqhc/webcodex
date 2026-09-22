@@ -1690,6 +1690,27 @@ fn work_on_project_projection_fails_closed_for_wrong_field_type() {
 }
 
 #[test]
+fn work_on_project_projection_keeps_safe_coding_agent_discovery_and_rejects_private_fields() {
+    let mut input = valid_work_on_project_projection_input();
+    input["coding_agent_providers"] = json!([{"provider_id":"pi", "name":"Pi Agent"}]);
+    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        input.clone(),
+    );
+    assert!(result.success);
+    assert_eq!(
+        result.output["coding_agent_providers"],
+        input["coding_agent_providers"]
+    );
+    input["coding_agent_providers"][0]["provider_instance_id"] = json!("private");
+    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        input,
+    );
+    assert!(!result.success);
+}
+
+#[test]
 fn work_on_project_projection_fails_closed_for_noncanonical_workflow() {
     let mut output = valid_work_on_project_projection_input();
     output["workflow"]["version"] =
@@ -4215,6 +4236,76 @@ async fn work_on_project_omits_instruction_bodies_even_for_a_fresh_session() {
         Some(stored_agents.fingerprint.as_str()),
         agents_source["fingerprint"].as_str()
     );
+}
+
+#[tokio::test]
+async fn work_on_project_fresh_window_discovers_only_owning_runner_acp_and_admits_it() {
+    let root = tempfile::tempdir().unwrap();
+    seed_coding_repository(root.path(), "Review source without changing files");
+    let runtime = ToolRuntime::new_for_tests();
+    let provider = |id: &str, name: &str| webcodex_core::coding_agent::CodingAgentProvider {
+        provider_id: id.to_owned(),
+        name: name.to_owned(),
+        provider_instance_id: format!("private-provider-{id}"),
+    };
+    let project = register_runner_project_at_path_with_coding_agents(
+        &runtime,
+        "wop-acp",
+        "demo",
+        root.path(),
+        Some(vec![provider("pi", "Pi Agent")]),
+    )
+    .await;
+    register_runner_project_at_path_with_coding_agents(
+        &runtime,
+        "other-acp",
+        "other",
+        root.path(),
+        Some(vec![provider("codex", "Codex Agent")]),
+    )
+    .await;
+    let auth = auth_context(None, true);
+    for window in ["fresh-acp-window-a", "fresh-acp-window-b"] {
+        let result = dispatch_coding_call_in_window(
+            &runtime,
+            "wop-acp",
+            work_on_project_call(
+                &project,
+                "Review the repository without changing files",
+                None,
+            ),
+            Some(&auth),
+            window,
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.output["coding_agent_providers"],
+            json!([{"provider_id":"pi","name":"Pi Agent"}])
+        );
+        assert!(!result.output.to_string().contains("private-provider-"));
+        let advertised = result.output["coding_agent_providers"][0]["provider_id"]
+            .as_str()
+            .unwrap();
+        assert!(runtime
+            .prepare_coding_agent_start(
+                project.clone(),
+                advertised.to_owned(),
+                format!("discover-{window}"),
+                "Read-only module review".to_owned(),
+                None,
+                Some(10),
+                Some(&auth),
+            )
+            .await
+            .is_ok());
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &json!({"success": true, "output": result.output}),
+            &schema,
+        )
+        .unwrap();
+    }
 }
 
 #[tokio::test]

@@ -14,6 +14,7 @@ mod checkpoint;
 mod code_mode;
 #[cfg(feature = "experimental-code-mode")]
 mod code_mode_e2b;
+mod coding_agent_discovery;
 mod coding_task;
 mod coding_task_semantic_navigation;
 mod collaboration;

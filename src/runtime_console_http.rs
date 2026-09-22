@@ -631,6 +631,7 @@ struct RuntimeConsoleRunnerSummary {
 struct RuntimeConsoleRunner {
     client_id: String,
     connected: bool,
+    coding_agent_providers: Vec<webcodex_core::coding_agent::CodingAgentProviderSummary>,
     status: Option<String>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -2855,6 +2856,10 @@ async fn runner_for_auth(
     };
     Ok(RuntimeConsoleRunner {
         client_id: client_id.to_string(),
+        coding_agent_providers: runner_value
+            .get("coding_agent_providers")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default(),
         connected: runner_value
             .get("connected")
             .and_then(Value::as_bool)

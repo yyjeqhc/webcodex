@@ -28,6 +28,20 @@ pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path(
     project_id: &str,
     root: &Path,
 ) -> String {
+    register_runner_project_at_path_with_coding_agents(runtime, client_id, project_id, root, None)
+        .await
+}
+
+pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path_with_coding_agents(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    root: &Path,
+    providers: Option<Vec<webcodex_core::coding_agent::CodingAgentProvider>>,
+) -> String {
+    let coding_agent_runs = providers
+        .as_ref()
+        .is_some_and(|providers| !providers.is_empty());
     let project_path = root.to_string_lossy().to_string();
     runtime
         .runner_registry
@@ -36,8 +50,8 @@ pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path(
             build: None,
             job_concurrency_limit: None,
             job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
+            coding_agent_providers: providers,
+            coding_agent_inventory: coding_agent_runs.then(Default::default),
             client_id: client_id.to_string(),
             runner_instance_id: "inst".to_string(),
             runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
@@ -52,6 +66,7 @@ pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path(
                 file_read: true,
                 file_write: true,
                 internal_posix_script: true,
+                coding_agent_runs,
                 ..Default::default()
             }),
             policy: None,

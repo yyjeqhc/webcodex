@@ -5,6 +5,7 @@ use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_protocol::{RunnerView, ShellJobInfo};
 use serde_json::{json, Value};
+use webcodex_core::coding_agent::safe_provider_inventory;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
@@ -189,6 +190,7 @@ impl ToolRuntime {
                         "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
                         "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
                         "build": client.build,
+                        "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
                     })
                 })
                 .collect()
@@ -216,6 +218,7 @@ impl ToolRuntime {
                         "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
                         "build": client.build,
                         "capabilities": client.capabilities,
+                        "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
                         "policy": sanitized_policy_summary(client.policy.as_ref()),
                         "shell_profiles": sanitized_shell_profiles_summary(
                             client.policy.as_ref().and_then(|policy| policy.shell_profiles.as_ref())
@@ -630,6 +633,7 @@ impl ToolRuntime {
                 "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
                 "projects_count": project_count,
                 "build": client.build,
+                "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             }],
             "summary": runner_health_summary(&clients, &selected_jobs, now),
         });
@@ -656,6 +660,7 @@ impl ToolRuntime {
             "status": client.status,
             "agent_instance_id": client.runner_instance_id,
             "build": client.build,
+            "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             "project_count": project_count,
             "active_jobs": runner_active,
             "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
@@ -835,6 +840,7 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
             let mut compact = json!({
                 "client_id": client_id,
                 "agent_instance_id": runner.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+                "coding_agent_providers": runner.get("coding_agent_providers").cloned().unwrap_or_else(|| json!([])),
                 "status": runner.get("status").cloned().unwrap_or(Value::Null),
                 "transport": runner.get("transport").cloned().unwrap_or(Value::Null),
                 "build_git_commit": compat.and_then(|value| value.get("build_git_commit")).cloned().unwrap_or(Value::Null),
@@ -1432,6 +1438,12 @@ fn runtime_status_client_summary(
     );
     value.insert("build".to_string(), json!(client.build));
     value.insert("capabilities".to_string(), json!(client.capabilities));
+    value.insert(
+        "coding_agent_providers".to_string(),
+        json!(safe_provider_inventory(
+            client.coding_agent_providers.as_deref()
+        )),
+    );
     value.insert(
         "projects_count".to_string(),
         json!(enabled_projects_count(client)),

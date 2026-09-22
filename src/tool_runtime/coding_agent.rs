@@ -429,13 +429,22 @@ impl ToolRuntime {
         {
             Some(provider) => provider.provider_instance_id.clone(),
             None => {
-                return Err(coding_agent_error(
+                let mut error = coding_agent_error(
                     "coding_agent_provider_unavailable",
-                    "logical ACP provider is not advertised by the exact Project Runner",
+                    "Logical ACP provider is not advertised by the exact Project Runner. Re-observe that Runner's coding_agent_providers; choose an advertised provider_id according to the user's instructions, not an executable from PATH.",
                     "not_started",
                     RecoveryKind::Reobserve,
                     Some(&run_id),
-                ))
+                );
+                error.output["available_providers"] =
+                    json!(webcodex_core::coding_agent::safe_provider_inventory(
+                        client.coding_agent_providers.as_deref()
+                    ));
+                error.output["suggested_call"] = json!({
+                    "tool": "runtime_status",
+                    "arguments": {"client_id": client.client_id, "compact": true},
+                });
+                return Err(error);
             }
         };
         let timeout_secs = timeout_secs.unwrap_or(DEFAULT_RUN_TIMEOUT_SECS);

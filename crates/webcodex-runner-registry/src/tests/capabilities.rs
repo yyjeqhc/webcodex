@@ -488,6 +488,21 @@ async fn coding_agent_registration_consistency_uses_canonical_feature_semantics(
     );
 }
 
+#[tokio::test]
+async fn old_runner_empty_provider_inventory_does_not_grant_coding_agent_capability() {
+    for providers in [None, Some(Vec::new())] {
+        let registry = RunnerRegistry::default();
+        let mut registration = runner_registration("old-runner", "old-instance", Vec::new());
+        registration.capabilities = v2_baseline_capabilities();
+        registration.coding_agent_providers = providers;
+        let view = registry.register(registration).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&view.capabilities).unwrap(),
+            serde_json::to_value(v2_baseline_capabilities()).unwrap()
+        );
+    }
+}
+
 async fn register_sticky_feature_state(
     registry: &RunnerRegistry,
     client_id: &str,

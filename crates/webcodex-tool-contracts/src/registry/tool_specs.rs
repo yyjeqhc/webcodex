@@ -408,10 +408,10 @@ mod tests {
         assert!(lower.contains("never"), "observe_jobs: {description}");
         assert!(lower.contains("retr"), "observe_jobs: {description}");
 
-        let token = observe_jobs.input_schema["properties"]["items"]["items"]["properties"]
-            ["after_observation_token"]["description"]
+        let token = observe_jobs.input_schema["properties"]["items"]["items"]["oneOf"][0]
+            ["properties"]["after_observation_token"]["description"]
             .as_str()
-            .expect("observe_jobs observation token description");
+            .expect("observe_jobs raw-selector observation token description");
         assert!(token.contains("not execution identity"), "{token}");
         assert!(token.contains("Server epoch"), "{token}");
         assert!(token.contains("without interpreting"), "{token}");

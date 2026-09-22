@@ -544,12 +544,17 @@ fn observe_jobs_items_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sch
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                        "job_id": {"type": "string", "minLength": 1},
+                        "job_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Existing opaque runtime Job id."
+                        },
                         "after_observation_token": {
                             "anyOf": [
                                 {"type": "string", "maxLength": MAX_JOB_OBSERVATION_TOKEN_LEN},
                                 {"type": "null"}
-                            ]
+                            ],
+                            "description": "Optional opaque Job-bound lifecycle/log-delta token from the latest observation. Return it unchanged without interpreting its cursor state. It is not execution identity or retry authority; a stale Server epoch resets the bounded log projection."
                         },
                         "observation_ref": {"type": "null"}
                     },
@@ -564,7 +569,8 @@ fn observe_jobs_items_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sch
                             "type": "string",
                             "pattern": "^~j[0-9]+$",
                             "minLength": 3,
-                            "maxLength": MAX_OBSERVATION_REF_LEN
+                            "maxLength": MAX_OBSERVATION_REF_LEN,
+                            "description": "Compact server-issued continuation selector for one exact prior Job observation state. Unknown or expired refs fail closed."
                         }
                     },
                     "required": ["observation_ref"]

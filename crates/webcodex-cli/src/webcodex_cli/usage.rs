@@ -131,6 +131,7 @@ pub(crate) fn pairing_create_usage() -> &'static str {
        --ttl-secs SECS           Pairing code lifetime [default: 600; range: 60..3600]\n\
        --user-token-name NAME    Name for the user API token created during enroll\n\
        --runner-token-name NAME  Name for the Runner transport token created during enroll\n\
+       --runner-capabilities    Explicitly grant SSH resource management and ACP coding runs\n\
        --json                    Print machine-readable output\n\
        -h, --help                Print help and exit\n\n\
      Server/admin-side command:\n\

@@ -346,6 +346,9 @@ impl WebCodexAdapter {
             username,
             "--ttl-secs".into(),
             "600".into(),
+            // Local Desktop setup has operator authority. Remote codes retain
+            // the scopes explicitly granted by their Server operator.
+            "--runner-capabilities".into(),
             "--json".into(),
         ];
         args.push("--no-system-proxy".into());

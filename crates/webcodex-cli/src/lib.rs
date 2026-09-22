@@ -180,6 +180,7 @@ struct PairingCreateOptions {
     ttl_secs: i64,
     user_token_name: Option<String>,
     runner_token_name: Option<String>,
+    runner_capabilities: bool,
     json: bool,
 }
 
@@ -2479,6 +2480,7 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
             }
             "--user-token-name" => opts.user_token_name = Some(next_value(&mut iter, arg)?),
             "--runner-token-name" => opts.runner_token_name = Some(next_value(&mut iter, arg)?),
+            "--runner-capabilities" => opts.runner_capabilities = true,
             "--agent-token-name" => {
                 return Err(
                     "--agent-token-name is retired; use --runner-token-name instead".to_string(),
@@ -2505,6 +2507,29 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
         return Err("use only one of --token, --token-file, or --env-file".to_string());
     }
     Ok(opts)
+}
+
+#[cfg(test)]
+mod pairing_capability_cli_tests {
+    use super::parse_pairing_create;
+
+    #[test]
+    fn runner_capability_enrollment_is_explicit_opt_in() {
+        let mut args: Vec<String> = [
+            "--server-url",
+            "http://127.0.0.1:8080",
+            "--username",
+            "desktop",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert!(!parse_pairing_create(&args).unwrap().runner_capabilities);
+        args.push("--runner-capabilities".to_owned());
+        assert!(parse_pairing_create(&args).unwrap().runner_capabilities);
+        args.push("--arbitrary-scopes".to_owned());
+        assert!(parse_pairing_create(&args).is_err());
+    }
 }
 
 /// Small flag parser for `webcodex runner init`. Produces an

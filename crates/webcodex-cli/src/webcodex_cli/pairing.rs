@@ -111,6 +111,7 @@ pub(crate) async fn run_pairing_create(opts: PairingCreateOptions) -> Result<Str
         "username": opts.username,
         "client_id": opts.client_id,
         "ttl_secs": opts.ttl_secs,
+        "runner_capabilities": opts.runner_capabilities,
     });
     if let Some(display_name) = &opts.display_name {
         body["display_name"] = json!(display_name);

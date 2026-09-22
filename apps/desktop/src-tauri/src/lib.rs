@@ -1,4 +1,5 @@
 mod activity;
+mod coding_agents;
 mod commands;
 mod connection_id;
 mod connections;
@@ -10,6 +11,8 @@ mod models;
 mod operation;
 mod platform;
 mod process;
+mod runner_capability_grant;
+mod ssh_resources;
 mod state;
 mod tray;
 mod tunnel_config;
@@ -68,6 +71,12 @@ pub fn run() {
             commands::save_tunnel_profile,
             commands::save_mcp_provider,
             commands::remove_mcp_provider,
+            commands::save_coding_agent,
+            commands::remove_coding_agent,
+            commands::ssh_resource_list,
+            commands::ssh_resource_register,
+            commands::ssh_resource_remove,
+            commands::authorize_runner_capabilities,
             commands::tunnel_profile_action,
             commands::inspect_project,
             commands::configure_local_setup,

@@ -1,5 +1,37 @@
 #![allow(clippy::all)]
 
+#[test]
+fn pairing_capability_migration_preserves_old_codes_without_granting_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy-pairing.sqlite");
+    let expires_at = chrono::Utc::now().timestamp() + 3600;
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("
+            CREATE TABLE pairing_codes (
+                id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
+                username TEXT NOT NULL, client_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL, used_at INTEGER, user_token_name TEXT, agent_token_name TEXT
+            );
+        ").unwrap();
+        // Startup legitimately prunes expired codes; keep this legacy code live
+        // so the test isolates migration rather than expiry cleanup.
+        conn.execute(
+            "INSERT INTO pairing_codes VALUES ('old-code','old-hash','owner','alice','mini',1,?1,NULL,NULL,NULL)",
+            rusqlite::params![expires_at],
+        ).unwrap();
+    }
+    // Opening twice also verifies that repeated initialization does not reset a
+    // grant or recreate the schema column. Previously issued codes stay false.
+    for _ in 0..2 {
+        let db = Database::open(&path).unwrap();
+        let old = db.get_pairing_code_by_hash("old-hash").unwrap().unwrap();
+        assert!(!old.runner_capabilities);
+        assert_eq!(old.client_id, "mini");
+        assert_eq!(old.expires_at, expires_at);
+    }
+}
+
 use super::*;
 use crate::models::{
     ApiKeyRecord, OAuthAccessTokenRecord, OAuthAuthorizationCodeRecord, OAuthClientRecord,
@@ -312,6 +344,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
 
     // Live + dead pairing codes.
     db.insert_pairing_code(&crate::models::PairingCodeRecord {
+        runner_capabilities: false,
         id: "p-live".to_string(),
         code_hash: "pair-live".to_string(),
         user_id: "u-1".to_string(),
@@ -325,6 +358,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
     })
     .unwrap();
     db.insert_pairing_code(&crate::models::PairingCodeRecord {
+        runner_capabilities: false,
         id: "p-dead".to_string(),
         code_hash: "pair-dead".to_string(),
         user_id: "u-1".to_string(),

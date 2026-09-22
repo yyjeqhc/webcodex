@@ -1,7 +1,9 @@
+mod coding_agents;
 mod connections;
 mod mcp_providers;
 #[cfg(test)]
 mod reconfiguration_tests;
+mod ssh_resources;
 mod workspace;
 mod workspace_settings;
 use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
@@ -62,6 +64,7 @@ struct ChatGptActivityProbe {
 
 pub struct AppState {
     core: Mutex<Option<DesktopCore>>,
+    ssh_resources: Mutex<crate::ssh_resources::SshResourcesManager>,
     published: Arc<RwLock<DesktopStateSnapshot>>,
     supervisor: SharedSupervisor,
     activity: ActivityLog,
@@ -80,6 +83,7 @@ impl AppState {
         let connections = core.connections.clone();
         Ok(Self {
             core: Mutex::new(Some(core)),
+            ssh_resources: Mutex::new(crate::ssh_resources::SshResourcesManager::default()),
             published,
             supervisor,
             connections,
@@ -574,6 +578,8 @@ pub struct DesktopCore {
     tunnel_config: TunnelConfig,
     mcp_providers: crate::mcp_providers::McpProviderStore,
     mcp_applied_revision: Option<u64>,
+    coding_agents: crate::coding_agents::CodingAgentStore,
+    coding_agents_applied_revision: Option<u64>,
     connections: ConnectionRuntimes,
     snapshot: DesktopStateSnapshot,
     adapter: WebCodexAdapter,
@@ -624,6 +630,8 @@ impl DesktopCore {
         };
         let mcp_providers = crate::mcp_providers::McpProviderStore::load(&data_dir);
         snapshot.mcp_providers = mcp_providers.snapshot(None);
+        let coding_agents = crate::coding_agents::CodingAgentStore::load(&data_dir);
+        snapshot.coding_agents = coding_agents.snapshot(None);
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
         Ok(Self {
@@ -633,6 +641,8 @@ impl DesktopCore {
             tunnel_config,
             mcp_providers,
             mcp_applied_revision: None,
+            coding_agents,
+            coding_agents_applied_revision: None,
             connections: ConnectionRuntimes::default(),
             snapshot,
             adapter: WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime"))),
@@ -795,6 +805,9 @@ impl DesktopCore {
 
     fn publish_snapshot(&mut self) -> DesktopStateSnapshot {
         self.snapshot.mcp_providers = self.mcp_providers.snapshot(self.mcp_applied_revision);
+        self.snapshot.coding_agents = self
+            .coding_agents
+            .snapshot(self.coding_agents_applied_revision);
         self.project_connections();
         self.snapshot.current_operation = None;
         self.snapshot.activity_sequence = self.activity.latest_sequence();
@@ -1126,8 +1139,7 @@ impl DesktopCore {
             status.probe_url
         };
         let mut server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
-        let server_owned =
-            process_is_active(self.process_snapshot(ProcessKey::LocalServer).await);
+        let server_owned = process_is_active(self.process_snapshot(ProcessKey::LocalServer).await);
         let mut stale_loopback_conflict = false;
         let running = if !server_owned {
             match loopback_socket_from_server_url(&server_url) {
@@ -2740,10 +2752,17 @@ fn read_desktop_server_env(env_file: &Path) -> DesktopResult<String> {
 
 fn desktop_server_listen_from_env(env_file: &Path) -> DesktopResult<String> {
     let content = read_desktop_server_env(env_file)?;
+    desktop_server_listen_from_content(&content)
+}
+
+fn desktop_server_listen_from_content(content: &str) -> DesktopResult<String> {
     let mut listen = None;
     for line in content.lines() {
         let candidate = line.trim_start();
-        let candidate = candidate.strip_prefix("export ").unwrap_or(candidate).trim_start();
+        let candidate = candidate
+            .strip_prefix("export ")
+            .unwrap_or(candidate)
+            .trim_start();
         let Some((key, value)) = candidate.split_once('=') else {
             continue;
         };
@@ -2829,7 +2848,10 @@ fn rewrite_desktop_server_address(env_file: &Path, listen: &str) -> DesktopResul
             (segment, "")
         };
         let candidate = body.trim_start();
-        let candidate = candidate.strip_prefix("export ").unwrap_or(candidate).trim_start();
+        let candidate = candidate
+            .strip_prefix("export ")
+            .unwrap_or(candidate)
+            .trim_start();
         let is_address = candidate
             .split_once('=')
             .is_some_and(|(key, _)| key.trim() == "WEBCODEX_ADDR");
@@ -3103,9 +3125,7 @@ mod tests {
         let content = std::fs::read_to_string(&env_file).unwrap();
         assert!(content.starts_with("WEBCODEX_ADDR=127.0.0.1:12345\n"));
         assert!(content.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=true\n"));
-        assert!(content.contains(
-            "WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true\n"
-        ));
+        assert!(content.contains("WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true\n"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3122,12 +3142,10 @@ mod tests {
         );
         std::fs::write(&env_file, original).unwrap();
 
-        let recovered = recover_stale_desktop_loopback_address(
-            &env_file,
-            &format!("http://{occupied_addr}"),
-        )
-        .unwrap()
-        .expect("occupied persisted loopback address should recover");
+        let recovered =
+            recover_stale_desktop_loopback_address(&env_file, &format!("http://{occupied_addr}"))
+                .unwrap()
+                .expect("occupied persisted loopback address should recover");
         assert_ne!(recovered, format!("http://{occupied_addr}"));
 
         let recovered_addr =
@@ -3164,21 +3182,14 @@ mod tests {
         std::fs::write(&env_file, &original).unwrap();
 
         assert_eq!(
-            recover_stale_desktop_loopback_address(
-                &env_file,
-                &format!("http://{bindable_addr}")
-            )
-            .unwrap(),
+            recover_stale_desktop_loopback_address(&env_file, &format!("http://{bindable_addr}"))
+                .unwrap(),
             None
         );
         assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
 
         assert_eq!(
-            recover_stale_desktop_loopback_address(
-                &env_file,
-                "https://example.com:8443"
-            )
-            .unwrap(),
+            recover_stale_desktop_loopback_address(&env_file, "https://example.com:8443").unwrap(),
             None
         );
         assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
@@ -3194,13 +3205,11 @@ mod tests {
             "WEBCODEX_ADDR=127.0.0.1:1111\nWEBCODEX_TOKEN=secret\nWEBCODEX_ADDR=127.0.0.1:2222\n";
         std::fs::write(&env_file, original).unwrap();
 
-        let error =
-            rewrite_desktop_server_address(&env_file, "127.0.0.1:3333").unwrap_err();
+        let error = rewrite_desktop_server_address(&env_file, "127.0.0.1:3333").unwrap_err();
         assert_eq!(error.code, "desktop_state_invalid");
         assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original);
         std::fs::remove_dir_all(dir).unwrap();
     }
-
 
     fn unique_state_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -4278,7 +4287,9 @@ mod tests {
             .expect("recovered local loopback address");
         assert_ne!(second_addr, first_addr);
         assert_eq!(
-            occupied.local_addr().expect("occupied address remains live"),
+            occupied
+                .local_addr()
+                .expect("occupied address remains live"),
             first_addr,
             "Desktop recovery must not disturb the external process holding the old port"
         );

@@ -115,6 +115,108 @@ async fn saving_updating_and_removing_mcp_never_restart_any_runtime_or_connectio
 }
 
 #[tokio::test]
+async fn coding_agent_appstate_save_keeps_service_generations_and_other_capabilities_unchanged() {
+    let fixture = Fixture::new();
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let app = fixture.app();
+    let path = fixture.0.join("runner.toml");
+    let config = "# identity comment\nserver_url = \"http://127.0.0.1:1\"\nclient_id = \"mini\"\ntoken = \"fixture-token\"\n[ssh_resources.static]\ntarget = \"operator-alias\"\n";
+    std::fs::write(&path, config).unwrap();
+    let registry_sentinel = fixture.0.join("managed-ssh-registry-sentinel");
+    std::fs::write(&registry_sentinel, "fixture-registry-unchanged").unwrap();
+    let runtime = crate::models::StoredRuntime {
+        server_url: "http://127.0.0.1:1".into(),
+        server_env_file: None,
+        runner_config: Some(path.clone()),
+        user_token_file: None,
+        runner_client_id: Some("mini".into()),
+        project_id: None,
+        runtime_project_id: None,
+    };
+    app.core.lock().await.as_mut().unwrap().config.runtime = Some(runtime.clone());
+    let target = crate::webcodex::settings::SettingsTarget {
+        config_path: path.clone(),
+        client_id: "mini".into(),
+        server_url: runtime.server_url.clone(),
+    };
+    let mut processes = Vec::new();
+    for key in [
+        ProcessKey::LocalServer,
+        ProcessKey::LocalRunner,
+        ProcessKey::RegularTunnel(crate::connection_id::TunnelProfileId::new()),
+    ] {
+        app.supervisor
+            .lock()
+            .await
+            .spawn_owned(key, fixture_process(), false)
+            .await
+            .unwrap();
+        processes.push(app.supervisor.lock().await.snapshot(key).unwrap());
+    }
+    let mcp = app
+        .save_mcp_provider(request(0))
+        .await
+        .unwrap()
+        .mcp_providers;
+    let mut add = crate::coding_agents::tests::request("pi", 0);
+    add.target = target.clone();
+    let saved = app.save_coding_agent(add).await.unwrap();
+    assert!(saved.coding_agents.restart_required);
+    assert_eq!(saved.mcp_providers.revision, mcp.revision);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        config,
+        "Save must not apply active config"
+    );
+    let mut edit = crate::coding_agents::tests::request("pi", 1);
+    edit.target = target.clone();
+    edit.previous_id = Some("pi".into());
+    edit.profile.name = "Pi Local".into();
+    app.save_coding_agent(edit).await.unwrap();
+    {
+        let slot = app.core.lock().await;
+        let core = slot.as_ref().unwrap();
+        crate::webcodex::settings::reconcile_acp(&runtime, &core.coding_agents, true).unwrap();
+        crate::webcodex::settings::reconcile_mcp(&runtime, &core.mcp_providers).unwrap();
+        crate::webcodex::settings::reconcile_acp(&runtime, &core.coding_agents, false).unwrap();
+    }
+    let applied = std::fs::read_to_string(&path).unwrap();
+    for expected in [
+        "# identity comment",
+        "fixture-token",
+        "operator-alias",
+        "Pi Local",
+        "Local MCP",
+    ] {
+        assert!(applied.contains(expected), "missing {expected}");
+    }
+    app.remove_coding_agent(crate::coding_agents::CodingAgentRemove {
+        target,
+        expected_revision: 2,
+        provider_id: "pi".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        applied,
+        "Removal must also await restart"
+    );
+    assert_eq!(
+        std::fs::read_to_string(registry_sentinel).unwrap(),
+        "fixture-registry-unchanged"
+    );
+    assert_eq!(app.get_state().mcp_providers.revision, mcp.revision);
+    for process in processes {
+        let observed = app.supervisor.lock().await.snapshot(process.kind).unwrap();
+        assert_eq!(observed.pid, process.pid);
+        assert_eq!(observed.generation, process.generation);
+        assert_eq!(observed.phase, ProcessPhase::Running);
+    }
+    app.supervisor.lock().await.stop_all().await;
+}
+
+#[tokio::test]
 async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desired_revision() {
     let fixture = Fixture::new();
     let app = fixture.app();

@@ -288,6 +288,9 @@ pub struct PairingCodeRecord {
     pub used_at: Option<i64>,
     pub user_token_name: Option<String>,
     pub agent_token_name: Option<String>,
+    /// Explicit admin-issued enrollment grant. Old codes retain their old scopes.
+    #[serde(default)]
+    pub runner_capabilities: bool,
 }
 
 impl ApiKeyRecord {

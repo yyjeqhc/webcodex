@@ -398,6 +398,8 @@ pub struct DesktopStateSnapshot {
     pub connections: crate::connections::ConnectionsSnapshot,
     #[serde(default)]
     pub mcp_providers: crate::mcp_providers::McpProvidersSnapshot,
+    #[serde(default)]
+    pub coding_agents: crate::coding_agents::CodingAgentsSnapshot,
     pub current_operation: Option<DesktopOperationSnapshot>,
     pub activity_sequence: u64,
     pub openai_tunnel_configured: bool,
@@ -421,6 +423,7 @@ impl Default for DesktopStateSnapshot {
             quick_share: None,
             connections: Default::default(),
             mcp_providers: Default::default(),
+            coding_agents: Default::default(),
             current_operation: None,
             activity_sequence: 0,
             openai_tunnel_configured: false,

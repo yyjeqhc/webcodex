@@ -2126,6 +2126,32 @@ mod acp_config_tests {
     }
 
     #[test]
+    fn desktop_owned_acp_marker_is_configuration_metadata_not_provider_inventory() {
+        let executable = toml::Value::String(agent().executable).to_string();
+        let source = format!(
+            r#"
+max_concurrent_runs = 1
+permission_timeout_secs = 5
+[[agents]]
+id = "pi"
+name = "Pi Agent"
+executable = {executable}
+args = ["--acp"]
+desktop_owner = "fixture-desktop-owner"
+[agents.env_from_env]
+OPENAI_API_KEY = "SUB2API_API_KEY"
+"#
+        );
+        let config: AcpConfig = toml::from_str(&source).unwrap();
+        validate_acp_config(&config).unwrap();
+        assert_eq!(config.agents[0].id, "pi");
+        assert_eq!(
+            config.agents[0].env_from_env["OPENAI_API_KEY"],
+            "SUB2API_API_KEY"
+        );
+    }
+
+    #[test]
     fn acp_env_mapping_rejects_webcodex_pat() {
         for (destination, source) in [("WEBCODEX_PAT", "SOURCE"), ("DEST", "WEBCODEX_PAT")] {
             let mut sensitive = agent();

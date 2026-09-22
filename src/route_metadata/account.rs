@@ -137,4 +137,14 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Other,
         AuthMiddleware,
     ),
+    route(
+        PairingRunnerCapabilities,
+        Post,
+        "/api/pairing/runner-capabilities",
+        Require(SCOPE_ACCOUNT_MANAGE),
+        AccountManagement,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
 ];

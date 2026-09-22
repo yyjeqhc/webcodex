@@ -8,6 +8,55 @@ use serde::Deserialize;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
+pub async fn authorize_runner_capabilities(
+    state: State<'_, AppState>,
+    request: crate::runner_capability_grant::GrantRequest,
+) -> DesktopResult<crate::ssh_resources::SshResourcesSnapshot> {
+    state.authorize_runner_capabilities(request).await
+}
+
+#[tauri::command]
+pub async fn ssh_resource_list(
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::ssh_resources::SshResourcesSnapshot> {
+    state.ssh_resource_list().await
+}
+
+#[tauri::command]
+pub async fn ssh_resource_register(
+    state: State<'_, AppState>,
+    request: crate::ssh_resources::SshRegisterRequest,
+) -> DesktopResult<crate::ssh_resources::SshMutationResult> {
+    state.ssh_resource_register(request).await
+}
+
+#[tauri::command]
+pub async fn ssh_resource_remove(
+    state: State<'_, AppState>,
+    request: crate::ssh_resources::SshRemoveRequest,
+) -> DesktopResult<crate::ssh_resources::SshMutationResult> {
+    state.ssh_resource_remove(request).await
+}
+
+#[tauri::command]
+pub async fn save_coding_agent(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::coding_agents::CodingAgentUpdate,
+) -> DesktopResult<DesktopStateSnapshot> {
+    project_state_result(&app, state.save_coding_agent(request).await)
+}
+
+#[tauri::command]
+pub async fn remove_coding_agent(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::coding_agents::CodingAgentRemove,
+) -> DesktopResult<DesktopStateSnapshot> {
+    project_state_result(&app, state.remove_coding_agent(request).await)
+}
+
+#[tauri::command]
 pub async fn save_mcp_provider(
     app: AppHandle,
     state: State<'_, AppState>,

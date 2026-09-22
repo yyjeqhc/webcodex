@@ -89,6 +89,7 @@ describe("product workspace task flows", () => {
   });
   it("opens effective instructions, lists real Skills and reloads a provider only on request", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={vi.fn()} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open AGENTS.md" }));
     const document = await screen.findByRole("dialog", { name: "AGENTS.md" });
     await within(document).findByText(/Use existing tests/);

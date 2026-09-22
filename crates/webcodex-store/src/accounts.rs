@@ -168,13 +168,37 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Compare-and-swap scopes on one still-live user key. Account-management
+    /// callers must authorize the grant before entering this storage primitive.
+    /// Never changes token bytes, expiry, kind, owner or transport credentials.
+    pub fn compare_and_swap_user_key_scopes(
+        &self,
+        id: &str,
+        user_id: &str,
+        expected: &str,
+        desired: &str,
+        now: i64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.lock_connection(crate::StoreDomain::Accounts);
+        let changed = conn.execute(
+            "UPDATE api_keys SET scopes = ?4
+             WHERE id = ?1 AND user_id = ?2 AND scopes = ?3
+               AND kind = 'user' AND revoked_at IS NULL
+               AND (expires_at IS NULL OR expires_at > ?5)
+               AND EXISTS (SELECT 1 FROM users WHERE users.id = api_keys.user_id
+                           AND users.disabled = 0 AND users.disabled_at IS NULL)",
+            params![id, user_id, expected, desired, now],
+        )?;
+        Ok(changed == 1)
+    }
+
     pub fn insert_pairing_code(&self, record: &PairingCodeRecord) -> anyhow::Result<()> {
         let conn = self.lock_connection(crate::StoreDomain::Accounts);
         conn.execute(
             "INSERT INTO pairing_codes (
                 id, code_hash, user_id, username, client_id, created_at, expires_at, used_at,
-                user_token_name, agent_token_name
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                user_token_name, agent_token_name, runner_capabilities
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 record.id,
                 record.code_hash,
@@ -186,6 +210,7 @@ impl Database {
                 record.used_at,
                 record.user_token_name,
                 record.agent_token_name,
+                record.runner_capabilities,
             ],
         )?;
         Ok(())
@@ -198,7 +223,7 @@ impl Database {
         let conn = self.lock_connection(crate::StoreDomain::Accounts);
         let mut stmt = conn.prepare(
             "SELECT id, code_hash, user_id, username, client_id, created_at, expires_at, used_at,
-                    user_token_name, agent_token_name
+                    user_token_name, agent_token_name, runner_capabilities
              FROM pairing_codes WHERE code_hash = ?1",
         )?;
         let mut rows = stmt.query_map(params![code_hash], row_to_pairing_code)?;
@@ -219,7 +244,7 @@ impl Database {
         let record = {
             let mut stmt = tx.prepare(
                 "SELECT id, code_hash, user_id, username, client_id, created_at, expires_at,
-                        used_at, user_token_name, agent_token_name
+                        used_at, user_token_name, agent_token_name, runner_capabilities
                  FROM pairing_codes WHERE code_hash = ?1",
             )?;
             let mut rows = stmt.query_map(params![code_hash], row_to_pairing_code)?;
@@ -371,6 +396,7 @@ fn row_to_pairing_code(row: &rusqlite::Row) -> rusqlite::Result<PairingCodeRecor
         used_at: row.get(7)?,
         user_token_name: row.get(8)?,
         agent_token_name: row.get(9)?,
+        runner_capabilities: row.get(10)?,
     })
 }
 

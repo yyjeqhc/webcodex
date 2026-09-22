@@ -528,10 +528,15 @@ only for local/trusted-network demos."
                 .post(pairing_http::pairing_enroll),
         )
         .push(
-            authed_api_router.push(
-                Router::with_path(route_metadata::api_path(RouteId::PairingCreate))
-                    .post(pairing_http::pairing_create),
-            ),
+            authed_api_router
+                .push(
+                    Router::with_path(route_metadata::api_path(RouteId::PairingCreate))
+                        .post(pairing_http::pairing_create),
+                )
+                .push(
+                    Router::with_path(route_metadata::api_path(RouteId::PairingRunnerCapabilities))
+                        .post(pairing_http::grant_runner_capabilities),
+                ),
         );
 
     let openapi_router =

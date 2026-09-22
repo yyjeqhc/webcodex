@@ -140,6 +140,7 @@ impl Database {
                 used_at INTEGER,
                 user_token_name TEXT,
                 agent_token_name TEXT,
+                runner_capabilities INTEGER NOT NULL DEFAULT 0 CHECK(runner_capabilities IN (0, 1)),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE INDEX IF NOT EXISTS idx_pairing_codes_hash ON pairing_codes(code_hash);
@@ -381,6 +382,19 @@ impl Database {
             );
             ",
         )?;
+
+        // Preserve the authority of previously issued enrollment codes. Only a
+        // newly issued explicit admin grant adds ACP/SSH scopes; old codes stay 0.
+        {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            if !table_columns(&tx, "pairing_codes")?
+                .iter()
+                .any(|column| column == "runner_capabilities")
+            {
+                tx.execute_batch("ALTER TABLE pairing_codes ADD COLUMN runner_capabilities INTEGER NOT NULL DEFAULT 0 CHECK(runner_capabilities IN (0, 1));")?;
+            }
+            tx.commit()?;
+        }
 
         // ActionAudit predates Window correlation. Fresh databases already have
         // the current columns above; existing databases receive the same shape

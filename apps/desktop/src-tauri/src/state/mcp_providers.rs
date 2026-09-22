@@ -50,7 +50,11 @@ impl DesktopCore {
         identity: &ProjectRuntimeIdentity,
     ) -> DesktopResult<std::process::Command> {
         let store = self.mcp_providers.clone();
-        if !store.managed_ids().is_empty() || store.snapshot(None).config_error {
+        let coding_agents = self.coding_agents.clone();
+        if !store.managed_ids().is_empty()
+            || store.snapshot(None).config_error
+            || coding_agents.needs_reconciliation()
+        {
             let suffix = format!(":{}", identity.project_id);
             let client_id = identity
                 .runtime_project_id
@@ -69,7 +73,10 @@ impl DesktopCore {
                 runtime_project_id: Some(identity.runtime_project_id.clone()),
             };
             tokio::task::spawn_blocking(move || {
-                crate::webcodex::settings::reconcile_mcp(&runtime, &store)
+                // Detect ACP ownership conflicts before changing any capability.
+                crate::webcodex::settings::reconcile_acp(&runtime, &coding_agents, true)?;
+                crate::webcodex::settings::reconcile_mcp(&runtime, &store)?;
+                crate::webcodex::settings::reconcile_acp(&runtime, &coding_agents, false)
             })
             .await
             .map_err(|_| crate::mcp_providers::invalid())??;
@@ -88,6 +95,7 @@ impl DesktopCore {
         self.spawn_owned(ProcessKey::LocalRunner, command, false, cancellation)
             .await?;
         self.mcp_applied_revision = Some(self.mcp_providers.revision());
+        self.coding_agents_applied_revision = Some(self.coding_agents.revision());
         Ok(())
     }
 }

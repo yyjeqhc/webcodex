@@ -12,8 +12,18 @@ import type {
 } from "../models/topology";
 
 import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } from "../models/connections-tools";
+import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult } from "../models/runner-capabilities";
 
 export const desktopApi = {
+  saveCodingAgent: (request: CodingAgentRequest) => invoke<DesktopState>("save_coding_agent", { request }),
+  removeCodingAgent: (target: SettingsTarget, providerId: string, expectedRevision: number) =>
+    invoke<DesktopState>("remove_coding_agent", { request: { target, provider_id: providerId, expected_revision: expectedRevision } }),
+  sshResources: () => invoke<SshResourcesSnapshot>("ssh_resource_list"),
+  authorizeRunnerCapabilities: (expected: SettingsTarget) =>
+    invoke<SshResourcesSnapshot>("authorize_runner_capabilities", { request: { expected, confirmed: true } }),
+  registerSshResource: (request: SshRegisterRequest) => invoke<SshMutationResult>("ssh_resource_register", { request }),
+  removeSshResource: (expected: SettingsTarget, observationId: string, name: string) =>
+    invoke<SshMutationResult>("ssh_resource_remove", { request: { expected, observation_id: observationId, name } }),
   saveTunnelProfile: (request: TunnelProfileRequest) => invoke<DesktopState>("save_tunnel_profile", { request }),
   tunnelProfileAction: (profileId: string, action: TunnelProfileAction) => invoke<DesktopState>("tunnel_profile_action", { profileId, action }),
   saveMcpProvider: (request: McpProviderRequest) => invoke<DesktopState>("save_mcp_provider", { request }),

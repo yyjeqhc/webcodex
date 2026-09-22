@@ -92,6 +92,7 @@ impl AppState {
             core.spawn_owned(ProcessKey::LocalRunner, command, false, &cancellation)
                 .await?;
             core.mcp_applied_revision = Some(core.mcp_providers.revision());
+            core.coding_agents_applied_revision = Some(core.coding_agents.revision());
             core.wait_for_runner(
                 &identity,
                 &cancellation,

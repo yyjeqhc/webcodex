@@ -179,6 +179,7 @@ export interface DesktopState {
   quick_share?: QuickShareState | null;
   connections?: import("./connections-tools").ConnectionsSnapshot;
   mcp_providers?: import("./connections-tools").McpProvidersSnapshot;
+  coding_agents?: import("./runner-capabilities").CodingAgentsSnapshot;
   current_operation?: DesktopOperation | null;
   activity_sequence: number;
   openai_tunnel_configured: boolean;

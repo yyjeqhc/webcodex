@@ -1488,6 +1488,7 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
     );
     fs::write(tmp.path().join("README.md"), "final task state\n").unwrap();
 
+    let mut sealed_snapshot_id: Option<String> = None;
     for summary_only in [false, true] {
         let result = finish_coding_task_with_agent(
             &runtime,
@@ -1517,6 +1518,18 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
                 .as_str()
                 .unwrap_or_default()
                 .contains("present_work_result")));
+        assert_eq!(result.output["task_outcome"]["blocking"], false);
+        let summary = runtime.sessions.summary(&session_id, None).unwrap();
+        let sealed = runtime
+            .sealed_work_result_changes(&project, &summary, Some(&auth))
+            .unwrap()
+            .expect("non-blocking finish must seal eligible final changes");
+        let snapshot_id = sealed["snapshot_id"].as_str().unwrap().to_string();
+        if let Some(expected) = sealed_snapshot_id.as_ref() {
+            assert_eq!(&snapshot_id, expected);
+        } else {
+            sealed_snapshot_id = Some(snapshot_id);
+        }
     }
 
     let restore = std::process::Command::new("git")
@@ -1536,6 +1549,71 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
     .await;
     assert!(reverted.success, "{:?}", reverted.error);
     assert!(reverted.output.get("presentation").is_none());
+}
+
+#[tokio::test]
+async fn finish_coding_task_blocking_closeout_does_not_seal_final_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "base\n", "base");
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let project = register_runner_project_at_path_with_auth(
+        &runtime,
+        "coding-finish-blocked-changes",
+        "demo",
+        tmp.path(),
+        &auth,
+    )
+    .await;
+    let start = work_on_project_serviced(
+        &runtime,
+        "coding-finish-blocked-changes",
+        &project,
+        "blocked changes closeout",
+        &auth,
+    )
+    .await;
+    assert!(start.success, "{:?}", start.error);
+    let session_id = start.output["session_id"].as_str().unwrap().to_string();
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "apply_text_edits",
+        json!({
+            "project": project,
+            "changes": [{"kind": "edit", "path": "README.md"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+    fs::write(tmp.path().join("README.md"), "blocked task state\n").unwrap();
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "cargo_fmt",
+        json!({"project": project, "check": true}),
+        false,
+        json!({"exit_code": 1, "failure_kind": "validation_failed"}),
+    );
+
+    let result = finish_coding_task_with_agent(
+        &runtime,
+        "coding-finish-blocked-changes",
+        project.clone(),
+        session_id.clone(),
+        auth.clone(),
+        true,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert!(result.output.get("presentation").is_some());
+    let summary = runtime.sessions.summary(&session_id, None).unwrap();
+    assert!(runtime
+        .sealed_work_result_changes(&project, &summary, Some(&auth))
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

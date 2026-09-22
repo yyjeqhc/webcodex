@@ -108,7 +108,10 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 15);
+    assert_eq!(
+        workflow["version"],
+        crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_VERSION
+    );
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -212,6 +215,21 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(!persistent_shell_guidance
         .contains("structured tools -> run_process/run_script -> run_shell"));
     assert!(!persistent_shell_guidance.contains("For repeated commands in one Workflow Session"));
+    let work_result_guidance = workflow["model_protocol"]["work_result_presentation"]
+        .as_str()
+        .expect("work result presentation guidance");
+    for phrase in [
+        "substantial coding",
+        "present_work_result(project, session_id) once",
+        "materially stateful",
+        "Do not repeat it",
+        "Tiny/read-only work skips it",
+        "non-blocking finish_coding_task",
+        "seals eligible final changes",
+        "mounted card to discover on refresh",
+    ] {
+        assert!(work_result_guidance.contains(phrase), "{phrase}");
+    }
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

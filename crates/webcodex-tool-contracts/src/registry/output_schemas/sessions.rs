@@ -252,11 +252,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "validation_summary" => Some(validation_summary_tool_output_schema()),
         "present_work_result" | "work_result_state" => Some(wrapped_output_schema(vec![(
             "work_result",
-            open_object_schema("Bounded Work Result for one exact project-scoped Workflow Session. Initial presentation may include frozen final_changes; explicit state reads return only live workspace, validation, and review domains."),
+            open_object_schema("Bounded Work Result for one exact project-scoped Workflow Session. Presentation and explicit App state reads expose live workspace, validation, review, and Session activity; after a non-blocking current-attempt finish_coding_task closeout they may also expose the retained sealed final_changes snapshot."),
         )])),
         "changes_file_diff" => Some(wrapped_output_schema(vec![(
             "changes_file_diff",
-            open_object_schema("Bounded lazy unified diff for one advertised path in the initial Work Result frozen snapshot."),
+            open_object_schema("Bounded lazy unified diff for one advertised path in the Work Result sealed final snapshot."),
         )])),
         "post_session_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),

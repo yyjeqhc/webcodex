@@ -8,9 +8,9 @@ use super::output_text::{
     CapturedOutputEncoding, FullStreamUtf8Validity, LeadingBom, OutputTextSource,
 };
 use super::projects::find_project_shell_context;
-use crate::runner_protocol::{
-    ShellCommandExecutionState, ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload,
-};
+#[cfg(windows)]
+use crate::runner_protocol::ShellCommandExecutionState;
+use crate::runner_protocol::{ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload};
 use std::collections::HashMap;
 #[cfg(windows)]
 use std::ffi::OsStr;

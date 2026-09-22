@@ -12,19 +12,22 @@
 work_on_project
 → inspect / search / read
 → edit
+→ substantial work 调用一次 present_work_result
 → focused validation
 → review changes
 → finish_coding_task
 ```
 
 `work_on_project` 是普通 coding/review 的 canonical bootstrap。把当前任务 instruction 交给它，然后遵循连接到的 Server 返回的 project instructions 与 tool surface。
+
+对于 substantial coding，在 Workflow Session 进入真实工作状态后（例如第一次有意义的源码 mutation，或开始长时间 validation），对该 exact Session 调用一次 `present_work_result(project, session_id)`。挂载后的 MCP App 会自行进行有界的 Workspace / Validation / Review live read，因此不要重复创建卡片，也不要为了给卡片喂状态而额外消耗 model turn。tiny/read-only 工作不需要 progress card。`finish_coding_task` 在 non-blocking closeout 时 seal eligible final changes，已经挂载的同一张卡会在后续 App refresh 中发现这份 immutable snapshot；如果此前没有挂卡而 closeout 明确返回 presentation suggestion，再在收尾时调用一次即可。
 它的 primary output 默认保持紧凑，不重复静态 instruction/workflow 正文；当前模型上下文缺少这些材料时，分别显式请求 `context_request=["project.instructions"]` 和/或 `context_request=["webcodex.workflow"]`。Workflow Session identity 不证明当前模型仍保留这些上下文。
 Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool call 的 `project` 应优先复用这个短 selector。Canonical `agent:<client_id>:<project_id>` 仍保留用于 diagnostic 与显式 addressing，但模型无需机械重复。`project_ref` 由 Server 持久维护、按 principal 隔离，不携带 authority；每次调用都会根据其钉住的 canonical Project/root identity 重新授权。
 默认情况下，它还会返回一个很小且有界的 `extensions` selection catalog：Skill metadata 来自 canonical 的 project / Runner-configured `skills.roots` / Runner-managed Skill Store 三类来源；Plugin metadata 只包含 configured working directory 与当前 Project root 匹配、且已 ready/committed 的 provider。该 metadata 不授予任何 authority，也不会自动读取 Skill body 或创建 Plugin binding；模型选择后使用 `skill_read_file` 读取 Skill 文本，`run_skill_resource` 只执行可信 Runner-configured live `scripts/` resource（由 `expected_definition_revision` fence definition）或 Runner-installed managed resource（另由 `expected_package_revision` fence package），Plugin 则走 `plugin_tool describe -> call`。Configured resource bytes 会一直保持 live 到实际执行时，并不会预先被 package revision 固定。只有当前模型上下文仍明确保留这些 discovery metadata 时，才应设置 `include_extension_catalog=false`。
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v14
+`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v16
 保持共享的 `guidance`、`model_protocol` 和 review `roles`，并在显式
 `context_request=["webcodex.workflow"]` 时通过
 `tool_strategy: {profile, guidance}` 返回本次请求选中的策略。

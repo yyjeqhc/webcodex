@@ -552,6 +552,7 @@ fn startup_workflow_schema() -> Value {
                     "goal_workflow": {"type": "string", "maxLength": 720},
                     "goal_continuation": {"type": "string", "maxLength": 720},
                     "goal_checkpoint": {"type": "string", "maxLength": 480},
+                    "work_result_presentation": {"type": "string", "maxLength": 640},
                     "normal_closeout": {"type": "string", "maxLength": 480}
                 },
                 "required": [
@@ -565,6 +566,7 @@ fn startup_workflow_schema() -> Value {
                     "goal_workflow",
                     "goal_continuation",
                     "goal_checkpoint",
+                    "work_result_presentation",
                     "normal_closeout"
                 ],
                 "additionalProperties": false

@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::auth::AuthContext;
 
@@ -65,9 +66,12 @@ struct ChangesSnapshot {
     caller_fingerprint: String,
     project: String,
     session_id: String,
+    attempt_key: String,
     baseline_tree: String,
     final_tree: String,
+    totals: ChangesTotals,
     files: Vec<ChangesFileMetadata>,
+    files_truncated: bool,
     expires_at: Instant,
 }
 
@@ -76,6 +80,30 @@ impl ChangesSnapshot {
         self.caller_fingerprint == caller_fingerprint
             && self.project == project
             && self.session_id == session_id
+    }
+
+    fn matches_attempt(
+        &self,
+        caller_fingerprint: &str,
+        project: &str,
+        session_id: &str,
+        attempt_key: &str,
+    ) -> bool {
+        self.matches_identity(caller_fingerprint, project, session_id)
+            && self.attempt_key == attempt_key
+    }
+
+    fn presentation_value(&self) -> Value {
+        json!({
+            "snapshot_id": self.snapshot_id,
+            "files_changed": self.totals.files,
+            "additions": self.totals.additions,
+            "deletions": self.totals.deletions,
+            "files_total": self.totals.files,
+            "files_returned": self.files.len(),
+            "files_truncated": self.files_truncated,
+            "files": self.files.iter().map(ChangesFileMetadata::to_value).collect::<Vec<_>>(),
+        })
     }
 }
 
@@ -89,9 +117,40 @@ impl ChangesSnapshotRegistry {
         self.snapshots.retain(|snapshot| snapshot.expires_at > now);
     }
 
-    fn insert(&mut self, snapshot: ChangesSnapshot) {
+    fn get_for_attempt(
+        &mut self,
+        caller_fingerprint: &str,
+        project: &str,
+        session_id: &str,
+        attempt_key: &str,
+    ) -> Option<ChangesSnapshot> {
+        self.prune(Instant::now());
+        self.snapshots
+            .iter()
+            .find(|snapshot| {
+                snapshot.matches_attempt(caller_fingerprint, project, session_id, attempt_key)
+            })
+            .cloned()
+    }
+
+    fn insert_or_get(&mut self, snapshot: ChangesSnapshot) -> ChangesSnapshot {
         let now = Instant::now();
         self.prune(now);
+        if let Some(existing) = self
+            .snapshots
+            .iter()
+            .find(|candidate| {
+                candidate.matches_attempt(
+                    &snapshot.caller_fingerprint,
+                    &snapshot.project,
+                    &snapshot.session_id,
+                    &snapshot.attempt_key,
+                )
+            })
+            .cloned()
+        {
+            return existing;
+        }
         while self
             .snapshots
             .iter()
@@ -112,7 +171,13 @@ impl ChangesSnapshotRegistry {
         while self.snapshots.len() >= MAX_CHANGES_SNAPSHOTS {
             self.snapshots.pop_front();
         }
-        self.snapshots.push_back(snapshot);
+        self.snapshots.push_back(snapshot.clone());
+        snapshot
+    }
+
+    #[cfg(test)]
+    fn insert(&mut self, snapshot: ChangesSnapshot) {
+        let _ = self.insert_or_get(snapshot);
     }
 
     fn get(&mut self, snapshot_id: &str) -> Option<ChangesSnapshot> {
@@ -176,6 +241,15 @@ changes_git() {
 }
 "#;
 
+fn current_work_result_attempt_key(summary: &super::sessions::SessionSummary) -> Option<String> {
+    summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "task_instruction")
+        .map(|event| event.event_id.clone())
+}
+
 impl ToolRuntime {
     /// Cheap closeout eligibility probe. It intentionally does not freeze a
     /// snapshot or generate diff bodies: only the explicit presentation call
@@ -233,13 +307,51 @@ exit 0
         }
     }
 
-    /// The frozen domain of an initial Work Result. The caller has independently
-    /// authorized this exact Project and Session; neither a card nor a snapshot
-    /// is authority. Live refresh must never call this helper.
+    pub(super) async fn seal_work_result_changes_for_closeout(
+        &self,
+        project: &str,
+        summary: &super::sessions::SessionSummary,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<Value>, ToolResult> {
+        let Some(attempt_key) = current_work_result_attempt_key(summary) else {
+            return Ok(None);
+        };
+        self.freeze_work_result_changes(project, summary, &attempt_key, auth)
+            .await
+    }
+
+    pub(super) fn sealed_work_result_changes(
+        &self,
+        project: &str,
+        summary: &super::sessions::SessionSummary,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<Value>, ToolResult> {
+        let Some(attempt_key) = current_work_result_attempt_key(summary) else {
+            return Ok(None);
+        };
+        let caller_fingerprint = workflow_session_authority_fingerprint(auth)
+            .map_err(|_| changes_identity_error("session_authority_denied"))?;
+        Ok(changes_snapshots()
+            .lock()
+            .expect("Changes snapshot registry mutex poisoned")
+            .get_for_attempt(
+                &caller_fingerprint,
+                project,
+                &summary.session_id,
+                &attempt_key,
+            )
+            .map(|snapshot| snapshot.presentation_value()))
+    }
+
+    /// Seal or reuse the immutable final-changes domain for one non-blocking
+    /// coding closeout. The caller has independently authorized this exact Project
+    /// and Session; neither a card nor a snapshot is authority. Repeated reads for
+    /// the same attempt reuse the same frozen identity.
     pub(super) async fn freeze_work_result_changes(
         &self,
         project: &str,
         summary: &super::sessions::SessionSummary,
+        attempt_key: &str,
         auth: Option<&AuthContext>,
     ) -> Result<Option<Value>, ToolResult> {
         let Some(baseline_tree) = summary.git_baseline_tree.as_deref() else {
@@ -253,6 +365,18 @@ exit 0
         }
         let caller_fingerprint = workflow_session_authority_fingerprint(auth)
             .map_err(|_| changes_identity_error("session_authority_denied"))?;
+        if let Some(snapshot) = changes_snapshots()
+            .lock()
+            .expect("Changes snapshot registry mutex poisoned")
+            .get_for_attempt(
+                &caller_fingerprint,
+                project,
+                &summary.session_id,
+                attempt_key,
+            )
+        {
+            return Ok(Some(snapshot.presentation_value()));
+        }
         let final_tree = self.freeze_final_workspace_tree(project).await?;
         if final_tree == baseline_tree {
             return Ok(None);
@@ -264,32 +388,33 @@ exit 0
             return Ok(None);
         }
 
-        let snapshot_id = format!("wc_changes_snapshot_{}", uuid::Uuid::new_v4().simple());
+        let snapshot_id = changes_snapshot_id(
+            &caller_fingerprint,
+            project,
+            &summary.session_id,
+            attempt_key,
+            baseline_tree,
+            &final_tree,
+        );
         let snapshot = ChangesSnapshot {
-            snapshot_id: snapshot_id.clone(),
+            snapshot_id,
             caller_fingerprint,
             project: project.to_string(),
             session_id: summary.session_id.clone(),
+            attempt_key: attempt_key.to_string(),
             baseline_tree: baseline_tree.to_string(),
             final_tree,
-            files: files.clone(),
+            totals,
+            files,
+            files_truncated,
             expires_at: Instant::now() + CHANGES_SNAPSHOT_TTL,
         };
-        changes_snapshots()
+        let snapshot = changes_snapshots()
             .lock()
             .expect("Changes snapshot registry mutex poisoned")
-            .insert(snapshot);
+            .insert_or_get(snapshot);
 
-        Ok(Some(json!({
-            "snapshot_id": snapshot_id,
-            "files_changed": totals.files,
-            "additions": totals.additions,
-            "deletions": totals.deletions,
-            "files_total": totals.files,
-            "files_returned": files.len(),
-            "files_truncated": files_truncated,
-            "files": files.iter().map(ChangesFileMetadata::to_value).collect::<Vec<_>>(),
-        })))
+        Ok(Some(snapshot.presentation_value()))
     }
 
     pub(crate) async fn changes_file_diff(
@@ -592,6 +717,35 @@ head -n {CHANGES_DIFF_MAX_LINES} "$tmp" | dd bs=1 count={CHANGES_DIFF_MAX_BYTES}
     }
 }
 
+fn changes_snapshot_id(
+    caller_fingerprint: &str,
+    project: &str,
+    session_id: &str,
+    attempt_key: &str,
+    baseline_tree: &str,
+    final_tree: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.work-result.sealed-changes.v1\0");
+    for value in [
+        caller_fingerprint,
+        project,
+        session_id,
+        attempt_key,
+        baseline_tree,
+        final_tree,
+    ] {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let suffix = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("wc_changes_snapshot_{suffix}")
+}
+
 fn bound_frozen_diff_text(text: &mut String) -> bool {
     if text.len() <= CHANGES_DIFF_MAX_BYTES {
         return false;
@@ -786,9 +940,12 @@ mod tests {
             caller_fingerprint: caller.to_string(),
             project: "agent:runner:project".to_string(),
             session_id: "session".to_string(),
+            attempt_key: format!("attempt-{id}"),
             baseline_tree: "a".repeat(40),
             final_tree: "b".repeat(40),
+            totals: ChangesTotals::default(),
             files: Vec::new(),
+            files_truncated: false,
             expires_at: Instant::now() + CHANGES_SNAPSHOT_TTL,
         }
     }

@@ -5,61 +5,200 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>WebCodex Progress</title>
 <style>
-:root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root {
+  color-scheme: light dark;
+  font: 13px/1.45 var(--font-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --card-border: color-mix(in srgb, CanvasText 16%, transparent);
+  --card-header: color-mix(in srgb, Canvas 94%, CanvasText 6%);
+  --card-body: color-mix(in srgb, Canvas 98%, CanvasText 2%);
+  --surface: color-mix(in srgb, Canvas 93%, CanvasText 7%);
+  --surface-hover: color-mix(in srgb, Canvas 87%, CanvasText 13%);
+  --divider: color-mix(in srgb, CanvasText 12%, transparent);
+  --muted: color-mix(in srgb, CanvasText 60%, transparent);
+  --faint: color-mix(in srgb, CanvasText 42%, transparent);
+  --accent: light-dark(#2563eb, #60a5fa);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --success: light-dark(#16803a, #6fda83);
+  --success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+  --danger: light-dark(#c93636, #ee7676);
+  --danger-soft: color-mix(in srgb, var(--danger) 12%, transparent);
+  --warning: light-dark(#a15c08, #e6b566);
+}
 * { box-sizing: border-box; }
-body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
-.card { display: grid; gap: 11px; }
-.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.actions { display: flex; align-items: center; gap: 7px; }
-h1 { margin: 0; font-size: 15px; font-weight: 650; }
-.badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
-.refresh { appearance: none; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); border-radius: 7px; padding: 3px 8px; color: CanvasText; background: color-mix(in srgb, CanvasText 7%, Canvas); font: inherit; font-size: 11px; cursor: pointer; }
-.refresh:disabled { opacity: .52; cursor: default; }
-.section { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, CanvasText 13%, transparent); }
-.section:first-of-type { padding-top: 0; border-top: 0; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-h2 { margin: 0; font-size: 12px; font-weight: 650; }
-.primary { font-weight: 600; overflow-wrap: anywhere; }
-.secondary, .status { font-size: 11px; color: color-mix(in srgb, CanvasText 62%, transparent); overflow-wrap: anywhere; }
-.files { margin: 1px 0 0; max-height: 13em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.frozen-file { margin-top: 5px; }
-.file-toggle { display: block; width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 5px; color: CanvasText; background: color-mix(in srgb, CanvasText 5%, Canvas); font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; cursor: pointer; }
-.diff { max-height: 22em; overflow: auto; margin: 4px 0; font: 11px/1.5 ui-monospace, monospace; }
-.diff-line { display: block; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.5em; }
-.diff-line.added { background: color-mix(in srgb, #238636 16%, Canvas); }
-.diff-line.deleted { background: color-mix(in srgb, #da3633 16%, Canvas); }
-.diff-line.hunk { color: light-dark(#0969da, #79c0ff); }
+html, body { margin: 0; background: transparent; }
+body { padding: 2px; color: CanvasText; }
+button { font: inherit; }
+.card {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card-body);
+  box-shadow: 0 1px 2px color-mix(in srgb, CanvasText 5%, transparent), 0 8px 28px color-mix(in srgb, CanvasText 4%, transparent);
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 66px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--card-header);
+}
+.brand { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.brand-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.brand-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.brand-copy { display: grid; min-width: 0; gap: 2px; }
+h1 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.25; letter-spacing: -.01em; }
+.brand-subtitle { overflow: hidden; color: var(--muted); font: 11px/1.35 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.badge, .status-value {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: color-mix(in srgb, CanvasText 5%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge.tone-clean, .status-value.tone-passed { border-color: color-mix(in srgb, var(--success) 28%, transparent); background: var(--success-soft); color: var(--success); }
+.badge.tone-changed, .status-value.tone-active { border-color: color-mix(in srgb, var(--accent) 28%, transparent); background: var(--accent-soft); color: var(--accent); }
+.badge.tone-unavailable, .status-value.tone-failed { border-color: color-mix(in srgb, var(--danger) 28%, transparent); background: var(--danger-soft); color: var(--danger); }
+.status-value.tone-warning { border-color: color-mix(in srgb, var(--warning) 28%, transparent); color: var(--warning); }
+.refresh {
+  appearance: none;
+  min-height: 30px;
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  padding: 5px 10px;
+  color: CanvasText;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 550;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.refresh:hover:not(:disabled) { background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent) 28%, var(--card-border)); }
+.refresh:active:not(:disabled) { transform: translateY(1px); }
+.refresh:focus-visible, .file-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 2px; }
+.refresh:disabled { opacity: .48; cursor: default; }
+.content { display: grid; gap: 10px; padding: 11px; }
+.section {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--card-body) 88%, transparent);
+}
+.section-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color: var(--muted); text-transform: uppercase; }
+.primary { min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.secondary, .status { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.progress-section { background: linear-gradient(135deg, var(--accent-soft), transparent 58%); }
+.status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stats-inline { display: inline-flex; align-items: center; gap: 7px; font: 11px/1.3 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.add { color: var(--success); }
+.remove { color: var(--danger); }
+.files {
+  margin: 0;
+  max-height: 13em;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 9px;
+  background: color-mix(in srgb, Canvas 90%, CanvasText 10%);
+  color: color-mix(in srgb, CanvasText 84%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.6 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+.frozen-file { overflow: hidden; border: 1px solid var(--divider); border-radius: 9px; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); }
+.frozen-file + .frozen-file { margin-top: 6px; }
+.file-toggle {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  border: 0;
+  padding: 8px 10px;
+  color: CanvasText;
+  background: transparent;
+  text-align: left;
+  font: 11px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.file-toggle:hover { background: var(--surface-hover); }
+.diff { max-height: 24em; overflow: auto; margin: 0; padding: 8px 0; border-top: 1px solid var(--divider); background: color-mix(in srgb, Canvas 88%, CanvasText 12%); font: 11px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.diff-line { display: block; min-height: 1.5em; padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-line.added { background: color-mix(in srgb, var(--success) 13%, transparent); }
+.diff-line.deleted { background: color-mix(in srgb, var(--danger) 13%, transparent); }
+.diff-line.hunk { color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.app-footer { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 8px 13px; border-top: 1px solid var(--divider); background: var(--card-header); }
+.live-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+@media (max-width: 620px) {
+  .app-header { align-items: flex-start; }
+  .actions { flex-direction: column-reverse; align-items: flex-end; }
+  .status-grid { grid-template-columns: 1fr; }
+  .brand-icon { width: 36px; height: 36px; }
+}
 [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main class="card" aria-live="polite">
-  <div class="header"><h1>WebCodex Progress</h1><div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div></div>
-  <section class="section">
-    <div class="section-head"><h2>Progress</h2><span id="progressMeta" class="secondary"></span></div>
-    <div id="progressStatus" class="primary">Waiting for Session activity…</div>
-  </section>
-  <section class="section">
-    <div class="section-head"><h2>Workspace</h2><span id="changesStats" class="secondary"></span></div>
-    <div id="changesTitle" class="primary">Waiting for Work state…</div>
-    <pre id="files" class="files" hidden></pre>
-  </section>
-  <section class="section">
-    <div class="section-head"><h2>Validation</h2><span id="validationMeta" class="secondary"></span></div>
-    <div id="validationStatus" class="primary">Unknown</div>
-  </section>
-  <section class="section">
-    <div class="section-head"><h2>Review</h2><span id="reviewMeta" class="secondary"></span></div>
-    <div id="reviewStatus" class="primary">No recorded review evidence</div>
-  </section>
-  <section id="finalChanges" class="section" hidden>
-    <div class="section-head"><h2>Frozen final changes</h2><span id="frozenStats" class="secondary"></span></div>
-    <div id="frozenSummary" class="primary"></div>
-    <div id="frozenFiles"></div>
-    <button id="frozenMore" class="refresh" type="button" hidden></button>
-    <div id="frozenFooter" class="secondary"></div>
-  </section>
-  <div id="status" class="status">App active · initializing Host</div>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M8.6 7.5 15.4 16.5M15.4 7.5 8.6 16.5"></path></svg></span>
+      <div class="brand-copy"><h1>WebCodex Progress</h1><span id="branch" class="brand-subtitle">Workflow session</span></div>
+    </div>
+    <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
+  </header>
+  <div class="content">
+    <section class="section progress-section">
+      <div class="section-head"><h2>Progress</h2><span id="progressMeta" class="secondary"></span></div>
+      <div id="progressStatus" class="primary">Waiting for Session activity…</div>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Workspace</h2><span id="changesStats" class="stats-inline"></span></div>
+      <div id="changesTitle" class="primary">Waiting for Work state…</div>
+      <pre id="files" class="files" hidden></pre>
+    </section>
+    <div class="status-grid">
+      <section class="section">
+        <div class="section-head"><h2>Validation</h2><span id="validationMeta" class="secondary"></span></div>
+        <div id="validationStatus" class="status-value">Unknown</div>
+      </section>
+      <section class="section">
+        <div class="section-head"><h2>Review</h2><span id="reviewMeta" class="secondary"></span></div>
+        <div id="reviewStatus" class="primary">No recorded review evidence</div>
+      </section>
+    </div>
+    <section id="finalChanges" class="section" hidden>
+      <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
+      <div id="frozenSummary" class="primary"></div>
+      <div id="frozenFiles"></div>
+      <button id="frozenMore" class="refresh" type="button" hidden></button>
+      <div id="frozenFooter" class="secondary"></div>
+    </section>
+  </div>
+  <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">App active · initializing Host</div></footer>
 </main>
 <script>
 (() => {
@@ -82,7 +221,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   const MAX_FROZEN_FILES = 24;
   const INITIAL_FROZEN_FILES = 5;
   let snapshot = null;
-  let initialFrozenKey = null;
+  let acceptedFrozenKey = null;
   let visibleCount = 0;
   let hasRefreshed = false;
   const diffCache = new Map();
@@ -263,14 +402,22 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       value.files.map(file => [file.path, file.previous_path ?? null, file.kind, file.additions, file.deletions, file.binary ?? null])]);
   }
 
-  function acceptInitialFrozen(value) {
-    const key = value === undefined ? "" : frozenKey(value);
-    if (initialFrozenKey !== null) {
-      if (key !== initialFrozenKey) { failClosed("Conflicting frozen Work identity"); return false; }
+  function renderLineStats(target, additions, deletions, suffix = "") {
+    target.replaceChildren();
+    const add = document.createElement("span"); add.className = "add"; add.textContent = `+${additions}`;
+    const remove = document.createElement("span"); remove.className = "remove"; remove.textContent = `−${deletions}`;
+    target.append(add, remove);
+    if (suffix) { const meta = document.createElement("span"); meta.className = "secondary"; meta.textContent = suffix; target.append(meta); }
+  }
+
+  function acceptFrozen(value) {
+    if (value === undefined) return true;
+    const key = frozenKey(value);
+    if (acceptedFrozenKey !== null) {
+      if (key !== acceptedFrozenKey) { failClosed("Conflicting sealed Work identity"); return false; }
       return true;
     }
-    initialFrozenKey = key;
-    if (value === undefined) return true;
+    acceptedFrozenKey = key;
     snapshot = {
       snapshot_id: value.snapshot_id, files_total: value.files_total, files_truncated: value.files_truncated,
       files: value.files.map(file => ({ path: file.path, previous_path: file.previous_path, kind: file.kind,
@@ -278,7 +425,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     };
     el("finalChanges").hidden = false;
     el("frozenSummary").textContent = `Changed ${value.files_changed} ${value.files_changed === 1 ? "file" : "files"}`;
-    el("frozenStats").textContent = `+${value.additions} −${value.deletions}`;
+    renderLineStats(el("frozenStats"), value.additions, value.deletions);
     appendFrozenFiles(INITIAL_FROZEN_FILES);
     return true;
   }
@@ -365,7 +512,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     while (visibleCount < end) el("frozenFiles").appendChild(frozenFileNode(snapshot.files[visibleCount++]));
     el("frozenMore").hidden = visibleCount >= snapshot.files.length;
     el("frozenMore").textContent = `Show ${snapshot.files.length - visibleCount} more files`;
-    el("frozenFooter").textContent = `Frozen at presentation · live Refresh does not change these files${snapshot.files_truncated
+    el("frozenFooter").textContent = `Sealed at coding closeout · live progress no longer changes this final snapshot${snapshot.files_truncated
       ? ` · metadata truncated (${snapshot.files.length}/${snapshot.files_total} files advertised)` : ""}`;
   }
 
@@ -382,26 +529,30 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   }
 
   function renderChanges(workspace) {
+    el("branch").textContent = workspace.branch || "Workflow session";
     if (!workspace.git_available) {
+      el("badge").className = "badge tone-unavailable";
       el("badge").textContent = "Unavailable";
       el("changesTitle").textContent = workspace.reason_code === "non_git_project" ? "Not a Git worktree" : "Git state unavailable";
-      el("changesStats").textContent = "";
+      el("changesStats").replaceChildren();
       el("files").textContent = "";
       el("files").hidden = true;
       return;
     }
     if (workspace.clean) {
+      el("badge").className = "badge tone-clean";
       el("badge").textContent = "Clean";
-      el("changesTitle").textContent = "Clean";
-      el("changesStats").textContent = "+0 −0";
+      el("changesTitle").textContent = "Workspace clean";
+      renderLineStats(el("changesStats"), 0, 0);
       el("files").textContent = "";
       el("files").hidden = true;
       return;
     }
+    el("badge").className = "badge tone-changed";
     el("badge").textContent = "Changed";
     el("changesTitle").textContent = `Changed ${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"}`;
     if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
-      el("changesStats").textContent = `+${workspace.additions} −${workspace.deletions}${workspace.line_stats_partial ? " · partial" : ""}`;
+      renderLineStats(el("changesStats"), workspace.additions, workspace.deletions, workspace.line_stats_partial ? "partial" : "");
     } else {
       el("changesStats").textContent = workspace.line_stats_partial ? "line stats partial" : "";
     }
@@ -425,6 +576,8 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
 
   function renderValidation(validation) {
     el("validationStatus").textContent = validationLabel(validation.current_status);
+    const validationTone = validation.current_status === "passed" ? "passed" : validation.current_status === "failed" ? "failed" : validation.current_status === "stale" || validation.current_status === "inconclusive" ? "warning" : "active";
+    el("validationStatus").className = `status-value tone-${validationTone}`;
     const pieces = [];
     if (safeCount(validation.successes)) pieces.push(`${validation.successes} validations`);
     if (validation.unresolved_failures > 0) pieces.push(`${validation.unresolved_failures} unresolved`);
@@ -517,22 +670,25 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
         return;
       }
       const state = extractState(response);
-      if (!state || state.final_changes !== undefined || !acceptIdentity(pair(state.project, state.session_id))) {
+      if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
         if (!tornDown) failClosed("Invalid authoritative Work state");
         return;
       }
+      const hadFrozen = snapshot !== null;
+      if (!acceptFrozen(state.final_changes)) return;
+      const sealedNow = !hadFrozen && snapshot !== null;
       hasRefreshed = true;
       sessionLifecycle = state.session.lifecycle;
       if (state.state_version !== lastStateVersion) {
         lastStateVersion = state.state_version;
         lastStateChangeAt = Date.now();
         render(state);
-        el("status").textContent = sessionLifecycle === "closed"
+        el("status").textContent = sealedNow ? "Final changes sealed · live progress retained" : sessionLifecycle === "closed"
           ? (automatic ? "Closed · updated" : "Updated · closed")
           : (automatic ? "Live · updated" : "Updated");
       } else {
-        if (!automatic) lastStateChangeAt = Date.now();
-        el("status").textContent = sessionLifecycle === "closed"
+        if (!automatic || sealedNow) lastStateChangeAt = Date.now();
+        el("status").textContent = sealedNow ? "Final changes sealed" : sessionLifecycle === "closed"
           ? (automatic ? "Closed" : "Up to date · closed")
           : (automatic ? "Live" : "Up to date");
       }
@@ -557,7 +713,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       if (!tornDown) failClosed("Invalid Work Result state");
       return;
     }
-    if (!acceptInitialFrozen(state.final_changes)) return;
+    if (!acceptFrozen(state.final_changes)) return;
     sessionLifecycle = state.session.lifecycle;
     if (!hasRefreshed && state.state_version !== lastStateVersion) {
       lastStateVersion = state.state_version;
@@ -620,7 +776,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex Progress", version: "1.1.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex Progress", version: "1.2.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;

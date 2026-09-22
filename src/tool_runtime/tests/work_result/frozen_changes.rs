@@ -79,6 +79,36 @@ fn record_first_class_edit(runtime: &ToolRuntime, session_id: &str, project: &st
     );
 }
 
+async fn seal_successful_closeout(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    session_id: &str,
+    auth: &crate::auth::AuthContext,
+) -> Option<Value> {
+    let summary = runtime.sessions.summary(session_id, None).unwrap();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .seal_work_result_changes_for_closeout(&project, &summary, Some(&auth))
+                .await
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !task.is_finished() {
+        assert!(Instant::now() < deadline, "Changes seal task timed out");
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+    task.await.unwrap().unwrap()
+}
+
 async fn service_agent_task(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -255,24 +285,50 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
     assert!(presentation_needed(&runtime, client_id, &project, current).await);
 
     let before = runtime.sessions.summary(&session.session_id, None).unwrap();
-    let result = present(&runtime, client_id, &project, &session.session_id, &auth).await;
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["work_result"]["project"], project);
+    let progress = present(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(progress.success, "{:?}", progress.error);
+    assert_eq!(progress.output["work_result"]["project"], project);
     assert_eq!(
-        result.output["work_result"]["session_id"],
+        progress.output["work_result"]["session_id"],
         session.session_id
     );
+    assert!(progress.output["work_result"]
+        .get("final_changes")
+        .is_none());
+    let pre_closeout = refresh(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(pre_closeout.success, "{:?}", pre_closeout.error);
+    assert!(pre_closeout.output["work_result"]
+        .get("final_changes")
+        .is_none());
+    assert_eq!(
+        pre_closeout.output["work_result"]["state_version"],
+        progress.output["work_result"]["state_version"]
+    );
+
+    let after_progress = runtime.sessions.summary(&session.session_id, None).unwrap();
+    assert_eq!(after_progress.events_total, before.events_total);
+    assert_eq!(after_progress.updated_at, before.updated_at);
+
+    let sealed =
+        seal_successful_closeout(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(sealed.is_some());
+    let after_closeout = runtime.sessions.summary(&session.session_id, None).unwrap();
+    let result = refresh(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(result.success, "{:?}", result.error);
     assert!(result.output["work_result"]["final_changes"]
         .get("project")
         .is_none());
     assert!(result.output["work_result"]["final_changes"]
         .get("session_id")
         .is_none());
-    let live = refresh(&runtime, client_id, &project, &session.session_id, &auth).await;
-    assert!(live.success, "{:?}", live.error);
-    assert!(live.output["work_result"].get("final_changes").is_none());
+    let sealed_again = refresh(&runtime, client_id, &project, &session.session_id, &auth).await;
+    assert!(sealed_again.success, "{:?}", sealed_again.error);
     assert_eq!(
-        live.output["work_result"]["state_version"],
+        sealed_again.output["work_result"]["final_changes"]["snapshot_id"],
+        result.output["work_result"]["final_changes"]["snapshot_id"]
+    );
+    assert_eq!(
+        sealed_again.output["work_result"]["state_version"],
         result.output["work_result"]["state_version"]
     );
     assert_eq!(
@@ -310,7 +366,10 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
     fs::write(tmp.path().join("after-snapshot.txt"), "live-only\n").unwrap();
     let live = refresh(&runtime, client_id, &project, &session.session_id, &auth).await;
     assert!(live.success, "{:?}", live.error);
-    assert!(live.output["work_result"].get("final_changes").is_none());
+    assert_eq!(
+        live.output["work_result"]["final_changes"]["snapshot_id"],
+        snapshot_id
+    );
     assert_ne!(
         live.output["work_result"]["state_version"],
         result.output["work_result"]["state_version"]
@@ -504,11 +563,8 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
     let second = present(&runtime, client_id, &project, &session.session_id, &auth).await;
     assert!(second.success, "{:?}", second.error);
     let changes = &second.output["work_result"]["final_changes"];
-    assert_eq!(changes["files_returned"], 24);
-    assert_eq!(changes["files_truncated"], true);
-    assert!(changes["files_total"].as_u64().unwrap() > 24);
     let second_id = changes["snapshot_id"].as_str().unwrap();
-    assert_ne!(second_id, snapshot_id);
+    assert_eq!(second_id, snapshot_id);
     assert!(!changes["files"]
         .as_array()
         .unwrap()
@@ -544,8 +600,8 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
         frozen.output["changes_file_diff"]["diff"]
     );
     let after = runtime.sessions.summary(&session.session_id, None).unwrap();
-    assert_eq!(after.events_total, before.events_total);
-    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(after.events_total, after_closeout.events_total);
+    assert_eq!(after.updated_at, after_closeout.updated_at);
 }
 
 #[tokio::test]
@@ -603,6 +659,11 @@ async fn final_changes_neutralizes_repository_configured_clean_and_process_filte
         "closeout Changes probe must not execute repository-configured filters"
     );
 
+    assert!(
+        seal_successful_closeout(&runtime, client_id, &project, &session.session_id, &auth,)
+            .await
+            .is_some()
+    );
     let result = present(&runtime, client_id, &project, &session.session_id, &auth).await;
     assert!(result.success, "{:?}", result.error);
     assert!(
@@ -640,6 +701,11 @@ async fn committed_final_tree_is_presentable_even_when_worktree_is_clean() {
 
     let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
     assert!(presentation_needed(&runtime, client_id, &project, summary).await);
+    assert!(
+        seal_successful_closeout(&runtime, client_id, &project, &session.session_id, &auth,)
+            .await
+            .is_some()
+    );
     let result = present(&runtime, client_id, &project, &session.session_id, &auth).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(
@@ -676,6 +742,11 @@ async fn shell_only_is_ineligible_and_reverted_first_class_edit_has_no_presentat
         .final_changes_presentation_needed(&project, &summary)
         .await
         .unwrap());
+    assert!(
+        seal_successful_closeout(&runtime, client_id, &project, &shell_only.session_id, &auth,)
+            .await
+            .is_none()
+    );
     let work = present(&runtime, client_id, &project, &shell_only.session_id, &auth).await;
     assert!(work.success, "{:?}", work.error);
     assert!(work.output["work_result"].get("final_changes").is_none());
@@ -691,6 +762,11 @@ async fn shell_only_is_ineligible_and_reverted_first_class_edit_has_no_presentat
         .unwrap();
     assert!(summary.repository_edit_observed);
     assert!(!presentation_needed(&runtime, client_id, &project, summary).await);
+    assert!(
+        seal_successful_closeout(&runtime, client_id, &project, &reverted.session_id, &auth,)
+            .await
+            .is_none()
+    );
     let work = present(&runtime, client_id, &project, &reverted.session_id, &auth).await;
     assert!(work.success, "{:?}", work.error);
     assert!(work.output["work_result"].get("final_changes").is_none());

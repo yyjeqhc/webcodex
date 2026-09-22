@@ -1797,7 +1797,34 @@ impl ToolRuntime {
         if let Some(follow_up) = self.active_goal_context_for_session(auth, &session_id) {
             output["goal_follow_up"] = follow_up;
         }
-        let decision = finish_decision_output(&output);
+        let mut decision = finish_decision_output(&output);
+        if decision
+            .pointer("/task_outcome/blocking")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && output.get("presentation").is_some()
+        {
+            if let Err(result) = self
+                .seal_work_result_changes_for_closeout(
+                    &resolved.resolved_id,
+                    &closeout_session_summary,
+                    auth,
+                )
+                .await
+            {
+                let message = result.error.unwrap_or_else(|| {
+                    "Final changes could not be sealed at coding closeout".to_string()
+                });
+                output["final_warnings"]
+                    .as_array_mut()
+                    .expect("finish final_warnings must remain an array")
+                    .push(json!({
+                        "kind": "work_result_seal_failed",
+                        "message": message,
+                    }));
+                decision = finish_decision_output(&output);
+            }
+        }
         if summary_only {
             return ToolResult::ok(compact_finish_output(&decision));
         }

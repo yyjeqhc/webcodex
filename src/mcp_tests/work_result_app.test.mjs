@@ -208,7 +208,7 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.nodes.refresh.textContent, "Refreshing…");
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
-  assert.equal(view.nodes.changesTitle.textContent, "Clean");
+  assert.equal(view.nodes.changesTitle.textContent, "Workspace clean");
   assert.equal(view.nodes.validationStatus.textContent, "Failed");
   assert.match(view.nodes.reviewStatus.textContent, /Committed range mapped/);
   assert.equal(view.nodes.status.textContent, "Updated");
@@ -438,7 +438,7 @@ test("Show more and live Refresh preserve pending frozen nodes, initial identity
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
-  assert.equal(view.nodes.changesTitle.textContent, "Clean");
+  assert.equal(view.nodes.changesTitle.textContent, "Workspace clean");
   assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
   assert.equal(frozenNodes(view).root, nodes.root);
   await view.reply(view.calls("changes_file_diff")[0], frozenDiff());
@@ -457,8 +457,26 @@ test("initial snapshot is idempotent and its late arrival cannot roll back an ex
   const root = frozenNodes(view).root;
   view.toolResult({ work_result: frozenWork() });
   assert.equal(frozenNodes(view).root, root);
-  assert.equal(view.nodes.changesTitle.textContent, "Clean");
+  assert.equal(view.nodes.changesTitle.textContent, "Workspace clean");
   assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
+});
+
+test("live progress card adopts the first sealed final snapshot from a later state refresh", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: baseState });
+  await view.initialize();
+  assert.equal(view.nodes.finalChanges, undefined);
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: frozenWork() }));
+  assert.equal(view.nodes.finalChanges.hidden, false);
+  assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
+  assert.match(view.nodes.status.textContent, /Final changes sealed/);
+  const root = frozenNodes(view).root;
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[1], toolResult({ work_result: frozenWork() }));
+  assert.equal(frozenNodes(view).root, root);
+  assert.equal(view.nodes.refresh.disabled, false);
 });
 
 test("metadata and lazy diff truncation remain truthful within bounded initial rows", async () => {
@@ -545,7 +563,7 @@ for (const via of ["initial", "refresh"]) {
 test("same snapshot id cannot smuggle a changed advertised path list", async () => {
   const view = await frozenView();
   view.toolResult({ work_result: frozenWork({ files: finalChanges.files.map((file, index) => index ? file : { ...file, path: "src/other.rs" }) }) });
-  assert.match(view.nodes.status.textContent, /Conflicting frozen Work identity/);
+  assert.match(view.nodes.status.textContent, /Conflicting sealed Work identity/);
   assert.equal(view.nodes.finalChanges.hidden, true);
 });
 

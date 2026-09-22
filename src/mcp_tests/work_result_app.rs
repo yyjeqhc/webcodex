@@ -36,7 +36,7 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v1"
+        "ui://webcodex/work-result/v2"
     );
     let runtime = test_runtime();
 
@@ -205,6 +205,7 @@ async fn work_result_resource_is_canonical_while_changes_resources_are_hidden_co
     let work_description = work_resource["description"].as_str().unwrap();
     assert!(work_description.contains("progress card"));
     assert!(work_description.contains("app-only live reads"));
+    assert!(work_description.contains("seal one immutable final-changes snapshot"));
     assert!(!resources
         .iter()
         .any(|resource| resource["uri"] == MCP_RESULT_UI_RESOURCE_URI));
@@ -342,7 +343,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "work_result_state",
         "changes_file_diff",
         "wc_changes_snapshot_",
-        "Frozen final changes",
+        "Final changes",
         "ui/notifications/tool-input",
         "ui/notifications/tool-result",
         "id=\"refresh\"",

@@ -60,11 +60,13 @@ pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/result/v2",
     "ui://webcodex/result/v3",
 ];
-pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v1";
-// Shipped Changes V3 descriptors can remain cached in Hosts. Keep resource
-// reads working with the safe canonical template, not a second admitted App.
-// Legacy payloads are never promoted into authoritative Work Result state.
-pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &["ui://webcodex/changes/v3"];
+pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v2";
+// Hosts can retain previously shipped Work Result / Changes resources across
+// deploys. Keep those URIs readable with the current safe template, but only the
+// canonical v2 descriptor admits a new card. Legacy payloads are never promoted
+// into authoritative Work Result state.
+pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] =
+    &["ui://webcodex/work-result/v1", "ui://webcodex/changes/v3"];
 // Goal Plan intentionally serves only one current resource identity. Hosts may
 // retain a live/cached View by URI across Server deploys, so any shipped App
 // template or incompatible App-tool wire change must advance this URI rather
@@ -142,7 +144,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .push(json!({
             "uri": MCP_WORK_RESULT_UI_RESOURCE_URI,
             "name": "WebCodex Progress",
-            "description": "Persistent read-only progress card for one explicitly presented project-scoped Workflow Session. The initial present_work_result ToolResult is authoritative, then the mounted App performs bounded app-only live reads while visible at a faster cadence and while hidden at a slower cadence. It shows current Session activity together with workspace, validation, and review state without creating model-visible polling turns. Frozen final changes remain presentation-time snapshots and lazy file expansion reads only advertised paths.",
+            "description": "Persistent read-only progress card for one explicitly presented project-scoped Workflow Session. The initial present_work_result ToolResult is authoritative, then the mounted App performs bounded app-only live reads while visible at a faster cadence and while hidden at a slower cadence. It shows current Session activity together with workspace, validation, and review state without creating model-visible polling turns. A non-blocking current-attempt finish_coding_task closeout may seal one immutable final-changes snapshot in the presentation cache; the same mounted card discovers and lazily expands that retained snapshot on later App refreshes.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
         }));

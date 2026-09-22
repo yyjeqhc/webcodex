@@ -43,8 +43,9 @@ impl ToolRuntime {
     }
 
     /// Project/Session authority is shared by initial presentation and explicit
-    /// live refresh. Only initial presentation may allocate a process-local
-    /// frozen snapshot; neither path writes the target Session.
+    /// live refresh. Neither path writes the target Session. Once the current
+    /// coding attempt has a successful closeout, either path may seal or reuse
+    /// one process-local final-changes snapshot for that exact attempt.
     async fn exact_work_result(
         &self,
         project: String,
@@ -126,18 +127,14 @@ impl ToolRuntime {
             history_partial,
         );
         projection["session"] = work_result_session(&summary);
-        // This version covers live domains only. The card keeps the initial
-        // frozen identity locally; refresh neither replaces nor re-creates it.
+        // state_version covers live domains only. A sealed final snapshot has its
+        // own immutable identity and may appear later without pretending that a
+        // live workspace/validation/review field changed.
         projection["state_version"] = json!(work_result_state_version(&projection));
-        if tool_name == "present_work_result" {
-            match self
-                .freeze_work_result_changes(&resolved.resolved_id, &summary, auth)
-                .await
-            {
-                Ok(Some(changes)) => projection["final_changes"] = changes,
-                Ok(None) => {}
-                Err(result) => return result,
-            }
+        match self.sealed_work_result_changes(&resolved.resolved_id, &summary, auth) {
+            Ok(Some(changes)) => projection["final_changes"] = changes,
+            Ok(None) => {}
+            Err(result) => return result,
         }
         ToolResult::ok(json!({"work_result": projection}))
     }

@@ -57,6 +57,7 @@ pub(crate) struct ToolCallRequest {
 /// input and the kernel continues to own all authority checks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolInvocationMetadata {
+    pub(crate) control: Option<super::control_sidecar::ControlSidecars>,
     pub(crate) ack_session_message_ids: Vec<String>,
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
     pub(crate) context_request: Vec<String>,
@@ -64,6 +65,8 @@ pub(crate) struct ToolInvocationMetadata {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ToolProtocolCapabilities {
+    /// Explicit model-facing control wrapper support; internal/App calls default off.
+    pub(crate) control_sidecars: bool,
     pub(crate) context_sidecar: bool,
     pub(crate) skill_runtime: bool,
     pub(crate) skill_management: bool,
@@ -263,6 +266,7 @@ impl ToolRuntime {
             context,
             ToolProtocolCapabilities {
                 context_sidecar: context_sidecar_capable,
+                control_sidecars: false,
                 skill_runtime: context_sidecar_capable,
                 skill_management: false,
                 memory_surface: false,
@@ -294,7 +298,7 @@ impl ToolRuntime {
         &'a self,
         request: ToolCallRequest,
         context: ToolCallContext<'a>,
-        invocation_metadata: ToolInvocationMetadata,
+        mut invocation_metadata: ToolInvocationMetadata,
         capabilities: ToolProtocolCapabilities,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolCallOutcome> + Send + 'a>> {
         // MCP enters the kernel here directly rather than through
@@ -302,9 +306,22 @@ impl ToolRuntime {
         Box::pin(async move {
             let telemetry =
                 ModelErgonomicsTimer::start_with_arguments(&request.tool_name, &request.arguments);
+            let mut control = invocation_metadata
+                .control
+                .take()
+                .map(super::control_sidecar::ControlExecution::new);
             let mut outcome = self
-                .call_tool_with_context_inner(request, context, invocation_metadata, capabilities)
+                .call_tool_with_context_inner(
+                    request,
+                    context,
+                    invocation_metadata,
+                    capabilities,
+                    &mut control,
+                )
                 .await;
+            if let Some(control) = control {
+                control.decorate(&mut outcome);
+            }
             outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
             outcome
         })
@@ -316,7 +333,18 @@ impl ToolRuntime {
         context: ToolCallContext<'_>,
         invocation_metadata: ToolInvocationMetadata,
         capabilities: ToolProtocolCapabilities,
+        control: &mut Option<super::control_sidecar::ControlExecution>,
     ) -> ToolCallOutcome {
+        if let Some(control) = control.as_ref() {
+            if let Err(outcome) = control.validate(
+                &request.tool_name,
+                context,
+                capabilities,
+                invocation_metadata.session_message_resolution.is_some(),
+            ) {
+                return outcome;
+            }
+        }
         let mut recorder_metadata =
             ToolCallRecorderMetadata::from_business_arguments(&request.arguments);
         recorder_metadata.ack_session_message_ids = invocation_metadata.ack_session_message_ids;
@@ -862,6 +890,21 @@ impl ToolRuntime {
         }
 
         let project = tool_project(&call);
+        if let Some(control) = control.as_mut() {
+            if let Err(outcome) = control.before(self, &call, context).await {
+                if let Some(result) = outcome.result.as_ref() {
+                    self.sessions.record_tool_call_finished(
+                        session_event,
+                        false,
+                        &result.output,
+                        result.error.as_deref(),
+                        Some("control_before_failed"),
+                    );
+                }
+                return outcome;
+            }
+            control.main_dispatched = true;
+        }
         // Preserve the concrete business Session for final presentation and
         // bounded ActionAudit evidence. The generic recorder remains independent
         // provenance and Window affinity never becomes execution or Session authority.
@@ -885,6 +928,11 @@ impl ToolRuntime {
                 capabilities,
             )
             .await;
+        if let Some(control) = control.as_mut() {
+            control
+                .after(self, &request.tool_name, &result, context)
+                .await;
+        }
         if result.success {
             // The concrete ToolCall has already passed canonical business Session
             // lifecycle/authority checks. Retain only its exact identity as bounded

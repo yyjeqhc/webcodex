@@ -26,6 +26,7 @@ mod communication;
 mod computer_tools;
 pub(crate) mod context_projection;
 mod continuation_feedback;
+pub(crate) mod control_sidecar;
 pub(crate) mod conversation_import;
 mod discovery_tools;
 mod dispatch;

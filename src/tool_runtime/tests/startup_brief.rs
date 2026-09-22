@@ -277,15 +277,31 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .unwrap();
     for phrase in [
-        "recovery-worthy milestones",
-        "not after every call",
-        "completed_step_ids/current_step_id",
-        "explicitly update_goal",
+        "After a plan phase completes",
+        "_control.before.goal_progress",
+        "facts already true",
+        "never pre-complete tests",
+        "checkpoint_goal remains valid standalone",
+        "explicit update_goal",
         "cannot judge natural-language conditions",
     ] {
         assert!(checkpoint.contains(phrase), "{phrase}");
     }
     assert!(goal_workflow.len() <= 720 && continuation.len() <= 720 && checkpoint.len() <= 480);
+    let sidecars = workflow["model_protocol"]["control_sidecars"]
+        .as_str()
+        .unwrap();
+    for phrase in [
+        "optional",
+        "otherwise omit",
+        "standalone",
+        "independently authorized",
+        "preserves main success",
+        "fail-closed",
+    ] {
+        assert!(sidecars.contains(phrase), "{phrase}");
+    }
+    assert!(sidecars.len() <= 640);
     let roles = workflow["roles"]
         .as_object()
         .expect("workflow roles object");

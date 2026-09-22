@@ -20,6 +20,7 @@ mod collaboration;
 mod computer_budgets;
 mod context_projection;
 mod continuation_feedback;
+mod control_sidecars;
 mod diagnostics;
 mod dispatch;
 mod edit_tool_telemetry;

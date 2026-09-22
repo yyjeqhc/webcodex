@@ -819,6 +819,7 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
         strip_stateless_session_message_resolution(&mut arguments).unwrap();
     let context_request = strip_stateless_context_request(&mut arguments).unwrap();
     let metadata = crate::tool_runtime::kernel::ToolInvocationMetadata {
+        control: None,
         ack_session_message_ids,
         session_message_resolution,
         context_request,
@@ -1665,6 +1666,32 @@ fn assert_compact_tool_diff(full: &Value, compact: &Value) {
             property.as_object_mut().unwrap().remove("pattern");
         }
     }
+    // `_control` is the one intentional structural compacting exception. The
+    // full Stateless MCP schema remains the exact closed operational contract;
+    // compact tools/list keeps only an object selection entry so the same large
+    // canonical sidecar payload schemas are not repeated on every ordinary tool.
+    if let (Some(full_control), Some(compact_control)) = (
+        expected["inputSchema"]
+            .pointer("/properties/_control")
+            .cloned(),
+        actual["inputSchema"]
+            .pointer("/properties/_control")
+            .cloned(),
+    ) {
+        assert_eq!(full_control["type"], "object", "{name}");
+        assert_eq!(full_control["additionalProperties"], false, "{name}");
+        assert_eq!(
+            full_control["properties"]["before"]["maxProperties"], 1,
+            "{name}"
+        );
+        assert_eq!(
+            full_control["properties"]["after_success"]["maxProperties"], 1,
+            "{name}"
+        );
+        assert_eq!(compact_control["type"], "object", "{name}");
+        assert!(compact_control.get("properties").is_none(), "{name}");
+        expected["inputSchema"]["properties"]["_control"] = compact_control;
+    }
     for tool in [&mut expected, &mut actual] {
         tool.as_object_mut().unwrap().remove("description");
         strip_description_text(&mut tool["inputSchema"]);
@@ -2133,13 +2160,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes (including wrappers/gateways, excluding the
-    // JSON-RPC envelope). Measurements: 85,676 / 88,360 / 99,384 bytes,
-    // plus 16,641 with Apps. About 10% byte headroom; new advertised tools
-    // require an explicit count-budget review, rather than silent growth.
+    // JSON-RPC envelope). With compact `_control`: 99,640 / 102,324 / 113,348
+    // bytes, plus 16,987 with Apps. Keep roughly 10% byte headroom rather than
+    // silently absorbing future advertised surface growth.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 34, 95_000),
-        ("scoped", Some(&scoped), 35, 98_000),
-        ("admin", Some(&admin), 41, 110_000),
+        ("anonymous", None, 34, 110_000),
+        ("scoped", Some(&scoped), 35, 113_000),
+        ("admin", Some(&admin), 41, 125_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -3385,4 +3412,83 @@ async fn mcp_tools_call_unknown_tool_is_bad_request() {
         }
         other => panic!("expected BadRequest, got {:?}", other),
     }
+}
+
+#[tokio::test]
+async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
+    let temp = tempfile::tempdir().unwrap();
+    let db =
+        std::sync::Arc::new(crate::db::Database::open(&temp.path().join("sidecars.db")).unwrap());
+    let runtime = test_runtime().with_communication_database(db);
+    let goal = runtime.create_goal_with_plan(
+        None,
+        crate::db::NewGoal {
+            title: "MCP sidecar".into(),
+            objective: "Prove wrapper stripping".into(),
+            controller_agent_id: None,
+            completion_conditions: vec!["contract verified".into()],
+            steps: vec![crate::db::NewGoalStep {
+                id: "inspect".into(),
+                title: "inspect".into(),
+            }],
+            idempotency_key: "create".into(),
+        },
+    );
+    assert!(goal.success);
+    let goal_id = &goal.output["goal"]["summary"]["goal_id"];
+    let control = json!({"before": {"goal_progress": {
+        "goal_id": goal_id, "expected_revision": 1, "completed_step_ids": ["inspect"],
+        "summary": "already inspected", "idempotency_key": "checkpoint"
+    }}});
+    for outer in [true, false] {
+        let mut arguments = json!({"tool": "get_goal", "arguments": {"goal_id": goal_id}});
+        if outer {
+            arguments["_control"] = control.clone();
+        } else {
+            arguments["arguments"]["_control"] = control.clone();
+        }
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(601)),
+                mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": arguments})),
+            ),
+            None,
+        )
+        .await;
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected structured success")
+        };
+        let result = &value["result"]["structuredContent"];
+        assert_eq!(result["success"], true, "{value}");
+        assert_eq!(result["output"]["goal"]["summary"]["revision"], 2);
+        assert_eq!(result["output"]["control"]["before"]["replayed"], !outer);
+        assert_eq!(result["output"]["control"]["before"]["revision"], 2);
+    }
+    let rejected = handle_mcp_request(&runtime, rpc("tools/call", Some(json!(602)), mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": {
+        "tool": "get_goal", "arguments": {"goal_id": goal_id}, "_control": {"before": {"unknown_private_value": {}}}
+    }}))), None).await;
+    let McpOutcome::BadRequest(value) = rejected else {
+        panic!("closed wrapper must reject")
+    };
+    assert!(!value.to_string().contains("unknown_private_value"));
+    let mut payload = json!({"tools": [
+        {"name": "get_goal", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("get_goal"), "outputSchema": crate::tool_runtime::registry::output_schema_for_tool("get_goal")},
+        {"name": "goal_plan_sync", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("goal_plan_sync")}
+    ]});
+    add_stateless_workflow_recorder_metadata(&mut payload);
+    assert_eq!(
+        payload["tools"][0]["inputSchema"]["properties"]["_control"]["properties"]["before"]
+            ["maxProperties"],
+        1
+    );
+    assert!(payload["tools"][1]["inputSchema"]["properties"]
+        .get("_control")
+        .is_none());
+    assert!(
+        webcodex_tool_contracts::input_schema_for_tool("get_goal")["properties"]
+            .get("_control")
+            .is_none()
+    );
 }

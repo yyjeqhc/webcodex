@@ -669,6 +669,7 @@ mod tests {
             "ack_session_message_ids",
             "context_request",
             "session_message_resolution",
+            "_control",
             "expected_failure",
             "expected_failure_kind",
             "result_expectation",

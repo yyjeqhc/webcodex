@@ -291,6 +291,7 @@ mod tests {
                 "ack_session_message_ids",
                 "context_request",
                 "session_message_resolution",
+                "_control",
             ] {
                 assert!(
                     !properties.contains_key(wrapper),

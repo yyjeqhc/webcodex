@@ -148,6 +148,7 @@ pub(crate) struct BackendDiagnosticsSnapshot {
     pub(crate) console: BackendEventSnapshot<BackendConsoleEntry>,
     pub(crate) network: BackendEventSnapshot<BackendNetworkEntry>,
     pub(crate) cursor: u64,
+    pub(crate) cleared_through_cursor: u64,
 }
 
 #[derive(Default)]
@@ -159,6 +160,7 @@ struct CdpEventBuffer {
     network_truncated: bool,
     pending_network: HashSet<String>,
     next_sequence: u64,
+    cleared_through_sequence: u64,
 }
 
 impl CdpEventBuffer {
@@ -209,6 +211,7 @@ impl CdpEventBuffer {
     }
 
     fn clear(&mut self) {
+        self.cleared_through_sequence = self.next_sequence;
         self.console.clear();
         self.console_truncated = false;
         self.network.clear();
@@ -219,6 +222,14 @@ impl CdpEventBuffer {
 
     fn cursor(&self) -> u64 {
         self.next_sequence
+    }
+
+    fn network_cursor(&self) -> u64 {
+        self.network
+            .values()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(0)
     }
 
     fn pending_count(&self) -> usize {
@@ -759,66 +770,7 @@ impl BrowserBackend for CdpBackend {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let raw_by_id = raw_nodes
-            .iter()
-            .filter_map(|node| {
-                node.get("nodeId")
-                    .and_then(Value::as_str)
-                    .map(|id| (id.to_string(), node))
-            })
-            .collect::<HashMap<_, _>>();
-        let mut nodes = Vec::new();
-        let mut truncated = raw_nodes.len() > MAX_SNAPSHOT_NODES;
-        let mut estimated_bytes = 0usize;
-        for raw in raw_nodes.iter().take(MAX_SNAPSHOT_NODES) {
-            let role = ax_value(raw, "role").unwrap_or_else(|| "generic".to_string());
-            if role == "RootWebArea" {
-                continue;
-            }
-            let name = ax_value(raw, "name");
-            let description = ax_value(raw, "description");
-            let value = ax_value(raw, "value");
-            let group = ax_group_context(raw, &raw_by_id);
-            let checked = ax_property_string(raw, "checked");
-            let selected = ax_property_bool(raw, "selected");
-            let required = ax_property_bool(raw, "required");
-            let disabled = ax_property_bool(raw, "disabled");
-            let read_only = ax_property_bool(raw, "readonly");
-            let backend_node_id = raw.get("backendDOMNodeId").and_then(Value::as_i64);
-            let actionable = is_actionable(&role) && backend_node_id.is_some();
-            estimated_bytes = estimated_bytes
-                .saturating_add(role.len())
-                .saturating_add(name.as_deref().map(str::len).unwrap_or(0))
-                .saturating_add(description.as_deref().map(str::len).unwrap_or(0))
-                .saturating_add(value.as_deref().map(str::len).unwrap_or(0))
-                .saturating_add(
-                    group
-                        .as_ref()
-                        .map(|(_, role, label)| role.len() + label.len())
-                        .unwrap_or(0),
-                )
-                .saturating_add(128);
-            if estimated_bytes > MAX_SNAPSHOT_BYTES {
-                truncated = true;
-                break;
-            }
-            nodes.push(BackendNode {
-                role,
-                name,
-                description,
-                value,
-                group_key: group.as_ref().map(|(key, _, _)| key.clone()),
-                group_role: group.as_ref().map(|(_, role, _)| role.clone()),
-                group_label: group.map(|(_, _, label)| label),
-                checked,
-                selected,
-                required,
-                disabled,
-                read_only,
-                backend_node_id,
-                actionable,
-            });
-        }
+        let (nodes, truncated) = parse_ax_snapshot_nodes(&raw_nodes);
         Ok(BackendSnapshot {
             document_id,
             nodes,
@@ -940,6 +892,7 @@ impl BrowserBackend for CdpBackend {
                 oldest_sequence: collector.events.network_oldest_sequence(),
             },
             cursor,
+            cleared_through_cursor: collector.events.cleared_through_sequence,
         })
     }
 
@@ -1240,7 +1193,7 @@ impl BrowserBackend for CdpBackend {
         let started = Instant::now();
         let deadline = started + timeout;
         let mut last_signature: Option<String> = None;
-        let mut last_event_cursor: Option<u64> = None;
+        let mut last_network_cursor: Option<u64> = None;
         let mut quiet_since: Option<Instant> = None;
         let mut last_reason = "deadline".to_string();
 
@@ -1262,10 +1215,15 @@ impl BrowserBackend for CdpBackend {
                 continue;
             }
 
-            let (pending, event_cursor) = self
+            let (pending, network_cursor) = self
                 .collectors
                 .get(target_id)
-                .map(|collector| (collector.events.pending_count(), collector.events.cursor()))
+                .map(|collector| {
+                    (
+                        collector.events.pending_count(),
+                        collector.events.network_cursor(),
+                    )
+                })
                 .unwrap_or((0, 0));
             let observed = self.page_call_until(
                 target_id,
@@ -1304,7 +1262,7 @@ impl BrowserBackend for CdpBackend {
                 .is_some_and(|state| state != "loading");
 
             let dom_unchanged = last_signature.as_deref() == Some(signature.as_str());
-            let network_unchanged = last_event_cursor == Some(event_cursor);
+            let network_unchanged = last_network_cursor == Some(network_cursor);
             if ready && dom_unchanged && network_unchanged {
                 let since = quiet_since.get_or_insert(now);
                 let required_quiet = if pending == 0 {
@@ -1339,7 +1297,7 @@ impl BrowserBackend for CdpBackend {
                 };
             }
             last_signature = Some(signature);
-            last_event_cursor = Some(event_cursor);
+            last_network_cursor = Some(network_cursor);
             std::thread::sleep(
                 POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
             );
@@ -1415,6 +1373,66 @@ fn viewport_dimension(metrics: &Value, pointer: &str) -> u32 {
         .unwrap_or(1.0)
         .round()
         .clamp(1.0, 4096.0) as u32
+}
+
+fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {
+    let raw_by_id = raw_nodes
+        .iter()
+        .filter_map(|node| {
+            node.get("nodeId")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_string(), node))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut nodes = Vec::new();
+    let mut estimated_bytes = 0usize;
+    for raw in raw_nodes {
+        let role = ax_value(raw, "role").unwrap_or_else(|| "generic".to_string());
+        if role == "RootWebArea" {
+            continue;
+        }
+        let name = ax_value(raw, "name");
+        let description = ax_value(raw, "description");
+        let value = ax_value(raw, "value");
+        let group = ax_group_context(raw, &raw_by_id);
+        let checked = ax_property_string(raw, "checked");
+        let selected = ax_property_bool(raw, "selected");
+        let required = ax_property_bool(raw, "required");
+        let disabled = ax_property_bool(raw, "disabled");
+        let read_only = ax_property_bool(raw, "readonly");
+        let backend_node_id = raw.get("backendDOMNodeId").and_then(Value::as_i64);
+        let actionable = is_actionable(&role) && backend_node_id.is_some();
+        estimated_bytes = estimated_bytes
+            .saturating_add(role.len())
+            .saturating_add(name.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(description.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(value.as_deref().map(str::len).unwrap_or(0))
+            .saturating_add(
+                group
+                    .as_ref()
+                    .map(|(_, role, label)| role.len() + label.len())
+                    .unwrap_or(0),
+            )
+            .saturating_add(128);
+        nodes.push(BackendNode {
+            role,
+            name,
+            description,
+            value,
+            group_key: group.as_ref().map(|(key, _, _)| key.clone()),
+            group_role: group.as_ref().map(|(_, role, _)| role.clone()),
+            group_label: group.map(|(_, _, label)| label),
+            checked,
+            selected,
+            required,
+            disabled,
+            read_only,
+            backend_node_id,
+            actionable,
+        });
+    }
+    let truncated = nodes.len() > MAX_SNAPSHOT_NODES || estimated_bytes > MAX_SNAPSHOT_BYTES;
+    (nodes, truncated)
 }
 
 fn ax_value(node: &Value, key: &str) -> Option<String> {
@@ -2164,6 +2182,32 @@ Connection: close
     }
 
     #[test]
+    fn ax_snapshot_parser_keeps_late_actionable_nodes_for_compaction() {
+        let mut raw_nodes = (0..=MAX_SNAPSHOT_NODES)
+            .map(|index| {
+                json!({
+                    "nodeId": format!("static-{index}"),
+                    "role": {"value": "paragraph"},
+                    "name": {"value": format!("Static {index}")},
+                })
+            })
+            .collect::<Vec<_>>();
+        raw_nodes.push(json!({
+            "nodeId": "late-action",
+            "role": {"value": "button"},
+            "name": {"value": "Continue"},
+            "backendDOMNodeId": 4242,
+        }));
+
+        let (nodes, truncated) = parse_ax_snapshot_nodes(&raw_nodes);
+        assert!(truncated);
+        let late = nodes.last().expect("late actionable node retained");
+        assert_eq!(late.name.as_deref(), Some("Continue"));
+        assert!(late.actionable);
+        assert_eq!(late.backend_node_id, Some(4242));
+    }
+
+    #[test]
     fn remote_object_sequence_reuses_one_page_websocket() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -2581,6 +2625,51 @@ Connection: close
             Some("late failure"),
             "a late failed request must remain diagnosable after the buffer fills"
         );
+    }
+
+    #[test]
+    fn console_activity_does_not_reset_network_quiet_cursor() {
+        let mut buffer = CdpEventBuffer::default();
+        record_cdp_event(
+            &mut buffer,
+            &json!({
+                "method": "Network.requestWillBeSent",
+                "params": {
+                    "requestId": "request-1",
+                    "request": {"method": "GET", "url": "https://example.test/api"},
+                    "type": "Fetch",
+                    "timestamp": 1.0,
+                }
+            }),
+        );
+        let network_cursor = buffer.network_cursor();
+        let event_cursor = buffer.cursor();
+
+        record_cdp_event(
+            &mut buffer,
+            &json!({
+                "method": "Runtime.consoleAPICalled",
+                "params": {
+                    "type": "log",
+                    "args": [{"value": "chatty console"}],
+                    "timestamp": 2.0,
+                }
+            }),
+        );
+        assert!(buffer.cursor() > event_cursor);
+        assert_eq!(buffer.network_cursor(), network_cursor);
+
+        record_cdp_event(
+            &mut buffer,
+            &json!({
+                "method": "Network.responseReceived",
+                "params": {
+                    "requestId": "request-1",
+                    "response": {"status": 200},
+                }
+            }),
+        );
+        assert!(buffer.network_cursor() > network_cursor);
     }
 
     #[test]

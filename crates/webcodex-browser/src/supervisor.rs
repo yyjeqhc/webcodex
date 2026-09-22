@@ -281,7 +281,11 @@ impl BrowserSupervisor {
             .collect::<Vec<_>>();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = snapshot.truncated || source_nodes.len() > max_nodes;
+        let mut truncated = if effective_mode == SnapshotMode::Interactive {
+            source_nodes.len() > max_nodes
+        } else {
+            snapshot.truncated || source_nodes.len() > max_nodes
+        };
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
         for node in source_nodes.into_iter().take(max_nodes) {
@@ -416,12 +420,13 @@ impl BrowserSupervisor {
 
         let console_retained = snapshot.console.entries.len();
         let network_retained = snapshot.network.entries.len();
-        let delta_truncated = since_cursor > 0
-            && ((snapshot.console.truncated
-                && snapshot
-                    .console
-                    .oldest_sequence
-                    .is_some_and(|oldest| since_cursor.saturating_add(1) < oldest))
+        let backend_delta_truncated = since_cursor > 0
+            && (since_cursor < snapshot.cleared_through_cursor
+                || (snapshot.console.truncated
+                    && snapshot
+                        .console
+                        .oldest_sequence
+                        .is_some_and(|oldest| since_cursor.saturating_add(1) < oldest))
                 || (snapshot.network.truncated
                     && snapshot
                         .network
@@ -496,6 +501,7 @@ impl BrowserSupervisor {
             bounded_recent_json_entries(console, DIAGNOSTIC_SECTION_ENTRIES_BYTES);
         let (network, network_truncated) =
             bounded_recent_json_entries(network, DIAGNOSTIC_SECTION_ENTRIES_BYTES);
+        let delta_truncated = backend_delta_truncated || console_truncated || network_truncated;
         Ok(serde_json::json!({
             "cursor": snapshot.cursor,
             "since_cursor": since_cursor,
@@ -1153,6 +1159,8 @@ mod tests {
         snapshot_node_count: usize,
         mixed_snapshot: bool,
         diagnostic_calls: usize,
+        diagnostics_cleared_through_cursor: u64,
+        large_diagnostics: bool,
         wait_fails: bool,
         fail_pages_after_create: bool,
         page_created: bool,
@@ -1175,6 +1183,8 @@ mod tests {
                 snapshot_node_count,
                 mixed_snapshot: false,
                 diagnostic_calls: 0,
+                diagnostics_cleared_through_cursor: 0,
+                large_diagnostics: false,
                 wait_fails: false,
                 fail_pages_after_create: false,
                 page_created: false,
@@ -1196,6 +1206,12 @@ mod tests {
         fn with_wait_failure() -> Self {
             let mut backend = Self::new();
             backend.wait_fails = true;
+            backend
+        }
+
+        fn with_large_diagnostics() -> Self {
+            let mut backend = Self::new();
+            backend.large_diagnostics = true;
             backend
         }
     }
@@ -1288,6 +1304,36 @@ mod tests {
             })
         }
         fn diagnostics(&mut self, _target_id: &str) -> BrowserResult<BackendDiagnosticsSnapshot> {
+            if self.large_diagnostics {
+                let console = (1..=200)
+                    .map(|sequence| BackendConsoleEntry {
+                        sequence,
+                        level: "error".into(),
+                        text: format!(
+                            "error-{sequence}-{}",
+                            "x".repeat(crate::types::MAX_DIAGNOSTIC_TEXT_BYTES)
+                        ),
+                        source: None,
+                        timestamp: Some(sequence as f64),
+                    })
+                    .collect::<Vec<_>>();
+                return Ok(BackendDiagnosticsSnapshot {
+                    console: BackendEventSnapshot {
+                        entries: console,
+                        truncated: false,
+                        cursor: 200,
+                        oldest_sequence: Some(1),
+                    },
+                    network: BackendEventSnapshot {
+                        entries: Vec::new(),
+                        truncated: false,
+                        cursor: 200,
+                        oldest_sequence: None,
+                    },
+                    cursor: 200,
+                    cleared_through_cursor: self.diagnostics_cleared_through_cursor,
+                });
+            }
             self.diagnostic_calls += 1;
             let cursor = if self.diagnostic_calls == 1 { 3 } else { 5 };
             let mut console = vec![BackendConsoleEntry {
@@ -1349,9 +1395,15 @@ mod tests {
                     oldest_sequence: Some(2),
                 },
                 cursor,
+                cleared_through_cursor: self.diagnostics_cleared_through_cursor,
             })
         }
         fn clear_diagnostics(&mut self, _target_id: &str) -> BrowserResult<()> {
+            self.diagnostics_cleared_through_cursor = match self.diagnostic_calls {
+                0 => 0,
+                1 => 3,
+                _ => 5,
+            };
             Ok(())
         }
         fn navigate(&mut self, _target_id: &str, _url: &str) -> BrowserResult<()> {
@@ -1452,6 +1504,16 @@ mod tests {
         }
         fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
             Ok(Box::new(FakeBackend::with_mixed_snapshot()))
+        }
+    }
+
+    struct LargeDiagnosticsFactory;
+    impl BackendFactory for LargeDiagnosticsFactory {
+        fn available(&self) -> bool {
+            true
+        }
+        fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+            Ok(Box::new(FakeBackend::with_large_diagnostics()))
         }
     }
 
@@ -1736,11 +1798,36 @@ mod tests {
         assert_eq!(second["network_count"], 1);
         assert_eq!(second["delta_truncated"], false);
 
+        supervisor
+            .clear_diagnostics(&browser.browser_id, &page.page_id)
+            .unwrap();
+        let after_clear = supervisor
+            .diagnostics(&browser.browser_id, &page.page_id, false, false, Some(3))
+            .unwrap();
+        assert_eq!(after_clear["delta_truncated"], true);
+
         let error = supervisor
             .diagnostics(&browser.browser_id, &page.page_id, false, false, Some(99))
             .unwrap_err();
         assert_eq!(error.kind, "invalid_diagnostics_cursor");
         assert_eq!(error.execution_state, ExecutionState::NotStarted);
+    }
+
+    #[test]
+    fn diagnostics_delta_reports_projection_truncation_before_advancing_cursor() {
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(LargeDiagnosticsFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+
+        let diagnostics = supervisor
+            .diagnostics(&browser.browser_id, &page.page_id, true, false, Some(1))
+            .unwrap();
+        assert_eq!(diagnostics["cursor"], 200);
+        assert_eq!(diagnostics["since_cursor"], 1);
+        assert_eq!(diagnostics["new_console_errors"], 199);
+        assert_eq!(diagnostics["console_truncated"], true);
+        assert_eq!(diagnostics["delta_truncated"], true);
+        assert!(diagnostics["console_count"].as_u64().unwrap() < 199);
     }
 
     #[test]

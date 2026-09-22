@@ -326,9 +326,12 @@ mod tests {
     #[tokio::test]
     async fn connect_rejects_retired_projects_dir_before_network_or_registration() {
         let tmp = tempfile::tempdir().unwrap();
-        let config_base = tmp.path().join("config");
-        let state_base = tmp.path().join("state");
-        let project = tmp.path().join("repo");
+        // macOS /var is a symlink. Exercise the retired-field validation rather
+        // than the independent credential-directory symlink defense.
+        let root = tmp.path().canonicalize().unwrap();
+        let config_base = root.join("config");
+        let state_base = root.join("state");
+        let project = root.join("repo");
         let profile_dir = config_base.join("clients/legacy");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(&profile_dir).unwrap();

@@ -1,10 +1,13 @@
 mod coding_agents;
 mod connections;
+mod diagnostics;
 mod mcp_providers;
 #[cfg(test)]
 mod reconfiguration_tests;
 mod runner_capability_grant;
+mod runtime_shell;
 mod ssh_resources;
+mod updates;
 mod workspace;
 mod workspace_settings;
 use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
@@ -73,6 +76,7 @@ pub struct AppState {
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,
     connections: ConnectionRuntimes,
+    update_check: tokio::sync::Mutex<()>,
 }
 
 impl AppState {
@@ -92,6 +96,7 @@ impl AppState {
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
+            update_check: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -375,6 +380,15 @@ impl AppState {
         if self.shutdown_signal.is_cancelled() {
             return Err(cancelled_error());
         }
+        if kind != DesktopOperationKind::ConfigurationRestore
+            && self.get_state().configuration_issue.is_some()
+        {
+            return Err(DesktopError::new(
+                "configuration_migration_failed",
+                "Configuration could not be migrated",
+                "Open Diagnostics or explicitly restore the previous known-good configuration.",
+            ));
+        }
         let operation = self.operations.admit(kind, cancellable)?;
         let cancellation =
             CancellationContext::new(operation.cancellation.clone(), self.shutdown_signal.clone());
@@ -576,6 +590,11 @@ pub struct DesktopCore {
     data_dir: PathBuf,
     config_path: PathBuf,
     config: StoredDesktopConfig,
+    configuration_issue: Option<String>,
+    runtime_candidate: Option<crate::runtime_selection::RuntimeCandidate>,
+    runtime_candidate_context: Option<String>,
+    runtime_selected_probe: Option<crate::runtime_selection::RuntimeCandidate>,
+    runtime_last_switch: Option<crate::runtime_selection::RuntimeSwitchResult>,
     tunnel_config: TunnelConfig,
     mcp_providers: crate::mcp_providers::McpProviderStore,
     mcp_applied_revision: Option<u64>,
@@ -593,12 +612,18 @@ impl DesktopCore {
     fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
         let activity = ActivityLog::default();
         let config_path = data_dir.join("desktop-state.json");
-        let config = load_config(&config_path, &activity)?;
+        // Keep Diagnostics usable if migration fails; admission below prevents
+        // replacing the operator's files with a default configuration.
+        let (config, configuration_issue) = match load_config(&config_path, &activity) {
+            Ok(config) => (config, None),
+            Err(error) => (StoredDesktopConfig::default(), Some(error.code)),
+        };
         let tunnel_config = TunnelConfig::load(
             &data_dir.join("secrets").join("tunnel-config.json"),
             config.preferred_connection == Some(RegularConnectionPreference::OpenAiTunnel),
         );
         let mut snapshot = DesktopStateSnapshot::default();
+        snapshot.configuration_issue = configuration_issue.clone();
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
         if config.topology.is_some() && config.runtime_autostart == Some(false) {
@@ -635,10 +660,17 @@ impl DesktopCore {
         snapshot.coding_agents = coding_agents.snapshot(None);
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
+        let mut adapter = WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime")));
+        adapter.set_runtime_source(config.runtime_binary_source.clone());
         Ok(Self {
             data_dir,
             config_path,
             config,
+            configuration_issue,
+            runtime_candidate: None,
+            runtime_candidate_context: None,
+            runtime_selected_probe: None,
+            runtime_last_switch: None,
             tunnel_config,
             mcp_providers,
             mcp_applied_revision: None,
@@ -646,7 +678,7 @@ impl DesktopCore {
             coding_agents_applied_revision: None,
             connections: ConnectionRuntimes::default(),
             snapshot,
-            adapter: WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime"))),
+            adapter,
             supervisor,
             activity,
             published,
@@ -2464,11 +2496,17 @@ enum StoredConfigFile {
         bytes: Vec<u8>,
     },
     Corrupt,
+    Unsupported,
 }
 
 fn load_config(path: &Path, activity: &ActivityLog) -> DesktopResult<StoredDesktopConfig> {
     let backup_path = desktop_state_backup_path(path);
     match read_stored_config(path)? {
+        StoredConfigFile::Unsupported => Err(DesktopError::new(
+            "configuration_migration_failed",
+            "The saved configuration requires a newer Desktop schema",
+            "Update Desktop or explicitly restore the previous configuration from Diagnostics.",
+        )),
         StoredConfigFile::Valid { config, .. } => Ok(config),
         StoredConfigFile::Missing => match read_stored_config(&backup_path)? {
             StoredConfigFile::Missing => Ok(StoredDesktopConfig::default()),
@@ -2476,14 +2514,18 @@ fn load_config(path: &Path, activity: &ActivityLog) -> DesktopResult<StoredDeskt
                 recover_config_from_backup(path, &bytes, activity)?;
                 Ok(config)
             }
-            StoredConfigFile::Corrupt => Err(desktop_state_corrupt()),
+            StoredConfigFile::Corrupt | StoredConfigFile::Unsupported => {
+                Err(desktop_state_corrupt())
+            }
         },
         StoredConfigFile::Corrupt => match read_stored_config(&backup_path)? {
             StoredConfigFile::Valid { config, bytes } => {
                 recover_config_from_backup(path, &bytes, activity)?;
                 Ok(config)
             }
-            StoredConfigFile::Missing | StoredConfigFile::Corrupt => Err(desktop_state_corrupt()),
+            StoredConfigFile::Missing
+            | StoredConfigFile::Corrupt
+            | StoredConfigFile::Unsupported => Err(desktop_state_corrupt()),
         },
     }
 }
@@ -2527,7 +2569,8 @@ fn read_stored_config(path: &Path) -> DesktopResult<StoredConfigFile> {
             .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
     })?;
     match serde_json::from_slice::<StoredDesktopConfig>(&bytes) {
-        Ok(config) => Ok(StoredConfigFile::Valid { config, bytes }),
+        Ok(config) if config.schema_version == 1 => Ok(StoredConfigFile::Valid { config, bytes }),
+        Ok(_) => Ok(StoredConfigFile::Unsupported),
         Err(_) => Ok(StoredConfigFile::Corrupt),
     }
 }
@@ -3237,6 +3280,7 @@ mod tests {
             preferred_connection: None,
             tunnel_proxy: TunnelProxyConfig::default(),
             runtime: None,
+            ..StoredDesktopConfig::default()
         }
     }
 
@@ -3677,6 +3721,7 @@ mod tests {
                 project_id: Some("repo".to_string()),
                 runtime_project_id: Some("agent:desktop:repo".to_string()),
             }),
+            ..StoredDesktopConfig::default()
         };
         assert_eq!(
             project_snapshot(&config).and_then(|project| project.runtime_project_id),

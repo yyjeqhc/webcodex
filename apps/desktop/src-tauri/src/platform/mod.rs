@@ -1,3 +1,4 @@
+pub mod opener;
 pub mod permissions;
 #[cfg(target_os = "windows")]
 mod windows;

@@ -297,11 +297,13 @@ def validate_public_manifest(manifest: dict, version: str) -> dict[str, dict[str
     return result
 
 
-def parse_sha256sums(text: str, version: str) -> dict[str, str]:
+def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False) -> dict[str, str]:
     expected_names = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     expected_names.update(
         canonical_desktop_name(version, platform) for platform in desktop_platforms_for_version(version)
     )
+    if runtime_manifest:
+        expected_names.add("webcodex-release-manifest.json")
     result: dict[str, str] = {}
     for raw_line in text.splitlines():
         if not raw_line:
@@ -430,6 +432,8 @@ def validate_github_assets(release: dict, version: str) -> dict[str, dict]:
             raise VerificationError(f"GitHub Release contains duplicate asset: {name}")
         result[name] = asset
     names = set(result)
+    if "webcodex-release-manifest.json" in names:
+        required.add("webcodex-release-manifest.json")
     post_publication = names & server_assets
     expected = required | server_assets if post_publication else required
     if names != expected:
@@ -745,7 +749,21 @@ def verify_public_release(version: str, timeout: float) -> None:
             sums_text = sums_bytes.decode("ascii")
         except UnicodeDecodeError as exc:
             raise VerificationError("SHA256SUMS is not ASCII") from exc
-        sums = parse_sha256sums(sums_text, version)
+        runtime_asset = assets.get("webcodex-release-manifest.json")
+        sums = parse_sha256sums(sums_text, version, runtime_manifest=runtime_asset is not None)
+        if runtime_asset is not None:
+            try:
+                from .desktop_runtime_manifest import validate, ManifestError
+            except ImportError:
+                from desktop_runtime_manifest import validate, ManifestError
+            runtime_bytes = fetch_bytes(runtime_asset["browser_download_url"], MAX_JSON_BYTES, timeout)
+            digest = hashlib.sha256(runtime_bytes).hexdigest()
+            if sums.get("webcodex-release-manifest.json") != digest or (_asset_digest(runtime_asset) is not None and _asset_digest(runtime_asset) != digest):
+                raise VerificationError("Runtime release manifest digest mismatch")
+            try:
+                validate(json.loads(runtime_bytes), version)
+            except (ValueError, UnicodeError, ManifestError) as exc:
+                raise VerificationError("Runtime release manifest contract is invalid") from exc
 
         for platform in desktop_platforms_for_version(version):
             desktop_name = canonical_desktop_name(version, platform)

@@ -882,6 +882,7 @@ jobs:
               --version "$VERSION" \
               --artifact-dir candidate-input \
               --output-dir release-bundle
+            python3 scripts/desktop_runtime_manifest.py               --version "$VERSION"               --binary-archive "candidate-input/$ARCHIVE_STEM-linux-x64.tar.gz"               --output-dir release-bundle
           else
             {
               for platform in "${platforms[@]}"; do
@@ -931,6 +932,12 @@ jobs:
               "artifacts": artifacts,
               "desktop_artifacts": desktop_artifacts,
           }
+          runtime_manifest = Path("release-bundle/webcodex-release-manifest.json")
+          if os.environ["BUILD_KIND"] == "release":
+              payload["runtime_manifest"] = {
+                  "filename": runtime_manifest.name,
+                  "sha256": hashlib.sha256(runtime_manifest.read_bytes()).hexdigest(),
+              }
           Path("release-bundle/release-build.json").write_text(
               json.dumps(payload, indent=2) + "\n", encoding="utf-8"
           )

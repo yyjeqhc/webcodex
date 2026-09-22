@@ -10,10 +10,17 @@ export function WorkspaceDialog({ title, onClose, children, busy = false }: { ti
     if (focusTimer.current !== null) window.clearTimeout(focusTimer.current);
     return () => {
       const element = trigger.current;
-      focusTimer.current = window.setTimeout(() => { if (element?.isConnected) element.focus(); }, 0);
+      focusTimer.current = window.setTimeout(() => {
+        // A replacement dialog owns focus now. Do not race Mantine's next focus
+        // trap by restoring the old trigger behind it (for example Window →
+        // Session details or cancel → reopen Runtime confirmation).
+        const activeModal = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'))
+          .some(dialog => getComputedStyle(dialog).display !== "none" && getComputedStyle(dialog).visibility !== "hidden");
+        if (!activeModal && element?.isConnected) element.focus();
+      }, 0);
     };
   }, []);
-  return <Modal opened onClose={() => { if (!busy) onClose(); }} title={title} centered size={800}
+  return <Modal opened onClose={() => { if (!busy) onClose(); }} title={title} centered size={800} returnFocus={false}
     closeOnEscape={!busy} closeOnClickOutside={!busy} withCloseButton={!busy}
     closeButtonProps={{ "aria-label": p("close") }}
     classNames={{ content: "workspace-dialog", header: "workspace-dialog-header", body: "workspace-dialog-body" }}

@@ -383,5 +383,9 @@
   "permissions.error": "Demande indisponible. Vérifiez les réglages de confidentialité.",
   "permissions.later": "Continuer · disponible dans Réglages",
   "operation.runnerSettingsUpdate": "Enregistrement des réglages Runner",
-  "operation.runnerRestart": "Redémarrage du Runner géré"
+  "operation.runnerRestart": "Redémarrage du Runner géré",
+  "operation.runtimeProbe": "Inspecting Runtime candidate",
+  "operation.runtimeSwitch": "Switching owned Runtime",
+  "operation.traceUpdate": "Updating request tracing",
+  "operation.configurationRestore": "Restoring previous configuration"
 }

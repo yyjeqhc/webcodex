@@ -354,18 +354,18 @@ export function AdminApp() {
           </div>)}</div>
         </Section>
         <Section id="devices-section" eyebrow="Connected fleet" title="Agents" error={sectionError("devices")}>
-          <DataTable label="Devices and Agents" empty="No devices observed." headings={["Name", "Client", "Status", "Transport", "Host", "Last seen", "Capabilities", "Projects", "Jobs", "Compatibility"]}
+          <DataTable label="Devices and Agents" empty="No devices observed." headings={["Name", "Client", "Status", "Transport", "Host", "Last seen", "Capabilities", "Projects", "Jobs", "Protocol", "Build alignment"]}
             rows={dashboard.devices.map((device) => [display(device.display_name), <code>{display(device.client_id)}</code>, <Status value={device.status} />,
               display(device.transport), display(device.hostname), <code>{display(device.last_seen)}</code>, display(capabilityLabels(device.capabilities).join(", ")),
-              display(device.project_count), display(device.active_jobs), <Status value={device.compatibility} />])} />
+              display(device.project_count), display(device.active_jobs), <Status value={device.protocol_compatibility || device.compatibility} />, <span title="Build identity is diagnostic, not functional compatibility">{display(device.build_alignment)}</span>])} />
         </Section>
         <Section id="projects-section" eyebrow="Runtime registry" title="Projects" error={sectionError("projects")}
           actions={<div className="section-actions"><Button variant="default" onClick={(event) => openCreate("register", event.currentTarget)}>Register</Button>
             <Button className="admin-primary" leftSection={<Plus size={15} />} onClick={(event) => openCreate("create", event.currentTarget)}>Create project</Button></div>}>
-          <DataTable label="Projects" empty="No projects registered." headings={["Runtime project", "Name", "Client", "Path", "Lifecycle", "Jobs", "Git", "Patch", "Shell profile", "Compatibility", "Console", "Actions"]}
+          <DataTable label="Projects" empty="No projects registered." headings={["Runtime project", "Name", "Client", "Path", "Lifecycle", "Jobs", "Git", "Patch", "Shell profile", "Protocol", "Build alignment", "Console", "Actions"]}
             rows={dashboard.projects.map((project) => [<code>{display(project.id)}</code>, display(project.name), display(project.client_id), <code title={String(project.path || "")}>{display(project.path)}</code>,
               <Status value={project.lifecycle_status || project.readiness} />, display(project.active_jobs), <Status value={project.git_available} />,
-              <Status value={project.allow_patch} />, <Status value={project.shell_profile_status} />, <Status value={project.compatibility} />,
+              <Status value={project.allow_patch} />, <Status value={project.shell_profile_status} />, <Status value={project.protocol_compatibility || project.compatibility} />, <span title="Build identity is diagnostic, not functional compatibility">{display(project.build_alignment)}</span>,
               display(project.console_hint), <ProjectActionMenu project={project} onAction={openAction} />])} />
         </Section>
         <div className="details-grid">

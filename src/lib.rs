@@ -125,6 +125,9 @@ where
             stdout: "Usage: webcodex-server [OPTIONS]\n\nRun the WebCodex server runtime.\n\nOptions:\n      --stop-on-stdin-eof  Stop when the invoking parent closes stdin\n  -h, --help               Print help and exit\n  -V, --version            Print version and exit\n".to_string(),
             stderr: String::new(),
         },
+        [arg] if arg == "--build-info-json" => ServerBinaryAction::Exit {
+            code: 0, stdout: build_info::build_info_json("webcodex-server"), stderr: String::new(),
+        },
         [arg] if matches!(arg.as_str(), "--version" | "-V") => ServerBinaryAction::Exit {
             code: 0,
             stdout: build_info::version_output("webcodex-server"),

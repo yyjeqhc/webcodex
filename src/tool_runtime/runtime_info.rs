@@ -6,6 +6,9 @@ use crate::auth::AuthContext;
 use crate::runner_protocol::{RunnerView, ShellJobInfo};
 use serde_json::{json, Value};
 use webcodex_core::coding_agent::safe_provider_inventory;
+use webcodex_core::desktop_runtime_contract::{
+    build_alignment, runner_protocol_compatibility, ProtocolCompatibility, DESKTOP_RUNTIME_CONTRACT,
+};
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
@@ -448,6 +451,10 @@ impl ToolRuntime {
         );
         output.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
         output.insert(
+            "desktop_runtime_contract".to_string(),
+            json!(DESKTOP_RUNTIME_CONTRACT),
+        );
+        output.insert(
             "build".to_string(),
             json!(crate::build_info::runtime_build_info()),
         );
@@ -465,6 +472,14 @@ impl ToolRuntime {
         // Runtime Console, admin HTTP, and CLI ops consume this established key.
         output.insert("agents".to_string(), runners);
         output.insert("connection_layers".to_string(), connection_layers);
+        output.insert(
+            "protocol_compatibility".to_string(),
+            version_compatibility["protocol_compatibility"].clone(),
+        );
+        output.insert(
+            "build_alignment".to_string(),
+            version_compatibility["build_alignment"].clone(),
+        );
         output.insert("version_compatibility".to_string(), version_compatibility);
         output.insert("jobs".to_string(), jobs);
         output.insert("tools".to_string(), tools);
@@ -665,11 +680,16 @@ impl ToolRuntime {
             "active_jobs": runner_active,
             "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
             "compatibility_status": target_runner.get("status").cloned().unwrap_or(Value::Null),
+            "protocol_compatibility": target_runner.get("protocol_compatibility").cloned().unwrap_or(Value::Null),
+            "build_alignment": target_runner.get("build_alignment").cloned().unwrap_or(Value::Null),
+            "agent_protocol_generation": client.runner_protocol_generation.get(),
+            "capabilities": client.capabilities,
             "source_alignment": source_alignment,
         });
         let server = json!({
             "version": env!("CARGO_PKG_VERSION"),
             "build": server_build,
+            "desktop_runtime_contract": DESKTOP_RUNTIME_CONTRACT,
         });
         let fleet_summary = json!({
             "visible_runner_count": visible_clients.len(),
@@ -692,6 +712,10 @@ impl ToolRuntime {
             self.effective_config_status(),
         );
         output.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
+        output.insert(
+            "desktop_runtime_contract".to_string(),
+            json!(DESKTOP_RUNTIME_CONTRACT),
+        );
         output.insert("build".to_string(), json!(server_build));
         output.insert("server_time".to_string(), json!(now));
         output.insert("pid".to_string(), json!(std::process::id()));
@@ -708,6 +732,14 @@ impl ToolRuntime {
         output.insert("fleet_summary".to_string(), fleet_summary);
         output.insert("projects".to_string(), projects);
         output.insert("agents".to_string(), runners);
+        output.insert(
+            "protocol_compatibility".to_string(),
+            target_compatibility["protocol_compatibility"].clone(),
+        );
+        output.insert(
+            "build_alignment".to_string(),
+            target_compatibility["build_alignment"].clone(),
+        );
         output.insert("version_compatibility".to_string(), target_compatibility);
         output.insert("jobs".to_string(), jobs);
         output.insert("tools".to_string(), tools);
@@ -723,6 +755,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
     if status.get("focus").is_some() {
         return json!({
             "compact": true,
+            "desktop_runtime_contract": status.get("desktop_runtime_contract").cloned().unwrap_or(Value::Null),
+            "protocol_compatibility": status.get("protocol_compatibility").cloned().unwrap_or_else(|| json!("unknown")),
+            "build_alignment": status.get("build_alignment").cloned().unwrap_or_else(|| json!("unknown")),
             "service": status.get("service").cloned().unwrap_or_else(|| json!("webcodex")),
             "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
             "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
@@ -749,6 +784,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
     }
     let mut compact = json!({
         "compact": true,
+        "desktop_runtime_contract": status.get("desktop_runtime_contract").cloned().unwrap_or(Value::Null),
+        "protocol_compatibility": status.get("protocol_compatibility").cloned().unwrap_or_else(|| json!("unknown")),
+        "build_alignment": status.get("build_alignment").cloned().unwrap_or_else(|| json!("unknown")),
         "service": status.get("service").cloned().unwrap_or_else(|| json!("webcodex")),
         "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
         "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
@@ -849,6 +887,8 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
                 "build_target": compat.and_then(|value| value.get("build_target")).cloned().unwrap_or(Value::Null),
                 "build_architecture": compat.and_then(|value| value.get("build_architecture")).cloned().unwrap_or(Value::Null),
                 "version_matches_server": compat.and_then(|value| value.get("version_matches_server")).cloned().unwrap_or(Value::Null),
+                "protocol_compatibility": compat.and_then(|value| value.get("protocol_compatibility")).cloned().unwrap_or_else(|| json!("unknown")),
+                "build_alignment": compat.and_then(|value| value.get("build_alignment")).cloned().unwrap_or_else(|| json!("unknown")),
                 "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
             });
             if status.get("focus").is_none() {
@@ -1206,12 +1246,12 @@ fn version_compatibility_against(
                 Some(false) if git_commit_matches_server == Some(false) => (
                     "different",
                     Some("runner_git_commit_differs_from_server"),
-                    Some("redeploy the older side when exact dogfood source alignment is required"),
+                    Some("diagnostic only: normal compatible builds may differ in source revision"),
                 ),
                 Some(false) => (
                     "different",
                     Some("dirty_build_prevents_exact_source_alignment"),
-                    Some("rebuild clean artifacts before relying on exact source alignment"),
+                    Some("diagnostic only: modified builds remain the operator responsibility"),
                 ),
                 None => (
                     "unknown",
@@ -1225,18 +1265,19 @@ fn version_compatibility_against(
                 _ => {}
             }
 
-            let (status, reason_code, action) = if version_matches_server == Some(false) {
-                (
-                    "version_mismatch",
-                    Some("runner_version_differs_from_server"),
-                    Some("align server and runner package versions (redeploy the older side)"),
-                )
-            } else {
-                ("compatible", None, None)
+            let protocol = runner_protocol_compatibility(client.runner_protocol_generation.get());
+            let (status, reason_code, action) = match protocol {
+                ProtocolCompatibility::Compatible => ("compatible", None, None),
+                ProtocolCompatibility::Incompatible => ("incompatible", Some("runner_protocol_generation_unsupported"), Some("use a Runner with a supported protocol generation")),
+                ProtocolCompatibility::Unknown => ("unknown", Some("runner_protocol_generation_unavailable"), Some("reconnect with an explicit supported protocol generation")),
             };
-            if status == "version_mismatch" {
-                overall = "version_mismatch";
+            if status == "incompatible" || (status == "unknown" && overall == "compatible") {
+                overall = status;
             }
+            let alignment = build_alignment(
+                build_version.as_deref(), build_git_commit.as_deref(), build_git_dirty,
+                Some(server_version), server_git_commit, server_git_dirty,
+            );
             json!({
                 "client_id": client.client_id,
                 "agent_protocol_generation": client.runner_protocol_generation.get(),
@@ -1247,6 +1288,8 @@ fn version_compatibility_against(
                 "build_target": build_target,
                 "build_architecture": build_architecture,
                 "version_matches_server": version_matches_server,
+                "protocol_compatibility": protocol,
+                "build_alignment": alignment,
                 "status": status,
                 "reason_code": reason_code,
                 "action": action,
@@ -1260,14 +1303,34 @@ fn version_compatibility_against(
             })
         })
         .collect();
+    let build_alignment = if runners.iter().any(|r| r["build_alignment"] == "dirty") {
+        "dirty"
+    } else if runners
+        .iter()
+        .any(|r| r["build_alignment"] == "different_version")
+    {
+        "different_version"
+    } else if runners
+        .iter()
+        .any(|r| r["build_alignment"] == "different_commit")
+    {
+        "different_commit"
+    } else if runners.is_empty() || runners.iter().any(|r| r["build_alignment"] == "unknown") {
+        "unknown"
+    } else {
+        "exact"
+    };
     json!({
         "status": overall,
+        "protocol_compatibility": if overall == "no_runners" { "unknown" } else { overall },
+        "build_alignment": build_alignment,
         "source_alignment": {
             "status": source_overall,
         },
         "server": {
             "version": server_version,
             "build": server_build,
+            "desktop_runtime_contract": DESKTOP_RUNTIME_CONTRACT,
         },
         "runners": runners,
     })

@@ -383,5 +383,9 @@
   "plugins.cwd": "Working directory (optional)",
   "plugins.invalidArgs": "Enter a JSON array containing only strings.",
   "plugins.save": "Save registration",
-  "tunnelConfig.applyFailed": "Configuration saved, but the tunnel needs recovery. Retry the connection; Server and Runner were not restarted."
+  "tunnelConfig.applyFailed": "Configuration saved, but the tunnel needs recovery. Retry the connection; Server and Runner were not restarted.",
+  "operation.runtimeProbe": "Inspecting Runtime candidate",
+  "operation.runtimeSwitch": "Switching owned Runtime",
+  "operation.traceUpdate": "Updating request tracing",
+  "operation.configurationRestore": "Restoring previous configuration"
 }

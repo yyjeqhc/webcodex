@@ -401,6 +401,10 @@ struct RuntimeConsoleWindowSession {
 
 #[derive(Debug, Clone, Serialize)]
 struct RuntimeConsoleWindowActivity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_observed_at_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_handed_at_ms: Option<i64>,
     started_at_ms: i64,
     ended_at_ms: i64,
     duration_ms: i64,
@@ -617,6 +621,8 @@ struct RuntimeConsoleRunnerSummary {
     build_git_commit: Option<String>,
     build_git_dirty: Option<bool>,
     source_alignment: Option<String>,
+    protocol_compatibility: String,
+    build_alignment: Option<String>,
     version_matches_server: Option<bool>,
     active_jobs: usize,
     job_concurrency_limit: Option<u64>,
@@ -629,6 +635,10 @@ struct RuntimeConsoleRunnerSummary {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleRunner {
+    server: Value,
+    tool_request_trace_mode: Option<String>,
+    agent_protocol_generation: Option<u64>,
+    capabilities: Value,
     client_id: String,
     connected: bool,
     coding_agent_providers: Vec<webcodex_core::coding_agent::CodingAgentProviderSummary>,
@@ -637,6 +647,8 @@ struct RuntimeConsoleRunner {
     build_git_commit: Option<String>,
     build_git_dirty: Option<bool>,
     source_alignment: Option<String>,
+    protocol_compatibility: String,
+    build_alignment: Option<String>,
     active_jobs: usize,
     job_concurrency_limit: Option<u64>,
     jobs_running: usize,
@@ -1257,6 +1269,13 @@ fn runner_fleet_rows(
                 .unwrap_or_else(empty_console_aggregate);
             sessions.sessions_truncated |= scan.project_scan_truncated;
             Some(RuntimeConsoleRunnerSummary {
+                protocol_compatibility: status
+                    .and_then(|value| value.get("protocol_compatibility"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                build_alignment: status
+                    .and_then(|value| safe_string(value.get("build_alignment"), MAX_STATUS_CHARS)),
                 client_id: client_id.clone(),
                 connected: safe_bool(runner_value.get("connected")),
                 status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
@@ -1899,6 +1918,8 @@ async fn project_visible_window_activity(
         .as_deref()
         .map(webcodex_tool_contracts::runtime_tool_activity_semantics);
     RuntimeConsoleWindowActivity {
+        request_observed_at_ms: event.request_observed_at_ms,
+        response_handed_at_ms: event.response_handed_at_ms,
         started_at_ms: event.started_at_ms,
         ended_at_ms: event.ended_at_ms,
         duration_ms: event.duration_ms,
@@ -2857,6 +2878,24 @@ async fn runner_for_auth(
         sessions: recent_sessions,
     };
     Ok(RuntimeConsoleRunner {
+        server: status.get("server").cloned().unwrap_or(Value::Null),
+        tool_request_trace_mode: safe_string(
+            status.pointer("/effective_config/tool_request_trace_mode"),
+            16,
+        ),
+        agent_protocol_generation: runner_value
+            .get("agent_protocol_generation")
+            .and_then(Value::as_u64),
+        capabilities: runner_value
+            .get("capabilities")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        protocol_compatibility: focus
+            .get("protocol_compatibility")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        build_alignment: safe_string(focus.get("build_alignment"), MAX_STATUS_CHARS),
         client_id: client_id.to_string(),
         coding_agent_providers: runner_value
             .get("coding_agent_providers")

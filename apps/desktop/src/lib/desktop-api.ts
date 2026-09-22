@@ -1,3 +1,4 @@
+import type { MachineBuildInfo, RuntimeSettings, RuntimeSource, RuntimeSwitchRequest, RuntimeSwitchResult, DiagnosticSnapshot, DiagnosticResource, TraceUpdate, TraceSettings, UpdateStatus } from "../models/runtime-shell";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActivityEntry,
@@ -15,6 +16,21 @@ import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } fr
 import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult, RunnerCapabilityAuthorizationSnapshot } from "../models/runner-capabilities";
 
 export const desktopApi = {
+  desktopBuildInfo: () => invoke<MachineBuildInfo>("get_desktop_build_info"),
+  runtimeSettings: () => invoke<RuntimeSettings>("get_runtime_settings"),
+  probeRuntime: (source: RuntimeSource) => invoke<RuntimeSettings>("probe_runtime", { source }),
+  recheckRuntime: () => invoke<RuntimeSettings>("recheck_runtime"),
+  switchRuntime: (request: RuntimeSwitchRequest) => invoke<RuntimeSwitchResult>("switch_runtime", { request }),
+  diagnostics: () => invoke<DiagnosticSnapshot>("get_diagnostics"),
+  setToolRequestTracing: (request: TraceUpdate) => invoke<TraceSettings>("set_tool_request_tracing", { request }),
+  openDiagnosticResource: (kind: DiagnosticResource) => invoke<void>("open_diagnostic_resource", { kind }),
+  copyRuntimeConsoleCredential: (expectedFence: string) => invoke<void>("copy_runtime_console_credential", { expectedFence }),
+  copyDiagnosticReport: () => invoke<void>("copy_diagnostic_report"),
+  exportSupportBundle: (path: string) => invoke<void>("export_support_bundle", { path }),
+  restorePreviousConfiguration: (expectedPrimarySha256: string) => invoke<DesktopState>("restore_previous_configuration", { expectedPrimarySha256 }),
+  checkForUpdates: (manual = false) => invoke<UpdateStatus>("check_for_updates", { manual }),
+  remindUpdateLater: () => invoke<UpdateStatus>("remind_update_later"),
+  openLatestRelease: () => invoke<void>("open_latest_release"),
   saveCodingAgent: (request: CodingAgentRequest) => invoke<DesktopState>("save_coding_agent", { request }),
   removeCodingAgent: (target: SettingsTarget, providerId: string, expectedRevision: number) =>
     invoke<DesktopState>("remove_coding_agent", { request: { target, provider_id: providerId, expected_revision: expectedRevision } }),

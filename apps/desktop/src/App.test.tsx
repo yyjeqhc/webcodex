@@ -315,9 +315,9 @@ beforeEach(() => {
     ]);
     renderApp(); await screen.findByRole("heading", { name: /^(WebCodex|repo)/, level: 1 });
     fireEvent.click(screen.getByRole("button", { name: "活动" }));
-    expect(screen.getByRole("tab", { name: "窗口" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "ChatGPT 调用" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("已切换到 sample-project")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "系统" }));
+    fireEvent.click(screen.getByRole("tab", { name: "系统事件" }));
     await screen.findByText("已切换到 sample-project");
     expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(screen.getAllByRole("article")[0]).toHaveTextContent("已切换到 sample-project");
@@ -412,7 +412,7 @@ beforeEach(() => {
     const language = screen.getByRole("button", { name: "界面语言" });
     language.focus();
     fireEvent.keyDown(language, { key: "3", metaKey: true });
-    fireEvent.click(screen.getByRole("tab", { name: "系统" }));
+    fireEvent.click(screen.getByRole("tab", { name: "系统事件" }));
     const search = screen.getByRole("searchbox");
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(1));
     fireEvent.click(screen.getByRole("checkbox", { name: "显示进程详情" }));

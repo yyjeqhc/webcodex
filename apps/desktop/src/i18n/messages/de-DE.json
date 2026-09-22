@@ -383,5 +383,9 @@
   "permissions.error": "Berechtigungsanfrage nicht verfügbar. System-Datenschutz prüfen.",
   "permissions.later": "Weiter · unter Einstellungen verfügbar",
   "operation.runnerSettingsUpdate": "Runner-Einstellungen speichern",
-  "operation.runnerRestart": "Verwalteten Runner neu starten"
+  "operation.runnerRestart": "Verwalteten Runner neu starten",
+  "operation.runtimeProbe": "Inspecting Runtime candidate",
+  "operation.runtimeSwitch": "Switching owned Runtime",
+  "operation.traceUpdate": "Updating request tracing",
+  "operation.configurationRestore": "Restoring previous configuration"
 }

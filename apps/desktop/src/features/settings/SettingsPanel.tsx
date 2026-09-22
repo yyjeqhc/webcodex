@@ -9,19 +9,34 @@ import { ComputerPermissions } from "./ComputerPermissions";
 import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 import { APPEARANCES, useAppearance } from "../../hooks/useAppearance";
 import { AccentPicker } from "../../components/AccentPicker";
+import { RuntimePanel } from "./RuntimePanel";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { AboutPanel } from "./AboutPanel";
+import { useShellText } from "../../i18n/runtime-shell";
+import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
 
 export function SettingsPanel({
   state,
   onState,
   onChangeSetup,
   onStopRuntime,
+  onActivity,
+  initialSection,
+  updates,
 }: {
   state: DesktopState;
   onState: (state: DesktopState) => void;
   onChangeSetup?: () => void;
   onStopRuntime?: () => void;
+  onActivity?: () => void;
+  initialSection?: "diagnostics" | "runtime";
+  updates?: RuntimeUpdates;
 }) {
   const { locale, setLocale, t } = useLocale();
+  const s = useShellText();
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(initialSection === "diagnostics");
+  const [runtimeOpen, setRuntimeOpen] = useState(initialSection === "runtime");
+  useEffect(() => { if (initialSection === "diagnostics") setDiagnosticsOpen(true); if (initialSection === "runtime") setRuntimeOpen(true); }, [initialSection]);
   const { appearance, setAppearance, accent, setAccent } = useAppearance();
   const p = useProduct();
   const [runnerSettings, setRunnerSettings] = useState<RunnerSettings | null>(null);
@@ -87,6 +102,14 @@ export function SettingsPanel({
         <div className="setting-row"><span>{p("background")}</span><span className="setting-value">{p("keepRunning")}</span></div>
       </section>
       <ComputerPermissions />
+      <details className="settings-section settings-disclosure" open={diagnosticsOpen} onToggle={event => setDiagnosticsOpen(event.currentTarget.open)}>
+        <summary>{s("Troubleshooting")}</summary>
+        {diagnosticsOpen && <DiagnosticsPanel state={state} onState={onState} />}
+      </details>
+      <details className="settings-section settings-disclosure" open={runtimeOpen} onToggle={event => setRuntimeOpen(event.currentTarget.open)}>
+        <summary>{s("Runtime")}</summary>
+        {runtimeOpen && <RuntimePanel state={state} onState={onState} onActivity={onActivity} />}
+      </details>
       <details className="settings-section settings-disclosure"><summary>{p("network")}</summary>
         <div className="field-group"><label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label><select id="desktop-tunnel-proxy-mode" value={proxyMode} onChange={event => setProxyMode(event.target.value as TunnelProxyMode)} disabled={savingProxy || operationBusy} data-webcodex-control="tunnel-proxy-mode"><option value="auto">{t("settings.tunnelProxyAuto")}</option><option value="direct">{t("settings.tunnelProxyDirect")}</option><option value="custom">{t("settings.tunnelProxyCustom")}</option></select></div>
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
@@ -107,10 +130,10 @@ export function SettingsPanel({
           finally { setRestartingRunner(false); }
         }}>{p("restartRunner")}</button>}
         {runnerError && <SettingsError error={runnerError} />}
-        {state.binaries && <dl className="detail-list"><div><dt>{t("settings.version")}</dt><dd>{state.binaries.version}</dd></div><div><dt>{t("settings.sourceRevision")}</dt><dd>{state.binaries.git_commit}</dd></div><div><dt>{t("settings.binaryDirectory")}</dt><dd>{state.binaries.directory}</dd></div><div><dt>{t("settings.binaryResolution")}</dt><dd>{state.binaries.source}</dd></div></dl>}
         {runnerSettings && <dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl>}
         <PowerShellInstallGuidance state={state} onState={onState} />
       </details>
+      <AboutPanel state={state} updates={updates} />
     </section>
   );
 }

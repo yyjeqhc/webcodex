@@ -208,3 +208,9 @@
   :root { --ui-motion-fast: 0ms; --ui-motion-base: 0ms; --ui-motion-slow: 0ms; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Portaled palettes escape sidebar scrolling without hiding or cropping content. */
+.accent-picker-panel.accent-picker-portal { position: fixed; z-index: 1100; box-sizing: border-box; overflow: auto; color: var(--ui-text-primary); }
+.accent-picker-portal button:focus-visible, .accent-picker-portal input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.accent-picker-portal .accent-swatches { min-width: 0; }
+.accent-picker-portal .accent-swatch { flex: 0 1 34px; min-width: 28px; }

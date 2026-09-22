@@ -288,3 +288,7 @@ ChatGPT 网页版 → Tunnel → Server → Runner → Project 链路已经打�
 **出现 `project_not_loaded` / 项目尚未就绪**：点击“重新激活项目”。Desktop 会重试同一个项目并只管理自己拥有的 Runner；普通用户不需要理解或手工修改内部 project registry。
 
 **我关了窗口再打开，为什么新环境变量还是识别不到**：关闭窗口默认只是隐藏到菜单栏/托盘，进程并未退出。使用菜单栏/托盘中的**退出 WebCodex**，再重新启动新进程。
+
+## 保留 Shell，单独更新 Runtime
+
+在“设置 → Runtime”检查官方解压目录或原生源码构建，然后明确激活，无需修改应用包。详见 [Runtime 兼容与诊断](DESKTOP_RUNTIME_COMPATIBILITY.zh-CN.md)。所选 Custom 文件缺失时不会悄悄改用内置文件。

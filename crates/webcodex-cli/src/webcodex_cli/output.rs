@@ -117,7 +117,7 @@ pub(crate) fn server_status_revision_check(comparison: &RevisionComparison) -> S
             "ok: local CLI and server runtime are built from the same commit".to_string()
         }
         RevisionComparison::Mismatch { local, remote } => format!(
-            "warning: local CLI commit {} differs from server runtime commit {}; deploy/update one side before debugging old behavior",
+            "warning: local CLI commit {} differs from server runtime commit {}; build identity is diagnostic; compatibility depends on protocol generation and capabilities",
             local, remote
         ),
         RevisionComparison::Unknown { reason } => format!(

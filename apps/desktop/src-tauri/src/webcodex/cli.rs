@@ -38,6 +38,7 @@ impl CliCommandContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedBinarySource {
     Bundled,
+    Custom,
     Environment,
     SourceDogfoodTarget,
 }
@@ -46,6 +47,7 @@ impl ResolvedBinarySource {
     fn label(self) -> &'static str {
         match self {
             Self::Bundled => "Bundled",
+            Self::Custom => "Custom",
             Self::Environment => "WEBCODEX_DESKTOP_BIN_DIR",
             Self::SourceDogfoodTarget => "source target/dogfood",
         }
@@ -61,6 +63,8 @@ pub struct ResolvedBinaries {
     pub version: String,
     pub git_commit: String,
     pub source: ResolvedBinarySource,
+    pub builds: Vec<webcodex_core::desktop_runtime_contract::MachineBuildInfo>,
+    pub fingerprint: String,
 }
 
 impl ResolvedBinaries {
@@ -81,118 +85,35 @@ impl ResolvedBinaries {
         cancellation: &CancellationContext,
         deadline: Deadline,
     ) -> DesktopResult<Self> {
-        cancellation.check()?;
-        if deadline.is_elapsed() {
-            return Err(timeout_error());
-        }
-        let (directory, source) =
-            if let Some(directory) = bundled_runtime_dir.filter(|path| path.is_dir()) {
-                (directory.to_path_buf(), ResolvedBinarySource::Bundled)
-            } else if !cfg!(debug_assertions) {
-                let expected = bundled_runtime_dir
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "<Desktop resource directory>/webcodex-runtime".to_string());
-                return Err(DesktopError::new(
-                    "bundled_runtime_missing",
-                    format!("The installed WebCodex runtime is missing: {expected}"),
-                    "Reinstall WebCodex Desktop from the matching release installer.",
-                ));
-            } else if let Some(value) = std::env::var_os("WEBCODEX_DESKTOP_BIN_DIR") {
-                let directory = PathBuf::from(value);
-                if directory.as_os_str().is_empty() {
-                    return Err(DesktopError::new(
-                        "binary_directory_invalid",
-                        "WEBCODEX_DESKTOP_BIN_DIR is empty",
-                        "Set it to the directory containing the source-matched WebCodex binaries.",
-                    ));
-                }
-                (directory, ResolvedBinarySource::Environment)
-            } else {
-                let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                let repo = manifest
-                    .parent()
-                    .and_then(Path::parent)
-                    .and_then(Path::parent)
-                    .ok_or_else(|| {
-                        DesktopError::new(
-                            "binary_directory_invalid",
-                            "Could not derive the WebCodex source root",
-                            "Set WEBCODEX_DESKTOP_BIN_DIR explicitly.",
-                        )
-                    })?;
-                (
-                    repo.join("target").join("dogfood"),
-                    ResolvedBinarySource::SourceDogfoodTarget,
-                )
-            };
-        let missing_directory_action = match source {
-            ResolvedBinarySource::Bundled => {
-                "Reinstall WebCodex Desktop from the matching release installer."
-            }
-            ResolvedBinarySource::Environment | ResolvedBinarySource::SourceDogfoodTarget => {
-                "Build `cargo build --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner` from this source baseline or set WEBCODEX_DESKTOP_BIN_DIR."
-            }
-        };
-        let directory = directory.canonicalize().map_err(|_| {
-            DesktopError::new(
-                "binary_directory_missing",
-                format!(
-                    "WebCodex binary directory does not exist: {}",
-                    directory.display()
-                ),
-                missing_directory_action,
-            )
-        })?;
-        let webcodex = directory.join(executable_name("webcodex"));
-        let server = directory.join(executable_name("webcodex-server"));
-        let runner = directory.join(executable_name("webcodex-runner"));
-        for path in [&webcodex, &server, &runner] {
-            if !path.is_file() {
-                return Err(DesktopError::new(
-                    "binary_missing",
-                    format!("Required WebCodex binary is missing: {}", path.display()),
-                    match source {
-                        ResolvedBinarySource::Bundled => {
-                            "Reinstall WebCodex Desktop from the matching release installer."
-                        }
-                        ResolvedBinarySource::Environment
-                        | ResolvedBinarySource::SourceDogfoodTarget => {
-                            "Build all WebCodex dogfood binaries from the current source baseline."
-                        }
-                    },
-                ));
-            }
-        }
+        Self::resolve_source_until(
+            &crate::runtime_selection::RuntimeSource::Bundled,
+            bundled_runtime_dir,
+            cancellation,
+            deadline,
+        )
+        .await
+    }
 
-        let cli_version = binary_version(&webcodex, cancellation, deadline).await?;
-        let server_version = binary_version(&server, cancellation, deadline).await?;
-        let runner_version = binary_version(&runner, cancellation, deadline).await?;
-        if cli_version.version != server_version.version
-            || cli_version.version != runner_version.version
-            || cli_version.git_commit != server_version.git_commit
-            || cli_version.git_commit != runner_version.git_commit
-        {
-            return Err(DesktopError::new(
-                "binary_version_mismatch",
-                "CLI, Server, and Runner were built from different baselines",
-                "Rebuild all dogfood binaries from one WebCodex checkout.",
-            ));
-        }
-        if cli_version.git_commit == "unknown" {
-            return Err(DesktopError::new(
-                "binary_version_unverifiable",
-                "WebCodex binaries do not carry a source revision",
-                "Rebuild dogfood binaries with normal WebCodex build metadata enabled.",
-            ));
-        }
-        Ok(Self {
-            directory,
-            webcodex,
-            server,
-            runner,
-            version: cli_version.version,
-            git_commit: cli_version.git_commit,
-            source,
+    pub async fn resolve_source_until(
+        source: &crate::runtime_selection::RuntimeSource,
+        bundled_runtime_dir: Option<&Path>,
+        cancellation: &CancellationContext,
+        deadline: Deadline,
+    ) -> DesktopResult<Self> {
+        let (view, resolved) = crate::runtime_selection::probe(
+            source.clone(),
+            bundled_runtime_dir,
+            0,
+            cancellation,
+            deadline,
+        )
+        .await?;
+        resolved.ok_or_else(|| {
+            crate::runtime_selection::error(
+                view.error_code
+                    .as_deref()
+                    .unwrap_or("build_info_unverifiable"),
+            )
         })
     }
 
@@ -206,42 +127,14 @@ impl ResolvedBinaries {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct VersionLine {
     version: String,
     git_commit: String,
 }
 
-async fn binary_version(
-    path: &Path,
-    cancellation: &CancellationContext,
-    deadline: Deadline,
-) -> DesktopResult<VersionLine> {
-    let output = run_bounded_until(
-        path,
-        &["--version".to_string()],
-        None,
-        false,
-        cancellation,
-        deadline,
-    )
-    .await?;
-    if output.exit_code != Some(0) {
-        return Err(DesktopError::new(
-            "binary_probe_failed",
-            format!("Could not read build identity from {}", path.display()),
-            "Rebuild the WebCodex dogfood binaries.",
-        ));
-    }
-    parse_version_line(&output.stdout).ok_or_else(|| {
-        DesktopError::new(
-            "binary_probe_failed",
-            format!("{} returned an invalid version identity", path.display()),
-            "Rebuild the WebCodex dogfood binaries from a compatible source baseline.",
-        )
-    })
-}
-
+#[cfg(test)]
 fn parse_version_line(output: &[u8]) -> Option<VersionLine> {
     let text = std::str::from_utf8(output).ok()?.trim();
     let mut fields = text.split_whitespace();
@@ -336,7 +229,7 @@ pub async fn run_project_activation_json<T: DeserializeOwned>(
         DesktopError::new(
             "webcodex_contract_invalid",
             "WebCodex returned invalid project activation output",
-            "Verify that Desktop and WebCodex binaries come from the same source baseline.",
+            "Use Runtime binaries implementing a supported Desktop operation contract.",
         )
     })
 }
@@ -378,7 +271,7 @@ pub async fn run_json_until<T: DeserializeOwned>(
         DesktopError::new(
             "webcodex_contract_invalid",
             "WebCodex returned invalid machine-readable output",
-            "Verify that Desktop and WebCodex binaries come from the same source baseline.",
+            "Use Runtime binaries implementing a supported Desktop operation contract.",
         )
     })
 }
@@ -536,6 +429,22 @@ async fn run_bounded_until(
     }
 
     let mut command = bounded_command(executable, args);
+    if args == ["--build-info-json"] {
+        command.env_clear();
+        for key in [
+            "PATH",
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "LANG",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+    }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin_payload.is_some() {
         command.stdin(Stdio::piped());

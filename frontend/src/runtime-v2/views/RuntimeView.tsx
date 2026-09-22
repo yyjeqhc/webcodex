@@ -158,9 +158,13 @@ export function RuntimeView({
                 <span className="runtime-row-meta">
                   {runner.jobs_running} {t("jobs running")} · {runner.projects_scanned} {t("projects")}
                 </span>
-                <span className={"status-pill " + (runner.source_alignment === "aligned" ? "good" : "warn")}>
-                  {runner.source_alignment === "aligned" ? <Check size={12} /> : <HardDrive size={12} />}
-                  {runner.source_alignment || t("unknown")}
+                <span className={"status-pill " + (runner.protocol_compatibility === "compatible" ? "good" : "warn")} title={t("Protocol compatibility")}>
+                  {runner.protocol_compatibility === "compatible" ? <Check size={12} /> : <HardDrive size={12} />}
+                  {t(runner.protocol_compatibility || "unknown")}
+                </span>
+                <span className="runtime-row-meta" title={t("Build revisions are diagnostic identity, not compatibility gates.")}>
+                  {t("Build alignment")}: {runner.build_alignment || runner.source_alignment || t("unknown")}
+                  {runner.build_git_commit ? ` · ${runner.build_git_commit}` : ""}
                 </span>
               </div>
             ))}

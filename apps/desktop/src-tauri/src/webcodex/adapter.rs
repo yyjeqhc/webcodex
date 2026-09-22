@@ -33,6 +33,7 @@ pub struct RunnerConnectionObservation {
 pub struct WebCodexAdapter {
     binaries: Option<ResolvedBinaries>,
     bundled_runtime_dir: Option<PathBuf>,
+    runtime_source: crate::runtime_selection::RuntimeSource,
 }
 
 impl WebCodexAdapter {
@@ -40,7 +41,26 @@ impl WebCodexAdapter {
         Self {
             binaries: None,
             bundled_runtime_dir,
+            runtime_source: Default::default(),
         }
+    }
+
+    pub(crate) fn set_runtime_source(&mut self, source: crate::runtime_selection::RuntimeSource) {
+        self.runtime_source = source;
+        self.binaries = None;
+    }
+
+    pub(crate) fn activate_binaries(
+        &mut self,
+        source: crate::runtime_selection::RuntimeSource,
+        binaries: ResolvedBinaries,
+    ) {
+        self.runtime_source = source;
+        self.binaries = Some(binaries);
+    }
+
+    pub(crate) fn bundled_runtime_dir(&self) -> Option<&Path> {
+        self.bundled_runtime_dir.as_deref()
     }
 
     pub async fn ensure_binaries(
@@ -49,8 +69,13 @@ impl WebCodexAdapter {
     ) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
             self.binaries = Some(
-                ResolvedBinaries::resolve(self.bundled_runtime_dir.as_deref(), cancellation)
-                    .await?,
+                ResolvedBinaries::resolve_source_until(
+                    &self.runtime_source,
+                    self.bundled_runtime_dir.as_deref(),
+                    cancellation,
+                    Deadline::after(std::time::Duration::from_secs(30)),
+                )
+                .await?,
             );
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
@@ -63,7 +88,8 @@ impl WebCodexAdapter {
     ) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
             self.binaries = Some(
-                ResolvedBinaries::resolve_until(
+                ResolvedBinaries::resolve_source_until(
+                    &self.runtime_source,
                     self.bundled_runtime_dir.as_deref(),
                     cancellation,
                     deadline,
@@ -231,16 +257,19 @@ impl WebCodexAdapter {
         if output.probe_url.trim().is_empty() {
             return Err(invalid_contract("server status"));
         }
-        if output
-            .revision_check
-            .as_deref()
-            .is_some_and(|value| value.starts_with("warning:"))
-        {
-            return Err(DesktopError::new(
-                "binary_version_mismatch",
-                "The running Server does not match this Desktop WebCodex CLI build",
-                "Stop the old Server or point Desktop at a matching Server before continuing.",
-            ));
+        // Source mismatch is advisory. A reachable peer must explicitly advertise
+        // a supported management contract; local executable metadata is not a
+        // substitute for the identity of the Server answering this request.
+        if output.http_reachable {
+            let contract = output
+                .desktop_runtime_contract
+                .ok_or_else(|| crate::runtime_selection::error("server_contract_unverifiable"))?;
+            if !contract.overlaps(webcodex_core::desktop_runtime_contract::DESKTOP_RUNTIME_CONTRACT)
+            {
+                return Err(crate::runtime_selection::error(
+                    "server_contract_incompatible",
+                ));
+            }
         }
         Ok(output)
     }
@@ -1042,10 +1071,13 @@ mod tests {
             version: "0.3.9".to_string(),
             git_commit: "0123456789abcdef".to_string(),
             source: super::super::cli::ResolvedBinarySource::Environment,
+            builds: Vec::new(),
+            fingerprint: String::new(),
         };
         let adapter = WebCodexAdapter {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
+            runtime_source: Default::default(),
         };
         let local = adapter
             .quick_share_command(Path::new("repo"), "none", None)
@@ -1098,10 +1130,13 @@ mod tests {
             version: "0.4.1".to_string(),
             git_commit: "0123456789abcdef".to_string(),
             source: super::super::cli::ResolvedBinarySource::Environment,
+            builds: Vec::new(),
+            fingerprint: String::new(),
         };
         let adapter = WebCodexAdapter {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
+            runtime_source: Default::default(),
         };
         let command = adapter
             .local_runner_command(Path::new("runner.toml"))
@@ -1148,10 +1183,13 @@ mod tests {
             version: "0.3.9".to_string(),
             git_commit: "0123456789abcdef".to_string(),
             source: super::super::cli::ResolvedBinarySource::Environment,
+            builds: Vec::new(),
+            fingerprint: String::new(),
         };
         let adapter = WebCodexAdapter {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
+            runtime_source: Default::default(),
         };
         let command = adapter
             .regular_tunnel_command(Path::new("server.env"), Some("http://127.0.0.1:7890"))

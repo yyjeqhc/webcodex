@@ -269,6 +269,10 @@ pub enum DesktopOperationKind {
     TunnelConfigUpdate,
     RunnerSettingsUpdate,
     RunnerRestart,
+    RuntimeProbe,
+    RuntimeSwitch,
+    TraceUpdate,
+    ConfigurationRestore,
 }
 
 impl DesktopOperationKind {
@@ -287,6 +291,10 @@ impl DesktopOperationKind {
             Self::TunnelProxyUpdate => "tunnel_proxy_update",
             Self::RunnerSettingsUpdate => "runner_settings_update",
             Self::RunnerRestart => "runner_restart",
+            Self::RuntimeProbe => "runtime_probe",
+            Self::RuntimeSwitch => "runtime_switch",
+            Self::TraceUpdate => "trace_update",
+            Self::ConfigurationRestore => "configuration_restore",
             Self::TunnelConfigUpdate => "tunnel_config_update",
         }
     }
@@ -384,6 +392,8 @@ pub struct ChatGptActivitySnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_issue: Option<String>,
     pub saved_projects: Vec<ProjectSelection>,
     pub topology: Option<RuntimeTopology>,
     pub readiness: ReadinessSnapshot,
@@ -413,6 +423,7 @@ pub struct DesktopStateSnapshot {
 impl Default for DesktopStateSnapshot {
     fn default() -> Self {
         Self {
+            configuration_issue: None,
             saved_projects: Vec::new(),
             topology: None,
             readiness: ReadinessSnapshot::default(),
@@ -442,8 +453,20 @@ impl Default for DesktopStateSnapshot {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredDesktopConfig {
+    #[serde(default = "desktop_config_schema")]
+    pub schema_version: u16,
+    #[serde(default)]
+    pub runtime_binary_source: crate::runtime_selection::RuntimeSource,
+    #[serde(default)]
+    pub runtime_selection_revision: u64,
+    #[serde(default)]
+    pub update_cache: crate::updates::UpdateCache,
+    #[serde(default)]
+    pub previous_runtime_source: Option<crate::runtime_selection::RuntimeSource>,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub saved_projects: Vec<SavedProject>,
     pub topology: Option<RuntimeTopology>,
@@ -455,6 +478,30 @@ pub struct StoredDesktopConfig {
     pub preferred_connection: Option<RegularConnectionPreference>,
     #[serde(default)]
     pub tunnel_proxy: TunnelProxyConfig,
+}
+
+fn desktop_config_schema() -> u16 {
+    1
+}
+
+impl Default for StoredDesktopConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: desktop_config_schema(),
+            runtime_binary_source: Default::default(),
+            runtime_selection_revision: 0,
+            previous_runtime_source: None,
+            update_cache: Default::default(),
+            extra: Default::default(),
+            saved_projects: Vec::new(),
+            topology: None,
+            project: None,
+            runtime: None,
+            runtime_autostart: None,
+            preferred_connection: None,
+            tunnel_proxy: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -319,5 +319,41 @@ class BundleTests(unittest.TestCase):
             self.assertFalse((root / "escape").exists())
 
 
+
+class RuntimeManifestBundleTests(unittest.TestCase):
+    def add_manifest(self, directory: Path, *, corrupt=False):
+        path = directory / "webcodex-release-manifest.json"
+        value = {"schema_version": 1, "release_version": "0.2.1", "runtime_version": "0.2.1", "desktop_runtime_contract": {"min_generation": 1, "max_generation": 1}}
+        if corrupt: value["desktop_runtime_contract"]["min_generation"] = 0
+        path.write_text(json.dumps(value))
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        metadata_path = directory / "release-build.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata["runtime_manifest"] = {"filename": path.name, "sha256": digest}
+        metadata_path.write_text(json.dumps(metadata))
+        sums = directory / "SHA256SUMS"
+        sums.write_text(sums.read_text() + f"{digest}  {path.name}\n")
+
+    def test_valid_manifest_is_collected_with_strict_digest_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
+            self.add_manifest(root)
+            summary = collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
+            self.assertEqual(summary["runtime_manifest"]["filename"], "webcodex-release-manifest.json")
+
+    def test_invalid_contract_rejected_even_when_checksums_match(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
+            self.add_manifest(root, corrupt=True)
+            with self.assertRaises(collector.CollectionError):
+                collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
+
+    def test_present_but_null_manifest_is_not_legacy_absence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
+            path = root / "release-build.json"; value = json.loads(path.read_text()); value["runtime_manifest"] = None; path.write_text(json.dumps(value))
+            with self.assertRaises(collector.CollectionError):
+                collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
+
 if __name__ == "__main__":
     unittest.main()

@@ -324,6 +324,9 @@ where
             stdout: usage().to_string(),
             stderr: String::new(),
         },
+        "--build-info-json" if args.len() == 1 => CliAction::Exit {
+            code: 0, stdout: build_info::build_info_json("webcodex"), stderr: String::new(),
+        },
         "--version" | "-V" => CliAction::Exit {
             code: 0,
             stdout: build_info::version_output("webcodex"),

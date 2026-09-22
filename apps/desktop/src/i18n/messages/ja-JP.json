@@ -383,5 +383,9 @@
   "permissions.error": "権限を要求できません。システムのプライバシー設定を確認してください。",
   "permissions.later": "続行 · 設定から再表示できます",
   "operation.runnerSettingsUpdate": "Runner 設定の保存",
-  "operation.runnerRestart": "管理中の Runner を再起動"
+  "operation.runnerRestart": "管理中の Runner を再起動",
+  "operation.runtimeProbe": "Inspecting Runtime candidate",
+  "operation.runtimeSwitch": "Switching owned Runtime",
+  "operation.traceUpdate": "Updating request tracing",
+  "operation.configurationRestore": "Restoring previous configuration"
 }

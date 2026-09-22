@@ -383,5 +383,9 @@
   "plugins.cwd": "工作目录（可选）",
   "plugins.invalidArgs": "请输入仅包含字符串的 JSON 数组。",
   "plugins.save": "保存插件注册",
-  "tunnelConfig.applyFailed": "配置已保存，但 Tunnel 尚未恢复。请重试连接；Server 和 Runner 未重启。"
+  "tunnelConfig.applyFailed": "配置已保存，但 Tunnel 尚未恢复。请重试连接；Server 和 Runner 未重启。",
+  "operation.runtimeProbe": "正在检查 Runtime 候选文件",
+  "operation.runtimeSwitch": "正在切换托管 Runtime",
+  "operation.traceUpdate": "正在更新请求追踪设置",
+  "operation.configurationRestore": "正在恢复之前的配置"
 }

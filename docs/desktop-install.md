@@ -303,3 +303,7 @@ If Desktop shows a healthy Service / Runner / Project / Tunnel but ChatGPT still
 **You see `project_not_loaded` / Project not ready:** use **Activate project again**. Desktop retries the same project and manages only its own Runner; normal users do not need to edit or understand the internal project registry.
 
 **I closed the window and reopened it, but new environment variables are still missing:** since the background-lifecycle change, closing the window hides Desktop in the tray/menu bar. Use **Quit WebCodex** there, then start a new process.
+
+## Keep the Shell, update the Runtime
+
+Use **Settings → Runtime** to inspect an extracted official archive or native source build, then explicitly activate it. Do not edit the app bundle. See [Runtime compatibility and diagnostics](DESKTOP_RUNTIME_COMPATIBILITY.md); unknown/missing Custom files do not silently fall back to bundled binaries.

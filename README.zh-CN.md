@@ -157,3 +157,7 @@ Desktop UI/Tauri 开发以及 Windows/macOS 本地打包请看 [Desktop 开发�
 ## 许可证
 
 使用 Apache License 2.0，见 [LICENSE](LICENSE)。
+
+## Desktop Shell 与 Runtime 升级
+
+Desktop 可以保留当前 Shell，并使用单独选择的兼容 Runtime。构建修订与软件版本用于诊断，不是兼容性开关。自行构建、切换与恢复、追踪、诊断报告与更新提示见 [Desktop Runtime 兼容说明](docs/DESKTOP_RUNTIME_COMPATIBILITY.zh-CN.md)。

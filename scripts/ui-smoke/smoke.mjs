@@ -82,21 +82,21 @@ async function visibleKeyboardFocus(locator, label) {
 }
 async function accentChoice(locator, label, color, capture = false) {
   await locator.locator('summary').click();
-  const panel = locator.locator('.accent-picker-panel');
+  const panel = page.getByRole('dialog', { name: 'Accent color', exact: true });
   await panel.waitFor();
   const bounds = await panel.boundingBox();
   assert(bounds && bounds.x >= -1 && bounds.x + bounds.width <= page.viewportSize().width + 1, `${label}: accent palette exceeds viewport ${JSON.stringify(bounds)}`);
   if (capture) await screenshot(`${label.toLowerCase().replaceAll(' ', '-')}-accent-picker`);
-  await locator.getByRole('button', { name: color }).click();
+  await panel.getByRole('button', { name: color }).click();
   assert.equal(await page.evaluate(() => localStorage.getItem('webcodex.ui.accent.v1')), ({ Blue: '#2563eb', Indigo: '#4f46e5', Teal: '#0f766e', Violet: '#7c3aed', Orange: '#c2410c' })[color]);
-  assert.equal(await locator.getByRole('button', { name: color }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await panel.getByRole('button', { name: color }).getAttribute('aria-pressed'), 'true');
   report.checks.push(`${label} preset, selection, and palette bounds`);
   await page.keyboard.press('Escape');
   if (await locator.count()) assert.equal(await locator.getAttribute('open'), null);
 }
 async function restoreDefaultAccent(locator) {
   await locator.locator('summary').click();
-  await locator.getByRole('button', { name: 'Blue' }).click();
+  await page.getByRole('dialog', { name: 'Accent color', exact: true }).getByRole('button', { name: 'Blue' }).click();
   await page.keyboard.press('Escape');
 }
 async function accessibilityPreferences(context, materialSelector, motionSelector, label) {
@@ -181,7 +181,7 @@ try {
       const picker = page.locator('.sidebar-preferences .accent-picker');
       await accentChoice(picker, 'Desktop 1440', 'Violet', true);
       await picker.locator('summary').click();
-      await picker.getByLabel('Custom color').fill('#d946ef');
+      await page.getByRole('dialog', { name: 'Accent color', exact: true }).getByLabel('Custom color').fill('#d946ef');
       assert.equal(await page.evaluate(() => localStorage.getItem('webcodex.ui.accent.v1')), '#d946ef');
       await page.reload();
       await page.locator('[data-webcodex-page="home"]').waitFor();
@@ -243,7 +243,7 @@ try {
     report.checks.push(`Connection profile save keeps API key out of UI ${width}`);
     if (width === 1440) {
       await desktopNav('projects');
-      await page.locator('.workspace-project-table tbody tr').filter({ hasText: '/fixture/beta' }).getByRole('button', { name: /Open/ }).click();
+      await page.locator('.workspace-project-table tbody tr').filter({ hasText: '/fixture/beta' }).getByRole('button', { name: /Use project/ }).click();
       await page.waitForFunction(() => window.__fixtureCalls.some(call => call.cmd === 'activate_local_project' && call.args.request.projectPath === '/fixture/beta'));
       await page.locator('[data-webcodex-action="add-project"]').click();
       await page.locator('.workspace-project-table tbody tr').filter({ hasText: '/fixture/gamma' }).waitFor();

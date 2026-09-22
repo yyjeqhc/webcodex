@@ -110,9 +110,9 @@ export function useDesktopWorkspace() {
         if (cancelled) return;
         // Keep first-run setup mounted through intermediate topology snapshots
         // and the optional Tunnel handoff, including their error/retry paths.
-        if (!initial.topology) setShowSetup(true);
+        if (!initial.topology && !initial.configuration_issue) setShowSetup(true);
         commitState(initial);
-        if (initial.current_operation) return;
+        if (initial.current_operation || initial.configuration_issue) return;
         const resumeExisting = Boolean(
           initial.topology
           && initial.runtime_autostart

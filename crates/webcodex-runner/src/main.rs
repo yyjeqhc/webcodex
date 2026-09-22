@@ -160,6 +160,13 @@ where
         .collect();
     if args.len() == 1 {
         match args[0].as_str() {
+            "--build-info-json" => {
+                return Ok(RunnerCliAction::Exit {
+                    code: 0,
+                    stdout: build_info::build_info_json("webcodex-runner"),
+                    stderr: String::new(),
+                });
+            }
             "--help" | "-h" => {
                 return Ok(RunnerCliAction::Exit {
                     code: 0,

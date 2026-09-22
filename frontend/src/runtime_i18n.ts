@@ -5,6 +5,11 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Protocol compatibility": "协议兼容性",
+  "Build alignment": "构建一致性",
+  "Build revisions are diagnostic identity, not compatibility gates.": "构建修订仅用于诊断，不决定功能兼容性。",
+  "compatible": "兼容",
+  "incompatible": "不兼容",
   "Session list unavailable. Check access to this Project.": "会话列表不可用，请检查此项目的访问权限。",
   "Source": "来源",
   "Current Runtime": "当前运行时",

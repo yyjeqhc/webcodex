@@ -3,6 +3,7 @@ import { desktopApi } from "../../lib/desktop-api";
 import type { ComputerPermissions as Permissions } from "../../models/topology";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
+import { useShellText } from "../../i18n/runtime-shell";
 
 const EXPLAINED_KEY = "desktop-permissions-explained";
 function wasExplained() {
@@ -11,7 +12,7 @@ function wasExplained() {
 
 export function ComputerPermissions({ welcome = false }: { welcome?: boolean }) {
   const { t } = useLocale();
-  const p = useProduct();
+  const p = useProduct(); const s = useShellText();
   const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [dismissed, setDismissed] = useState(() => welcome && wasExplained());
   const [foreground, setForeground] = useState(false);
@@ -73,7 +74,7 @@ export function ComputerPermissions({ welcome = false }: { welcome?: boolean }) 
     </div>}
     {failed && <p role="alert">{t("permissions.error")}</p>}
     {!permissions && !failed && <p role="status">{t("common.checking")}</p>}
-    <details className="workspace-technical permission-troubleshooting"><summary>{p("troubleshooting")}</summary>
+    <details className="workspace-technical permission-troubleshooting"><summary>{s("Computer Use permission troubleshooting")}</summary>
       <p>{t("permissions.owner")}</p><p>{t("permissions.restartHelp")}</p>
       <div className="permission-actions"><button type="button" className="secondary-button" data-webcodex-action="recheck-permissions" disabled={busy} onClick={() => void request()}>{t("permissions.recheck")}</button>
       {permissions?.supported && <button type="button" className="secondary-button" disabled={busy} onClick={() => void request("open_settings")}>{t("permissions.openSettings")}</button>}</div>

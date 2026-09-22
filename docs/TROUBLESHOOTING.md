@@ -344,3 +344,7 @@ Use a safe project-relative artifact path and a MIME type that matches the file
 extension. For smoke tests, prefer a simple `.txt` path with `text/plain`. Avoid
 secret-like paths, absolute paths, `.env*`, `.git`, token/credential paths, and
 unsafe binary extensions.
+
+## Desktop Diagnostics Center
+
+**Settings → Troubleshooting** provides safe report/support-bundle export, Off/Metadata/Full request tracing, local diagnostic locations and a credential-free Runtime Console URL. Full tracing and copying a managed user credential require explicit confirmation. See [Desktop Runtime compatibility](DESKTOP_RUNTIME_COMPATIBILITY.md) for ownership-aware recovery and how to interpret response handoff/continuation evidence.

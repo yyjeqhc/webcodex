@@ -539,6 +539,10 @@ def verify_bundle_directory(
         "artifacts",
         "desktop_artifacts",
     }
+    # Older retained bundles have no Desktop contract manifest. Only that
+    # explicit absence is legacy; malformed or unchecksummed present assets fail.
+    if "runtime_manifest" in release_build:
+        required_fields.add("runtime_manifest")
     if set(release_build) != required_fields:
         raise CollectionError("release-build.json contains unexpected or missing fields")
     if release_build.get("tag") != expected_tag:
@@ -610,6 +614,12 @@ def verify_bundle_directory(
         desktop_files[platform] = filename
         desktop_hashes[platform] = digest
 
+    runtime_manifest = release_build.get("runtime_manifest")
+    if "runtime_manifest" in release_build:
+        if build_kind != "release" or not isinstance(runtime_manifest, dict) or set(runtime_manifest) != {"filename", "sha256"}:
+            raise CollectionError("malformed Runtime release manifest identity")
+        if runtime_manifest.get("filename") != "webcodex-release-manifest.json" or not isinstance(runtime_manifest.get("sha256"), str) or not SHA256_RE.fullmatch(runtime_manifest["sha256"]):
+            raise CollectionError("invalid Runtime release manifest identity")
     expected_files = {
         "release-build.json",
         "SHA256SUMS",
@@ -620,6 +630,8 @@ def verify_bundle_directory(
     }
     if build_kind == "release":
         expected_files.add("manifest.json")
+    if runtime_manifest is not None:
+        expected_files.add(runtime_manifest["filename"])
     try:
         actual_files = {child.name for child in root.iterdir()}
     except OSError as exc:
@@ -633,7 +645,23 @@ def verify_bundle_directory(
         sums_text = _read_bounded(root / "SHA256SUMS", 16 * 1024).decode("ascii")
     except UnicodeDecodeError as exc:
         raise CollectionError("SHA256SUMS is not ASCII") from exc
-    sums = _parse_sha256sums(sums_text, set(artifact_files.values()) | set(desktop_files.values()))
+    downloadable = set(artifact_files.values()) | set(desktop_files.values())
+    if runtime_manifest is not None:
+        downloadable.add(runtime_manifest["filename"])
+    sums = _parse_sha256sums(sums_text, downloadable)
+    if runtime_manifest is not None:
+        try:
+            from .desktop_runtime_manifest import validate, ManifestError
+        except ImportError:
+            from desktop_runtime_manifest import validate, ManifestError
+        filename = runtime_manifest["filename"]
+        actual = sha256_file(root / filename)
+        if actual != runtime_manifest["sha256"] or sums.get(filename) != actual:
+            raise CollectionError("Runtime release manifest SHA-256 mismatch")
+        try:
+            validate(_read_json(root / filename, MAX_MANIFEST_BYTES), version)
+        except ManifestError as exc:
+            raise CollectionError("Runtime release manifest contract is invalid") from exc
     for platform in PLATFORMS:
         filename = artifact_files[platform]
         path = root / filename
@@ -676,6 +704,7 @@ def verify_bundle_directory(
         "workflow_run_id": run_id,
         "archive_stem": archive_stem,
         "artifacts": artifact_hashes,
+        **({"runtime_manifest": runtime_manifest} if runtime_manifest is not None else {}),
         "desktop_artifacts": {
             platform: {"filename": desktop_files[platform], "sha256": desktop_hashes[platform]}
             for platform in DESKTOP_PLATFORMS

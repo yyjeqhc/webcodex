@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GitSummary, SessionActivity, WorkflowSession } from "../../models/workspace";
 import { useProduct, type ProductKey } from "../../i18n/product";
 import { useLocale } from "../../i18n/locale";
+import { useShellText } from "../../i18n/runtime-shell";
 import { sessionTitle, workspaceQuery } from "../workspace/WorkspaceContext";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { observationTime } from "../workspace/WorkspaceStatus";
@@ -25,7 +26,7 @@ export function SessionAttention({ session }: { session: WorkflowSession }) {
   </span>;
 }
 export function WorkflowSessionDetail({ project, id, onClose }: { project: string; id: string; onClose: () => void }) {
-  const p = useProduct(); const { locale } = useLocale();
+  const p = useProduct(); const s = useShellText(); const { locale } = useLocale();
   const [session, setSession] = useState<WorkflowSession | null>(null);
   const [git, setGit] = useState<GitSummary | null>(null);
   const [failed, setFailed] = useState(false);
@@ -44,6 +45,8 @@ export function WorkflowSessionDetail({ project, id, onClose }: { project: strin
     {session && <>
       <div className="session-detail-meta"><span className="workspace-badge">{sessionLifecycle(session.lifecycle, p)}</span><span>{observationTime(session.updated_at * 1000, locale)}</span></div>
       <SessionAttention session={session} />
+      <dl className="runtime-facts"><div><dt>{s("Validation")}</dt><dd>{session.overview.validation?.state ?? s("No validation evidence")}</dd></div><div><dt>{s("Requests in progress")}</dt><dd>{session.running_call ? 1 : 0}</dd></div></dl>
+      <button type="button" className="secondary-button" onClick={() => setRevision(value => value + 1)}>{p("refresh")}</button>
       <section className="workspace-section"><h3>{p("task")}</h3><p>{session.overview.reported_progress?.text || activityTitle(activity[0], p)}</p></section>
       <section className="workspace-section"><h3>{p("recentActivity")}</h3><div className="workspace-timeline">{activity.slice(0, 30).map((entry, index) => <article key={`${entry.started_at}-${index}`}>
         <div><strong>{activityTitle(entry, p)}</strong>{entry.paths && entry.paths.length > 0 && <span>{entry.paths.join(" · ")}</span>}</div>

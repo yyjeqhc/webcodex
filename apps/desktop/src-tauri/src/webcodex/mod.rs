@@ -1,5 +1,5 @@
 mod adapter;
-mod cli;
+pub(crate) mod cli;
 mod models;
 pub mod settings;
 

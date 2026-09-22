@@ -569,6 +569,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
     if opts.json {
         let summary = json!({
             "http_reachable": http.reachable,
+            "server_pid": output.and_then(|v| v.get("pid")).and_then(Value::as_u64),
             "probe_url": probe_url,
             "http_status_code": http.status_code,
             "http_content_type": http.content_type,
@@ -606,6 +607,14 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
                 "built_at": local_build.built_at,
             },
             "revision_check": server_status_revision_check(&revision_comparison),
+            "desktop_runtime_contract": output.and_then(|v| v.get("desktop_runtime_contract")).cloned().unwrap_or(Value::Null),
+            "protocol_compatibility": output.and_then(|v| v.get("desktop_runtime_contract"))
+                .and_then(|v| serde_json::from_value::<webcodex_core::desktop_runtime_contract::DesktopRuntimeContract>(v.clone()).ok())
+                .filter(|range| range.is_valid())
+                .map(|range| if range.overlaps(webcodex_core::desktop_runtime_contract::DESKTOP_RUNTIME_CONTRACT) { "compatible" } else { "incompatible" })
+                .unwrap_or("unknown"),
+            "server_runner_protocol_compatibility": output.and_then(|v| v.get("protocol_compatibility")).cloned().unwrap_or(Value::Null),
+            "build_alignment": output.and_then(|v| v.get("build_alignment")).cloned().unwrap_or(Value::Null),
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }

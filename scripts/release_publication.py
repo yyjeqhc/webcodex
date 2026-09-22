@@ -1003,6 +1003,8 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
         raise PublicationError("GitHub draft asset listing is malformed or too large")
 
     expected_files = {"SHA256SUMS"}
+    if summary.get("runtime_manifest") is not None:
+        expected_files.add("webcodex-release-manifest.json")
     expected_files.update(f"{summary['archive_stem']}-{platform}.tar.gz" for platform in collector.PLATFORMS)
     desktop_artifacts = summary.get("desktop_artifacts")
     if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(collector.DESKTOP_PLATFORMS):

@@ -647,3 +647,51 @@ async fn canonical_sticky_feature_fence_preserves_allowed_reconnect_transitions(
     assert_eq!(view.runner_instance_id, "inst-b");
     assert!(!view.capabilities.job_state_reconciliation);
 }
+
+#[tokio::test]
+async fn build_identity_never_substitutes_for_wire_or_optional_operation_capabilities() {
+    let registry = RunnerRegistry::new();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    registry
+        .register_client(
+            "mixed-build",
+            "test",
+            None,
+            None,
+            RunnerProtocol::from_generation(
+                webcodex_core::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            ),
+            capabilities(&[
+                ("shell_actions", true),
+                ("file_batch", true),
+                ("project_lifecycle", false),
+            ]),
+            tx,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    registry
+        .update_client_build(
+            "mixed-build",
+            Some("0.99.0".into()),
+            Some("abcdef012345".into()),
+            Some(true),
+            Some("100".into()),
+        )
+        .await
+        .unwrap();
+    let client = registry.get_client("mixed-build").await.unwrap();
+    assert_eq!(
+        webcodex_core::desktop_runtime_contract::runner_protocol_compatibility(
+            client.runner_protocol_generation.get()
+        ),
+        webcodex_core::desktop_runtime_contract::ProtocolCompatibility::Compatible
+    );
+    assert!(!client.supports(RunnerFeature::ProjectLifecycle));
+    assert!(client.supports(RunnerFeature::ShellActions));
+    assert!(client.supports(RunnerFeature::FileBatch));
+    assert!(client.supports(RunnerFeature::FileReadBatch));
+    assert!(client.supports(RunnerFeature::ShowChanges));
+}

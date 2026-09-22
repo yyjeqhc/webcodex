@@ -184,6 +184,8 @@ export type ProjectGit = {
 };
 
 export type RunnerSummary = {
+  protocol_compatibility?: "compatible" | "incompatible" | "unknown";
+  build_alignment?: "exact" | "different_version" | "different_commit" | "dirty" | "unknown";
   client_id: string;
   connected: boolean;
   status?: string;

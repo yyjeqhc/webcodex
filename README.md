@@ -157,3 +157,7 @@ Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space fo
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+## Desktop Shell and Runtime upgrades
+
+Desktop can keep its existing shell while using a separately selected compatible Runtime folder. Build revisions and package versions are diagnostic identity, not compatibility gates. See [Desktop Runtime compatibility](docs/DESKTOP_RUNTIME_COMPATIBILITY.md) for custom builds, safe switching/rollback, diagnostics, tracing and update notifications.

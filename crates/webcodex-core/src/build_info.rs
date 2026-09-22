@@ -59,6 +59,38 @@ pub fn version_output(binary: &str) -> String {
     output
 }
 
+/// Stable machine-readable metadata. This surface exits before config loading.
+pub fn machine_build_info(binary: &str) -> crate::desktop_runtime_contract::MachineBuildInfo {
+    use crate::desktop_runtime_contract::{
+        MachineBuildInfo, BUILD_INFO_SCHEMA_VERSION, DESKTOP_RUNTIME_CONTRACT,
+    };
+    let info = current();
+    MachineBuildInfo {
+        schema_version: BUILD_INFO_SCHEMA_VERSION,
+        binary: binary.to_string(),
+        version: info.version.to_string(),
+        git_commit: info.git_commit.map(str::to_string),
+        git_dirty: info.git_dirty,
+        built_at: info.built_at.map(str::to_string),
+        target: info.target.unwrap_or("unknown").to_string(),
+        architecture: info
+            .architecture
+            .unwrap_or(std::env::consts::ARCH)
+            .to_string(),
+        desktop_runtime_contract: DESKTOP_RUNTIME_CONTRACT,
+        agent_protocol_generation: matches!(binary, "webcodex-server" | "webcodex-runner")
+            .then_some(crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2.get()),
+    }
+}
+
+pub fn build_info_json(binary: &str) -> String {
+    format!(
+        "{}\n",
+        serde_json::to_string(&machine_build_info(binary))
+            .expect("build identity contains only JSON primitives")
+    )
+}
+
 fn non_empty(value: &'static str) -> Option<&'static str> {
     (!value.trim().is_empty()).then_some(value)
 }

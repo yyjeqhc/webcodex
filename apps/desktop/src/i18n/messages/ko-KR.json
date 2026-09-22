@@ -383,5 +383,9 @@
   "permissions.error": "권한 요청을 사용할 수 없습니다. 시스템 개인 정보 설정을 확인하세요.",
   "permissions.later": "계속 · 설정에서 다시 확인 가능",
   "operation.runnerSettingsUpdate": "Runner 설정 저장 중",
-  "operation.runnerRestart": "소유 Runner 재시작 중"
+  "operation.runnerRestart": "소유 Runner 재시작 중",
+  "operation.runtimeProbe": "Inspecting Runtime candidate",
+  "operation.runtimeSwitch": "Switching owned Runtime",
+  "operation.traceUpdate": "Updating request tracing",
+  "operation.configurationRestore": "Restoring previous configuration"
 }

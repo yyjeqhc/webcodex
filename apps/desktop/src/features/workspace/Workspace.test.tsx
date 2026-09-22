@@ -62,7 +62,7 @@ describe("product workspace task flows", () => {
     const view = render(wrap(<ProjectsPanel state={state} onChooseProject={add} onSelectProject={open} />));
     await screen.findByLabelText("2 active sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     expect(screen.getAllByRole("row")).toHaveLength(3);
-    fireEvent.click(screen.getByRole("button", { name: "Open Project beta" })); expect(open).toHaveBeenCalledWith(beta.path);
+    fireEvent.click(screen.getByRole("button", { name: "Use project beta" })); expect(open).toHaveBeenCalledWith(beta.path);
     const switched = { ...state, project: { ...state.project!, path: beta.path, runtime_project_id: beta.id } };
     view.rerender(wrap(<ProjectsPanel state={switched} onChooseProject={add} onSelectProject={open} />, switched));
     await waitFor(() => expect(within(screen.getByRole("row", { name: "beta" })).getByText("Current")).toBeInTheDocument());
@@ -73,9 +73,9 @@ describe("product workspace task flows", () => {
   });
   it("opens a Window's associated Workflow Session and presents product activity rather than a ledger", async () => {
     render(wrap(<ActivityPanel activity={[]} />));
-    expect(screen.getByRole("tab", { name: "Windows" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(await screen.findByRole("button", { name: /Windows · window-001/ }));
-    const detail = await screen.findByRole("dialog", { name: "Windows · window-001" });
+    expect(screen.getByRole("tab", { name: "ChatGPT calls" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(await screen.findByRole("button", { name: /Open call details:.*window-001/ }));
+    const detail = await screen.findByRole("dialog", { name: "Request details · window-001" });
     fireEvent.click(await within(detail).findByRole("button", { name: /Fix export workflow/ }));
     const workflow = await screen.findByRole("dialog", { name: "Fix export workflow" });
     await within(workflow).findByText("Review the export changes");
@@ -86,7 +86,7 @@ describe("product workspace task flows", () => {
     fireEvent.click(within(workflow).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
     expect(await screen.findByRole("button", { name: /Fix export workflow/ })).toHaveTextContent("Active jobs 1");
-    expect(screen.getByRole("tab", { name: "System" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "System events" })).toHaveAttribute("aria-selected", "false");
   });
   it("opens effective instructions, lists real Skills and reloads a provider only on request", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={vi.fn()} />));

@@ -117,7 +117,7 @@ describe("workspace configuration boundaries", () => {
     api.computerPermissions.mockRejectedValueOnce(new Error("fixture unavailable"));
     render(wrap(<ComputerPermissions />));
     expect(await screen.findByRole("alert")).toHaveTextContent("Permission request unavailable");
-    fireEvent.click(screen.getByText("Troubleshooting", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Computer Use permission troubleshooting", { selector: "summary" }));
     fireEvent.click(screen.getByRole("button", { name: "Recheck permissions" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(screen.getAllByText("Permission needed")).toHaveLength(2);

@@ -82,11 +82,24 @@ bounded targeted reads and related-range batching. Broad discovery should prefer
 files/count/small low-context search projections followed by targeted reads.
 `run_process` remains the natural path for one native executable with literal
 argv; `run_shell` is first-class for shell grammar or a short tightly related
-chain, and a bounded deterministic Python heredoc is appropriate when one small
-program expresses one coherent transformation more reliably than many mechanical
-edits. None of these rules means “shell first” or weakens specialized semantics.
+chain, while `run_script(language=python)` carries a program-like Python body as
+typed data. A bounded Python heredoc remains possible for special shell
+composition. None of these rules means “shell first” or weakens specialized semantics.
 
 ## 2. Mechanical repair should be server-owned
+
+Current execution-input compatibility is deliberately narrow:
+
+| Model input | Canonical interpretation | Condition |
+|---|---|---|
+| `run_process.argv`, `run_detached_process.argv` | `args` | If `args` is also present, values must be identical. |
+| `run_process` with exact `sh -c` or `bash -c` argv | `run_shell` with explicit `shell` | Runtime proves the request is lossless and the canonical shell path passes authority, policy, and capability gates. |
+| `run_process` with exact `bash -lc` argv | `run_shell(shell=bash, login=true)` | Same proof and Bash-login capability gate. |
+
+`run_script(language=python)` is canonical; `python3` is not a language alias.
+Unknown spellings such as `timeout`, `workdir`, `command_args`, and
+`command` for `script` still fail closed. Successful normalization returns a
+short `input_normalization` code and hint without replaying the raw payload.
 
 Do not spend a model turn on a repair WebCodex can prove locally.
 

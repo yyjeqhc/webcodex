@@ -57,7 +57,10 @@ impl WebCodexAdapter {
     }
 
     fn validate_runtime_approval(&self, binaries: &ResolvedBinaries) -> DesktopResult<()> {
-        if matches!(self.runtime_source, crate::runtime_selection::RuntimeSource::Custom { .. }) {
+        if matches!(
+            self.runtime_source,
+            crate::runtime_selection::RuntimeSource::Custom { .. }
+        ) {
             let expected = self.approved_custom_fingerprint.as_deref().ok_or_else(|| {
                 crate::runtime_selection::error("runtime_custom_approval_required")
             })?;
@@ -73,8 +76,11 @@ impl WebCodexAdapter {
         source: crate::runtime_selection::RuntimeSource,
         binaries: ResolvedBinaries,
     ) {
-        self.approved_custom_fingerprint = matches!(source, crate::runtime_selection::RuntimeSource::Custom { .. })
-            .then(|| binaries.fingerprint.clone());
+        self.approved_custom_fingerprint = matches!(
+            source,
+            crate::runtime_selection::RuntimeSource::Custom { .. }
+        )
+        .then(|| binaries.fingerprint.clone());
         self.runtime_source = source;
         self.binaries = Some(binaries);
     }

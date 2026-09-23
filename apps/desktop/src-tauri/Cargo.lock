@@ -5025,6 +5025,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "system-configuration",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

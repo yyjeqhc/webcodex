@@ -17,7 +17,7 @@ const state: DesktopState = {
   project: { path: "/fixture/alpha", allowed_root: "/fixture/alpha", is_git_repository: false, runtime_project_id: "agent:fixture-runner:alpha" },
   readiness: { runtime_ready: true, ready_for_chatgpt: false, server: "ready", runner: "ready", exposure: "local_ready", project: "ready", summary: "Ready", summary_kind: "runtime_ready_local_only", next_action: "", next_action_kind: "choose_connection" },
   activity_sequence: 0, openai_tunnel_configured: true, regular_tunnel_available: true, runtime_autostart: false, preferred_connection: "no_chat_gpt",
-  tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "direct", effective_url: null, detected_url: null },
+  tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "direct", effective_proxy_present: false, system_proxy_detected: false },
   current_operation: null,
   openai_tunnel_config: { source: "file", saved_tunnel_id: "tunnel_fixture", effective_tunnel_id: "tunnel_fixture", tunnel_id_present: true, api_key_present: true },
 };

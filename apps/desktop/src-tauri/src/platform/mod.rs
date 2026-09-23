@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod opener;
 pub mod permissions;
 #[cfg(target_os = "windows")]
@@ -129,7 +131,6 @@ fn is_username_character(character: char) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemProxyCandidate {
     pub url: String,
-    pub enabled: bool,
 }
 
 pub fn system_http_proxy_candidate() -> Option<SystemProxyCandidate> {
@@ -137,7 +138,11 @@ pub fn system_http_proxy_candidate() -> Option<SystemProxyCandidate> {
     {
         return windows::system_http_proxy_candidate();
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        return macos::system_http_proxy_candidate();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         None
     }
@@ -179,17 +184,6 @@ pub(crate) fn normalize_proxy_server(value: &str) -> Option<String> {
         return None;
     }
     Some(candidate.trim_end_matches('/').to_string())
-}
-
-pub(crate) fn proxy_is_loopback(url: &str) -> bool {
-    url::Url::parse(url).ok().and_then(|parsed| {
-        parsed.host_str().map(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host == "127.0.0.1"
-                || host == "::1"
-                || host == "[::1]"
-        })
-    }) == Some(true)
 }
 
 #[cfg(test)]
@@ -259,8 +253,6 @@ mod tests {
             normalize_proxy_server("http=127.0.0.1:7890;https=127.0.0.1:7891").as_deref(),
             Some("http://127.0.0.1:7891")
         );
-        assert!(proxy_is_loopback("http://127.0.0.1:7890"));
-        assert!(!proxy_is_loopback("http://proxy.example.test:8080"));
     }
 
     #[test]

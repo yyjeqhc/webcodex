@@ -120,8 +120,8 @@ export interface TunnelProxySnapshot {
   mode: TunnelProxyMode;
   custom_url?: string | null;
   effective_source: string;
-  effective_url?: string | null;
-  detected_url?: string | null;
+  effective_proxy_present: boolean;
+  system_proxy_detected: boolean;
 }
 
 export type DesktopOperationKind =

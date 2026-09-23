@@ -15,6 +15,12 @@ export interface TunnelConnection {
   health: "unknown" | "healthy" | "degraded";
   last_error: ConnectionError | null;
   ready: boolean;
+  process_started: boolean;
+  process_ready: boolean;
+  tunnel_ready: boolean | null;
+  local_mcp_ready: boolean | null;
+  failure_stage: string | null;
+  reason_code: string | null;
   runtime_directory: string | null;
   health_url: string | null;
   log_file: string | null;

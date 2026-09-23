@@ -2978,7 +2978,7 @@ fn exposure_readiness(topology: Option<&RuntimeTopology>) -> ExposureReadiness {
 struct EffectiveTunnelProxy {
     url: Option<String>,
     source: &'static str,
-    detected_url: Option<String>,
+    system_proxy_detected: bool,
 }
 
 fn validate_tunnel_proxy_url(value: &str) -> DesktopResult<String> {
@@ -3002,46 +3002,51 @@ fn environment_tunnel_proxy() -> Option<String> {
 }
 
 fn effective_tunnel_proxy(config: &TunnelProxyConfig) -> DesktopResult<EffectiveTunnelProxy> {
-    let system = crate::platform::system_http_proxy_candidate();
-    let detected_url = system.as_ref().map(|candidate| candidate.url.clone());
+    resolve_tunnel_proxy(
+        config,
+        environment_tunnel_proxy(),
+        crate::platform::system_http_proxy_candidate(),
+    )
+}
+
+fn resolve_tunnel_proxy(
+    config: &TunnelProxyConfig,
+    environment: Option<String>,
+    system: Option<crate::platform::SystemProxyCandidate>,
+) -> DesktopResult<EffectiveTunnelProxy> {
+    let system_proxy_detected = system.is_some();
     match config.mode {
         TunnelProxyMode::Direct => Ok(EffectiveTunnelProxy {
             url: None,
             source: "direct",
-            detected_url,
+            system_proxy_detected,
         }),
         TunnelProxyMode::Custom => Ok(EffectiveTunnelProxy {
             url: Some(validate_tunnel_proxy_url(
                 config.custom_url.as_deref().unwrap_or(""),
             )?),
             source: "custom",
-            detected_url,
+            system_proxy_detected,
         }),
         TunnelProxyMode::Auto => {
-            if let Some(url) = environment_tunnel_proxy() {
+            if let Some(url) = environment {
                 return Ok(EffectiveTunnelProxy {
                     url: Some(url),
                     source: "environment",
-                    detected_url,
+                    system_proxy_detected,
                 });
             }
             if let Some(candidate) = system {
-                if candidate.enabled || crate::platform::proxy_is_loopback(&candidate.url) {
-                    return Ok(EffectiveTunnelProxy {
-                        url: Some(candidate.url),
-                        source: if candidate.enabled {
-                            "windows_system"
-                        } else {
-                            "windows_loopback_candidate"
-                        },
-                        detected_url,
-                    });
-                }
+                return Ok(EffectiveTunnelProxy {
+                    url: Some(candidate.url),
+                    source: "system",
+                    system_proxy_detected,
+                });
             }
             Ok(EffectiveTunnelProxy {
                 url: None,
                 source: "direct",
-                detected_url,
+                system_proxy_detected,
             })
         }
     }
@@ -3081,17 +3086,19 @@ fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredD
             mode: config.tunnel_proxy.mode,
             custom_url: config.tunnel_proxy.custom_url.clone(),
             effective_source: proxy.source.to_string(),
-            effective_url: proxy.url,
-            detected_url: proxy.detected_url,
+            effective_proxy_present: proxy.url.is_some(),
+            system_proxy_detected: proxy.system_proxy_detected,
         },
-        Err(_) => TunnelProxySnapshot {
-            mode: config.tunnel_proxy.mode,
-            custom_url: config.tunnel_proxy.custom_url.clone(),
-            effective_source: "invalid_custom".to_string(),
-            effective_url: None,
-            detected_url: crate::platform::system_http_proxy_candidate()
-                .map(|candidate| candidate.url),
-        },
+        Err(_) => {
+            let system = crate::platform::system_http_proxy_candidate();
+            TunnelProxySnapshot {
+                mode: config.tunnel_proxy.mode,
+                custom_url: config.tunnel_proxy.custom_url.clone(),
+                effective_source: "invalid_custom".to_string(),
+                effective_proxy_present: false,
+                system_proxy_detected: system.is_some(),
+            }
+        }
     };
 }
 
@@ -3644,6 +3651,52 @@ mod tests {
         assert_eq!(direct.source, "direct");
 
         assert!(validate_tunnel_proxy_url("http://user:secret@127.0.0.1:7890").is_err());
+    }
+
+    #[test]
+    fn tunnel_proxy_resolution_has_explicit_precedence() {
+        let auto = TunnelProxyConfig::default();
+        let system = crate::platform::SystemProxyCandidate {
+            url: "http://127.0.0.1:7890".to_string(),
+        };
+        let environment = "http://environment.example.test:8080".to_string();
+
+        let resolved =
+            resolve_tunnel_proxy(&auto, Some(environment.clone()), Some(system.clone())).unwrap();
+        assert_eq!(resolved.source, "environment");
+        assert_eq!(resolved.url.as_deref(), Some(environment.as_str()));
+        assert!(resolved.system_proxy_detected);
+
+        let resolved = resolve_tunnel_proxy(&auto, None, Some(system.clone())).unwrap();
+        assert_eq!(resolved.source, "system");
+        assert_eq!(resolved.url.as_deref(), Some(system.url.as_str()));
+        assert!(resolved.system_proxy_detected);
+
+        let resolved = resolve_tunnel_proxy(&auto, None, None).unwrap();
+        assert_eq!(resolved.source, "direct");
+        assert_eq!(resolved.url, None);
+        assert!(!resolved.system_proxy_detected);
+
+        let custom = TunnelProxyConfig {
+            mode: TunnelProxyMode::Custom,
+            custom_url: Some("http://custom.example.test:9000".to_string()),
+        };
+        let resolved =
+            resolve_tunnel_proxy(&custom, Some(environment.clone()), Some(system.clone())).unwrap();
+        assert_eq!(resolved.source, "custom");
+        assert_eq!(
+            resolved.url.as_deref(),
+            Some("http://custom.example.test:9000")
+        );
+
+        let direct = TunnelProxyConfig {
+            mode: TunnelProxyMode::Direct,
+            custom_url: Some("http://ignored.example.test:9000".to_string()),
+        };
+        let resolved = resolve_tunnel_proxy(&direct, Some(environment), Some(system)).unwrap();
+        assert_eq!(resolved.source, "direct");
+        assert_eq!(resolved.url, None);
+        assert!(resolved.system_proxy_detected);
     }
 
     #[test]

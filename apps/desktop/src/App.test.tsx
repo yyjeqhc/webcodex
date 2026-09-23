@@ -111,8 +111,8 @@ const readyState: DesktopState = {
     mode: "auto",
     custom_url: null,
     effective_source: "direct",
-    effective_url: null,
-    detected_url: null,
+    effective_proxy_present: false,
+    system_proxy_detected: false,
   },
 };
 
@@ -144,8 +144,8 @@ const firstRunState: DesktopState = {
     mode: "auto",
     custom_url: null,
     effective_source: "direct",
-    effective_url: null,
-    detected_url: null,
+    effective_proxy_present: false,
+    system_proxy_detected: false,
   },
 };
 
@@ -339,10 +339,17 @@ beforeEach(() => {
   });
 
   it("keeps a failed owned profile stoppable without duplicating its process", async () => {
-    api.getState.mockResolvedValue({ ...readyState, connections: connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "stop_failed" })) });
+    api.getState.mockResolvedValue({ ...readyState, connections: connectionSnapshot(connectionFixture({
+      lifecycle: "error", ready: false, last_error: "stop_failed",
+      process_started: true, process_ready: true, tunnel_ready: false, local_mcp_ready: true,
+      failure_stage: "tunnel_control_plane", reason_code: "tunnel_control_plane_probe_failed",
+    })) });
     api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Stop failed" });
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(screen.queryByRole("button", { name: "启动 ChatGPT" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("高级 · ChatGPT"));
+    expect(screen.getByText("tunnel_control_plane")).toBeInTheDocument();
+    expect(screen.getByText("tunnel_control_plane_probe_failed")).toBeInTheDocument();
     const stop = screen.getByRole("button", { name: "停止 ChatGPT" });
     fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("未能应用更改");
     await waitFor(() => expect(stop).toBeEnabled()); fireEvent.click(stop);

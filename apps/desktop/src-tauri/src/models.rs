@@ -346,8 +346,8 @@ pub struct TunnelProxySnapshot {
     pub mode: TunnelProxyMode,
     pub custom_url: Option<String>,
     pub effective_source: String,
-    pub effective_url: Option<String>,
-    pub detected_url: Option<String>,
+    pub effective_proxy_present: bool,
+    pub system_proxy_detected: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -446,8 +446,8 @@ impl Default for DesktopStateSnapshot {
                 mode: TunnelProxyMode::Auto,
                 custom_url: None,
                 effective_source: "direct".to_string(),
-                effective_url: None,
-                detected_url: None,
+                effective_proxy_present: false,
+                system_proxy_detected: false,
             },
         }
     }

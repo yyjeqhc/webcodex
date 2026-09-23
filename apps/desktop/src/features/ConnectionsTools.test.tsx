@@ -23,7 +23,7 @@ function state(): DesktopState {
     readiness: { runtime_ready: true, ready_for_chatgpt: false, server: "ready", runner: "ready", exposure: "local_ready", project: "ready", summary: "Ready", summary_kind: "runtime_ready_local_only", next_action: "", next_action_kind: "choose_connection" },
     openai_tunnel_config: { source: "file", tunnel_id_present: true, api_key_present: true, saved_tunnel_id: "tunnel_fixture", effective_tunnel_id: "tunnel_fixture" },
     activity_sequence: 0, openai_tunnel_configured: true, regular_tunnel_available: true, runtime_autostart: true, preferred_connection: "no_chat_gpt",
-    tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "direct", effective_url: null, detected_url: null },
+    tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "direct", effective_proxy_present: false, system_proxy_detected: false },
     connections: connectionSnapshot(connectionFixture({ id: "personal", name: "ChatGPT Personal" }), connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "process_exited" }), connectionFixture({ id: "third", name: "Account 3", pid: 300 })),
     mcp_providers: { ...EMPTY_MCP_PROVIDERS, profiles: [] },
   };

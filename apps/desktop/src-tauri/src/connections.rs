@@ -58,6 +58,12 @@ pub struct ConnectionRuntimeSnapshot {
     pub health: ConnectionHealth,
     pub last_error: Option<ConnectionError>,
     pub ready: bool,
+    pub process_started: bool,
+    pub process_ready: bool,
+    pub tunnel_ready: Option<bool>,
+    pub local_mcp_ready: Option<bool>,
+    pub failure_stage: Option<String>,
+    pub reason_code: Option<String>,
     pub runtime_directory: Option<PathBuf>,
     pub health_url: Option<String>,
     pub log_file: Option<PathBuf>,
@@ -139,6 +145,7 @@ impl ConnectionRuntimes {
         let mut state = ConnectionRuntimeSnapshot {
             lifecycle: ConnectionLifecycle::Starting,
             pid: process.pid,
+            process_started: true,
             ..Default::default()
         };
         log(&mut state, "starting");
@@ -289,7 +296,11 @@ impl ConnectionRuntimes {
                     if ready_seen && last_health.is_none_or(|at| Instant::now().duration_since(at) > HEALTH_STALE_AFTER) {
                         self.update(id, generation, |state| {
                             if state.last_error != Some(ConnectionError::HealthStale) { log(state, "health_stale"); }
-                            state.ready = false; state.health = ConnectionHealth::Degraded; state.last_error = Some(ConnectionError::HealthStale);
+                            state.ready = false;
+                            state.health = ConnectionHealth::Degraded;
+                            state.last_error = Some(ConnectionError::HealthStale);
+                            state.failure_stage = Some("tunnel_health".into());
+                            state.reason_code = Some("tunnel_health_stale".into());
                         });
                     }
                     continue;
@@ -316,6 +327,9 @@ impl ConnectionRuntimes {
                         state.log_file = Some(metadata.log_file);
                         state.tunnel_client_pid = Some(metadata.tunnel_client_pid);
                         state.local_mcp_url = Some(metadata.local_mcp_url);
+                        state.process_ready = true;
+                        state.failure_stage = None;
+                        state.reason_code = None;
                         log(state, "process_ready");
                     }) {
                         return;
@@ -355,15 +369,45 @@ impl ConnectionRuntimes {
                             );
                         }
                         state.ready = tunnel && local;
+                        state.tunnel_ready = Some(tunnel);
+                        state.local_mcp_ready = Some(local);
                         state.health = if state.ready {
                             ConnectionHealth::Healthy
                         } else {
                             ConnectionHealth::Degraded
                         };
                         state.last_error = error;
+                        if state.ready {
+                            state.failure_stage = None;
+                            state.reason_code = None;
+                        } else if !local {
+                            state.failure_stage = Some("local_mcp".into());
+                            state.reason_code = Some("local_mcp_unavailable".into());
+                        } else {
+                            state.failure_stage = Some("tunnel_health".into());
+                            state.reason_code = Some("tunnel_unavailable".into());
+                        }
                     }) {
                         return;
                     }
+                }
+                Some("failure") => {
+                    let Some((failure_stage, reason_code)) = safe_failure_evidence(&event) else {
+                        break ConnectionError::ProtocolInvalid;
+                    };
+                    let failure = if reason_code == "local_mcp_unavailable" {
+                        ConnectionError::LocalMcpUnavailable
+                    } else {
+                        ConnectionError::TunnelUnavailable
+                    };
+                    if !self.update(id, generation, |state| {
+                        state.failure_stage = Some(failure_stage.to_string());
+                        state.reason_code = Some(reason_code.to_string());
+                        log(state, "typed_failure");
+                    }) {
+                        return;
+                    }
+                    break failure;
                 }
                 Some("error" | "failed" | "machine_event_overflow" | "stopped" | "exited") => {
                     break ConnectionError::ProcessExited
@@ -376,6 +420,11 @@ impl ConnectionRuntimes {
             state.ready = false;
             state.health = ConnectionHealth::Degraded;
             state.last_error = Some(failure);
+            if state.reason_code.is_none() {
+                let (stage, reason) = connection_error_evidence(failure);
+                state.failure_stage = Some(stage.into());
+                state.reason_code = Some(reason.into());
+            }
             log(state, "connection_failed");
         }) {
             activity.push_for_profile(Some(id), ActivityEventKind::ProcessObservationFailed, "regular_tunnel", ActivityLevel::Error, "Connection needs attention; other connections and the shared runtime are unchanged");
@@ -397,6 +446,41 @@ impl ConnectionRuntimes {
                 }
             });
         }
+    }
+}
+
+fn safe_failure_evidence(event: &Value) -> Option<(&str, &str)> {
+    if event["schema_version"] != 1 || event["provider"] != "openai" {
+        return None;
+    }
+    let stage = event["failure_stage"].as_str()?;
+    let reason = event["reason_code"].as_str()?;
+    let valid = matches!(
+        (stage, reason),
+        (
+            "tunnel_client_verification",
+            "tunnel_client_verification_failed"
+        ) | ("tunnel_doctor", "tunnel_doctor_failed")
+            | ("tunnel_control_plane", "tunnel_control_plane_unreachable")
+            | ("tunnel_control_plane", "tunnel_control_plane_probe_failed")
+            | ("tunnel_daemon_start", "tunnel_daemon_start_failed")
+            | ("tunnel_daemon_readiness", "tunnel_daemon_not_ready")
+            | ("local_mcp", "local_mcp_unavailable")
+            | ("tunnel_startup", "tunnel_startup_failed")
+    );
+    valid.then_some((stage, reason))
+}
+
+fn connection_error_evidence(error: ConnectionError) -> (&'static str, &'static str) {
+    match error {
+        ConnectionError::StartupTimeout => ("tunnel_startup", "tunnel_startup_timeout"),
+        ConnectionError::ProcessExited => ("tunnel_process", "tunnel_process_exited"),
+        ConnectionError::ProtocolInvalid => ("machine_protocol", "tunnel_protocol_invalid"),
+        ConnectionError::HealthStale => ("tunnel_health", "tunnel_health_stale"),
+        ConnectionError::TunnelUnavailable => ("tunnel_health", "tunnel_unavailable"),
+        ConnectionError::LocalMcpUnavailable => ("local_mcp", "local_mcp_unavailable"),
+        ConnectionError::StartFailed => ("tunnel_process", "tunnel_process_start_failed"),
+        ConnectionError::StopFailed => ("tunnel_process", "tunnel_process_stop_failed"),
     }
 }
 
@@ -458,6 +542,39 @@ fn runtime_metadata(
         return None;
     }
     Some(metadata)
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn safe_failure_evidence_accepts_known_codes_and_ignores_new_optional_fields() {
+        let event = json!({
+            "event": "failure",
+            "schema_version": 1,
+            "provider": "openai",
+            "failure_stage": "tunnel_control_plane",
+            "reason_code": "tunnel_control_plane_probe_failed",
+            "future_optional": {"ignored": true}
+        });
+        assert_eq!(
+            safe_failure_evidence(&event),
+            Some(("tunnel_control_plane", "tunnel_control_plane_probe_failed"))
+        );
+    }
+
+    #[test]
+    fn safe_failure_evidence_fails_closed_on_malformed_or_unknown_codes() {
+        for event in [
+            json!({"event":"failure","schema_version":1,"provider":"openai"}),
+            json!({"event":"failure","schema_version":2,"provider":"openai","failure_stage":"tunnel_doctor","reason_code":"tunnel_doctor_failed"}),
+            json!({"event":"failure","schema_version":1,"provider":"openai","failure_stage":"tunnel_doctor","reason_code":"private_runtime_key_rejected"}),
+        ] {
+            assert_eq!(safe_failure_evidence(&event), None);
+        }
+    }
 }
 
 #[cfg(test)]

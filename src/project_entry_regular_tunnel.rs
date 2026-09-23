@@ -51,6 +51,18 @@ impl Drop for RegularTunnelSession {
 pub(crate) async fn run_regular_server_tunnel(
     options: &RegularServerTunnelOptions,
 ) -> Result<(), ProductError> {
+    match run_regular_server_tunnel_inner(options).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            println!("{}", machine_regular_tunnel_failure_event(&error));
+            Err(error)
+        }
+    }
+}
+
+async fn run_regular_server_tunnel_inner(
+    options: &RegularServerTunnelOptions,
+) -> Result<(), ProductError> {
     let local_server_url = validate_local_server_url(&options.local_server_url)?;
     let session = RegularTunnelSession::create(&options.runtime_parent)?;
     let authorization_file = session.write_authorization_file(&options.bootstrap_token)?;
@@ -177,6 +189,37 @@ fn machine_regular_tunnel_ready_event(clipboard: ClipboardCopyOutcome) -> Value 
     })
 }
 
+fn machine_regular_tunnel_failure_event(error: &ProductError) -> Value {
+    let (failure_stage, reason_code) = tunnel_failure_evidence(&error.code);
+    json!({
+        "event": "failure",
+        "schema_version": 1,
+        "provider": "openai",
+        "failure_stage": failure_stage,
+        "reason_code": reason_code,
+    })
+}
+
+fn tunnel_failure_evidence(code: &str) -> (&'static str, &'static str) {
+    match code {
+        "tunnel_client_verification_failed" => (
+            "tunnel_client_verification",
+            "tunnel_client_verification_failed",
+        ),
+        "tunnel_doctor_failed" => ("tunnel_doctor", "tunnel_doctor_failed"),
+        "tunnel_control_plane_unreachable" => {
+            ("tunnel_control_plane", "tunnel_control_plane_unreachable")
+        }
+        "tunnel_control_plane_probe_failed" => {
+            ("tunnel_control_plane", "tunnel_control_plane_probe_failed")
+        }
+        "tunnel_daemon_start_failed" => ("tunnel_daemon_start", "tunnel_daemon_start_failed"),
+        "tunnel_daemon_not_ready" => ("tunnel_daemon_readiness", "tunnel_daemon_not_ready"),
+        "local_mcp_unavailable" | "tunnel_auth_invalid" => ("local_mcp", "local_mcp_unavailable"),
+        _ => ("tunnel_startup", "tunnel_startup_failed"),
+    }
+}
+
 fn validate_local_server_url(value: &str) -> Result<String, ProductError> {
     let value = value.trim().trim_end_matches('/');
     let parsed = url::Url::parse(value).map_err(|_| {
@@ -272,6 +315,24 @@ mod tests {
         assert!(!encoded.contains("Bearer"));
         assert!(!encoded.contains("wc_pat_"));
         assert!(!encoded.contains("wc_boot_"));
+    }
+
+    #[test]
+    fn machine_failure_event_is_typed_bounded_and_secret_free() {
+        let error = ProductError::new(
+            "tunnel_control_plane_probe_failed",
+            "private runtime key and tunnel id must never cross the machine channel",
+            Some("private recovery text"),
+        );
+        let event = machine_regular_tunnel_failure_event(&error);
+        assert_eq!(event["event"], "failure");
+        assert_eq!(event["failure_stage"], "tunnel_control_plane");
+        assert_eq!(event["reason_code"], "tunnel_control_plane_probe_failed");
+        let encoded = serde_json::to_string(&event).unwrap();
+        assert!(!encoded.contains("private runtime key"));
+        assert!(!encoded.contains("private recovery"));
+        assert!(!encoded.contains("Authorization"));
+        assert!(!encoded.contains("Bearer"));
     }
 
     #[test]

@@ -201,7 +201,9 @@ impl AppState {
                     )
                     .await
                     .ok();
-                    let active = observed.as_ref().and_then(runtime_shell::observed_active_jobs);
+                    let active = observed
+                        .as_ref()
+                        .and_then(runtime_shell::observed_active_jobs);
                     if active != Some(0) && !request.confirm_interrupt {
                         return Err(diagnostics::diagnostic_error(
                             "runtime_switch_jobs_confirmation_required",

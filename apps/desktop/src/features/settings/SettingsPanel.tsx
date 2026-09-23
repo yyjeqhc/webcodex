@@ -113,7 +113,10 @@ export function SettingsPanel({
       <SettingsDisclosure id="desktop-settings-network" label={p("network")} open={networkOpen} onOpenChange={setNetworkOpen}>
         <div className="field-group"><label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label><select id="desktop-tunnel-proxy-mode" value={proxyMode} onChange={event => setProxyMode(event.target.value as TunnelProxyMode)} disabled={savingProxy || operationBusy} data-webcodex-control="tunnel-proxy-mode"><option value="auto">{t("settings.tunnelProxyAuto")}</option><option value="direct">{t("settings.tunnelProxyDirect")}</option><option value="custom">{t("settings.tunnelProxyCustom")}</option></select></div>
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
-        <dl className="detail-list"><div><dt>{t("settings.tunnelProxyEffective")}</dt><dd>{state.tunnel_proxy.effective_url ?? t("settings.tunnelProxyDirectValue")}</dd></div></dl>
+        <dl className="detail-list">
+          <div><dt>{t("settings.tunnelProxyEffective")}</dt><dd>{state.tunnel_proxy.effective_proxy_present ? state.tunnel_proxy.effective_source : t("settings.tunnelProxyDirectValue")}</dd></div>
+          <div><dt>{t("settings.tunnelProxyDetected")}</dt><dd>{state.tunnel_proxy.system_proxy_detected ? p("available") : p("notConfigured")}</dd></div>
+        </dl>
         <button type="button" className="secondary-button" onClick={() => void saveProxy()} disabled={savingProxy || operationBusy || (proxyMode === "custom" && !customProxy.trim())} data-webcodex-action="save-tunnel-proxy">{savingProxy ? p("loading") : p("saveApply")}</button>
         {proxyError && <SettingsError error={proxyError} />}
       </SettingsDisclosure>

@@ -147,8 +147,13 @@ impl AppState {
 }
 
 pub(super) fn observed_active_jobs(value: &Value) -> Option<u64> {
-    if value.get("connected").and_then(Value::as_bool) != Some(true) { return None; }
-    value.get("jobs_running")?.as_u64()?.checked_add(value.get("jobs_queued")?.as_u64()?)
+    if value.get("connected").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    value
+        .get("jobs_running")?
+        .as_u64()?
+        .checked_add(value.get("jobs_queued")?.as_u64()?)
 }
 
 fn selection_context(config: &StoredDesktopConfig) -> String {
@@ -535,8 +540,7 @@ impl DesktopCore {
             .iter()
             .find(|b| b.binary == "webcodex-runner")
             .ok_or_else(|| runtime_selection::error("build_info_unverifiable"))?;
-        if runner.get("client_id").and_then(Value::as_str)
-            != Some(runner_client_id.as_str())
+        if runner.get("client_id").and_then(Value::as_str) != Some(runner_client_id.as_str())
             || runner.get("version").and_then(Value::as_str) != Some(expected.version.as_str())
             || runner.get("build_git_commit").and_then(Value::as_str)
                 != expected.git_commit.as_deref()

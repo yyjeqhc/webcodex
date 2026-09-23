@@ -115,15 +115,19 @@ describe("Diagnostics are explicit and secret-free", () => {
   });
 });
 
-it("keeps the six localized navigation labels and unique native Settings disclosures", async () => {
+it("keeps the six localized navigation labels and semantically pressable Settings disclosures", async () => {
   localStorage.setItem("webcodex.desktop.locale", "zh-CN");
   render(wrap(<><Sidebar navigation="settings" setNavigation={vi.fn()} state={state} /><SettingsPanel state={state} onState={vi.fn()} onChangeSetup={vi.fn()} /></>));
   for (const label of ["首页", "项目", "活动", "连接", "扩展", "设置"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Desktop 设置" })).toBeInTheDocument();
   expect(await screen.findByRole("checkbox", { name: "登录时启动 WebCodex" })).toBeInTheDocument();
-  for (const label of ["故障排查", "Runtime", "网络", "高级"]) expect(screen.getByText(label, { selector: "summary" })).toBeInTheDocument();
-  const disclosure = screen.getByText("故障排查", { selector: "summary" }).parentElement as HTMLDetailsElement;
-  disclosure.open = true; fireEvent(disclosure, new Event("toggle"));
+  for (const label of ["故障排查", "Runtime", "网络", "高级"]) {
+    expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-expanded", "false");
+  }
+  const disclosure = screen.getByRole("button", { name: "故障排查" });
+  fireEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(await screen.findByRole("region", { name: "故障排查" })).toBeInTheDocument();
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "打开 Runtime Console" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();

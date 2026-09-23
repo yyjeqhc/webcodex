@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { LANGUAGES, useLocale } from "../../i18n/locale";
@@ -36,6 +36,8 @@ export function SettingsPanel({
   const s = useShellText();
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(initialSection === "diagnostics");
   const [runtimeOpen, setRuntimeOpen] = useState(initialSection === "runtime");
+  const [networkOpen, setNetworkOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   useEffect(() => { if (initialSection === "diagnostics") setDiagnosticsOpen(true); if (initialSection === "runtime") setRuntimeOpen(true); }, [initialSection]);
   const { appearance, setAppearance, accent, setAccent } = useAppearance();
   const p = useProduct();
@@ -102,22 +104,20 @@ export function SettingsPanel({
         <div className="setting-row"><span>{p("background")}</span><span className="setting-value">{p("keepRunning")}</span></div>
       </section>
       <ComputerPermissions />
-      <details className="settings-section settings-disclosure" open={diagnosticsOpen} onToggle={event => setDiagnosticsOpen(event.currentTarget.open)}>
-        <summary>{s("Troubleshooting")}</summary>
-        {diagnosticsOpen && <DiagnosticsPanel state={state} onState={onState} />}
-      </details>
-      <details className="settings-section settings-disclosure" open={runtimeOpen} onToggle={event => setRuntimeOpen(event.currentTarget.open)}>
-        <summary>{s("Runtime")}</summary>
-        {runtimeOpen && <RuntimePanel state={state} onState={onState} onActivity={onActivity} />}
-      </details>
-      <details className="settings-section settings-disclosure"><summary>{p("network")}</summary>
+      <SettingsDisclosure id="desktop-settings-diagnostics" label={s("Troubleshooting")} open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
+        <DiagnosticsPanel state={state} onState={onState} />
+      </SettingsDisclosure>
+      <SettingsDisclosure id="desktop-settings-runtime" label={s("Runtime")} open={runtimeOpen} onOpenChange={setRuntimeOpen}>
+        <RuntimePanel state={state} onState={onState} onActivity={onActivity} />
+      </SettingsDisclosure>
+      <SettingsDisclosure id="desktop-settings-network" label={p("network")} open={networkOpen} onOpenChange={setNetworkOpen}>
         <div className="field-group"><label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label><select id="desktop-tunnel-proxy-mode" value={proxyMode} onChange={event => setProxyMode(event.target.value as TunnelProxyMode)} disabled={savingProxy || operationBusy} data-webcodex-control="tunnel-proxy-mode"><option value="auto">{t("settings.tunnelProxyAuto")}</option><option value="direct">{t("settings.tunnelProxyDirect")}</option><option value="custom">{t("settings.tunnelProxyCustom")}</option></select></div>
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
         <dl className="detail-list"><div><dt>{t("settings.tunnelProxyEffective")}</dt><dd>{state.tunnel_proxy.effective_url ?? t("settings.tunnelProxyDirectValue")}</dd></div></dl>
         <button type="button" className="secondary-button" onClick={() => void saveProxy()} disabled={savingProxy || operationBusy || (proxyMode === "custom" && !customProxy.trim())} data-webcodex-action="save-tunnel-proxy">{savingProxy ? p("loading") : p("saveApply")}</button>
         {proxyError && <SettingsError error={proxyError} />}
-      </details>
-      <details className="settings-section settings-disclosure"><summary>{p("advanced")}</summary>
+      </SettingsDisclosure>
+      <SettingsDisclosure id="desktop-settings-advanced" label={p("advanced")} open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <div className="connection-actions">
           {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("serverConnection")}</button>}
           {onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
@@ -132,8 +132,41 @@ export function SettingsPanel({
         {runnerError && <SettingsError error={runnerError} />}
         {runnerSettings && <dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl>}
         <PowerShellInstallGuidance state={state} onState={onState} />
-      </details>
+      </SettingsDisclosure>
       <AboutPanel state={state} updates={updates} />
+    </section>
+  );
+}
+
+function SettingsDisclosure({
+  id,
+  label,
+  open,
+  onOpenChange,
+  children,
+}: {
+  id: string;
+  label: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="settings-section settings-disclosure">
+      <button
+        type="button"
+        className="settings-disclosure-trigger"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => onOpenChange(!open)}
+      >
+        {label}
+      </button>
+      {open && (
+        <div id={id} className="settings-disclosure-panel" role="region" aria-label={label}>
+          {children}
+        </div>
+      )}
     </section>
   );
 }

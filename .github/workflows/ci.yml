@@ -631,6 +631,11 @@ jobs:
         with:
           shared-key: windows-runner-ci
       - name: Run Windows Runner and Computer tests
+        # This lane starts real PowerShell/MCP child processes. Keep the Rust
+        # harness bounded so hosted-runner scheduling does not consume their
+        # production startup/request deadlines.
+        env:
+          RUST_TEST_THREADS: "2"
         run: cargo test --locked -p webcodex-runner -p webcodex-lsp -p webcodex-computer --features runner-real-process-tests
 
   test-windows-package:

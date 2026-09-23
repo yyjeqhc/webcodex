@@ -2,11 +2,16 @@ use super::*;
 
 #[test]
 fn source_is_explicit_and_release_resolution_prefers_custom() {
-    let source: RuntimeSource =
-        serde_json::from_str(r#"{"kind":"custom","directory":"/missing-runtime"}"#).unwrap();
+    let custom_directory = std::env::temp_dir().join("webcodex-missing-runtime");
+    assert!(custom_directory.is_absolute());
+    let source: RuntimeSource = serde_json::from_value(serde_json::json!({
+        "kind": "custom",
+        "directory": custom_directory.clone(),
+    }))
+    .unwrap();
     assert!(matches!(source, RuntimeSource::Custom { .. }));
-    let (path, resolution) = source_directory(&source, Some(Path::new("/bundled"))).unwrap();
-    assert_eq!(path, Path::new("/missing-runtime"));
+    let (path, resolution) = source_directory(&source, None).unwrap();
+    assert_eq!(path, custom_directory);
     assert_eq!(resolution, ResolvedBinarySource::Custom);
     assert_eq!(RuntimeSource::default(), RuntimeSource::Bundled);
 }

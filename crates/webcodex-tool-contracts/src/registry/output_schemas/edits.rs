@@ -211,6 +211,16 @@ fn apply_text_edit_summary_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "index": {"type":"integer","minimum":0,"maximum":19},
+            "kind": {"type":"string","enum":["replace_exact","insert_before","insert_after","delete_exact"]},
+            "old_start_line": {"type":"integer","minimum":1},
+            "old_end_line": {"type":"integer","minimum":1},
+            "new_line_count": {"type":"integer","minimum":0},
+            "would_change": {"type":"boolean"},
+            "match_count": {"type":"integer","minimum":1},
+            "expected_match_count": {"type":"integer","minimum":1,"maximum":1024},
+            "match_ranges": {"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT,"items":edit_candidate_range_schema()},
+            "match_ranges_truncated": {"type":"boolean"},
             "warning": {
                 "type": "string",
                 "enum": [webcodex_core::apply_edits_shared::APPLY_TEXT_EDIT_DUPLICATE_ANCHOR_WARNING],
@@ -413,8 +423,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "applied_count",
-                schema_type("integer", "Number of file changes applied in the batch."),
+                schema_type("integer", "Number of confirmed applied file changes; zero for dry_run."),
             ),
+            ("planned_count", schema_type("integer", "Number of fully planned file changes, including dry_run.")),
+            ("change_summary", json!({"type":"object","additionalProperties":false,"properties":{
+                "requested_changes":{"type":"integer","minimum":1,"maximum":16},
+                "changed_files":{"type":"integer","minimum":0,"maximum":16},
+                "logical_edits":{"type":"integer","minimum":0},
+                "resolved_matches":{"type":"integer","minimum":0},
+                "warnings":{"type":"integer","minimum":0}
+            },"required":["requested_changes","changed_files","logical_edits","resolved_matches","warnings"]})),
             (
                 "ignored_noop_count",
                 schema_type("integer", "Number of provable empty insert operations ignored without invalidating the transactional batch."),
@@ -482,9 +500,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "match_count",
                 schema_type("integer", "Exact-match count reported for a deterministic text conflict when useful."),
             ),
+            ("expected_match_count", schema_type("integer", "Caller-required exact count for match_count_mismatch.")),
+            ("actual_match_count", schema_type("integer", "Observed exact count in the requested scope for match_count_mismatch.")),
+            ("line_scope", json!({"anyOf":[{"type":"object","properties":{"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1}}},{"type":"null"}]})),
+            ("direct_retry_safe", schema_type("boolean", "Whether the failed exact edit can be retried without a new read.")),
+            ("reread_required", schema_type("boolean", "Whether a fresh read is required before correction.")),
             (
                 "candidate_ranges",
-                array_schema(edit_candidate_range_schema(), "Bounded candidate source ranges. occurrence is included only when the current read revision makes positional retry safe."),
+                json!({"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES,"items":edit_candidate_range_schema(),"description":"Bounded candidate source ranges. occurrence is included only when the current read revision makes positional retry safe."}),
             ),
             (
                 "candidates_truncated",

@@ -178,6 +178,10 @@ pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA: &str =
 /// false and is never inferred from occurrence, protocol generation, file_write,
 /// version, transport, OS, or build identity.
 pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
+/// Runner enforces explicit bounded all-match cardinality against one original
+/// source snapshot. Missing on older Runners is false; never inferred.
+pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT: &str =
+    "apply_text_edit_expected_match_count";
 /// Authoritative Runner-side Codex Patch parsing plus bounded transactional apply.
 /// Missing on older Runners is false and is never inferred from file_write or
 /// protocol generation, so a new Server cannot send this request kind to an old Runner.
@@ -461,6 +465,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT,
     RUNNER_CAPABILITY_APPLY_PATCH,
     RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
     RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE,
@@ -576,6 +581,8 @@ pub struct RunnerCapabilities {
     /// Runners is false and is never inferred from occurrence or generation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub apply_text_edit_line_scope: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub apply_text_edit_expected_match_count: bool,
     /// Authoritative Codex-compatible patch parsing and transactional application.
     /// Missing on older Runners is false and never follows from generic file_write.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1041,6 +1048,7 @@ impl Default for RunnerCapabilities {
             apply_text_edit_occurrence: false,
             apply_text_edit_local_guard_without_sha: false,
             apply_text_edit_line_scope: false,
+            apply_text_edit_expected_match_count: false,
             apply_patch: false,
             apply_patch_match_metadata: false,
             apply_patch_matching_mode: false,
@@ -2619,6 +2627,7 @@ mod envelope_tests {
                 apply_text_edit_occurrence: false,
                 apply_text_edit_local_guard_without_sha: false,
                 apply_text_edit_line_scope: false,
+                apply_text_edit_expected_match_count: false,
                 apply_patch: false,
                 apply_patch_match_metadata: false,
                 apply_patch_matching_mode: false,
@@ -3929,6 +3938,7 @@ mod envelope_tests {
                 "apply_text_edit_occurrence",
                 "apply_text_edit_local_guard_without_sha",
                 "apply_text_edit_line_scope",
+                "apply_text_edit_expected_match_count",
                 "apply_patch",
                 "apply_patch_match_metadata",
                 "apply_patch_matching_mode",

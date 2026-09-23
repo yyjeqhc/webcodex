@@ -59,6 +59,7 @@ pub(crate) struct ModelErgonomicsTimer {
     started: Instant,
     finish_summary_only: Option<bool>,
     work_on_project: Option<WorkOnProjectErgonomicsFacts>,
+    bulk_exact_requested: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +69,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     duration_ms: u64,
     finish_summary_only: Option<bool>,
     work_on_project: Option<WorkOnProjectErgonomicsFacts>,
+    bulk_exact_requested: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -90,6 +92,10 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) edit_outcome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) edit_conflict_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) bulk_exact_outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) bulk_exact_match_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) work_on_project: Option<WorkOnProjectErgonomicsFacts>,
 }
@@ -123,6 +129,22 @@ impl ModelErgonomicsTimer {
                 .unwrap_or(false)
         });
         let work_on_project = work_on_project_facts(tool_name, arguments);
+        let bulk_exact_requested = tool_name == "apply_text_edits"
+            && arguments
+                .get("changes")
+                .and_then(Value::as_array)
+                .is_some_and(|changes| {
+                    changes.iter().any(|change| {
+                        change
+                            .get("edits")
+                            .and_then(Value::as_array)
+                            .is_some_and(|edits| {
+                                edits
+                                    .iter()
+                                    .any(|edit| edit.get("expected_match_count").is_some())
+                            })
+                    })
+                });
         Some(Self {
             tool_name: definition.name,
             tool_category: definition.category,
@@ -130,6 +152,7 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only,
             work_on_project,
+            bulk_exact_requested,
         })
     }
 
@@ -142,6 +165,7 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
+            bulk_exact_requested: self.bulk_exact_requested,
         }
     }
 
@@ -154,6 +178,7 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
+            bulk_exact_requested: self.bulk_exact_requested,
         }
     }
 }
@@ -224,8 +249,9 @@ impl ModelErgonomicsCompletion {
             )
         };
         let edit = edit_facts(self.tool_name, success, output);
+        let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 7,
+            schema_version: 8,
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -240,6 +266,51 @@ impl ModelErgonomicsCompletion {
             edit_surface: edit.surface,
             edit_outcome: edit.outcome,
             edit_conflict_kind: edit.conflict_kind,
+            bulk_exact_outcome: self.bulk_exact_requested.then(|| {
+                if success {
+                    if output.get("dry_run").and_then(Value::as_bool) == Some(true) {
+                        "dry_run"
+                    } else {
+                        "success"
+                    }
+                } else if edit_uncertain {
+                    "uncertain"
+                } else {
+                    "rejection"
+                }
+                .to_string()
+            }),
+            bulk_exact_match_total: if self.bulk_exact_requested {
+                if success {
+                    Some(
+                        output
+                            .get("files")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|file| {
+                                file.get("edits")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                            })
+                            .filter_map(|edit| {
+                                edit.get("expected_match_count")
+                                    .and_then(Value::as_u64)
+                                    .and_then(|_| edit.get("match_count").and_then(Value::as_u64))
+                            })
+                            .sum::<u64>()
+                            .min(327_680),
+                    )
+                } else {
+                    output
+                        .get("actual_match_count")
+                        .and_then(Value::as_u64)
+                        .map(|count| count.min(327_680))
+                }
+            } else {
+                None
+            },
             work_on_project: self.work_on_project,
         }
     }
@@ -390,6 +461,7 @@ fn edit_conflict_kind(output: &Value) -> Option<String> {
     matches!(
         value,
         "multiple_matches"
+            | "match_count_mismatch"
             | "match_not_found"
             | "occurrence_out_of_range"
             | "occurrence_outside_line_scope"
@@ -446,6 +518,34 @@ mod tests {
             .finish_after(Duration::from_millis(duration_ms))
     }
 
+    #[test]
+    fn bulk_exact_metrics_record_only_bounded_counts_and_outcomes() {
+        let args = json!({"changes":[{"path":"private.rs","edits":[{"kind":"replace_exact","old_text":"SECRET_OLD","new_text":"SECRET_NEW","expected_match_count":2}]}]});
+        let completion = ModelErgonomicsTimer::start_with_arguments("apply_text_edits", &args)
+            .unwrap()
+            .finish();
+        let dry = completion
+            .record_for_tool_result(&ToolResult::ok(json!({
+                "dry_run":true,"changed":false,"would_change":true,
+                "files":[{"edits":[{"expected_match_count":2,"match_count":2}]}]
+            })))
+            .unwrap();
+        assert_eq!(dry.bulk_exact_outcome.as_deref(), Some("dry_run"));
+        assert_eq!(dry.bulk_exact_match_total, Some(2));
+        let reject = completion.record_for_tool_result(&ToolResult::err_with_output(
+            "count mismatch", json!({"error_kind":"match_count_mismatch","actual_match_count":1,"state_changed":false,"execution_state":"not_started"})
+        )).unwrap();
+        assert_eq!(reject.bulk_exact_outcome.as_deref(), Some("rejection"));
+        assert_eq!(reject.bulk_exact_match_total, Some(1));
+        assert_eq!(
+            reject.edit_conflict_kind.as_deref(),
+            Some("match_count_mismatch")
+        );
+        let serialized = serde_json::to_string(&reject).unwrap();
+        assert!(!serialized.contains("SECRET_OLD"));
+        assert!(!serialized.contains("private.rs"));
+    }
+
     fn work_on_project_record(arguments: Value) -> ModelErgonomicsRecord {
         ModelErgonomicsTimer::start_with_arguments("work_on_project", &arguments)
             .expect("work_on_project telemetry")
@@ -481,7 +581,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 7);
+        assert_eq!(record.schema_version, 8);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -773,7 +873,7 @@ mod tests {
             let record = completion("apply_text_edits", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 7);
+            assert_eq!(record.schema_version, 8);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -881,7 +981,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 7);
+            assert_eq!(record.schema_version, 8);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

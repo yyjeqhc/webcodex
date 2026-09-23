@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use webcodex_core::runner_operation::RunnerFilePayload;
 
@@ -375,12 +376,15 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // neutral shared type names directly rather than preserving Runner-local aliases.
 use crate::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
-    is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path, resolve_apply_text_match,
-    restore_apply_text_line_endings, ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput,
-    ApplyTextEditKind, ApplyTextMatchConflict, ApplyTextMatchConflictKind,
+    is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path,
+    resolve_apply_text_bulk_matches, resolve_apply_text_match, restore_apply_text_line_endings,
+    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
+    ApplyTextLineEnding, ApplyTextMatchConflict, ApplyTextMatchConflictKind,
     MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
+    MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT, MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT,
+    MAX_APPLY_TEXT_MATCH_RANGES_TOTAL,
 };
 use crate::apply_patch_shared::{
     derive_codex_patch_update_with_matching_mode, parse_codex_patch, ApplyPatchMatchingMode,
@@ -415,6 +419,13 @@ struct ResolvedEditSourceRange {
 #[derive(Debug)]
 enum EditPlanConflict {
     Match(ApplyTextMatchConflict),
+    MatchCount {
+        expected: usize,
+        actual: usize,
+        line_scope: Option<crate::apply_edits_shared::ApplyTextLineScope>,
+        candidate_ranges: Vec<crate::apply_edits_shared::ApplyTextMatchCandidate>,
+        candidates_truncated: bool,
+    },
     Overlap {
         first: ResolvedEditSourceRange,
         second: ResolvedEditSourceRange,
@@ -501,8 +512,9 @@ fn edit_plan(
     let canonical_original = canonicalize_apply_text_line_endings(original, line_ending)
         .map_err(|error| EditPlanError::plain(0, "edit", error))?;
     let original = canonical_original.as_ref();
-    let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
+    let mut ops: Vec<(usize, usize, Arc<str>, usize)> = Vec::with_capacity(edits.len());
     let mut duplicate_anchors = vec![false; edits.len()];
+    let mut bulk_matches = vec![None; edits.len()];
     for (index, edit) in edits.iter().enumerate() {
         let kind = &edit.kind;
         if edit.occurrence == Some(0) {
@@ -511,6 +523,15 @@ fn edit_plan(
                 kind.as_str(),
                 "occurrence must be at least 1",
             ));
+        }
+        if let Some(expected) = edit.expected_match_count {
+            if expected == 0
+                || expected > MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT
+                || *kind != ApplyTextEditKind::ReplaceExact
+                || edit.occurrence.is_some()
+            {
+                return Err(EditPlanError::plain(index, kind.as_str(), "expected_match_count requires replace_exact without occurrence and must be within 1..=1024"));
+            }
         }
         if let Some(line_scope) = edit.line_scope {
             line_scope
@@ -602,6 +623,33 @@ fn edit_plan(
             continue;
         }
         let needle = needle.as_ref();
+        if let Some(expected) = edit.expected_match_count {
+            let matches =
+                resolve_apply_text_bulk_matches(original, needle, edit.line_scope.as_ref());
+            if matches.match_count != expected {
+                return Err(EditPlanError {
+                    edit_index: index,
+                    edit_kind: kind.as_str(),
+                    message: format!(
+                        "expected {expected} exact matches but found {}",
+                        matches.match_count
+                    ),
+                    conflict: Some(EditPlanConflict::MatchCount {
+                        expected,
+                        actual: matches.match_count,
+                        line_scope: edit.line_scope,
+                        candidate_ranges: matches.candidate_ranges,
+                        candidates_truncated: matches.candidates_truncated,
+                    }),
+                });
+            }
+            bulk_matches[index] = Some((matches.match_count, matches.candidate_ranges));
+            let replacement: Arc<str> = replacement.into();
+            for (start, end) in matches.ranges {
+                ops.push((start, end, replacement.clone(), index));
+            }
+            continue;
+        }
         let (start, end) =
             resolve_apply_text_match(original, needle, edit.occurrence, edit.line_scope.as_ref())
                 .map_err(|conflict| {
@@ -659,7 +707,7 @@ fn edit_plan(
             ApplyTextEditKind::InsertAfter => replacement.starts_with(needle),
             _ => false,
         };
-        ops.push((range_start, range_end, replacement, index));
+        ops.push((range_start, range_end, replacement.into(), index));
     }
     ops.sort_by_key(|&(start, end, _, index)| (start, end, index));
     for pair in ops.windows(2) {
@@ -675,21 +723,68 @@ fn edit_plan(
             });
         }
     }
+    let crlf = line_ending == ApplyTextLineEnding::Crlf;
+    let source_bytes = original.len() + usize::from(crlf) * original.matches('\n').count();
+    let apply_size_delta = |size: usize, start: usize, end: usize, text: &str| {
+        let old = &original[start..end];
+        size.saturating_sub(old.len() + usize::from(crlf) * old.matches('\n').count())
+            .saturating_add(text.len() + usize::from(crlf) * text.matches('\n').count())
+    };
+    let final_bytes = ops
+        .iter()
+        .fold(source_bytes, |size, (start, end, text, _)| {
+            apply_size_delta(size, *start, *end, text)
+        });
+    if final_bytes > APPLY_TEXT_EDITS_MAX_FILE_BYTES {
+        let mut running_bytes = source_bytes;
+        for &(start, end, ref text, index) in &ops {
+            running_bytes = apply_size_delta(running_bytes, start, end, text);
+            if running_bytes > APPLY_TEXT_EDITS_MAX_FILE_BYTES {
+                return Err(EditPlanError::plain(
+                    index,
+                    edits[index].kind.as_str(),
+                    "replacement would exceed the file-size limit",
+                ));
+            }
+        }
+    }
     let mut replacement = String::with_capacity(original.len() + 64);
     let mut cursor = 0usize;
-    let mut summaries = Vec::with_capacity(ops.len());
+    let mut summaries = Vec::with_capacity(edits.len());
+    let mut summarized = vec![false; edits.len()];
     for &(start, end, ref text, index) in &ops {
         replacement.push_str(&original[cursor..start]);
-        replacement.push_str(text);
+        replacement.push_str(text.as_ref());
         cursor = end;
         let source_range = resolved_edit_source_range(original, start, end, index);
+        if summarized[index] {
+            continue;
+        }
+        summarized[index] = true;
         let mut summary = serde_json::json!({
             "index": index,
             "kind": edits[index].kind.as_str(),
             "old_start_line": source_range.start_line,
             "old_end_line": source_range.end_line,
             "new_line_count": if text.is_empty() { 0 } else { text.lines().count() },
+            "would_change": &original[start..end] != text.as_ref(),
         });
+        if let Some((match_count, ranges)) = &bulk_matches[index] {
+            for redundant in ["old_start_line", "old_end_line", "new_line_count"] {
+                summary
+                    .as_object_mut()
+                    .expect("summary object")
+                    .remove(redundant);
+            }
+            summary["match_count"] = serde_json::json!(match_count);
+            summary["expected_match_count"] = serde_json::json!(edits[index].expected_match_count);
+            summary["match_ranges"] = serde_json::json!(ranges
+                .iter()
+                .take(MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT)
+                .collect::<Vec<_>>());
+            summary["match_ranges_truncated"] =
+                serde_json::json!(*match_count > MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT);
+        }
         if duplicate_anchors[index] {
             summary["warning"] = serde_json::json!(
                 webcodex_core::apply_edits_shared::APPLY_TEXT_EDIT_DUPLICATE_ANCHOR_WARNING
@@ -699,11 +794,36 @@ fn edit_plan(
     }
     replacement.push_str(&original[cursor..]);
     let replacement = restore_apply_text_line_endings(replacement, line_ending);
+    if replacement.len() > APPLY_TEXT_EDITS_MAX_FILE_BYTES {
+        return Err(EditPlanError::plain(
+            0,
+            "edit",
+            "replacement would exceed the file-size limit",
+        ));
+    }
     Ok((replacement, summaries))
 }
 
 fn edit_conflict_recovery(error: &EditPlanError) -> Option<serde_json::Value> {
     match error.conflict.as_ref()? {
+        EditPlanConflict::MatchCount {
+            expected,
+            actual,
+            line_scope,
+            candidate_ranges,
+            candidates_truncated,
+        } => Some(serde_json::json!({
+            "schema_version": 1,
+            "conflict_kind": "match_count_mismatch",
+            "expected_match_count": expected,
+            "actual_match_count": actual,
+            "line_scope": line_scope,
+            "candidate_ranges": candidate_ranges,
+            "candidates_truncated": candidates_truncated,
+            "direct_retry_safe": false,
+            "reread_required": true,
+            "recovery_action": "reread_or_correct_expected_match_count",
+        })),
         EditPlanConflict::Match(conflict) => {
             let scoped = conflict.line_scope.is_some();
             let (selector_supported, recovery_action, direct_retry_safe, reread_required) =
@@ -794,6 +914,9 @@ fn edit_conflict_retry_guidance(recovery: Option<&serde_json::Value>) -> &'stati
         Some("refine_edit_batch") => {
             "refine the edit batch so exact edit ranges no longer overlap; preserve any caller-provided snapshot guard when positional selection remains necessary."
         }
+        Some("reread_or_correct_expected_match_count") => {
+            "reread the file, check the bounded exact-match locations, and retry with the correct expected_match_count and a fresh read revision."
+        }
         _ => "reread this file or use a stronger globally unique exact target.",
     }
 }
@@ -830,6 +953,7 @@ fn batch_error(
             "changed": false,
             "error_kind": code,
             "state_changed": false,
+            "execution_state": "not_started",
             "change_index": change_index,
             "kind": kind,
             "path": path,
@@ -1206,7 +1330,7 @@ fn execute_planned_file_changes(
         }
     }
 
-    let files = plans
+    let mut files = plans
         .iter()
         .map(|plan| {
             serde_json::json!({
@@ -1222,9 +1346,34 @@ fn execute_planned_file_changes(
             })
         })
         .collect::<Vec<_>>();
+    if requested_matching_mode.is_none() {
+        let mut remaining_ranges = MAX_APPLY_TEXT_MATCH_RANGES_TOTAL;
+        for file in &mut files {
+            if let Some(edits) = file
+                .get_mut("edits")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for edit in edits {
+                    if let Some(ranges) = edit
+                        .get_mut("match_ranges")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        let truncated = ranges.len() > remaining_ranges;
+                        if truncated {
+                            ranges.truncate(remaining_ranges);
+                        }
+                        remaining_ranges = remaining_ranges.saturating_sub(ranges.len());
+                        if truncated {
+                            edit["match_ranges_truncated"] = serde_json::json!(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut output = serde_json::json!({
         "dry_run": dry_run,
-        "applied_count": plans.len(),
+        "applied_count": if dry_run && requested_matching_mode.is_none() { 0 } else { plans.len() },
         "ignored_noop_count": ignored_noop_count,
         "changed": !dry_run && would_change,
         "state_changed": !dry_run && would_change,
@@ -1235,6 +1384,34 @@ fn execute_planned_file_changes(
     });
     if let Some(mode) = requested_matching_mode {
         output["requested_matching_mode"] = serde_json::json!(mode.as_str());
+    } else {
+        let logical_edits: usize = plans
+            .iter()
+            .map(|plan| plan.edit_summaries.len())
+            .sum::<usize>()
+            + ignored_noop_count;
+        let resolved_matches: usize = plans
+            .iter()
+            .flat_map(|plan| &plan.edit_summaries)
+            .map(|edit| {
+                edit.get("match_count")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(1) as usize
+            })
+            .sum();
+        let warnings = plans
+            .iter()
+            .flat_map(|plan| &plan.edit_summaries)
+            .filter(|edit| edit.get("warning").is_some())
+            .count();
+        output["planned_count"] = serde_json::json!(plans.len());
+        output["change_summary"] = serde_json::json!({
+            "requested_changes": plans.len(),
+            "changed_files": if dry_run { 0 } else { plans.iter().filter(|plan| plan.would_change).count() },
+            "logical_edits": logical_edits,
+            "resolved_matches": resolved_matches,
+            "warnings": warnings,
+        });
     }
     line_edit_stdout(output, start)
 }
@@ -1890,6 +2067,22 @@ pub(crate) fn handle_apply_text_edits_file_request(
                     }
                 };
                 let whole_file_guard_required = !matches!(change.kind, ApplyFileChangeKind::Edit);
+                if change.kind == ApplyFileChangeKind::Edit
+                    && change
+                        .edits
+                        .iter()
+                        .any(|edit| edit.expected_match_count.is_some())
+                    && change.expected_sha256.is_none()
+                {
+                    return batch_error(
+                        Some(index),
+                        Some("edit"),
+                        Some(&change.path),
+                        "missing_sha256_guard",
+                        "bulk exact replacement requires an expected_sha256 wire guard",
+                        start,
+                    );
+                }
                 if whole_file_guard_required && change.expected_sha256.is_none() {
                     return batch_error(
                         Some(index),
@@ -1951,6 +2144,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                                     "changed": false,
                                     "error_kind": "edit_conflict",
                                     "state_changed": false,
+                                    "execution_state": "not_started",
                                     "change_index": index,
                                     "edit_index": error.edit_index,
                                     "kind": error.edit_kind,

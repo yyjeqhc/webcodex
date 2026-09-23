@@ -379,6 +379,16 @@ fn validate_apply_text_edit(
             edit.kind.as_str()
         ));
     }
+    if let Some(expected) = edit.expected_match_count {
+        if expected == 0
+            || expected > crate::apply_edits_shared::MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT
+        {
+            return Err(format!("change {change_index} edit {edit_index} ({}): expected_match_count must be within 1..={}", edit.kind.as_str(), crate::apply_edits_shared::MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT));
+        }
+        if edit.kind != ApplyTextEditKind::ReplaceExact || edit.occurrence.is_some() {
+            return Err(format!("change {change_index} edit {edit_index} ({}): expected_match_count is only allowed for replace_exact without occurrence", edit.kind.as_str()));
+        }
+    }
     if let Some(line_scope) = edit.line_scope {
         if let Err(reason) = line_scope.validate() {
             return Err(format!(
@@ -495,11 +505,11 @@ fn validate_apply_file_change(
     };
     match change.kind {
         ApplyFileChangeKind::Edit => {
-            let positional_edit_index = change
-                .edits
-                .iter()
-                .position(|edit| edit.occurrence.is_some() || edit.line_scope.is_some());
-            valid_revision(positional_edit_index.is_some(), positional_edit_index)?;
+            let positional_edit_index = change.edits.iter().position(|edit| {
+                edit.occurrence.is_some()
+                    || edit.line_scope.is_some()
+                    || edit.expected_match_count.is_some()
+            });
             if change.to_path.is_some() || change.content.is_some() {
                 return Err(
                     format!("change {index} (edit): to_path and content are not allowed").into(),
@@ -520,6 +530,7 @@ fn validate_apply_file_change(
                     });
                 }
             }
+            valid_revision(positional_edit_index.is_some(), positional_edit_index)?;
         }
         ApplyFileChangeKind::Create => {
             if change.to_path.is_some()
@@ -624,8 +635,20 @@ fn transactional_edit_agent_stdout_result(
     let applied_count = obj.get("applied_count").and_then(Value::as_u64);
     let changed = obj.get("changed").and_then(Value::as_bool);
     let would_change = obj.get("would_change").and_then(Value::as_bool);
+    let expected_applied = if tool_name == "apply_text_edits"
+        && expected_dry_run
+        && obj.get("planned_count").is_some()
+    {
+        0
+    } else {
+        expected_change_count as u64
+    };
     let valid = dry_run == Some(expected_dry_run)
-        && applied_count == Some(expected_change_count as u64)
+        && applied_count == Some(expected_applied)
+        && (tool_name != "apply_text_edits"
+            || obj.get("planned_count").is_none()
+            || obj.get("planned_count").and_then(Value::as_u64)
+                == Some(expected_change_count as u64))
         && changed.is_some()
         && would_change.is_some()
         && !(expected_dry_run && changed == Some(true))
@@ -696,6 +719,14 @@ fn validate_apply_text_edits_success_metadata(
 
     let mut any_changed = false;
     let mut any_would_change = false;
+    let mut total_ranges = 0usize;
+    let mut observed_edits = 0usize;
+    let mut resolved_matches = 0usize;
+    let mut warnings = 0usize;
+    let bulk_requested = changes
+        .iter()
+        .flat_map(|change| &change.edits)
+        .any(|edit| edit.expected_match_count.is_some());
     for (expected_index, (file, change)) in files.iter().zip(changes).enumerate() {
         if file.get("index").and_then(Value::as_u64) != Some(expected_index as u64)
             || file.get("kind").and_then(Value::as_str) != Some(change.kind.as_str())
@@ -710,7 +741,115 @@ fn validate_apply_text_edits_success_metadata(
         if !to_path_matches {
             return false;
         }
-        if file.get("edits").and_then(Value::as_array).is_none() {
+        let Some(edits) = file.get("edits").and_then(Value::as_array) else {
+            return false;
+        };
+        observed_edits += edits.len();
+        let mut seen_bulk = std::collections::HashSet::new();
+        for summary in edits {
+            let Some(fields) = summary.as_object() else {
+                return false;
+            };
+            if fields.keys().any(|key| {
+                !matches!(
+                    key.as_str(),
+                    "index"
+                        | "kind"
+                        | "old_start_line"
+                        | "old_end_line"
+                        | "new_line_count"
+                        | "would_change"
+                        | "warning"
+                        | "match_count"
+                        | "expected_match_count"
+                        | "match_ranges"
+                        | "match_ranges_truncated"
+                )
+            }) {
+                return false;
+            }
+            let Some(index) = summary
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+            else {
+                return false;
+            };
+            let Some(requested) = change.edits.get(index) else {
+                return false;
+            };
+            if requested.expected_match_count.is_some()
+                && summary.get("kind").and_then(Value::as_str) != Some(requested.kind.as_str())
+            {
+                return false;
+            }
+            if let Some(expected) = requested.expected_match_count {
+                if !seen_bulk.insert(index) {
+                    return false;
+                }
+                if summary.get("expected_match_count").and_then(Value::as_u64)
+                    != Some(expected as u64)
+                    || summary.get("match_count").and_then(Value::as_u64) != Some(expected as u64)
+                    || summary
+                        .get("would_change")
+                        .and_then(Value::as_bool)
+                        .is_none()
+                {
+                    return false;
+                }
+                let Some(ranges) = summary.get("match_ranges").and_then(Value::as_array) else {
+                    return false;
+                };
+                let expected_ranges = expected
+                    .min(crate::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT)
+                    .min(
+                        crate::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_TOTAL
+                            .saturating_sub(total_ranges),
+                    );
+                if ranges.len() != expected_ranges {
+                    return false;
+                }
+                total_ranges += ranges.len();
+                if total_ranges > crate::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_TOTAL {
+                    return false;
+                }
+                if summary
+                    .get("match_ranges_truncated")
+                    .and_then(Value::as_bool)
+                    != Some(ranges.len() < expected)
+                {
+                    return false;
+                }
+                if ranges.iter().any(|range| {
+                    range.get("start_line").and_then(Value::as_u64).is_none()
+                        || range.get("end_line").and_then(Value::as_u64).is_none()
+                        || range.get("occurrence").and_then(Value::as_u64).is_none()
+                        || range.as_object().is_none_or(|object| object.len() != 3)
+                }) {
+                    return false;
+                }
+                if ranges.iter().any(|range| {
+                    let start = range["start_line"].as_u64().unwrap_or(0);
+                    let end = range["end_line"].as_u64().unwrap_or(0);
+                    start == 0 || end < start || range["occurrence"].as_u64() == Some(0)
+                }) || ranges.windows(2).any(|pair| {
+                    pair[0]["occurrence"].as_u64() >= pair[1]["occurrence"].as_u64()
+                        || pair[0]["start_line"].as_u64() > pair[1]["start_line"].as_u64()
+                }) {
+                    return false;
+                }
+                resolved_matches += expected;
+            } else {
+                resolved_matches += 1;
+            }
+            warnings += usize::from(summary.get("warning").is_some());
+        }
+        if change
+            .edits
+            .iter()
+            .enumerate()
+            .any(|(index, edit)| edit.expected_match_count.is_some() && !seen_bulk.contains(&index))
+        {
             return false;
         }
 
@@ -747,8 +886,31 @@ fn validate_apply_text_edits_success_metadata(
         any_would_change |= would_change;
     }
 
+    let summary = output.get("change_summary");
+    let requested_logical_edits: usize = changes.iter().map(|change| change.edits.len()).sum();
+    let ignored_noop_count = output
+        .get("ignored_noop_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let summary_valid = summary.is_some_and(|summary| {
+        summary.get("requested_changes").and_then(Value::as_u64) == Some(changes.len() as u64)
+            && summary.get("changed_files").and_then(Value::as_u64)
+                == Some(
+                    files
+                        .iter()
+                        .filter(|file| file.get("changed").and_then(Value::as_bool) == Some(true))
+                        .count() as u64,
+                )
+            && summary.get("logical_edits").and_then(Value::as_u64)
+                == Some(requested_logical_edits as u64)
+            && observed_edits + ignored_noop_count == requested_logical_edits
+            && summary.get("resolved_matches").and_then(Value::as_u64)
+                == Some(resolved_matches as u64)
+            && summary.get("warnings").and_then(Value::as_u64) == Some(warnings as u64)
+    });
     output.get("changed").and_then(Value::as_bool) == Some(any_changed)
         && output.get("would_change").and_then(Value::as_bool) == Some(any_would_change)
+        && (summary_valid || (!bulk_requested && summary.is_none()))
 }
 
 fn apply_patch_sha256(value: &Value) -> bool {
@@ -1787,6 +1949,7 @@ fn sanitize_apply_text_edits_model_recovery(
     };
     let conflict_kind = match conflict_kind {
         "multiple_matches"
+        | "match_count_mismatch"
         | "match_not_found"
         | "occurrence_out_of_range"
         | "occurrence_outside_line_scope"
@@ -1797,11 +1960,43 @@ fn sanitize_apply_text_edits_model_recovery(
     if let Some(match_count) = raw_conflict.get("match_count").and_then(Value::as_u64) {
         result.output["match_count"] = json!(match_count);
     }
+    if conflict_kind == "match_count_mismatch" {
+        let requested = change.and_then(|change| {
+            result
+                .output
+                .get("edit_index")
+                .and_then(Value::as_u64)
+                .and_then(|index| change.edits.get(index as usize))
+        });
+        if let Some(expected) = requested.and_then(|edit| edit.expected_match_count) {
+            result.output["expected_match_count"] = json!(expected);
+            if let Some(scope) = requested.and_then(|edit| edit.line_scope) {
+                result.output["line_scope"] = json!(scope);
+            }
+            result.output["direct_retry_safe"] = json!(false);
+            result.output["reread_required"] = json!(true);
+            if let Some(actual) = raw_conflict
+                .get("actual_match_count")
+                .and_then(Value::as_u64)
+            {
+                result.output["actual_match_count"] = json!(actual);
+            }
+        }
+    }
     if let Some(truncated) = raw_conflict
         .get("candidates_truncated")
         .and_then(Value::as_bool)
     {
-        result.output["candidates_truncated"] = json!(truncated);
+        result.output["candidates_truncated"] = json!(if conflict_kind == "match_count_mismatch" {
+            raw_conflict
+                .get("actual_match_count")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| {
+                    count > crate::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES as u64
+                })
+        } else {
+            truncated
+        });
     }
     if let Some(indices) = raw_conflict
         .get("conflicting_edit_indices")
@@ -1845,6 +2040,7 @@ fn sanitize_apply_text_edits_model_recovery(
     {
         let candidates = candidates
             .iter()
+            .take(crate::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES)
             .filter_map(|candidate| {
                 let start_line = candidate.get("start_line")?.as_u64()?;
                 let end_line = candidate.get("end_line")?.as_u64()?;
@@ -1859,12 +2055,13 @@ fn sanitize_apply_text_edits_model_recovery(
                 }
             })
             .collect::<Vec<_>>();
-        if !candidates.is_empty() {
+        if !candidates.is_empty() || conflict_kind == "match_count_mismatch" {
             result.output["candidate_ranges"] = json!(candidates);
         }
     }
 
-    if !guarded && conflict_kind != "overlapping_edits" {
+    if (!guarded && conflict_kind != "overlapping_edits") || conflict_kind == "match_count_mismatch"
+    {
         if let Some(change) = change {
             result.output["recovery"] = read_files_recovery(project, &change.path);
         }
@@ -1872,6 +2069,7 @@ fn sanitize_apply_text_edits_model_recovery(
     result.error = Some(
         match conflict_kind {
             "multiple_matches" => "Rejected transactional file batch: the exact target matched multiple locations. No files were modified.",
+            "match_count_mismatch" => "Rejected transactional file batch: exact match count differed from expected_match_count. No files were modified.",
             "match_not_found" => "Rejected transactional file batch: the exact target was not found. No files were modified.",
             "occurrence_out_of_range" => "Rejected transactional file batch: the requested occurrence is outside the exact-match set. No files were modified.",
             "occurrence_outside_line_scope" => "Rejected transactional file batch: the requested occurrence is outside line_scope. No files were modified.",
@@ -1943,8 +2141,8 @@ fn apply_text_edits_agent_stdout_result(
     if !result.success {
         return result;
     }
+    sanitize_apply_text_edit_advisories(&mut result.output, changes);
     if validate_apply_text_edits_success_metadata(&result.output, changes, expected_dry_run) {
-        sanitize_apply_text_edit_advisories(&mut result.output, changes);
         return result;
     }
     structured_edit_outcome_unknown_result(
@@ -2178,6 +2376,13 @@ pub(crate) fn apply_text_edits_to_string(
         ));
     }
     let old_sha256 = sha256_hex_bytes(original.as_bytes());
+    if edits.iter().any(|edit| edit.expected_match_count.is_some())
+        && expected_file_sha256.is_none()
+    {
+        return Err(recoverable_write_rejection(
+            "bulk exact replacement requires an expected_file_sha256 guard",
+        ));
+    }
     if let Some(expected) = expected_file_sha256 {
         if old_sha256 != expected {
             return Err(recoverable_write_rejection("expected_file_sha256 mismatch"));
@@ -2205,6 +2410,19 @@ pub(crate) fn apply_text_edits_to_string(
         .count();
     for (index, edit) in edits.iter().enumerate() {
         let kind = edit.kind;
+        if let Some(expected) = edit.expected_match_count {
+            if kind != ApplyTextEditKind::ReplaceExact
+                || edit.occurrence.is_some()
+                || expected == 0
+                || expected > crate::apply_edits_shared::MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT
+            {
+                return Err(edit_field_error(
+                    index,
+                    kind,
+                    "invalid expected_match_count combination or bound",
+                ));
+            }
+        }
         if edit.occurrence == Some(0) {
             return Err(edit_field_error(
                 index,
@@ -2273,6 +2491,24 @@ pub(crate) fn apply_text_edits_to_string(
             .map_err(|error| edit_field_error(index, kind, error))?
             .into_owned();
         let needle = needle.as_ref();
+        if let Some(expected) = edit.expected_match_count {
+            let matches = crate::apply_edits_shared::resolve_apply_text_bulk_matches(
+                original,
+                needle,
+                edit.line_scope.as_ref(),
+            );
+            if matches.match_count != expected {
+                return Err(edit_match_error(
+                    index,
+                    kind,
+                    "expected_match_count mismatch",
+                ));
+            }
+            for (start, end) in matches.ranges {
+                ops.push((start, end, replacement.clone(), index));
+            }
+            continue;
+        }
         let (start, end) = crate::apply_edits_shared::resolve_apply_text_match(
             original,
             needle,
@@ -3075,7 +3311,7 @@ impl ToolRuntime {
         // Any invalid/stale/mismatched revision rejects the entire batch without
         // dispatch, preserving transactionality across mixed guarded/unguarded changes.
         let mut wire_changes = Vec::with_capacity(changes.len());
-        for change in &changes {
+        for (change_index, change) in changes.iter().enumerate() {
             let expected_sha256 = match change.expected_read_revision {
                 Some(revision) => {
                     let target =
@@ -3083,11 +3319,10 @@ impl ToolRuntime {
                     match self.read_revisions.resolve(revision, &target) {
                         Ok(sha256) => Some(sha256),
                         Err(error) => {
-                            return read_revision_rejection(
-                                &resolved.resolved_id,
-                                &change.path,
-                                error,
-                            )
+                            let mut result =
+                                read_revision_rejection(&resolved.resolved_id, &change.path, error);
+                            result.output["change_index"] = json!(change_index);
+                            return result;
                         }
                     }
                 }
@@ -3174,6 +3409,26 @@ impl ToolRuntime {
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error.contains(
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT,
+                    ) =>
+            {
+                let mut result = ToolResult::err_with_output(
+                    format!("Rejected before write: {error}. No files were modified."),
+                    json!({"changed":false,"state_changed":false,"execution_state":"not_started","error_kind":"agent_capability_unavailable","failure_kind":"capability_unavailable","capability":crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT}),
+                );
+                if let Some((change_index, edit_index, path)) = changes.iter().enumerate().find_map(|(change_index, change)| {
+                    change.edits.iter().position(|edit| edit.expected_match_count.is_some())
+                        .map(|edit_index| (change_index, edit_index, change.path.as_str()))
+                }) {
+                    result.output["change_index"] = json!(change_index);
+                    result.output["edit_index"] = json!(edit_index);
+                    result.output["path"] = json!(path);
+                }
+                return result;
+            }
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error.contains(
                         crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA,
                     ) =>
             {
@@ -3196,16 +3451,16 @@ impl ToolRuntime {
                 return apply_text_edit_occurrence_capability_rejection(error)
             }
             Err(error) if error.starts_with("stale_runner:") => {
-                if let Some(path) = changes.iter().find_map(|change| {
-                    change
-                        .expected_read_revision
-                        .map(|_| change.path.as_str())
+                if let Some((change_index, path)) = changes.iter().enumerate().find_map(|(index, change)| {
+                    change.expected_read_revision.map(|_| (index, change.path.as_str()))
                 }) {
-                    return read_revision_rejection(
+                    let mut result = read_revision_rejection(
                         &resolved.resolved_id,
                         path,
                         ReadRevisionLookupError::OwnerMismatch,
                     );
+                    result.output["change_index"] = json!(change_index);
+                    return result;
                 }
                 return structured_edit_not_started_result(
                     "apply_text_edits",
@@ -4360,6 +4615,7 @@ mod tests {
                 new_text: Some("anchor".to_string()),
                 anchor_text: Some("anchor".to_string()),
                 occurrence: None,
+                expected_match_count: None,
                 line_scope: None,
             }],
             expected_read_revision: None,
@@ -4635,5 +4891,109 @@ mod tests {
         assert_eq!(rolled_back.output["changed"], false);
         assert_eq!(rolled_back.output["state_changed"], false);
         assert_eq!(rolled_back.output["execution_state"], "completed");
+    }
+
+    #[test]
+    fn bulk_success_metadata_rejects_unbounded_or_unexpected_ranges() {
+        let change = ApplyFileChangeInput {
+            kind: ApplyFileChangeKind::Edit,
+            path: "bulk.txt".to_string(),
+            to_path: None,
+            content: None,
+            edits: vec![ApplyTextEditInput {
+                kind: ApplyTextEditKind::ReplaceExact,
+                old_text: Some("OLD".to_string()),
+                new_text: Some("NEW".to_string()),
+                anchor_text: None,
+                occurrence: None,
+                expected_match_count: Some(2),
+                line_scope: None,
+            }],
+            expected_read_revision: Some(1),
+        };
+        let mut payload = json!({
+            "dry_run":true,"applied_count":0,"planned_count":1,"changed":false,"would_change":true,
+            "files":[{"index":0,"kind":"edit","path":"bulk.txt","to_path":null,
+                "old_sha256":"a".repeat(64),"new_sha256":"b".repeat(64),"changed":false,"would_change":true,
+                "edits":[{"index":0,"kind":"replace_exact","old_start_line":1,"old_end_line":1,
+                    "new_line_count":1,"would_change":true,"match_count":2,"expected_match_count":2,
+                    "match_ranges":[{"occurrence":1,"start_line":1,"end_line":1},{"occurrence":2,"start_line":2,"end_line":2}],
+                    "match_ranges_truncated":false}]}],
+            "changed_paths":["bulk.txt"],
+            "change_summary":{"requested_changes":1,"changed_files":0,"logical_edits":1,"resolved_matches":2,"warnings":0}
+        });
+        let evaluate = |value: &Value| {
+            apply_text_edits_agent_stdout_result(
+                &value.to_string(),
+                1,
+                true,
+                "project",
+                &[change.clone()],
+            )
+        };
+        assert!(evaluate(&payload).success);
+        payload["files"][0]["edits"][0]["match_ranges"][0]["old_text"] = json!("SECRET");
+        let rejected = evaluate(&payload);
+        assert!(!rejected.success);
+        assert_eq!(rejected.output["execution_state"], "outcome_unknown");
+        assert!(!serde_json::to_string(&rejected).unwrap().contains("SECRET"));
+        payload["files"][0]["edits"] = json!([]);
+        payload["change_summary"]["logical_edits"] = json!(0);
+        payload["change_summary"]["resolved_matches"] = json!(0);
+        assert!(!evaluate(&payload).success);
+    }
+
+    #[test]
+    fn bulk_count_mismatch_projects_bounded_request_bound_evidence() {
+        let change = ApplyFileChangeInput {
+            kind: ApplyFileChangeKind::Edit,
+            path: "bulk.txt".to_string(),
+            to_path: None,
+            content: None,
+            edits: vec![ApplyTextEditInput {
+                kind: ApplyTextEditKind::ReplaceExact,
+                old_text: Some("PRIVATE_OLD".to_string()),
+                new_text: Some("PRIVATE_NEW".to_string()),
+                anchor_text: None,
+                occurrence: None,
+                expected_match_count: Some(2),
+                line_scope: Some(crate::apply_edits_shared::ApplyTextLineScope {
+                    start_line: 3,
+                    end_line: 4,
+                }),
+            }],
+            expected_read_revision: Some(1),
+        };
+        let failure = json!({
+            "changed":false,"state_changed":false,"execution_state":"not_started",
+            "error_kind":"edit_conflict","change_index":0,"edit_index":0,
+            "kind":"replace_exact","path":"bulk.txt","error":"No files were modified",
+            "conflict_recovery":{"conflict_kind":"match_count_mismatch",
+                "expected_match_count":99,"actual_match_count":0,
+                "line_scope":{"start_line":1,"end_line":99},
+                "candidate_ranges":[],"candidates_truncated":false}
+        });
+        let result = apply_text_edits_agent_stdout_result(
+            &failure.to_string(),
+            1,
+            false,
+            "project",
+            &[change],
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "match_count_mismatch");
+        assert_eq!(result.output["expected_match_count"], 2);
+        assert_eq!(result.output["actual_match_count"], 0);
+        assert_eq!(
+            result.output["line_scope"],
+            json!({"start_line":3,"end_line":4})
+        );
+        assert_eq!(result.output["candidate_ranges"], json!([]));
+        assert_eq!(result.output["direct_retry_safe"], false);
+        assert_eq!(result.output["reread_required"], true);
+        assert_eq!(result.output["execution_state"], "not_started");
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains("PRIVATE_OLD"));
     }
 }

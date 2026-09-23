@@ -19,6 +19,7 @@ pub enum RunnerFeature {
     ApplyTextEditOccurrence,
     ApplyTextEditLocalGuardWithoutSha,
     ApplyTextEditLineScope,
+    ApplyTextEditExpectedMatchCount,
     ApplyPatch,
     ApplyPatchMatchMetadata,
     ApplyPatchMatchingMode,
@@ -91,6 +92,7 @@ const ALL_RUNNER_FEATURES: &[RunnerFeature] = &[
     RunnerFeature::ApplyTextEditOccurrence,
     RunnerFeature::ApplyTextEditLocalGuardWithoutSha,
     RunnerFeature::ApplyTextEditLineScope,
+    RunnerFeature::ApplyTextEditExpectedMatchCount,
     RunnerFeature::ApplyPatch,
     RunnerFeature::ApplyPatchMatchMetadata,
     RunnerFeature::ApplyPatchMatchingMode,
@@ -185,6 +187,9 @@ impl RunnerFeature {
                 wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA
             }
             Self::ApplyTextEditLineScope => wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+            Self::ApplyTextEditExpectedMatchCount => {
+                wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT
+            }
             Self::ApplyPatch => wire::RUNNER_CAPABILITY_APPLY_PATCH,
             Self::ApplyPatchMatchMetadata => wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
             Self::ApplyPatchMatchingMode => wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE,
@@ -277,6 +282,9 @@ impl RunnerFeature {
                 Self::ApplyTextEditLocalGuardWithoutSha
             }
             wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE => Self::ApplyTextEditLineScope,
+            wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT => {
+                Self::ApplyTextEditExpectedMatchCount
+            }
             wire::RUNNER_CAPABILITY_APPLY_PATCH => Self::ApplyPatch,
             wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA => Self::ApplyPatchMatchMetadata,
             wire::RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE => Self::ApplyPatchMatchingMode,
@@ -388,6 +396,7 @@ impl RunnerFeature {
             | Self::StructuredCargoTestLib
             | Self::StructuredCargoCheckPackages
             | Self::ApplyTextEditLineScope
+            | Self::ApplyTextEditExpectedMatchCount
             | Self::ApplyTextEditLocalGuardWithoutSha
             | Self::ApplyPatch
             | Self::ApplyPatchMatchMetadata
@@ -444,6 +453,9 @@ impl RunnerFeature {
                 capabilities.apply_text_edit_local_guard_without_sha
             }
             Self::ApplyTextEditLineScope => capabilities.apply_text_edit_line_scope,
+            Self::ApplyTextEditExpectedMatchCount => {
+                capabilities.apply_text_edit_expected_match_count
+            }
             Self::ApplyPatch => capabilities.apply_patch,
             Self::ApplyPatchMatchMetadata => capabilities.apply_patch_match_metadata,
             Self::ApplyPatchMatchingMode => capabilities.apply_patch_matching_mode,

@@ -236,6 +236,8 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Scoped exact matching is likewise runtime-only and must not be
             // inferred from generated config or occurrence support.
             apply_text_edit_line_scope: false,
+            // Bulk cardinality is implemented by the running binary, never inferred.
+            apply_text_edit_expected_match_count: false,
             // Codex Patch is a running-binary request kind and must not be
             // inferred from generated config or generic file-write support.
             apply_patch: false,

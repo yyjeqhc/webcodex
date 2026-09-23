@@ -66,6 +66,8 @@ fn apply_text_edits_input_schema_encodes_structural_wire_contracts() {
     assert_eq!(edit["properties"]["anchor_text"]["maxLength"], 512 * 1024);
     assert_eq!(edit["properties"]["new_text"]["maxLength"], 512 * 1024);
     assert_eq!(edit["properties"]["occurrence"]["minimum"], 1);
+    assert_eq!(edit["properties"]["expected_match_count"]["minimum"], 1);
+    assert_eq!(edit["properties"]["expected_match_count"]["maximum"], 1024);
     let line_scope = &edit["properties"]["line_scope"];
     assert_eq!(line_scope["additionalProperties"], false);
     assert_eq!(line_scope["required"], json!(["start_line", "end_line"]));
@@ -122,6 +124,9 @@ fn apply_text_edits_input_schema_encodes_structural_wire_contracts() {
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_read_revision":0}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_read_revision":9007199254740992_u64}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","occurrence":0}]}]}),
+        json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","expected_match_count":0}]}]}),
+        json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","expected_match_count":"many"}]}]}),
+        json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","expected_match_count":1025}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","line_scope":{"start_line":0,"end_line":2}}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","edits":[{"kind":"replace_exact","old_text":"old","unknown":true}]}]}),
     ] {

@@ -2085,7 +2085,8 @@ pub(super) async fn handle_call(
     // tool identity. A few MCP-only validations still happen before the
     // shared ToolRuntime kernel; preserve those failed attempts in generic
     // telemetry without creating a second record for normal kernel calls.
-    let mut pre_kernel_model_ergonomics = ModelErgonomicsTimer::start(&params.name);
+    let mut pre_kernel_model_ergonomics =
+        ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
     let artifact_presentation =
         resources::project_artifact_presentation_mode(&params.name, &params.arguments);
     let resource_tool_call = match resources::prepare_tool_call(

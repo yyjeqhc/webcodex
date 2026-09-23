@@ -17,6 +17,89 @@ fn scoped_text_edit(
     edit
 }
 
+#[tokio::test]
+async fn bulk_exact_invalid_combination_and_missing_revision_fail_before_dispatch() {
+    let runtime = runtime_with_agent_project("ate-bulk-preflight");
+    let project = agent_test_project_id("ate-bulk-preflight");
+    let mut edit = text_edit(
+        ApplyTextEditKind::ReplaceExact,
+        Some("OLD"),
+        Some("NEW"),
+        None,
+    );
+    edit.expected_match_count = Some(2);
+    edit.occurrence = Some(1);
+    let change = edit_change("sample.txt", "unused", vec![edit.clone()]);
+    let rejected = runtime
+        .apply_text_edits(project.clone(), vec![change], None)
+        .await;
+    assert!(!rejected.success);
+    assert_eq!(rejected.output["error_kind"], "invalid_edit");
+    assert_eq!(rejected.output["change_index"], 0);
+    assert_eq!(rejected.output["edit_index"], 0);
+    assert_eq!(rejected.output["execution_state"], "not_started");
+
+    edit.occurrence = None;
+    let change = edit_change("sample.txt", "unused", vec![edit]);
+    let rejected = runtime.apply_text_edits(project, vec![change], None).await;
+    assert!(!rejected.success);
+    assert_eq!(rejected.output["error_kind"], "missing_read_revision");
+    assert_eq!(rejected.output["edit_index"], 0);
+}
+
+#[tokio::test]
+async fn bulk_exact_old_runner_is_rejected_without_queueing() {
+    let runtime = runtime_with_agent_project("ate-bulk-old-runner");
+    register_agent(
+        &runtime,
+        "ate-bulk-old-runner",
+        None,
+        RunnerCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("ate-bulk-old-runner");
+    let revision = seed_read_revision(&runtime, &project, "sample.txt", &"a".repeat(64)).await;
+    let mut edit = text_edit(
+        ApplyTextEditKind::ReplaceExact,
+        Some("OLD"),
+        Some("NEW"),
+        None,
+    );
+    edit.expected_match_count = Some(2);
+    let mut change = edit_change("sample.txt", "unused", vec![edit]);
+    change.expected_read_revision = Some(revision);
+    let mut stale_change = change.clone();
+    stale_change.expected_read_revision = Some(revision + 10_000);
+    let stale = runtime
+        .apply_text_edits(project.clone(), vec![stale_change], None)
+        .await;
+    assert!(!stale.success);
+    assert_eq!(stale.output["error_kind"], "unknown_read_revision");
+    assert_eq!(stale.output["change_index"], 0);
+    assert_eq!(stale.output["execution_state"], "not_started");
+    let result = runtime.apply_text_edits(project, vec![change], None).await;
+    assert!(!result.success);
+    assert_eq!(
+        result.output["capability"],
+        "apply_text_edit_expected_match_count"
+    );
+    assert_eq!(result.output["change_index"], 0);
+    assert_eq!(result.output["edit_index"], 0);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "ate-bulk-old-runner".to_string(),
+            runner_instance_id: "inst".to_string()
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
 #[test]
 fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let specs = registered_tool_specs();
@@ -40,6 +123,8 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     );
     assert_eq!(edit["properties"]["occurrence"]["type"], "integer");
     assert_eq!(edit["properties"]["occurrence"]["minimum"], 1);
+    assert_eq!(edit["properties"]["expected_match_count"]["minimum"], 1);
+    assert_eq!(edit["properties"]["expected_match_count"]["maximum"], 1024);
     let line_scope = &edit["properties"]["line_scope"];
     assert_eq!(line_scope["type"], "object");
     assert_eq!(line_scope["additionalProperties"], false);
@@ -58,7 +143,6 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
         "conflict_recovery",
         "retry_guidance",
         "expected_read_revision",
-        "reread_required",
         "suggested_call",
         "recovery_action",
     ] {
@@ -89,6 +173,10 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
         serde_json::json!(["not_started", "completed", "outcome_unknown"])
     );
     assert_eq!(output_properties["ignored_noop_count"]["type"], "integer");
+    assert_eq!(output_properties["planned_count"]["type"], "integer");
+    assert_eq!(output_properties["change_summary"]["type"], "object");
+    assert_eq!(output_properties["expected_match_count"]["type"], "integer");
+    assert_eq!(output_properties["actual_match_count"]["type"], "integer");
     let file_properties = output_properties["files"]["items"]["properties"]
         .as_object()
         .expect("apply_text_edits file summary properties");

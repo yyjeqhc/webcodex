@@ -57,6 +57,324 @@ fn apply_text_edits_request(
 }
 
 #[test]
+fn bulk_exact_replaces_original_ranges_once_with_compact_review() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("bulk.txt");
+    std::fs::write(&file, "αα OLD OLD\r\nOLD\r\n").unwrap();
+    let hash = sha256_hex_bytes(&std::fs::read(&file).unwrap());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "bulk.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"bulk.txt","expected_sha256":hash,
+            "edits":[{"kind":"replace_exact","old_text":"OLD","new_text":"OLD+OLD","expected_match_count":3},
+                {"kind":"replace_exact","old_text":"αα","new_text":"β","occurrence":1}]}]}),
+        ),
+    ));
+    assert_eq!(out["changed"], true);
+    assert_eq!(out["change_summary"]["logical_edits"], 2);
+    assert_eq!(out["change_summary"]["changed_files"], 1);
+    assert_eq!(out["change_summary"]["resolved_matches"], 4);
+    assert_eq!(out["files"][0]["edits"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "β OLD+OLD OLD+OLD\r\nOLD+OLD\r\n"
+    );
+}
+
+#[test]
+fn bulk_exact_adjacent_matches_do_not_rematch_inserted_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("adjacent.txt");
+    std::fs::write(&file, "aaaa").unwrap();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "adjacent.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"adjacent.txt",
+            "expected_sha256":sha256_hex_bytes(b"aaaa"),"edits":[
+            {"kind":"replace_exact","old_text":"a","new_text":"aa","expected_match_count":4}]}]}),
+        ),
+    ));
+    assert_eq!(out["change_summary"]["resolved_matches"], 4);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "aaaaaaaa");
+}
+
+#[test]
+fn bulk_exact_mismatch_and_generated_overlap_leave_whole_batch_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let first = tmp.path().join("first.txt");
+    let second = tmp.path().join("second.txt");
+    let removed = tmp.path().join("removed.txt");
+    std::fs::write(&first, "keep").unwrap();
+    std::fs::write(&second, "OLD OLD OLD").unwrap();
+    std::fs::write(&removed, "retain").unwrap();
+    let first_hash = sha256_hex_bytes(&std::fs::read(&first).unwrap());
+    let removed_hash = sha256_hex_bytes(&std::fs::read(&removed).unwrap());
+    let hash = sha256_hex_bytes(&std::fs::read(&second).unwrap());
+    for expected in [2, 4] {
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "first.txt",
+                serde_json::json!({"recovery_metadata_version":1,"changes":[
+                {"kind":"create","path":format!("created-{expected}.txt"),"content":"new"},
+                {"kind":"rename","path":"first.txt","to_path":format!("renamed-{expected}.txt"),"expected_sha256":first_hash},
+                {"kind":"delete","path":"removed.txt","expected_sha256":removed_hash},
+                {"kind":"edit","path":"second.txt","expected_sha256":hash,"edits":[
+                    {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","expected_match_count":expected}]}]}),
+            ),
+        ));
+        assert_eq!(
+            out["conflict_recovery"]["conflict_kind"],
+            "match_count_mismatch"
+        );
+        assert_eq!(out["conflict_recovery"]["actual_match_count"], 3);
+        assert_eq!(out["change_index"], 3);
+        assert_eq!(out["edit_index"], 0);
+        assert_eq!(out["state_changed"], false);
+        assert!(!tmp.path().join(format!("created-{expected}.txt")).exists());
+        assert!(!tmp.path().join(format!("renamed-{expected}.txt")).exists());
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&removed).unwrap(), "retain");
+    }
+    let zero = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "second.txt",
+            serde_json::json!({"recovery_metadata_version":1,"changes":[{"kind":"edit","path":"second.txt","expected_sha256":hash,"edits":[
+            {"kind":"replace_exact","old_text":"ABSENT","new_text":"NEW","expected_match_count":1}]}]}),
+        ),
+    ));
+    assert_eq!(
+        zero["conflict_recovery"]["conflict_kind"],
+        "match_count_mismatch"
+    );
+    assert_eq!(zero["conflict_recovery"]["actual_match_count"], 0);
+    assert_eq!(
+        zero["conflict_recovery"]["candidate_ranges"],
+        serde_json::json!([])
+    );
+    let overlap = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "second.txt",
+            serde_json::json!({"recovery_metadata_version":1,"changes":[{"kind":"edit","path":"second.txt","expected_sha256":hash,"edits":[
+            {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","expected_match_count":3},
+            {"kind":"replace_exact","old_text":"OLD","new_text":"OTHER","occurrence":3}]}]}),
+        ),
+    ));
+    assert_eq!(
+        overlap["conflict_recovery"]["conflict_kind"],
+        "overlapping_edits"
+    );
+    assert_eq!(
+        overlap["conflict_recovery"]["conflicting_edit_indices"],
+        serde_json::json!([0, 1])
+    );
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), "OLD OLD OLD");
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "keep");
+}
+
+#[test]
+fn bulk_exact_scoped_dry_run_is_bounded_and_does_not_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("bulk.txt");
+    let source = (0..40).map(|_| "OLD\n").collect::<String>();
+    std::fs::write(&file, &source).unwrap();
+    let hash = sha256_hex_bytes(source.as_bytes());
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "bulk.txt",
+            serde_json::json!({"dry_run":true,"changes":[{"kind":"edit","path":"bulk.txt","expected_sha256":hash,"edits":[
+            {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","line_scope":{"start_line":2,"end_line":39},"expected_match_count":38}]}]}),
+        ),
+    ));
+    assert_eq!(out["dry_run"], true);
+    assert_eq!(out["changed"], false);
+    assert_eq!(out["state_changed"], false);
+    assert_eq!(out["applied_count"], 0);
+    assert_eq!(out["planned_count"], 1);
+    assert_eq!(out["files"][0]["edits"][0]["match_count"], 38);
+    assert_eq!(out["files"][0]["edits"][0]["expected_match_count"], 38);
+    assert_eq!(
+        out["files"][0]["edits"][0]["match_ranges"]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+    assert_eq!(out["files"][0]["edits"][0]["match_ranges_truncated"], true);
+    assert_eq!(out["files"][0]["edits"][0]["would_change"], true);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+}
+
+#[test]
+fn bulk_exact_stale_sha_and_later_mismatch_preserve_prior_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let old = tmp.path().join("old.txt");
+    let target = tmp.path().join("target.txt");
+    std::fs::write(&old, "retain").unwrap();
+    std::fs::write(&target, "OLD OLD").unwrap();
+    let old_hash = sha256_hex_bytes(&std::fs::read(&old).unwrap());
+    let target_hash = sha256_hex_bytes(&std::fs::read(&target).unwrap());
+    for expected_sha256 in ["0".repeat(64), target_hash] {
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "old.txt",
+                serde_json::json!({"recovery_metadata_version":1,"changes":[
+                {"kind":"delete","path":"old.txt","expected_sha256":old_hash},
+                {"kind":"edit","path":"target.txt","expected_sha256":expected_sha256,"edits":[
+                    {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","expected_match_count":3}]}]}),
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["state_changed"], false);
+        assert_eq!(out["change_index"], 1);
+        assert!(old.exists());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "OLD OLD");
+    }
+}
+
+#[test]
+fn bulk_exact_evidence_has_transaction_wide_range_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let source = (0..9)
+        .map(|index| format!("TOKEN{index} ").repeat(9))
+        .collect::<String>();
+    let file = tmp.path().join("many.txt");
+    std::fs::write(&file, &source).unwrap();
+    let edits = (0..9)
+        .map(|index| {
+            serde_json::json!({
+                "kind":"replace_exact","old_text":format!("TOKEN{index}"),
+                "new_text":format!("DONE{index}"),"expected_match_count":9
+            })
+        })
+        .collect::<Vec<_>>();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "many.txt",
+            serde_json::json!({"dry_run":true,"changes":[{"kind":"edit","path":"many.txt",
+            "expected_sha256":sha256_hex_bytes(source.as_bytes()),"edits":edits}]}),
+        ),
+    ));
+    assert_eq!(out["change_summary"]["resolved_matches"], 81);
+    let summaries = out["files"][0]["edits"].as_array().unwrap();
+    assert_eq!(
+        summaries
+            .iter()
+            .map(|edit| edit["match_ranges"].as_array().unwrap().len())
+            .sum::<usize>(),
+        64
+    );
+    assert!(summaries
+        .iter()
+        .any(|edit| edit["match_ranges_truncated"] == true));
+    assert!(serde_json::to_vec(&out).unwrap().len() < 256 * 1024);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), source);
+}
+
+#[test]
+fn bulk_exact_requires_wire_sha_even_when_match_is_unique() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("unique.txt");
+    std::fs::write(&file, "OLD").unwrap();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "unique.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"unique.txt","edits":[
+            {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","expected_match_count":1}]}]}),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "missing_sha256_guard");
+    assert_eq!(out["state_changed"], false);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "OLD");
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "unique.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"unique.txt",
+            "expected_sha256":sha256_hex_bytes(b"OLD"),"edits":[
+            {"kind":"replace_exact","old_text":"OLD","new_text":"NEW","expected_match_count":1}]}]}),
+        ),
+    ));
+    assert_eq!(out["changed"], true);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "NEW");
+}
+
+#[test]
+fn bulk_exact_rejects_expanded_file_before_allocating_or_writing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("growth.txt");
+    std::fs::write(&file, "aaaaaa").unwrap();
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "growth.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"growth.txt",
+            "expected_sha256":sha256_hex_bytes(b"aaaaaa"),"edits":[
+            {"kind":"replace_exact","old_text":"a","new_text":"x".repeat(400 * 1024),"expected_match_count":6}]}]}),
+        ),
+    ));
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert_eq!(out["state_changed"], false);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "aaaaaa");
+}
+
+#[test]
+fn bulk_exact_bounds_final_size_after_all_original_source_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("balanced.txt");
+    let original = format!("{}{}", "A".repeat(6), "Z".repeat(1_500_000));
+    std::fs::write(&file, &original).unwrap();
+    let expanded = "X".repeat(300_000);
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "balanced.txt",
+            serde_json::json!({"changes":[{"kind":"edit","path":"balanced.txt",
+            "expected_sha256":sha256_hex_bytes(original.as_bytes()),"edits":[
+            {"kind":"replace_exact","old_text":"A","new_text":expanded,"expected_match_count":6},
+            {"kind":"replace_exact","old_text":"Z".repeat(500_000),"new_text":"","expected_match_count":3}
+            ]}]}),
+        ),
+    ));
+    assert_eq!(out["changed"], true, "{out}");
+    assert_eq!(out["change_summary"]["resolved_matches"], 9);
+    assert_eq!(std::fs::metadata(&file).unwrap().len(), 1_800_000);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "X".repeat(1_800_000)
+    );
+}
+
+#[test]
 fn file_apply_text_edits_applies_multi_file_transaction() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
@@ -387,6 +705,7 @@ fn file_apply_text_edits_replace_exact_writes_atomically() {
     assert_eq!(out["changed"], true);
     assert_eq!(out["would_change"], true);
     assert_eq!(out["changed_paths"][0], "target.txt");
+    assert!(out["files"][0]["edits"][0].get("match_ranges").is_none());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "new\n");
 }
 
@@ -412,6 +731,7 @@ fn file_apply_text_edits_ignores_empty_insert_noop_and_applies_remaining_edit() 
     ));
     assert_eq!(out["changed"], true);
     assert_eq!(out["ignored_noop_count"], 1);
+    assert_eq!(out["change_summary"]["logical_edits"], 2);
     assert_eq!(out["files"][0]["edits"].as_array().unwrap().len(), 1);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "new\n");
 }

@@ -265,3 +265,82 @@ fn apply_text_edit_line_scope_missing_capability_defaults_false_and_is_omitted()
     let serialized = serde_json::to_value(RunnerCapabilities::default()).unwrap();
     assert!(serialized.get("apply_text_edit_line_scope").is_none());
 }
+
+#[tokio::test]
+async fn bulk_exact_requires_explicit_capability_before_generic_dispatch() {
+    let registry = RunnerRegistry::default();
+    register_line_scope_instance(&registry, "bulk-off", true).await;
+    let mut request = line_scope_request("bulk-off", None);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    payload["changes"][0]["edits"][0]["expected_match_count"] = serde_json::json!(3);
+    request.content = Some(payload.to_string());
+    let error = registry
+        .enqueue_file_op(request, "tester".to_string())
+        .await
+        .unwrap_err();
+    assert!(error.contains("apply_text_edit_expected_match_count"));
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "bulk-off".to_string(),
+            runner_instance_id: "inst".to_string()
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    let mut direct = line_scope_request("bulk-off", Some(1));
+    let mut direct_payload: serde_json::Value =
+        serde_json::from_str(direct.content.as_deref().unwrap()).unwrap();
+    direct_payload["changes"][0]["edits"][0]["expected_match_count"] = serde_json::json!(3);
+    direct.content = Some(direct_payload.to_string());
+    let error = registry
+        .enqueue_apply_text_edits_with_occurrence(direct, "tester".to_string())
+        .await
+        .unwrap_err();
+    assert!(error.contains("apply_text_edit_expected_match_count"));
+
+    let features = RunnerFeatureSet::try_from_registration(&RunnerCapabilities {
+        apply_text_edit_expected_match_count: true,
+        ..v2_baseline_capabilities()
+    })
+    .unwrap();
+    assert!(features.supports(RunnerFeature::ApplyTextEditExpectedMatchCount));
+    assert!(
+        !RunnerFeatureSet::try_from_registration(&v2_baseline_capabilities())
+            .unwrap()
+            .supports(RunnerFeature::ApplyTextEditExpectedMatchCount)
+    );
+
+    register_instance_with_capabilities(
+        &registry,
+        "bulk-on",
+        "inst",
+        RunnerCapabilities {
+            file_write: true,
+            apply_text_edit_line_scope: true,
+            apply_text_edit_expected_match_count: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut request = line_scope_request("bulk-on", None);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    payload["changes"][0]["edits"][0]["expected_match_count"] = serde_json::json!(3);
+    request.content = Some(payload.to_string());
+    let (request_id, _rx) = registry
+        .enqueue_file_op(request, "tester".to_string())
+        .await
+        .unwrap();
+    let queued = registry
+        .poll(RunnerPollRequest {
+            client_id: "bulk-on".to_string(),
+            runner_instance_id: "inst".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.request_id, request_id);
+}

@@ -22,7 +22,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
   const failedConnections = state.connections?.profiles.filter(profile => profile.enabled && (profile.lifecycle === "error" || profile.health === "degraded")) ?? [];
   const restartRunner = () => run(async () => {
     const current = await desktopApi.runnerSettings();
-    if (!current.can_restart) throw { code: "runner_not_owned", message: "Runner is not managed by Desktop", suggestion: "Open Diagnostics" };
+    if (!current.can_restart) throw { code: "runner_not_owned", message: "Runner is not managed by Desktop", next_action: "Open Diagnostics" };
     return desktopApi.restartOwnedRunner(current.target);
   });
   return <section className={`readiness-banner ${healthy ? "ready" : "attention"}`} aria-label={s("WebCodex Ready")}>

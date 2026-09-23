@@ -191,6 +191,28 @@ pub(in crate::tool_runtime::tests) async fn register_runner_project_at_path_with
     crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
+fn usable_skill_test_python_command() -> std::process::Command {
+    let mut candidates = vec![("python3", Vec::<&str>::new()), ("python", Vec::new())];
+    if cfg!(windows) {
+        candidates.push(("py", vec!["-3"]));
+    }
+    for (program, prefix) in candidates {
+        let status = std::process::Command::new(program)
+            .args(&prefix)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if status.is_ok_and(|status| status.success()) {
+            let mut command = std::process::Command::new(program);
+            command.args(prefix);
+            return command;
+        }
+    }
+    panic!("no usable Python interpreter is available for the Skill execution test fixture");
+}
+
 pub(in crate::tool_runtime::tests) fn run_runner_skill_resource_request_locally(
     req: &RunnerRequest,
     script: &str,
@@ -220,7 +242,7 @@ pub(in crate::tool_runtime::tests) fn run_runner_skill_resource_request_locally(
                 "g = {'__name__': '__main__', '__file__': p, '__package__': None, '__spec__': None, '__builtins__': __builtins__}\n",
                 "exec(compile(src, p, 'exec'), g, g)\n",
             );
-            let mut command = std::process::Command::new("python3");
+            let mut command = usable_skill_test_python_command();
             command.args(["-B", "-c", WRAPPER, target]);
             command.args(&skill.args);
             command

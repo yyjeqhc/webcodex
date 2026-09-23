@@ -62,7 +62,7 @@ When bootstrap or discovery returns `project_ref`, reuse it as the `project` sel
 ## Tool strategy guidance
 
 `work_on_project` accepts `guidance_profile`, defaulting to `direct`. Workflow
-contract v17 returns shared `guidance`, `model_protocol` and review `roles`, plus
+contract v18 returns shared `guidance`, `model_protocol` and review `roles`, plus
 only the selected `tool_strategy: {profile, guidance}`, when explicitly requested
 through `context_request=["webcodex.workflow"]`. The selection is request-local:
 choose again on exact resume without changing Session identity or business state.
@@ -74,6 +74,11 @@ workflow sidecar uses that call's `guidance_profile`; unrelated tools that reque
 
 - `direct`: use the simplest sufficient primitive; batch predetermined independent
   observations and let the model inspect results before adaptive follow-up calls.
+- `host_code_mode`: use Host-native orchestration when the Host provides it. Keep one
+  simple observation direct, prefer canonical same-kind batches, keep dependent
+  search/read follow-ups in one Host cell when useful, and return compact evidence
+  rather than raw ToolResults. This profile grants no WebCodex capability or authority
+  and does not require nested WebCodex Code Mode.
 - `code_mode`: still use a direct primitive for one simple observation. Prefer
   read-only orchestration when related search/read work, cross-file investigation
   or synthesis saves outer model turns. Keep dependent follow-ups sequential inside
@@ -81,7 +86,7 @@ workflow sidecar uses that call's `guidance_profile`; unrelated tools that reque
   the cell, filter and synthesize them, then emit compact decision evidence through
   `text(...)`. Avoid `text(results)` dumps and project before reaching output limits.
 
-Both strategies retain bounded targeted reads, narrow discovery, first-class native
+All strategies retain bounded targeted reads, narrow discovery, first-class native
 commands/structured tools, and the same recovery, authority, review and closeout.
 Canonical edits and structured validators remain the default. Effectful composition
 is useful only when related validations save outer turns; guarded mutation composition

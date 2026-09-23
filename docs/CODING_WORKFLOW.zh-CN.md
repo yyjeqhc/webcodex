@@ -27,13 +27,17 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v17
+`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v18
 保持共享的 `guidance`、`model_protocol` 和 review `roles`，并在显式
 `context_request=["webcodex.workflow"]` 时通过
 `tool_strategy: {profile, guidance}` 返回本次请求选中的策略。
 
 - `direct`：简单 observation 直接调用最合适的 primitive；预先确定且独立的
   observations 可以批量执行，模型根据结果顺序决定 adaptive follow-up。
+- `host_code_mode`：Host 确实提供 native orchestration 时使用。简单单步 observation
+  仍直接调用；同类独立输入优先 canonical batch；有依赖的 search/read follow-up
+  适合时留在同一个 Host cell，并只返回下一步需要的紧凑证据而不是 raw ToolResult。
+  该 profile 不授予任何 WebCodex capability/authority，也不要求 nested WebCodex Code Mode。
 - `code_mode`：简单单步 observation 仍直接调用；相关 search/read、跨文件定位或
   综合调查能减少外层模型往返时，优先 read-only Code Mode。在同一个 cell 内顺序
   完成依赖结果的 follow-up，只并发独立 observations。Raw child results 留在 cell
@@ -47,7 +51,7 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 `guidance_profile`；其他无 profile context 的普通工具显式请求该 material 时，
 继续使用 canonical default `direct`。
 
-两者共用 scope、recovery、validation truth、Job continuation、review 和 closeout。
+这些策略共用 scope、recovery、validation truth、Job continuation、review 和 closeout。
 默认仍走 canonical edit 和 structured validation；只有多个相关 validation 或
 adaptive read → one guarded edit 确实减少外层往返时，才考虑相应的 effectful/mutating
 Code Mode。Nested canonical authority、effects、evidence 和 retry certainty 不变。

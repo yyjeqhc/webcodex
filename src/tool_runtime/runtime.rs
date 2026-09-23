@@ -202,6 +202,8 @@ pub struct ToolRuntime {
     /// to raw job_id + after_observation_token on unknown refs.
     pub(crate) observation_ref_registry:
         Arc<webcodex_core::job_observation::ObservationRefRegistry>,
+    /// Process-local, bounded, non-authoritative passive Job attention cursor.
+    pub(crate) job_attention_cursor: Arc<super::job_attention::JobAttentionCursor>,
 }
 
 impl ToolRuntime {
@@ -264,6 +266,7 @@ impl ToolRuntime {
             observation_ref_registry: Arc::new(
                 webcodex_core::job_observation::ObservationRefRegistry::default(),
             ),
+            job_attention_cursor: Arc::new(super::job_attention::JobAttentionCursor::default()),
         }
     }
 

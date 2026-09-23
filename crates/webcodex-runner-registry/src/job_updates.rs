@@ -1778,6 +1778,35 @@ impl RunnerRegistry {
         jobs.into_iter().map(|job| job_view(&job)).collect()
     }
 
+    /// Passive attention reads only the Server's current Job records. In particular,
+    /// it must not refresh lifecycle or contact a Runner on an unrelated tool call.
+    pub async fn snapshot_jobs_for_auth_filtered(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        project_id: &str,
+        session_id: &str,
+        limit: usize,
+    ) -> Vec<ShellJobInfo> {
+        let inner = self.inner.lock().await;
+        let mut jobs = inner
+            .jobs_by_id
+            .values()
+            .filter(|job| job.visibility == ShellJobVisibility::Public)
+            .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| job.project_id.as_deref() == Some(project_id))
+            .filter(|job| job.session_id.as_deref() == Some(session_id))
+            .collect::<Vec<_>>();
+        // Active work must not disappear behind a full page of newer terminal
+        // records. Keep the snapshot bounded while prioritizing active Jobs.
+        jobs.sort_by(|a, b| {
+            a.lifecycle
+                .is_terminal()
+                .cmp(&b.lifecycle.is_terminal())
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
+        jobs.into_iter().take(limit.min(32)).map(job_view).collect()
+    }
+
     async fn visible_job_records_for_auth(
         &self,
         auth: Option<&crate::RunnerAccess>,

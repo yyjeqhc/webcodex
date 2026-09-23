@@ -80,6 +80,22 @@ nonfatal to the main call. Recorder or prior Sessions never select a business
 Session. The summary contains bounded counts and brief Job metadata, not logs,
 command bodies, observation tokens, host details, or arbitrary payload.
 
+Passive Job attention is a separate post-result projection on ordinary coding
+tools. It requires a non-anonymous authenticated principal, current ClientWindow, exact
+resolved and currently visible Project, `runtime:read`, an explicitly supplied
+business Workflow Session authorized for that Project, and a Job whose durable
+Project and Session fields both match. A recorder Session, Window affinity, or
+Project match alone never selects a Job. It reads only the Server's current Job
+records; unrelated read calls do not poll a Runner. The payload is limited to
+`job_id`, `kind`, durable `status`, existing lifecycle timestamps, and terminal
+`exit_code`. A bounded process-local cursor keyed by principal, Window, Project,
+and business Session emits changed states once per observed revision. Server
+restart may repeat one bounded active snapshot; the cursor is not durable
+authority. Failure or omission of attention leaves the main tool result intact.
+`current_window_activity` is a nonmeaningful diagnostic observation and neither
+receives nor consumes passive attention. Explicit `jobs.attention` retains its
+Project-level scope and zero-active summary independently of this cursor.
+
 Query may piggyback; control may not. `stop_job` is the explicit canonical
 Mutate/JobRun/Standard/DesiredState primitive, with `confirm=true`, `job:run`,
 and unchanged Project/Session ownership checks. MCP/Adaptive expose it directly;

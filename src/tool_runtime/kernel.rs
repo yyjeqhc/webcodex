@@ -1103,6 +1103,15 @@ impl ToolRuntime {
         if request.tool_name == "observe_jobs" {
             super::observe_jobs::sparsify_observe_jobs_model_result(&mut result);
         }
+        self.add_passive_job_attention(
+            &mut result,
+            &request.tool_name,
+            correlation.resolved_project.as_deref(),
+            correlation.business_session_id.as_deref(),
+            context.window,
+            context.auth,
+        )
+        .await;
         ToolCallOutcome {
             success: result.success,
             result: Some(result),

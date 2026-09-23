@@ -618,6 +618,12 @@ jobs:
         run: cargo check --locked --workspace
       - name: Run Windows library and CLI tests
         run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
+      - name: Run Windows search fallback tests
+        run: |
+          cargo test --locked -p webcodex --lib search_project_text_grep
+          if ($LASTEXITCODE -ne 0) { throw "Windows grep fallback tests failed" }
+          cargo test --locked -p webcodex --lib search_requires_ripgrep_based_on_effective_features_not_field_presence
+          if ($LASTEXITCODE -ne 0) { throw "Windows search capability test failed" }
 
   test-windows-runner:
     needs: changes

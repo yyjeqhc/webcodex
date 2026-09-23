@@ -217,7 +217,7 @@ impl SearchOptions {
         if !exclude_globs.is_empty() {
             requested_features.push("exclude_globs".to_string());
         }
-        if result_mode != SearchResultMode::Matches {
+        if result_mode == SearchResultMode::Count {
             requested_features.push(format!("result_mode={}", result_mode.as_str()));
         }
 
@@ -245,7 +245,7 @@ impl SearchOptions {
     pub(crate) fn requires_ripgrep(&self) -> bool {
         !self.include_globs.is_empty()
             || !self.exclude_globs.is_empty()
-            || self.result_mode != SearchResultMode::Matches
+            || self.result_mode == SearchResultMode::Count
     }
 }
 
@@ -633,18 +633,24 @@ fn grep_search_command(options: &SearchOptions) -> String {
         SearchPatternMode::Regex => "-E ",
         SearchPatternMode::Literal => "-F ",
     };
+    let mode_args = match options.result_mode {
+        SearchResultMode::Matches => format!(
+            "-rHnI --null -B {} -A {}",
+            options.context_before, options.context_after
+        ),
+        SearchResultMode::FilesWithMatches => "-rlI".to_string(),
+        SearchResultMode::Count => unreachable!("count mode requires ripgrep"),
+    };
     format!(
-        "grep -rnI --null {pattern_mode_arg}{excludes} -B {before} -A {after} -e {pattern} -- {target} 2>/dev/null",
+        "grep {mode_args} {pattern_mode_arg}{excludes} -e {pattern} -- {target} 2>/dev/null",
         excludes = search_project_text_exclude_args(),
-        before = options.context_before,
-        after = options.context_after,
         pattern = shell_escape_simple(&options.pattern),
         target = shell_escape_simple(&options.path),
     )
 }
 
 /// Build one bounded capability-selecting command for every search mode. Basic
-/// matches calls retain grep fallback; requests that need full capabilities
+/// matches and files-with-matches calls retain grep fallback; requests that need full capabilities
 /// emit a machine-readable marker when ripgrep is unavailable.
 pub(crate) fn search_project_text_command(options: &SearchOptions) -> String {
     search_project_text_command_with_head_fallbacks(
@@ -1426,7 +1432,7 @@ pub(crate) fn search_project_text_output_with_agent_error(
         );
     }
     if backend_status.feature_unavailable {
-        let message = "ripgrep is required for the requested search_project_text features; grep fallback supports only basic matches requests";
+        let message = "ripgrep is required for the requested search_project_text features; grep fallback supports matches and files_with_matches without globs";
         let mut result = search_failure_tool_result(
             options,
             "search_backend_feature_unavailable",
@@ -2290,7 +2296,7 @@ mod tests {
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("--fixed-strings"));
-        assert!(command.contains("grep -rnI --null -F"));
+        assert!(command.contains("grep -rHnI --null -B 0 -A 0 -F"));
         let (exit_code, stdout, stderr, _) = run_command_sync(&command, &root, 10);
         assert_eq!(exit_code, 0, "stderr: {stderr}");
         let result =

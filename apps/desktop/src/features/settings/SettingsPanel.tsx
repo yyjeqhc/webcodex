@@ -164,7 +164,13 @@ function SettingsDisclosure({
         {label}
       </button>
       {open && (
-        <div id={id} className="settings-disclosure-panel" role="region" aria-label={label}>
+        // Keep the controlled panel out of the macOS named-landmark path. WebKit
+        // currently exposes named regions as AX leaves (AXChildren=0), which
+        // makes otherwise standard descendants unreachable to semantic Computer Use.
+        // The trigger still carries the disclosure contract through
+        // aria-expanded + aria-controls, while the descendants retain their own
+        // native heading/input/button semantics.
+        <div id={id} className="settings-disclosure-panel" data-webcodex-disclosure-panel={label}>
           {children}
         </div>
       )}

@@ -50,7 +50,8 @@ describe("Runtime candidate and ownership semantics", () => {
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     await screen.findByRole("heading", { name: "Current Runtime" });
     fireEvent.click(screen.getByRole("button", { name: "Select Runtime folder…" }));
-    const preview = await screen.findByRole("region", { name: "Candidate Runtime" });
+    const previewHeading = await screen.findByRole("heading", { name: "Candidate Runtime" });
+    const preview = previewHeading.parentElement as HTMLElement;
     expect(api.switchRuntime).not.toHaveBeenCalled();
     expect(within(preview).getByText("Compatible")).toBeInTheDocument();
     expect(within(preview).getByText("Different versions")).toBeInTheDocument();
@@ -61,7 +62,8 @@ describe("Runtime candidate and ownership semantics", () => {
     api.probeRuntime.mockResolvedValue({ ...settings, candidate: { ...candidate, compatibility: "incompatible", error_code: "runtime_contract_incompatible" } });
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
-    const preview = await screen.findByRole("region", { name: "Candidate Runtime" });
+    const previewHeading = await screen.findByRole("heading", { name: "Candidate Runtime" });
+    const preview = previewHeading.parentElement as HTMLElement;
     expect(within(preview).getByRole("button", { name: "Use this Runtime" })).toBeDisabled();
     expect(api.switchRuntime).not.toHaveBeenCalled(); expect(screen.getByText("Bundled")).toBeInTheDocument();
   });
@@ -126,13 +128,24 @@ it("keeps the six localized navigation labels and semantically pressable Setting
   }
   const disclosure = screen.getByRole("button", { name: "故障排查" });
   expect(disclosure.parentElement).toHaveAttribute("data-webcodex-page", "settings");
+  expect(disclosure).toHaveAttribute("aria-controls", "desktop-settings-diagnostics");
   fireEvent.click(disclosure);
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
-  const diagnosticsRegion = await screen.findByRole("region", { name: "故障排查" });
-  expect(diagnosticsRegion.parentElement).toHaveAttribute("data-webcodex-page", "settings");
+  const diagnosticsPanel = document.getElementById("desktop-settings-diagnostics");
+  expect(diagnosticsPanel).toBeInTheDocument();
+  expect(diagnosticsPanel).not.toHaveAttribute("role", "region");
+  expect(diagnosticsPanel?.parentElement).toHaveAttribute("data-webcodex-page", "settings");
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "打开 Runtime Console" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();
+
+  const runtimeDisclosure = screen.getByRole("button", { name: "Runtime" });
+  expect(runtimeDisclosure).toHaveAttribute("aria-controls", "desktop-settings-runtime");
+  fireEvent.click(runtimeDisclosure);
+  expect(runtimeDisclosure).toHaveAttribute("aria-expanded", "true");
+  expect(await screen.findByRole("button", { name: "选择 Runtime 文件夹…" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "使用内置 Runtime" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "重新检查 Runtime" })).toBeInTheDocument();
 });
 
 it("renders factual handoff uncertainty rather than Host failure", () => {

@@ -54,7 +54,7 @@ export function RuntimePanel({ state, onState, onActivity }: { state: DesktopSta
     else void activate(candidate, false);
   };
   const resultTitle = result?.outcome === "activated" ? "Runtime activated" : result?.outcome === "selected" ? "Runtime selected; start it when ready" : result?.outcome === "rolled_back" ? "Previous Runtime restored" : "Runtime recovery required";
-  return <section aria-label={s("Runtime")} className="runtime-settings-panel">
+  return <div className="runtime-settings-panel" data-webcodex-panel="runtime">
     <h2>{s("Current Runtime")}</h2>
     <p className="field-help">{s("Build revisions are diagnostic identity, not compatibility gates.")}</p>
     {settings ? <>
@@ -71,12 +71,12 @@ export function RuntimePanel({ state, onState, onActivity }: { state: DesktopSta
       <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => { const next = await desktopApi.recheckRuntime(); if (alive.current) setSettings(next); })}>{s("Recheck Runtime")}</button>
       <button type="button" className="text-button" disabled={disabled || !state.binaries} onClick={() => void run(() => desktopApi.openDiagnosticResource("runtime_directory"))}>{s("Open Runtime folder")}</button>
     </div>
-    {settings?.candidate && <section className="runtime-candidate" aria-label={s("Candidate Runtime")}>
+    {settings?.candidate && <div className="runtime-candidate" data-webcodex-panel="runtime-candidate">
       <h3>{s("Candidate Runtime")}</h3><p className="field-help">{s("Candidate inspection does not change the active Runtime.")}</p>
       {settings.candidate.directory && <code className="runtime-directory">{settings.candidate.directory}</code>}
       <BinaryFacts candidate={settings.candidate} />
       <button type="button" className="primary-button" disabled={disabled || !settings.can_switch || settings.candidate.compatibility !== "compatible"} onClick={stageSwitch}>{s("Use this Runtime")}</button>
-    </section>}
+    </div>}
     {result && <div className={`shell-notice ${result.outcome === "recovery_required" ? "warning" : ""}`} role={result.outcome === "recovery_required" ? "alert" : "status"}>
       <strong>{s(resultTitle)}</strong>{result.reason_code && <code>{result.reason_code}</code>}{result.rollback_reason_code && <code>{result.rollback_reason_code}</code>}
     </div>}
@@ -89,7 +89,7 @@ export function RuntimePanel({ state, onState, onActivity }: { state: DesktopSta
         {onActivity && <button type="button" className="text-button" disabled={disabled} onClick={onActivity}>{s("View activity")}</button>}
         <button type="button" className="primary-button" disabled={disabled} onClick={() => void activate(confirm, true)}>{s("Switch anyway")}</button></div>
     </WorkspaceDialog>}
-  </section>;
+  </div>;
 }
 
 export function BinaryFacts({ candidate }: { candidate: RuntimeCandidate }) {

@@ -125,9 +125,11 @@ it("keeps the six localized navigation labels and semantically pressable Setting
     expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-expanded", "false");
   }
   const disclosure = screen.getByRole("button", { name: "故障排查" });
+  expect(disclosure.parentElement).toHaveAttribute("data-webcodex-page", "settings");
   fireEvent.click(disclosure);
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
-  expect(await screen.findByRole("region", { name: "故障排查" })).toBeInTheDocument();
+  const diagnosticsRegion = await screen.findByRole("region", { name: "故障排查" });
+  expect(diagnosticsRegion.parentElement).toHaveAttribute("data-webcodex-page", "settings");
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "打开 Runtime Console" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();

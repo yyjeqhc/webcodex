@@ -152,10 +152,11 @@ function SettingsDisclosure({
   children: ReactNode;
 }) {
   return (
-    <section className="settings-section settings-disclosure">
+    <>
       <button
         type="button"
         className="settings-disclosure-trigger"
+        aria-label={label}
         aria-expanded={open}
         aria-controls={id}
         onClick={() => onOpenChange(!open)}
@@ -167,7 +168,7 @@ function SettingsDisclosure({
           {children}
         </div>
       )}
-    </section>
+    </>
   );
 }
 

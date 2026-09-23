@@ -97,10 +97,12 @@ pub(crate) mod startup_brief;
 mod structured_execution;
 mod surface;
 pub(crate) use tool_audit::session_log_result_for_tool as audit_safe_result_for_tool;
+mod current_window_activity;
 mod validation_events;
 pub(crate) mod validation_profile;
 mod validation_source;
 pub(crate) mod window_activity;
+pub(crate) mod window_activity_projection;
 pub(crate) use webcodex_core::{
     project_instructions, project_listing as file_listing, validation_evidence as validation_parser,
 };

@@ -2420,6 +2420,33 @@ async fn mcp_tools_call_list_projects_returns_content_blocks() {
 }
 
 #[tokio::test]
+async fn mcp_current_window_activity_requires_adapter_window_identity() {
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("window-diagnostic-mcp");
+    let McpOutcome::Ok(value) = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(41)),
+            mcp_2026_params(adaptive_runtime_gateway_params(
+                "current_window_activity",
+                json!({"limit": 20}),
+            )),
+        ),
+        Some(&auth),
+    )
+    .await
+    else {
+        panic!("current_window_activity must be callable")
+    };
+    assert_eq!(
+        value["result"]["structuredContent"]["output"]["reason_code"],
+        "window_identity_unavailable"
+    );
+    assert_eq!(value["result"]["isError"], false);
+}
+
+#[tokio::test]
 async fn mcp_tools_call_rejects_legacy_reserved_session_id_before_dispatch() {
     let runtime = test_runtime();
     let session = runtime.sessions.start_session(

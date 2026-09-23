@@ -280,6 +280,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_runners",
             "runtime_status",
             "runner_config_check",
+            "current_window_activity",
             "runner_config_reload",
             "tool_manifest",
             #[cfg(feature = "experimental-code-mode")]

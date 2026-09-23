@@ -455,6 +455,24 @@ fails parsing. When `work_on_project` explicitly requests `webcodex.workflow`, i
 sidecar uses that request-local profile; unrelated tools without profile context
 continue to project the canonical default `direct`.
 
+`current_window_activity` observes persisted ActionAudit activity for the exact
+ClientWindow supplied by the current adapter request. Its input cannot select
+another Window. It remains available through the canonical adaptive runtime
+gateway and `tool_manifest` without expanding the default direct tool inventory.
+It requires `runtime:read` and a non-anonymous authenticated
+principal, fixes that principal,
+and reapplies current Project visibility to every event and Workflow Session
+link. Runtime Console and the model tool share the sanitized event and timing
+projection. The tool scans at most 200 records and returns at most 50 events
+within a smaller serialized byte ceiling. It exposes descriptive timing and
+counts only, without arguments, outputs, paths, credentials, or principal IDs.
+`response_handed_at_ms` means WebCodex constructed the response and handed it
+to the HTTP framework or returned from the handler. It does not prove client
+receipt, MCP Host receipt, ChatGPT ingestion, or model continuation. A
+`next_call_gap_ms` exists only when a later canonical meaningful call was
+actually observed; elapsed wall time alone never supplies that value. The
+diagnostic call is nonmeaningful and excludes itself from active requests.
+
 Repository instruction files are still re-observed and Session metadata/delta
 status still update even though instruction bodies are absent from the primary
 output. The default bounded

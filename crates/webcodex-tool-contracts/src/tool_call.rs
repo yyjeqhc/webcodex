@@ -4270,6 +4270,17 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Read bounded, sanitized persisted activity for the current Host Window.
+    /// Window identity is accepted only from the adapter's ToolCallContext.
+    CurrentWindowActivity {
+        /// Maximum returned events, clamped to 1..50 (default 20).
+        #[serde(default)]
+        limit: Option<usize>,
+        /// Include support/diagnostic events in the event list (default false).
+        #[serde(default)]
+        include_nonmeaningful: bool,
+    },
+
     /// Return bounded stdout/stderr tails for a job. Defaults to a bounded tail
     /// so the console never reads full logs by default. When `after_observation_token`
     /// and `wait_secs` are both supplied, this is a single bounded wait (up to
@@ -5586,6 +5597,7 @@ impl ToolCall {
             Self::ShowChanges { .. } => "show_changes",
             Self::WorkspaceHygieneCheck { .. } => "workspace_hygiene_check",
             Self::ListJobs { .. } => "list_jobs",
+            Self::CurrentWindowActivity { .. } => "current_window_activity",
             Self::JobTail { .. } => "job_tail",
             Self::WriteProjectFile { .. } => "write_project_file",
             Self::SaveProjectArtifact { .. } => "save_project_artifact",

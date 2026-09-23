@@ -146,6 +146,8 @@ pub struct WindowActivityEventRecord {
     pub window_transition_kind: Option<String>,
     pub response_streaming: Option<bool>,
     pub window_continuity_eligible: Option<bool>,
+    /// HTTP response status from the WebCodex handler, if recorded.
+    pub http_status: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

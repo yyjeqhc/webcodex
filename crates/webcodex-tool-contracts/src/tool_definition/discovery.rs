@@ -173,6 +173,33 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         20,
     ),
+    model_spec(
+            def(
+                "current_window_activity",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
+                ModelVisible,
+                TOOL_CATEGORY_RUNTIME,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            )
+            .with_activity(
+                super::ToolActivityPresentation::Support,
+                super::ToolActivityInteraction::NonMeaningful,
+            ),
+            "Read bounded sanitized ActionAudit activity only for the current Host Window from transport identity. Requires runtime:read; every event retains current Project and principal visibility checks. No window selector, arguments, output, credentials, paths, or Host/model-state diagnosis. response_handed_at_ms means WebCodex constructed the response and handed it to the HTTP framework or returned from the handler; it does not prove downstream receipt. next_call_gap_ms exists only when a later canonical event was observed.",
+        ),
     adaptive_runtime_direct(
         model_spec(
             def(

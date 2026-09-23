@@ -2010,6 +2010,14 @@ impl ToolRuntime {
                     .await
             }
 
+            ToolCall::CurrentWindowActivity {
+                limit,
+                include_nonmeaningful,
+            } => {
+                self.current_window_activity(window, auth, limit, include_nonmeaningful)
+                    .await
+            }
+
             call @ (ToolCall::RunnerConfigCheck { .. } | ToolCall::RunnerConfigReload { .. }) => {
                 self.dispatch_runner_config_tool(call, auth).await
             }

@@ -7,6 +7,25 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "current_window_activity" => Some(wrapped_output_schema(vec![
+            ("status", json!({"type":"string","enum":["available","unavailable"]})),
+            ("reason_code", schema_type("string", "Bounded reason when current Window, authenticated principal, runtime:read, or activity storage is unavailable.")),
+            ("events", json!({"type":"array","maxItems":50,"description":"Newest first, sanitized current-Window events after principal and current Project visibility filtering. No arguments, outputs, raw payloads, native paths, credentials, or principal identifiers.","items":{"type":"object","additionalProperties":false,"properties":{
+                "request_observed_at_ms":{"type":"integer"},
+                "response_handed_at_ms":{"type":"integer","description":"WebCodex response constructed and handed to HTTP framework / handler returned. No client, Host, ChatGPT, or model-continuation receipt is implied."},
+                "started_at_ms":{"type":"integer"},"ended_at_ms":{"type":"integer"},"duration_ms":{"type":"integer"},
+                "service_ms":{"type":"integer"},
+                "next_call_gap_ms":{"type":["integer","null"],"description":"Observed only from a later canonical meaningful call in this principal and Window; null means no serial gap was observed, never elapsed time."},
+                "cycle_ms":{"type":"integer"},"window_transition_kind":{"type":"string"},"response_streaming":{"type":"boolean"},
+                "method":{"type":"string"},"tool_name":{"type":"string"},"activity_presentation":{"type":"string"},"activity_kind":{"type":"string"},
+                "project":{"type":"string"},"status":{"type":"string"},"http_status":{"type":"integer"},"meaningful":{"type":"boolean"},
+                "server_trace_id":{"type":"string"},"workflow_sessions":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"workflow_session_id":{"type":"string"},"project":{"type":"string"},"relation":{"type":"string"}},"required":["workflow_session_id","relation"]}},
+                "code_mode_composition":open_object_schema("Validated bounded nested WebCodex Code Mode composition when available.")
+            },"required":["started_at_ms","ended_at_ms","duration_ms","method","status","meaningful","workflow_sessions"]}})),
+            ("summary", open_object_schema("Descriptive counts over the bounded visible event scan. Ratio denominator is explicit; no Host/model-state attribution.")),
+            ("active_requests", json!({"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"properties":{"server_trace_id":{"type":"string"},"tool_name":{"type":["string","null"]},"started_at_ms":{"type":"integer"}},"required":["server_trace_id","tool_name","started_at_ms"]}})),
+            ("truncated", schema_type("boolean", "Visible events from the bounded recent scan were omitted by the presentation or serialized byte bound; this is not a lifetime-history completeness claim.")),
+        ])),
         "runtime_status" => Some(wrapped_output_schema(vec![
             ("service", schema_type("string", "Runtime service name.")),
             (

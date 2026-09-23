@@ -168,7 +168,7 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible
+                    e.window_continuity_eligible, e.http_status
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -230,7 +230,7 @@ impl Database {
                     e.window_meaningful, e.recorder_gap_session_id,
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming, e.window_continuity_eligible
+                    e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status
              FROM action_events e JOIN selected s ON s.event_id = e.event_id
              ORDER BY e.window_ended_at_ms DESC, e.event_id DESC",
         )?;
@@ -266,7 +266,7 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.summary_json
+                    e.window_continuity_eligible, e.http_status, e.summary_json
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -284,11 +284,11 @@ impl Database {
                 drop(stmt);
                 let mut stmt = conn.prepare(&sql)?;
                 let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(20))?;
+                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(21))?;
                 return Ok(records);
             }
         };
-        collect_window_event_rows(&conn, &mut rows, Some(20))
+        collect_window_event_rows(&conn, &mut rows, Some(21))
     }
 
     /// Latest authoritative Window/Session relation for diagnostic continuity.
@@ -507,6 +507,7 @@ fn collect_window_event_rows(
             window_transition_kind: row.get(17)?,
             response_streaming: row.get(18)?,
             window_continuity_eligible: row.get(19)?,
+            http_status: row.get(20)?,
             code_mode_composition: match code_mode_summary_column {
                 Some(column) => row
                     .get::<_, Option<String>>(column)?

@@ -2171,6 +2171,29 @@ fn guidance_profile_defaults_and_schema_follow_compiled_availability() {
     }
 }
 
+#[test]
+fn current_window_activity_has_no_model_supplied_window_selector() {
+    let input = crate::request_schema::input_schema_for_tool("current_window_activity");
+    let properties = input["properties"].as_object().unwrap();
+    assert!(properties.contains_key("limit"));
+    assert!(properties.contains_key("include_nonmeaningful"));
+    assert!(!properties.contains_key("client_window_key"));
+    assert!(!properties.contains_key("window"));
+    assert!(ToolCall::from_tool_name(
+        "current_window_activity",
+        json!({
+            "client_window_key": "foreign"
+        })
+    )
+    .is_err());
+    assert_eq!(
+        ToolCall::from_tool_name("current_window_activity", json!({"limit":20}))
+            .unwrap()
+            .tool_name(),
+        "current_window_activity"
+    );
+}
+
 #[cfg(not(feature = "experimental-code-mode"))]
 #[test]
 fn guidance_profile_code_mode_fails_closed_when_feature_is_unavailable() {

@@ -5995,6 +5995,13 @@ impl ToolCallAuditProjection for ToolCall {
                 "summary_only": summary_only,
                 "client_id_present": client_id.is_some(),
             }),
+            Self::CurrentWindowActivity {
+                limit,
+                include_nonmeaningful,
+            } => serde_json::json!({
+                "limit": limit,
+                "include_nonmeaningful": include_nonmeaningful,
+            }),
             Self::WorkspaceHygieneCheck {
                 project,
                 max_findings,

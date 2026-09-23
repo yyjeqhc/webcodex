@@ -440,8 +440,14 @@ through `context_request`. Omission means no static material, not an inferred
 retention state. `include_extension_catalog` remains a separate caller-explicit
 selection-metadata preference.
 
-`guidance_profile` is a request-local presentation enum: `direct` by default, or
-`code_mode` only in Experimental Code Mode builds. Exact resume may choose either
+`guidance_profile` is a request-local presentation enum: `direct` by default,
+`host_code_mode` for Host-supplied native orchestration in every build, or
+`code_mode` for WebCodex nested orchestration only in Experimental Code Mode
+builds. Host-native guidance favors canonical batches and `search_and_read`,
+allows independent cross-tool observations and dependent branching within one
+Host cell, keeps raw ToolResults in that cell, and warns against Job polling and
+stale validation after covered source changes. It does not assert that WebCodex
+verified Host capability or require nested Code Mode. Exact resume may choose any available profile
 without a Session transition; omission always selects `direct`, never a remembered
 choice. It is not persisted in Session state or event arguments and changes no
 admission, authority, effects, validation or Job semantics. An unavailable profile

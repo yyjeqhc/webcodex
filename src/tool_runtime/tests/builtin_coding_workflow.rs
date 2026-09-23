@@ -175,6 +175,35 @@ fn direct_strategy_keeps_ordinary_observations_without_code_mode_instructions() 
     }
 }
 
+#[test]
+fn host_code_mode_strategy_is_bounded_guidance_only() {
+    use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
+    let mut direct = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
+    let mut host = builtin_coding_workflow_projection(CodingGuidanceProfile::HostCodeMode);
+    validate_schema_instance_for_test(&host, &workflow_schema()).unwrap();
+    assert_eq!(host["tool_strategy"]["profile"], "host_code_mode");
+    let strategy = strategy_text(&host);
+    for phrase in [
+        "model guidance only",
+        "read_files(items)",
+        "search_project_texts(queries)",
+        "multi-package Cargo",
+        "search_and_read",
+        "Promise.all only for independent",
+        "compact evidence",
+        "passive Job attention",
+        "do not poll mechanically",
+        "latest source revision",
+        "does not require WebCodex nested Code Mode",
+        "not verified by WebCodex",
+    ] {
+        assert!(strategy.contains(phrase), "{phrase}");
+    }
+    direct.as_object_mut().unwrap().remove("tool_strategy");
+    host.as_object_mut().unwrap().remove("tool_strategy");
+    assert_eq!(direct, host);
+}
+
 #[cfg(feature = "experimental-code-mode")]
 #[test]
 fn code_mode_strategy_changes_only_guidance_and_teaches_compact_composition() {

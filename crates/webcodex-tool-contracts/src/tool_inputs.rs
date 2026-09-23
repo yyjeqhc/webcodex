@@ -26,6 +26,7 @@ pub enum StartupDetail {
 pub enum CodingGuidanceProfile {
     #[default]
     Direct,
+    HostCodeMode,
     #[cfg(feature = "experimental-code-mode")]
     CodeMode,
 }

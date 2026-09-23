@@ -2141,11 +2141,11 @@ fn guidance_profile_defaults_and_schema_follow_compiled_availability() {
         .as_array()
         .unwrap()
         .contains(&json!("guidance_profile")));
-    let mut profiles = vec!["direct"];
+    let mut profiles = vec!["direct", "host_code_mode"];
     if cfg!(feature = "experimental-code-mode") {
         profiles.push("code_mode");
     }
-    assert_eq!(property["enum"], json!(profiles));
+    assert_eq!(property["enum"], json!(profiles), "{property}");
     let output_schema = output_schema_for_tool("work_on_project");
     let output_properties = output_schema["properties"]["output"]["properties"]
         .as_object()

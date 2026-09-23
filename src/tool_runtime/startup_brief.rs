@@ -110,6 +110,15 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
             "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
         ],
+        CodingGuidanceProfile::HostCodeMode => &[
+            "Host-native Code Mode is model guidance only; use it when the Host actually provides orchestration. It grants no WebCodex capability or authority and does not require WebCodex nested Code Mode.",
+            "One simple observation: use a direct primitive. For known independent inputs of the same kind, prefer canonical batches such as read_files(items), search_project_texts(queries), and multi-package Cargo; do not mechanically Promise.all micro-calls.",
+            "For search followed by inspecting hits and reading source, prefer search_and_read. Keep dependent cross-tool search, inspect, read, branch, and compact projection in one Host cell when useful; use Promise.all only for independent observations from different tools.",
+            "Keep raw ToolResults inside the Host cell and return only compact evidence needed for the next model decision; avoid text(JSON.stringify(fullToolResult)) and text(results).",
+            "Start a long Job once, retain its job_id and continuation identity, continue independent work, and use passive Job attention and durable state. Call observe_jobs for actual details; do not poll mechanically.",
+            "Validation running during covered source edits is stale as final evidence. Continue independent work, then rerun appropriate validation against the latest source revision.",
+            "Do not wrap Host-native orchestration in WebCodex nested Code Mode by default; use nested Code Mode only when its own scenario has a clear benefit. Host capability is supplied by the Host, not verified by WebCodex.",
+        ],
         #[cfg(feature = "experimental-code-mode")]
         CodingGuidanceProfile::CodeMode => &[
             "For one simple observation use a direct primitive; do not wrap it in Code Mode. If one bounded search will immediately inspect its matches, prefer direct search_and_read. Native commands and structured tools are first-class; choose the simplest sufficient primitive. Narrow broad discovery before targeted reads.",

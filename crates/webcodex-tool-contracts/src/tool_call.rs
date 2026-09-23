@@ -1421,9 +1421,10 @@ pub enum ToolCall {
         /// title.
         #[schemars(length(min = 1, max = 4000))]
         instruction: String,
-        /// Model guidance only: direct (default) or code_mode for read-only orchestration strategy.
-        /// No tool admission, authority, effects, or Session state changes; explicit resume may choose
-        /// again. code_mode is invalid when Experimental Code Mode is not compiled. Request
+        /// Model guidance only: direct (default), host_code_mode for Host-native orchestration,
+        /// or feature-gated code_mode for WebCodex nested orchestration. No tool admission,
+        /// authority, effects, or Session state changes; explicit resume may choose again.
+        /// Request
         /// `context_request=["webcodex.workflow"]` when the current model context needs that guidance.
         #[serde(default)]
         guidance_profile: CodingGuidanceProfile,

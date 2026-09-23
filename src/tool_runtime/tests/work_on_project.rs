@@ -5634,7 +5634,7 @@ async fn work_on_project_guidance_profile_is_request_local_and_not_durable() {
     let session_id = first.output["session_id"].as_str().unwrap().to_string();
     let before =
         serde_json::to_value(runtime.sessions.summary(&session_id, Some(50)).unwrap()).unwrap();
-    let mut cases = vec![Some("direct")];
+    let mut cases = vec![Some("direct"), Some("host_code_mode")];
     #[cfg(feature = "experimental-code-mode")]
     cases.push(Some("code_mode"));
     cases.push(None); // Same Window/Session must not remember the last profile.

@@ -88,9 +88,9 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
     assert_eq!(
         work_props["guidance_profile"]["enum"],
         if cfg!(feature = "experimental-code-mode") {
-            json!(["direct", "code_mode"])
+            json!(["direct", "host_code_mode", "code_mode"])
         } else {
-            json!(["direct"])
+            json!(["direct", "host_code_mode"])
         }
     );
     assert_eq!(work_props["include_extension_catalog"]["default"], true);

@@ -100,7 +100,7 @@ Saving modifies only `WEBCODEX_TOOL_REQUEST_TRACE` in the managed Server environ
 
 Activity's **ChatGPT calls** tab shows actual observed work/calls; **Workflow Sessions** shows durable work progress/Jobs/validation; **System events** shows Desktop-owned service events. IDs are correlation details, not the primary user-facing description.
 
-A completed call without `response_handed_at_ms` is **Execution completed; response handoff not confirmed**. A confirmed handoff means bytes were handed to the MCP client, not proof that a model received or processed them. Streaming start is shown separately from completed handoff.
+A completed call without `response_handed_at_ms` is **Execution completed; response handoff not confirmed**. A confirmed handoff means the response was handed to the HTTP framework, not proof that the MCP client received it or that a model processed it. Streaming start is shown separately from completed handoff.
 
 The canonical `next_call_gap_ms` is attached to the arriving request and measures its gap from a previous non-streaming response. It is **not** evidence that another meaningful call followed the current event. A following meaningful call is only claimed when later canonical activity proves it. The elapsed gap can include networking, Host scheduling, inference, user input, or other time WebCodex cannot observe. The UI does not diagnose “ChatGPT stuck” or model failure from silence.
 

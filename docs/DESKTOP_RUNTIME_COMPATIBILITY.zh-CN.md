@@ -48,7 +48,7 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 ## 活动与续轮证据
 
-“ChatGPT 调用”展示实际工具、执行与响应状态及关联工作；“工作会话”展示持久任务、进度、Jobs 与验证；“系统事件”展示 Desktop 自身服务状态。没有 response handoff 时间时显示“响应交付未确认”。已交付 MCP 客户端不代表模型已收到；响应流启动也不等于完整交付。
+“ChatGPT 调用”展示实际工具、执行与响应状态及关联工作；“工作会话”展示持久任务、进度、Jobs 与验证；“系统事件”展示 Desktop 自身服务状态。没有 response handoff 时间时显示“响应交付未确认”。已返回 HTTP 框架不代表 MCP 客户端已收到，也不代表模型已收到；响应流启动也不等于完整交付。
 
 底层 `next_call_gap_ms` 附着在到达的新请求上，表示它距离前次响应的间隔，不能反过来证明当前事件已有后续调用。只能用后续实际记录确认续轮；无记录的时间可能包含网络、Host 调度、模型推理、用户操作等，不直接归因于“ChatGPT 卡死”。
 
